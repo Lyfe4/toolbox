@@ -1,12 +1,15 @@
-import { createLazyFileRoute } from '@tanstack/react-router';
+import { createLazyFileRoute, useSearch } from '@tanstack/react-router';
 
 import { TooltipProvider } from '@/components/Tooltip';
 import { Canvas } from '@/features/canvas';
 
 export function CanvasPage() {
+  // Typed by the route's Zod search schema in index.tsx.
+  const { p } = useSearch({ from: '/' });
+
   return (
     <TooltipProvider>
-      <Canvas />
+      <Canvas shareParam={p} />
     </TooltipProvider>
   );
 }

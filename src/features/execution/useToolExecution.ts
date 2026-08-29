@@ -3,7 +3,9 @@ import { createContext, use, useCallback, useEffect, useMemo, useRef, useState }
 import type { ToolId } from '@/features/registry/manifest';
 import type { ToolError, ToolInputs, ToolOutputs } from '@/features/registry/types';
 
-import { createDefaultEngine, type ExecutionEngine } from './engine';
+import { getSharedEngine } from './sharedEngine';
+
+import type { ExecutionEngine } from './engine';
 
 /**
  * The execution state machine, as a discriminated union.
@@ -21,20 +23,6 @@ export type ExecutionState =
 const ExecutionEngineContext = createContext<ExecutionEngine | null>(null);
 
 export const ExecutionEngineProvider = ExecutionEngineContext.Provider;
-
-/**
- * One engine, and therefore one worker, shared by the whole app.
- *
- * Created lazily on first use. Constructing the engine does NOT construct a
- * Worker - that happens on the first run - so this is safe to evaluate in a
- * test environment that has no Worker at all.
- */
-let sharedEngine: ExecutionEngine | null = null;
-
-function getSharedEngine(): ExecutionEngine {
-  sharedEngine ??= createDefaultEngine();
-  return sharedEngine;
-}
 
 export function useExecutionEngine(): ExecutionEngine {
   return use(ExecutionEngineContext) ?? getSharedEngine();

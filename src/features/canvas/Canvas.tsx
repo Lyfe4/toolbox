@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/Button';
-import { PlusIcon, SearchIcon, SignalIcon } from '@/components/Icon';
+import { CopyIcon, PlusIcon, SearchIcon, SignalIcon } from '@/components/Icon';
 import { useToast } from '@/components/Toast';
 import { VisuallyHidden } from '@/components/VisuallyHidden';
+import { idleState } from '@/features/execution/graph';
+import { usePipelineStore } from '@/features/execution/pipelineStore';
 import { getManifestEntry, TOOL_MANIFEST, type ToolId } from '@/features/registry';
 import { cx } from '@/lib/cx';
 
@@ -11,9 +13,18 @@ import styles from './canvas.module.css';
 import { CanvasNodeView } from './CanvasNodeView';
 import { CommandDialog, type DialogOption } from './CommandDialog';
 import { checkConnection, connectionCount, validTargetsFor } from './connections';
-import { GRID, MAX_ZOOM, MIN_ZOOM, NODE_WIDTH, spatialOrder } from './geometry';
+import {
+  GRID,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  NODE_WIDTH,
+  nodeTakesTypedInput,
+  spatialOrder,
+} from './geometry';
 import { useCanvasStore } from './graphStore';
 import { createDebouncedSaver, loadGraph } from './persistence';
+import { PIPELINE_PRESETS } from './presets';
+import { buildShareUrl, decodeParamToGraph } from './share';
 import { CANVAS_DESCRIPTION } from './shortcuts';
 import { ShortcutsOverlay } from './ShortcutsOverlay';
 import { toWorld, useViewportStore } from './viewportStore';
@@ -32,7 +43,12 @@ type Overlay =
 const NUDGE = GRID;
 const BIG_NUDGE = GRID * 8;
 
-export function Canvas() {
+export interface CanvasProps {
+  /** Validated and length-bounded by the route's search schema. */
+  readonly shareParam?: string | undefined;
+}
+
+export function Canvas({ shareParam }: CanvasProps = {}) {
   const rootRef = useRef<HTMLDivElement>(null);
   const descriptionId = useId();
 
@@ -54,6 +70,32 @@ export function Canvas() {
    * ---------------------------------------------------------------------- */
 
   useEffect(() => {
+    /*
+     * A share link wins over the saved canvas: following a link is an explicit
+     * request to see THAT pipeline. It is decoded asynchronously because
+     * DecompressionStream is stream-based, and nothing is applied unless the
+     * whole payload validates.
+     */
+    if (shareParam !== undefined && shareParam !== '') {
+      let cancelled = false;
+      void decodeParamToGraph(shareParam).then((result) => {
+        if (cancelled) return;
+        if (result.status === 'ok') {
+          store.getState().replaceGraph(result.graph);
+          store
+            .getState()
+            .announce(
+              `Loaded a shared pipeline: ${result.graph.nodeOrder.length.toString()} nodes. Inputs are empty - shared links never carry data.`,
+            );
+        } else {
+          notify({ title: 'Shared link rejected', description: result.message, tone: 'error' });
+        }
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
     const result = loadGraph();
     if (result.status === 'loaded') {
       store.getState().replaceGraph(result.graph);
@@ -62,7 +104,8 @@ export function Canvas() {
       // crash and never a half-restored graph.
       notify({ title: 'Saved canvas reset', description: result.message, tone: 'warn' });
     }
-  }, [store, notify]);
+    return undefined;
+  }, [store, notify, shareParam]);
 
   useEffect(() => {
     const saver = createDebouncedSaver();
@@ -74,6 +117,40 @@ export function Canvas() {
       unsubscribe();
     };
   }, [store]);
+
+  /* ---------------------------------------------------------------------- *
+   * Pipeline
+   * ---------------------------------------------------------------------- */
+
+  const runStates = usePipelineStore((state) => state.states);
+  const pipelineRunning = usePipelineStore((state) => state.running);
+  const pipelineAnnouncement = usePipelineStore((state) => state.announcement);
+
+  /*
+   * Re-run whenever the document changes. `schedule` is debounced, so typing
+   * into a node produces one run after the pause rather than one per keystroke,
+   * and the executor's cache means only the edited node and its descendants
+   * actually execute.
+   */
+  useEffect(() => {
+    usePipelineStore.getState().schedule(graph);
+  }, [graph]);
+
+  useEffect(
+    () => () => {
+      usePipelineStore.getState().cancel();
+    },
+    [],
+  );
+
+  // Pipeline messages go to the canvas's single live region rather than a
+  // second one, so nothing competes to be read out.
+  const lastPipelineSeq = useRef(0);
+  useEffect(() => {
+    if (pipelineAnnouncement.seq === lastPipelineSeq.current) return;
+    lastPipelineSeq.current = pipelineAnnouncement.seq;
+    if (pipelineAnnouncement.text !== '') store.getState().announce(pipelineAnnouncement.text);
+  }, [pipelineAnnouncement, store]);
 
   /* ---------------------------------------------------------------------- *
    * Viewport: pan and zoom, throttled to animation frames
@@ -260,6 +337,42 @@ export function Canvas() {
    * Connecting
    * ---------------------------------------------------------------------- */
 
+  const onShare = useCallback(() => {
+    void buildShareUrl(store.getState().graph, window.location.origin).then(
+      async (url) => {
+        try {
+          await navigator.clipboard.writeText(url);
+          notify({
+            title: 'Share link copied',
+            description: `${url.length.toString()} characters. Structure and settings only - your input is not in the link.`,
+            tone: 'ok',
+          });
+          store.getState().announce('Share link copied. It contains no input data.');
+        } catch {
+          notify({
+            title: 'Could not copy',
+            description: 'The browser refused clipboard access.',
+            tone: 'error',
+          });
+        }
+      },
+      () => {
+        notify({
+          title: 'Could not build a link',
+          description: 'The pipeline could not be encoded.',
+          tone: 'error',
+        });
+      },
+    );
+  }, [store, notify]);
+
+  const onInputChange = useCallback(
+    (nodeId: string, value: string) => {
+      store.getState().setNodeInput(nodeId, value);
+    },
+    [store],
+  );
+
   const tryConnect = useCallback(
     (from: PortRef, to: PortRef): boolean => {
       const result = store.getState().connect(from, to);
@@ -308,6 +421,19 @@ export function Canvas() {
     [store],
   );
 
+  const addPreset = useCallback(
+    (presetId: string) => {
+      const rect = rootRef.current?.getBoundingClientRect();
+      const centre = toWorld(
+        { x: (rect?.width ?? 800) / 2, y: (rect?.height ?? 600) / 2 },
+        useViewportStore.getState().viewport,
+      );
+      // Placed left of centre so a two- or three-node chain lands in view.
+      store.getState().applyPreset(presetId, { x: centre.x - NODE_WIDTH, y: centre.y - 80 });
+    },
+    [store],
+  );
+
   /* ---------------------------------------------------------------------- *
    * Keyboard
    * ---------------------------------------------------------------------- */
@@ -338,6 +464,24 @@ export function Canvas() {
 
   const onKeyDown = (event: KeyboardEvent): void => {
     if (overlay.kind !== 'none') return;
+
+    /*
+     * When the caret is in a node's input, the keyboard belongs to the text -
+     * otherwise typing "k" would open the palette and Delete would remove the
+     * node being edited. Escape is the one key still handled here, to step
+     * back out to the node.
+     */
+    const target = event.target;
+    const editing =
+      target instanceof HTMLElement &&
+      (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable);
+
+    if (editing) {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      target.closest<HTMLElement>('[data-node-id]')?.focus();
+      return;
+    }
 
     const state = store.getState();
     const focused = focusedNodeId();
@@ -381,12 +525,23 @@ export function Canvas() {
         state.clearSelection();
         return;
 
-      case 'Enter':
-        if (event.shiftKey && focused) {
+      case 'Enter': {
+        if (!focused) return;
+        if (event.shiftKey) {
           event.preventDefault();
           state.toggleNode(focused);
+          return;
+        }
+        // Step into this node's input editor, if it has one.
+        const field = rootRef.current?.querySelector<HTMLTextAreaElement>(
+          `[data-node-id="${focused}"] [data-node-input]`,
+        );
+        if (field) {
+          event.preventDefault();
+          field.focus();
         }
         return;
+      }
 
       case 'c':
       case 'C':
@@ -560,6 +715,16 @@ export function Canvas() {
   }, [draft, graph]);
 
   const selectedNodes = useMemo(() => new Set(selection.nodes), [selection.nodes]);
+
+  /** Wires feeding a node that is running right now. */
+  const activeEdges = useMemo(() => {
+    const active = new Set<string>();
+    for (const edgeId of graph.edgeOrder) {
+      const edge = graph.edges[edgeId];
+      if (edge && runStates[edge.to.nodeId]?.status === 'running') active.add(edgeId);
+    }
+    return active;
+  }, [graph, runStates]);
   const emptySet = useMemo(() => new Set<string>(), []);
 
   const draftPath = useMemo(() => {
@@ -580,14 +745,23 @@ export function Canvas() {
    * ---------------------------------------------------------------------- */
 
   const paletteOptions: readonly DialogOption[] = useMemo(
-    () =>
-      TOOL_MANIFEST.map((entry) => ({
+    () => [
+      // Presets first: they are the fastest way to see what the canvas is for.
+      ...PIPELINE_PRESETS.map((preset) => ({
+        id: `preset:${preset.id}`,
+        name: preset.name,
+        meta: 'pipeline',
+        detail: preset.summary,
+        group: 'Pipelines',
+      })),
+      ...TOOL_MANIFEST.map((entry) => ({
         id: entry.id,
         name: entry.name,
         meta: entry.category,
         detail: entry.summary,
         group: entry.category,
       })),
+    ],
     [],
   );
 
@@ -677,6 +851,7 @@ export function Canvas() {
         <Wires
           graph={graph}
           selectedEdges={selection.edges}
+          activeEdges={activeEdges}
           draft={draftPath}
           onSelectEdge={(id, additive) => {
             const state = store.getState();
@@ -698,10 +873,13 @@ export function Canvas() {
               node={node}
               selected={selectedNodes.has(id)}
               connections={connectionCount(graph, id)}
+              run={runStates[id] ?? idleState()}
+              acceptsTypedInput={nodeTakesTypedInput(graph, node)}
               linkState={draft === null ? 'none' : valid && valid.size > 0 ? 'valid' : 'invalid'}
               validInputPorts={valid ?? emptySet}
               connectedPorts={connectedPorts.get(id) ?? emptySet}
               onPortPointerDown={onPortPointerDown}
+              onInputChange={onInputChange}
             />
           );
         })}
@@ -769,6 +947,10 @@ export function Canvas() {
         >
           Redo
         </Button>
+        <Button size="sm" variant="ghost" onClick={onShare}>
+          <CopyIcon size={12} /> Share
+        </Button>
+        <span className={styles.shareNote}>Link holds structure only, never your input</span>
         <Button
           size="sm"
           variant="ghost"
@@ -785,6 +967,7 @@ export function Canvas() {
           <SignalIcon size={10} /> {graph.nodeOrder.length} nodes
         </span>
         <span>{graph.edgeOrder.length} wires</span>
+        <span>{pipelineRunning ? 'running' : 'idle'}</span>
         <span>
           {zoomPercent}%{' '}
           {viewport.zoom <= MIN_ZOOM ? 'min' : viewport.zoom >= MAX_ZOOM ? 'max' : ''}
@@ -801,6 +984,10 @@ export function Canvas() {
           onClose={closeOverlay}
           onChoose={(id) => {
             closeOverlay();
+            if (id.startsWith('preset:')) {
+              addPreset(id.slice('preset:'.length));
+              return;
+            }
             addTool(id as ToolId);
           }}
         />

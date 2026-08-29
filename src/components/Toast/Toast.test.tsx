@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
@@ -40,9 +40,21 @@ describe('Toast', () => {
 
     await user.click(screen.getByRole('button', { name: 'Run' }));
 
-    const status = await screen.findByRole('status');
-    expect(status).toHaveTextContent('Encoded');
-    expect(status).toHaveTextContent('48 bytes written');
+    /*
+     * Radix renders its own empty announce region alongside the toast, so
+     * there is more than one role="status" node and their order is a timing
+     * detail. Assert against the set rather than against whichever happens to
+     * be first.
+     */
+    await waitFor(() => {
+      const regions = screen.getAllByRole('status');
+      expect(regions.some((region) => region.textContent.includes('Encoded'))).toBe(true);
+    });
+    expect(
+      screen
+        .getAllByRole('status')
+        .some((region) => region.textContent.includes('48 bytes written')),
+    ).toBe(true);
   });
 
   it('raises errors assertively', async () => {
@@ -57,7 +69,10 @@ describe('Toast', () => {
 
     // Radix keeps role="status" on every toast and varies aria-live instead,
     // so "assertive" is what actually makes an error interrupt.
-    expect(await screen.findByRole('status')).toHaveAttribute('aria-live', 'assertive');
+    await waitFor(() => {
+      const regions = screen.getAllByRole('status');
+      expect(regions.some((region) => region.getAttribute('aria-live') === 'assertive')).toBe(true);
+    });
   });
 
   it('can be dismissed', async () => {
@@ -69,9 +84,11 @@ describe('Toast', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'Run' }));
-    await screen.findByRole('status');
+    await screen.findByText('Encoded');
     await user.click(screen.getByRole('button', { name: 'Dismiss notification' }));
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('Encoded')).not.toBeInTheDocument();
+    });
   });
 
   it('has no axe violations with a message on screen', async () => {
@@ -83,7 +100,7 @@ describe('Toast', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'Run' }));
-    await screen.findByRole('status');
+    await screen.findByText('Encoded');
     await expectNoAxeViolations(container);
   });
 });

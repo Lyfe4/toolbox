@@ -32,7 +32,7 @@ function bigGraph(): GraphData {
       toolId: index % 2 === 0 ? 'base64' : 'structured-data',
       position: { x: (index % 10) * 280, y: Math.floor(index / 10) * 240 },
       options: {},
-      status: 'idle',
+      input: '',
     };
   }
 

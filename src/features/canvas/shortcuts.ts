@@ -28,6 +28,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
 
   { keys: ['Arrows'], action: 'Move the selected nodes by 8px', group: 'Editing' },
   { keys: ['Shift', 'Arrows'], action: 'Move the selected nodes by 64px', group: 'Editing' },
+  { keys: ['Enter'], action: "Edit the focused node's input", group: 'Editing' },
+  { keys: ['Escape'], action: 'Leave the input and return to the node', group: 'Editing' },
   { keys: ['Shift', 'Enter'], action: 'Add the focused node to the selection', group: 'Editing' },
   { keys: ['Ctrl', 'A'], action: 'Select every node', group: 'Editing' },
   { keys: ['Ctrl', 'D'], action: 'Duplicate the selection', group: 'Editing' },

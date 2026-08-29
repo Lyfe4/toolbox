@@ -13,6 +13,7 @@ import type { ErasedTool } from './types';
 const LOADERS: Record<ToolId, () => Promise<{ readonly default: ErasedTool }>> = {
   base64: () => import('@/tools/base64'),
   'structured-data': () => import('@/tools/structured-data'),
+  hash: () => import('@/tools/hash'),
 };
 
 /** Resolved tools, so switching back to a tool does not re-await the import. */

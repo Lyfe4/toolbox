@@ -1,4 +1,5 @@
 import { defineTool, eraseTool, ok, type ErasedTool } from '@/features/registry/types';
+import { bytesToTextStrict } from '@/lib/base64';
 
 import { DELIMITERS, detectFormat, parseSource, serialise, sortKeysDeep } from './convert';
 import {
@@ -28,9 +29,12 @@ export const structuredDataTool = defineTool({
     {
       id: 'input',
       label: 'Document',
-      types: ['text', 'json'],
+      // Bytes as well as text: a document very often arrives as raw bytes -
+      // straight from a dropped file, or out of a base64 decode - and refusing
+      // those made the most obvious pipeline in the product impossible.
+      types: ['text', 'json', 'bytes'],
       required: true,
-      description: 'Paste a document, drop a file, or wire in JSON from another tool.',
+      description: 'Paste a document, drop a file, or wire in data from another tool.',
     },
   ],
 
@@ -61,13 +65,26 @@ export const structuredDataTool = defineTool({
     const { input } = inputs;
     const delimiter = DELIMITERS[options.delimiter];
 
-    // A wired-in 'json' value is already parsed; only text needs a parser.
+    // A wired-in 'json' value is already parsed. Bytes are decoded as UTF-8
+    // first, strictly: a PNG wired in here should say so, not be parsed as
+    // mojibake and fail with a confusing syntax error.
+    let source: string;
+    if (input.type === 'json') {
+      source = '';
+    } else if (input.type === 'bytes') {
+      const decoded = bytesToTextStrict(input.bytes);
+      if (!decoded.ok) return decoded;
+      source = decoded.value;
+    } else {
+      source = input.text;
+    }
+
     const parsed =
       input.type === 'json'
         ? ok(input.data)
         : parseSource(
-            input.text,
-            options.source === 'auto' ? detectFormat(input.text) : options.source,
+            source,
+            options.source === 'auto' ? detectFormat(source) : options.source,
             delimiter,
           );
 

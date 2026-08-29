@@ -18,17 +18,26 @@ export interface Point {
   readonly y: number;
 }
 
-/** Reflected by the header LED. Execution fills these in a later prompt. */
-export type NodeStatus = 'idle' | 'running' | 'ok' | 'error';
-
 export interface CanvasNode {
   readonly id: NodeId;
   readonly toolId: ToolId;
   /** World coordinates of the top-left corner, always snapped to the grid. */
   readonly position: Point;
   readonly options: Readonly<Record<string, unknown>>;
-  readonly status: NodeStatus;
+  /**
+   * Text the user typed into this node, feeding its first input port when no
+   * wire does. USER DATA: persisted locally, and deliberately never included
+   * in a share URL.
+   */
+  readonly input: string;
 }
+
+/*
+ * Execution status deliberately does NOT live on the node. It is derived from
+ * a run, not part of the document: keeping it here would put it in the undo
+ * history and in the saved file, and "this node succeeded" is not something
+ * anyone wants to undo or reload. It lives in the pipeline store instead.
+ */
 
 /** One end of a wire: a specific port on a specific node. */
 export interface PortRef {

@@ -12,10 +12,10 @@ import { EMPTY_GRAPH, type GraphData } from './types';
  * simply be corrupt - so it is parsed with Zod and cross-checked against the
  * live tool registry before it is allowed anywhere near the store.
  */
-export const GRAPH_STORAGE_KEY = 'patchbay:graph:v1';
+export const GRAPH_STORAGE_KEY = 'patchbay:graph:v2';
 
 /** Bump when the persisted shape changes, and add a migration below. */
-export const CURRENT_GRAPH_VERSION = 1;
+export const CURRENT_GRAPH_VERSION = 2;
 
 const pointSchema = z.object({
   // z.number() already rejects NaN and Infinity in Zod 4.
@@ -35,7 +35,8 @@ const nodeSchema = z.object({
   toolId: z.string().refine(isToolId, 'Unknown tool'),
   position: pointSchema,
   options: z.record(z.string(), z.unknown()),
-  status: z.enum(['idle', 'running', 'ok', 'error']),
+  /** User data. Saved locally; never serialised into a share URL. */
+  input: z.string(),
 });
 
 const edgeSchema = z.object({
@@ -86,12 +87,43 @@ function migrate(raw: unknown): unknown {
   const version = (raw as { version?: unknown }).version;
 
   switch (version) {
+    case 1:
+      return migrateV1ToV2(raw as Record<string, unknown>);
     case CURRENT_GRAPH_VERSION:
       return raw;
     default:
       // Unknown or missing version: refuse rather than guess at the shape.
       return null;
   }
+}
+
+/**
+ * v1 -> v2.
+ *
+ * v2 moved execution status off the node (it is derived, not document state)
+ * and added the node's typed-in `input`. A v1 graph has neither, so the status
+ * is dropped and the input starts empty - the structure is preserved, and the
+ * user only has to retype what was never saved in the first place.
+ */
+function migrateV1ToV2(raw: Record<string, unknown>): unknown {
+  const nodes: readonly unknown[] = Array.isArray(raw.nodes) ? raw.nodes : [];
+
+  return {
+    ...raw,
+    version: 2,
+    nodes: nodes.map((node): unknown => {
+      if (typeof node !== 'object' || node === null) return node;
+
+      // Rebuilt field by field rather than by deleting `status`, so a v1 node
+      // cannot smuggle any other stale field through either.
+      const source = node as Record<string, unknown>;
+      const carried: Record<string, unknown> = {};
+      for (const key of ['id', 'toolId', 'position', 'options']) {
+        if (key in source) carried[key] = source[key];
+      }
+      return { ...carried, input: '' };
+    }),
+  };
 }
 
 /** Rebuilds the normalised store shape, dropping edges with missing endpoints. */

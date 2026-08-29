@@ -564,3 +564,110 @@
     border-color: Highlight;
   }
 }
+
+/* --- Execution feedback ------------------------------------------------- */
+
+/*
+ * Additional LED states. Each has its own SHAPE as well as its own colour -
+ * blocked is a hollow square with a bar, upstream-failed is a hollow square
+ * with a corner cut - so the state is legible in greyscale and survives
+ * forced-colors, where every colour we choose is discarded.
+ */
+.ledBlocked {
+  border-color: var(--pb-ink-muted);
+  background-image: linear-gradient(
+    to bottom,
+    transparent 0 40%,
+    var(--pb-ink-muted) 40% 60%,
+    transparent 60%
+  );
+}
+
+.ledUpstream {
+  border-color: var(--pb-signal-warn);
+  background-color: transparent;
+  clip-path: polygon(0 0, 100% 0, 100% 60%, 60% 100%, 0 100%);
+}
+
+.nodeTiming {
+  flex-shrink: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-variant-numeric: tabular-nums;
+  color: var(--pb-ink-muted);
+}
+
+.nodeInput {
+  margin: 0 var(--pb-space-xs) var(--pb-space-xs);
+  block-size: 48px;
+  resize: none;
+
+  background-color: var(--pb-surface-inset);
+  border: var(--pb-border-width) solid var(--pb-control-border);
+  border-radius: var(--pb-radius-control);
+  color: var(--pb-ink-primary);
+
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  padding: var(--pb-space-2xs) var(--pb-space-xs);
+}
+
+.nodeInput::placeholder {
+  color: var(--pb-ink-muted);
+}
+
+/* --- Wire activity ------------------------------------------------------ */
+
+/*
+ * A single dash travelling once along the wire while data moves through it.
+ * Mechanical rather than decorative: no glow, no pulse, no loop past the run.
+ */
+.wireActive {
+  stroke: var(--pb-accent);
+  stroke-dasharray: 10 190;
+  animation: wire-travel var(--pb-motion-slow) linear infinite;
+}
+
+@keyframes wire-travel {
+  from {
+    stroke-dashoffset: 200;
+  }
+
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/*
+ * Reduced motion removes the travel entirely rather than shortening it. The
+ * wire still changes colour, so the information is not lost - only the
+ * movement is.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .wireActive {
+    animation: none;
+    stroke-dasharray: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .wireActive {
+    stroke: Highlight;
+  }
+
+  .ledBlocked,
+  .ledUpstream {
+    border-color: CanvasText;
+    background-image: none;
+    background-color: CanvasText;
+  }
+}
+
+.shareNote {
+  max-inline-size: 190px;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  color: var(--pb-ink-muted);
+  line-height: 1.2;
+}

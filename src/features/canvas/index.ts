@@ -1,4 +1,5 @@
 export { Canvas } from './Canvas';
+export type { CanvasProps } from './Canvas';
 export { CommandDialog, fuzzyFilter, fuzzyScore } from './CommandDialog';
 export type { DialogOption } from './CommandDialog';
 export { applyCommand, describeCommand, revertCommand, type Command } from './commands';
@@ -33,3 +34,18 @@ export {
   zoomAbout,
   type Viewport,
 } from './viewportStore';
+export { canvasSearchSchema, type CanvasSearch } from './shareSearch';
+export {
+  buildShareUrl,
+  decodeParamToGraph,
+  encodeGraphToParam,
+  fromSharePayload,
+  MAX_SHARE_PARAM_LENGTH,
+  SHARE_FORMAT_VERSION,
+  SHARE_PARAM,
+  sharePayloadSchema,
+  toSharePayload,
+  type SharePayload,
+  type ShareResult,
+} from './share';
+export { getPreset, instantiatePreset, PIPELINE_PRESETS, type PipelinePreset } from './presets';

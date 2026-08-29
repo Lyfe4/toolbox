@@ -11,13 +11,13 @@ import { EMPTY_GRAPH, type GraphData } from './types';
 
 const graph: GraphData = {
   nodes: {
-    n1: { id: 'n1', toolId: 'base64', position: { x: 8, y: 16 }, options: {}, status: 'idle' },
+    n1: { id: 'n1', toolId: 'base64', position: { x: 8, y: 16 }, options: {}, input: '' },
     n2: {
       id: 'n2',
       toolId: 'structured-data',
       position: { x: 400, y: 16 },
       options: { target: 'yaml' },
-      status: 'idle',
+      input: '',
     },
   },
   nodeOrder: ['n1', 'n2'],
@@ -56,8 +56,8 @@ describe('graph persistence', () => {
 
   it('stores under a namespaced, versioned key', () => {
     saveGraph(graph);
-    expect(window.localStorage.getItem(GRAPH_STORAGE_KEY)).toContain('"version":1');
-    expect(GRAPH_STORAGE_KEY).toBe('patchbay:graph:v1');
+    expect(window.localStorage.getItem(GRAPH_STORAGE_KEY)).toContain('"version":2');
+    expect(GRAPH_STORAGE_KEY).toBe('patchbay:graph:v2');
   });
 
   /*
@@ -68,16 +68,16 @@ describe('graph persistence', () => {
    */
   it.each([
     ['not json at all', 'unparseable text'],
-    ['{"version":2,"nodes":[],"edges":[],"nextId":1}', 'a newer version'],
+    ['{"version":9,"nodes":[],"edges":[],"nextId":1}', 'a newer version'],
     ['{"nodes":[],"edges":[],"nextId":1}', 'a missing version'],
-    ['{"version":1,"nodes":"nope","edges":[],"nextId":1}', 'a wrong node type'],
-    ['{"version":1,"nodes":[],"edges":[],"nextId":0}', 'an invalid counter'],
+    ['{"version":2,"nodes":"nope","edges":[],"nextId":1}', 'a wrong node type'],
+    ['{"version":2,"nodes":[],"edges":[],"nextId":0}', 'an invalid counter'],
     [
-      '{"version":1,"nodes":[{"id":"n1","toolId":"ghost-tool","position":{"x":0,"y":0},"options":{},"status":"idle"}],"edges":[],"nextId":2}',
+      '{"version":2,"nodes":[{"id":"n1","toolId":"ghost-tool","position":{"x":0,"y":0},"options":{},"input":""}],"edges":[],"nextId":2}',
       'a tool that no longer exists',
     ],
     [
-      '{"version":1,"nodes":[{"id":"n1","toolId":"base64","position":{"x":"left","y":0},"options":{},"status":"idle"}],"edges":[],"nextId":2}',
+      '{"version":2,"nodes":[{"id":"n1","toolId":"base64","position":{"x":"left","y":0},"options":{},"input":""}],"edges":[],"nextId":2}',
       'a non-numeric position',
     ],
   ])('rejects %s (%s) with a message rather than throwing', (payload) => {
@@ -94,10 +94,8 @@ describe('graph persistence', () => {
     window.localStorage.setItem(
       GRAPH_STORAGE_KEY,
       JSON.stringify({
-        version: 1,
-        nodes: [
-          { id: 'n1', toolId: 'base64', position: { x: 0, y: 0 }, options: {}, status: 'idle' },
-        ],
+        version: 2,
+        nodes: [{ id: 'n1', toolId: 'base64', position: { x: 0, y: 0 }, options: {}, input: '' }],
         edges: [
           {
             id: 'e1',
@@ -121,7 +119,7 @@ describe('graph persistence', () => {
     const persisted = toPersisted(graph);
     expect(persisted.nodes).toHaveLength(2);
     expect(persisted.edges).toHaveLength(1);
-    expect(persisted.version).toBe(1);
+    expect(persisted.version).toBe(2);
   });
 });
 

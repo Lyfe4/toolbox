@@ -1,6 +1,7 @@
 import { memo } from 'react';
 
 import { PortIcon, SignalIcon, SlidersIcon } from '@/components/Icon';
+import type { NodeRunState, NodeRunStatus } from '@/features/execution/graph';
 import { getManifestEntry, type ToolCategory, type ToolManifestEntry } from '@/features/registry';
 import { cx } from '@/lib/cx';
 
@@ -15,30 +16,53 @@ import {
 } from './geometry';
 import { describeTypes, PortGlyph } from './PortGlyph';
 
-import type { CanvasNode, NodeStatus, PortRef } from './types';
+import type { CanvasNode, PortRef } from './types';
 
 const CATEGORY_GLYPHS: Partial<Record<ToolCategory, typeof PortIcon>> = {
   encoding: PortIcon,
   data: SlidersIcon,
 };
 
-const STATUS_TEXT: Record<NodeStatus, string> = {
-  idle: 'idle',
+/**
+ * Status is announced as words, never carried by the LED colour alone.
+ *
+ * The LED also changes SHAPE per state (see canvas.module.css), so the
+ * distinction survives greyscale, colour blindness and forced-colors mode -
+ * and this text is what a screen reader actually reads.
+ */
+const STATUS_TEXT: Record<NodeRunStatus, string> = {
+  idle: 'not run yet',
+  blocked: 'blocked',
   running: 'running',
   ok: 'succeeded',
   error: 'failed',
+  'upstream-failed': 'waiting on a failed node upstream',
 };
 
-function ledClass(status: NodeStatus): string {
+/** The short label printed in the node footer beside the LED. */
+const STATUS_LABEL: Record<NodeRunStatus, string> = {
+  idle: 'idle',
+  blocked: 'blocked',
+  running: 'run',
+  ok: 'ok',
+  error: 'error',
+  'upstream-failed': 'upstream',
+};
+
+function ledClass(status: NodeRunStatus): string {
   switch (status) {
     case 'idle':
       return cx(styles.led, styles.ledIdle);
+    case 'blocked':
+      return cx(styles.led, styles.ledBlocked);
     case 'running':
       return cx(styles.led, styles.ledRunning);
     case 'ok':
       return cx(styles.led, styles.ledOk);
     case 'error':
       return cx(styles.led, styles.ledError);
+    case 'upstream-failed':
+      return cx(styles.led, styles.ledUpstream);
   }
 }
 
@@ -54,48 +78,52 @@ export interface CanvasNodeViewProps {
   readonly node: CanvasNode;
   readonly selected: boolean;
   readonly connections: number;
-  /** Set while a wire is being dragged, to dim ports that cannot accept it. */
+  readonly run: NodeRunState;
+  /** True when this node's first input has no wire, so it takes typed input. */
+  readonly acceptsTypedInput: boolean;
   readonly linkState: 'none' | 'valid' | 'invalid';
-  /** Which of this node's input ports could accept the in-flight wire. */
   readonly validInputPorts: ReadonlySet<string>;
   readonly connectedPorts: ReadonlySet<string>;
   readonly onPortPointerDown: (ref: PortRef, side: 'input' | 'output') => void;
+  readonly onInputChange: (nodeId: string, value: string) => void;
 }
 
 /**
  * One node.
  *
  * `memo` matters here: panning and zooming change only the plane's transform,
- * and moving one node must not re-render the other forty-nine. Because the
- * props are primitives and stable sets, React bails out of re-rendering every
- * node whose own data did not change.
+ * and moving one node must not re-render the other forty-nine.
  */
 export const CanvasNodeView = memo(function CanvasNodeView({
   node,
   selected,
   connections,
+  run,
+  acceptsTypedInput,
   linkState,
   validInputPorts,
   connectedPorts,
   onPortPointerDown,
+  onInputChange,
 }: CanvasNodeViewProps) {
   const entry: ToolManifestEntry = getManifestEntry(node.toolId);
   const Glyph = CATEGORY_GLYPHS[entry.category] ?? SignalIcon;
-  const height = nodeHeight(entry);
+  const height = nodeHeight(entry, acceptsTypedInput);
 
   /*
    * The accessible name carries everything a sighted user reads off the node
-   * plus everything they read off its position on the plane: what it is, where
-   * it is, how many wires touch it, and whether it is selected.
+   * plus everything they read off its position on the plane.
    */
   const label = [
     entry.name,
     `at ${node.position.x.toString()}, ${node.position.y.toString()}`,
     `${connections.toString()} ${connections === 1 ? 'connection' : 'connections'}`,
-    STATUS_TEXT[node.status],
+    STATUS_TEXT[run.status],
+    run.blockedReason,
+    run.status === 'error' ? run.error?.message : null,
     selected ? 'selected' : null,
   ]
-    .filter((part): part is string => part !== null)
+    .filter((part): part is string => typeof part === 'string' && part !== '')
     .join(', ');
 
   return (
@@ -107,12 +135,8 @@ export const CanvasNodeView = memo(function CanvasNodeView({
       )}
       style={{ left: node.position.x, top: node.position.y, height }}
       data-node-id={node.id}
+      data-status={run.status}
       data-testid={`node-${node.id}`}
-      /*
-       * `group` plus tabIndex makes the node a single, focusable, labelled
-       * stop. Ports are deliberately not tab stops - Tab walks nodes, and the
-       * connect dialog is the keyboard route to a specific port.
-       */
       role="group"
       aria-roledescription="Canvas node"
       aria-label={label}
@@ -123,10 +147,20 @@ export const CanvasNodeView = memo(function CanvasNodeView({
           <Glyph size={12} />
         </span>
         <span className={styles.nodeTitle}>{entry.name}</span>
-        <span className={ledClass(node.status)} aria-hidden="true" />
+        {/* Per-node timing: small, mono, tabular. A developer-tool detail. */}
+        {run.durationMs === null ? null : (
+          <span className={styles.nodeTiming} aria-hidden="true">
+            {formatDuration(run.durationMs)}
+          </span>
+        )}
+        <span className={ledClass(run.status)} aria-hidden="true" />
       </div>
 
-      <p className={styles.nodeSummary}>{entry.summary}</p>
+      <p className={styles.nodeSummary}>
+        {run.status === 'error' && run.error
+          ? run.error.message
+          : (run.blockedReason ?? entry.summary)}
+      </p>
 
       <div className={styles.nodeBody}>
         {entry.inputs.map((port, index) => {
@@ -135,11 +169,6 @@ export const CanvasNodeView = memo(function CanvasNodeView({
             <button
               key={port.id}
               type="button"
-              /*
-               * A real button, so the linter and the platform both see an
-               * interactive element - but tabIndex -1, because Tab moves
-               * between nodes rather than stopping at every port.
-               */
               tabIndex={-1}
               className={cx(
                 styles.port,
@@ -191,8 +220,38 @@ export const CanvasNodeView = memo(function CanvasNodeView({
         ))}
       </div>
 
+      {/*
+        A source node - one whose first input has no wire - takes its input
+        here. Nodes fed by a wire show the value they received instead of an
+        editor, because typing into them would have nowhere to go.
+      */}
+      {acceptsTypedInput ? (
+        <textarea
+          className={styles.nodeInput}
+          /*
+           * Not a tab stop: Tab walks NODES, as documented. Enter on the
+           * focused node moves focus in here, Escape moves it back out - the
+           * usual way into and out of a composite widget.
+           */
+          tabIndex={-1}
+          data-node-input=""
+          aria-label={`${entry.name} input`}
+          placeholder="Type or paste input"
+          value={node.input}
+          spellCheck={false}
+          // The canvas listens for pointerdown to start a drag; a textarea has
+          // to keep its own selection behaviour.
+          onPointerDown={(event) => {
+            event.stopPropagation();
+          }}
+          onChange={(event) => {
+            onInputChange(node.id, event.target.value);
+          }}
+        />
+      ) : null}
+
       <div className={styles.nodeFooter}>
-        <span>{entry.category}</span>
+        <span>{STATUS_LABEL[run.status]}</span>
         <span>
           {connections.toString()} {connections === 1 ? 'wire' : 'wires'}
         </span>
@@ -200,3 +259,10 @@ export const CanvasNodeView = memo(function CanvasNodeView({
     </div>
   );
 });
+
+/** Sub-millisecond runs read as "<1ms" rather than "0ms". */
+export function formatDuration(ms: number): string {
+  if (ms < 1) return '<1ms';
+  if (ms < 1000) return `${Math.round(ms).toString()}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}

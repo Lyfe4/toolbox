@@ -10,6 +10,8 @@ import type { EdgeId, GraphData, Point } from './types';
 export interface WiresProps {
   readonly graph: GraphData;
   readonly selectedEdges: readonly EdgeId[];
+  /** Wires currently carrying data into a running node. */
+  readonly activeEdges: ReadonlySet<EdgeId>;
   readonly onSelectEdge: (id: EdgeId, additive: boolean) => void;
   /** The wire currently being dragged out of a port, if any. */
   readonly draft: { readonly from: Point; readonly to: Point } | null;

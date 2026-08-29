@@ -20,6 +20,8 @@ export const PORT_ROW_HEIGHT = 24;
 export const BODY_PADDING = 8;
 export const SUMMARY_HEIGHT = 32;
 export const FOOTER_HEIGHT = 24;
+/** The typed-input editor, shown only on nodes whose first port has no wire. */
+export const INPUT_HEIGHT = 56;
 
 export const MIN_ZOOM = 0.25;
 export const MAX_ZOOM = 2.5;
@@ -44,14 +46,31 @@ export function portRowCount(entry: ToolManifestEntry): number {
   return Math.max(entry.inputs.length, entry.outputs.length);
 }
 
-export function nodeHeight(entry: ToolManifestEntry): number {
+export function nodeHeight(entry: ToolManifestEntry, withTypedInput = false): number {
   return (
     HEADER_HEIGHT +
     SUMMARY_HEIGHT +
     portRowCount(entry) * PORT_ROW_HEIGHT +
     BODY_PADDING * 2 +
+    (withTypedInput ? INPUT_HEIGHT : 0) +
     FOOTER_HEIGHT
   );
+}
+
+/**
+ * True when a node takes typed input: its first input port exists and nothing
+ * is wired into it. Ports sit above the editor, so this changes the node's
+ * height without moving any port - wire geometry is unaffected.
+ */
+export function nodeTakesTypedInput(graph: GraphData, node: CanvasNode): boolean {
+  const first = getManifestEntry(node.toolId).inputs[0];
+  if (!first) return false;
+
+  for (const edgeId of graph.edgeOrder) {
+    const edge = graph.edges[edgeId];
+    if (edge?.to.nodeId === node.id && edge.to.portId === first.id) return false;
+  }
+  return true;
 }
 
 /** Vertical centre of the port at `index`, relative to the node's top edge. */
@@ -113,12 +132,12 @@ export interface Rect {
   readonly height: number;
 }
 
-export function nodeRect(node: CanvasNode): Rect {
+export function nodeRect(node: CanvasNode, withTypedInput = false): Rect {
   return {
     x: node.position.x,
     y: node.position.y,
     width: NODE_WIDTH,
-    height: nodeHeight(getManifestEntry(node.toolId)),
+    height: nodeHeight(getManifestEntry(node.toolId), withTypedInput),
   };
 }
 
@@ -134,7 +153,7 @@ export function graphBounds(graph: GraphData): Rect | null {
   for (const id of graph.nodeOrder) {
     const node = graph.nodes[id];
     if (!node) continue;
-    const rect = nodeRect(node);
+    const rect = nodeRect(node, nodeTakesTypedInput(graph, node));
     minX = Math.min(minX, rect.x);
     minY = Math.min(minY, rect.y);
     maxX = Math.max(maxX, rect.x + rect.width);

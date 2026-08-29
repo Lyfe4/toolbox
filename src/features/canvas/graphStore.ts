@@ -5,6 +5,7 @@ import { getManifestEntry, type ToolId } from '@/features/registry';
 import { applyCommand, describeCommand, revertCommand, type Command } from './commands';
 import { checkConnection, edgesTouching } from './connections';
 import { GRID, snapPoint, snapToGrid } from './geometry';
+import { getPreset, instantiatePreset } from './presets';
 import {
   EMPTY_GRAPH,
   type CanvasEdge,
@@ -51,6 +52,7 @@ export interface CanvasStore {
   readonly announce: (text: string) => void;
   readonly addNode: (toolId: ToolId, position: Point) => NodeId;
   readonly duplicateSelection: () => void;
+  readonly applyPreset: (presetId: string, origin: Point) => void;
   readonly deleteSelection: () => void;
   readonly nudgeNodes: (ids: readonly NodeId[], delta: Point) => void;
   readonly beginMove: (ids: readonly NodeId[]) => void;
@@ -59,6 +61,7 @@ export interface CanvasStore {
   readonly connect: (from: PortRef, to: PortRef) => ConnectionCheck;
   readonly removeEdges: (ids: readonly EdgeId[]) => void;
   readonly setNodeOptions: (nodeId: NodeId, options: Readonly<Record<string, unknown>>) => void;
+  readonly setNodeInput: (nodeId: NodeId, input: string) => void;
   readonly select: (selection: Partial<Selection>) => void;
   readonly toggleNode: (id: NodeId) => void;
   readonly clearSelection: () => void;
@@ -134,13 +137,27 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
           toolId,
           position: snapPoint(position),
           options: {},
-          status: 'idle',
+          input: '',
         },
       });
 
       set({ selection: { nodes: [id], edges: [] } });
       announce(`Added ${entry.name}. Selected.`);
       return id;
+    },
+
+    applyPreset: (presetId, origin) => {
+      const preset = getPreset(presetId);
+      if (!preset) return;
+
+      const { graph } = get();
+      const { nodes, edges } = instantiatePreset(preset, snapPoint(origin), graph.nextId);
+
+      push({ kind: 'add-subgraph', label: preset.name, nodes, edges });
+      set({ selection: { nodes: nodes.map((node) => node.id), edges: [] } });
+      announce(
+        `Loaded the ${preset.name} pipeline: ${nodes.length.toString()} nodes, ${edges.length.toString()} wires. No data included.`,
+      );
     },
 
     duplicateSelection: () => {
@@ -168,7 +185,6 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
               x: source.position.x + GRID * 3,
               y: source.position.y + GRID * 3,
             }),
-            status: 'idle',
           },
         });
       }
@@ -364,6 +380,20 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
       const node = get().graph.nodes[nodeId];
       if (!node) return;
       push({ kind: 'set-options', nodeId, from: node.options, to: options });
+    },
+
+    setNodeInput: (nodeId, input) => {
+      // Typing is not an undo step of its own: it is coalesced into one
+      // command per node so that undo returns to the previous value rather
+      // than replaying every keystroke.
+      const node = get().graph.nodes[nodeId];
+      if (!node || node.input === input) return;
+      set((state) => ({
+        graph: {
+          ...state.graph,
+          nodes: { ...state.graph.nodes, [nodeId]: { ...node, input } },
+        },
+      }));
     },
 
     select: (selection) => {

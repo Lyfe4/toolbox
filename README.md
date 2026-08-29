@@ -123,6 +123,48 @@ fails for colour-blind users and disappears entirely in forced-colors mode.
 Wires and ports switch to `CanvasText` and `Highlight` there so they stay
 visible.
 
+### Pipeline execution
+
+Wires carry data. The graph is sorted into dependency order and run, with
+independent branches executing concurrently up to a bound (4), so wiring twenty
+consumers to one source spawns four workers' worth of work rather than twenty.
+
+- **Blocked is not failed.** A node whose required input has neither a wire nor
+  typed-in text is `blocked` - the normal state while you are still wiring, and
+  visibly different from an error.
+- **Failure does not cascade as noise.** The node that failed shows the error;
+  everything downstream shows `upstream-failed` and points back at the node
+  that actually broke.
+- **Only what changed re-runs.** Each node has a cache key built from its tool,
+  its options, its typed input, and the _keys_ of the nodes feeding it - never
+  their values. Comparing upstream keys is O(1) whatever the data is, so a
+  30 MB decoded file never has to be hashed to know whether it changed. Editing
+  one node re-runs that node and its descendants and nothing else.
+- **Debounced.** Typing re-runs the pipeline once you pause, not once per
+  keystroke.
+- **Bounded.** At most 100 nodes execute; beyond that the run is refused rather
+  than wedging the tab.
+
+### Shareable pipeline links
+
+The **Share** control copies a link that carries the pipeline's _shape_ -
+which tools, where, wired how, with which settings.
+
+**It never carries your input.** `CanvasNode.input` is absent from the payload
+and from the schema that reads one back, `toSharePayload` lists the fields it
+copies explicitly rather than spreading the node, and `share.test.ts` asserts
+that secrets typed into a node appear neither in the encoded parameter nor in
+anything decoded from it. A share link is something people paste into chat and
+issue trackers; it is the one place data could escape, so the omission is
+enforced rather than intended.
+
+The payload is compact positional JSON, deflated, then URL-safe base64. A
+four-node pipeline is a **320-character URL**. Reading one back is treated as
+hostile input throughout: bounded length before decompression, a decompression
+cap enforced while reading, then Zod - including checking every tool id against
+the live registry, so a hostile link can never trigger a dynamic import of
+something that is not a real tool.
+
 ### Undo/redo
 
 A command history, not a stack of snapshots. Each mutation is a small object
@@ -136,8 +178,10 @@ reverting each kind and asserting deep equality.
 
 ### Persistence
 
-The graph is saved to `patchbay:graph:v1`, debounced so a drag writes once
-rather than sixty times. It is validated with Zod on load and cross-checked
+The graph is saved to `patchbay:graph:v2`, debounced so a drag writes once
+rather than sixty times. v2 moved execution status off the node - it is derived
+from a run, not part of the document - and added the node's typed input; a v1
+save is migrated automatically. It is validated with Zod on load and cross-checked
 against the live tool registry; anything corrupt, older, or referring to a tool
 that no longer exists produces an empty canvas and a message, never a crash.
 

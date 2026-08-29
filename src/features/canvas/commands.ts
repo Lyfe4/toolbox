@@ -49,6 +49,17 @@ export type Command =
     }
   | { readonly kind: 'add-edge'; readonly edge: CanvasEdge }
   | {
+      /**
+       * A whole preset dropped in at once. A compound command rather than a
+       * run of add-node/add-edge ones, so undo removes the pipeline in a
+       * single press instead of unpicking it node by node.
+       */
+      readonly kind: 'add-subgraph';
+      readonly label: string;
+      readonly nodes: readonly CanvasNode[];
+      readonly edges: readonly CanvasEdge[];
+    }
+  | {
       readonly kind: 'remove-edges';
       readonly edges: readonly CanvasEdge[];
       readonly edgeIndices: readonly number[];
@@ -73,6 +84,8 @@ export function describeCommand(command: Command): string {
       return command.ids.length === 1 ? 'move node' : `move ${command.ids.length.toString()} nodes`;
     case 'add-edge':
       return 'connect';
+    case 'add-subgraph':
+      return `add ${command.label}`;
     case 'remove-edges':
       return command.edges.length === 1
         ? 'disconnect'
@@ -187,6 +200,13 @@ export function applyCommand(graph: GraphData, command: Command): GraphData {
     case 'add-edge':
       return withEdge(graph, command.edge);
 
+    case 'add-subgraph': {
+      let next = graph;
+      for (const node of command.nodes) next = withNode(next, node);
+      for (const edge of command.edges) next = withEdge(next, edge);
+      return next;
+    }
+
     case 'remove-edges':
       return withoutEdges(
         graph,
@@ -230,6 +250,15 @@ export function revertCommand(graph: GraphData, command: Command): GraphData {
 
     case 'add-edge':
       return withoutEdges(graph, [command.edge.id]);
+
+    case 'add-subgraph':
+      return withoutEdges(
+        withoutNodes(
+          graph,
+          command.nodes.map((node) => node.id),
+        ),
+        command.edges.map((edge) => edge.id),
+      );
 
     case 'remove-edges': {
       let next = graph;

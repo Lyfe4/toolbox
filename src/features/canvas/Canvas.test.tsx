@@ -90,9 +90,49 @@ describe('adding tools', () => {
     await user.click(screen.getByRole('button', { name: /Add tool/ }));
     await user.type(screen.getByRole('combobox', { name: 'Search tools' }), 'yaml');
 
-    const options = screen.getAllByRole('option');
-    expect(options).toHaveLength(1);
-    expect(options[0]).toHaveTextContent('Structured data');
+    // "yaml" appears nowhere in the tool's NAME, only in its summary, so a
+    // hit here proves the summary is searched. The palette also lists
+    // pipelines, whose summaries mention YAML too, so this checks membership
+    // rather than an exact count.
+    const text = screen.getAllByRole('option').map((option) => option.textContent);
+    expect(text.some((entry) => entry.includes('Structured data'))).toBe(true);
+  });
+
+  it('lists pipeline presets in the palette and loads one in a click', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+
+    await user.click(screen.getByRole('button', { name: /Add tool/ }));
+    await user.type(screen.getByRole('combobox', { name: 'Search tools' }), 'fingerprint');
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(useCanvasStore.getState().graph.nodeOrder).toHaveLength(2);
+    });
+
+    const graph = useCanvasStore.getState().graph;
+    expect(graph.edgeOrder).toHaveLength(1);
+    // Structure only: a preset ships no data.
+    for (const id of graph.nodeOrder) expect(graph.nodes[id]?.input).toBe('');
+    expect(announcer()).toHaveTextContent('No data included');
+  });
+
+  it('undoes a whole preset in one press', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+
+    await user.click(screen.getByRole('button', { name: /Add tool/ }));
+    await user.type(screen.getByRole('combobox', { name: 'Search tools' }), 'compare');
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(useCanvasStore.getState().graph.nodeOrder).toHaveLength(3);
+    });
+
+    await user.click(screen.getByRole('application'));
+    await user.keyboard('{Control>}z{/Control}');
+    expect(useCanvasStore.getState().graph.nodeOrder).toHaveLength(0);
+    expect(useCanvasStore.getState().graph.edgeOrder).toHaveLength(0);
   });
 
   it('selects and focuses the new node so it needs no hunting for', async () => {
@@ -130,7 +170,7 @@ describe('nodes', () => {
     const node = screen.getByRole('group', { name: /Base64/ });
     expect(node).toHaveAccessibleName(/at -?\d+, -?\d+/);
     expect(node).toHaveAccessibleName(/0 connections/);
-    expect(node).toHaveAccessibleName(/idle/);
+    expect(node).toHaveAccessibleName(/not run yet|blocked/);
     expect(node).toHaveAccessibleName(/selected/);
     expect(node).toHaveAttribute('aria-roledescription', 'Canvas node');
   });
@@ -201,21 +241,21 @@ describe('nodes', () => {
             toolId: 'base64',
             position: { x: 400, y: 0 },
             options: {},
-            status: 'idle',
+            input: '',
           },
           left: {
             id: 'left',
             toolId: 'base64',
             position: { x: 0, y: 0 },
             options: {},
-            status: 'idle',
+            input: '',
           },
           below: {
             id: 'below',
             toolId: 'base64',
             position: { x: 200, y: 400 },
             options: {},
-            status: 'idle',
+            input: '',
           },
         },
         // Insertion order deliberately does NOT match spatial order.

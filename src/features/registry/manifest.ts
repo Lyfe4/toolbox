@@ -69,9 +69,9 @@ export const TOOL_MANIFEST = [
       {
         id: 'input',
         label: 'Document',
-        types: ['text', 'json'],
+        types: ['text', 'json', 'bytes'],
         required: true,
-        description: 'Paste a document, drop a file, or wire in JSON from another tool.',
+        description: 'Paste a document, drop a file, or wire in data from another tool.',
       },
     ],
     outputs: [
@@ -90,6 +90,31 @@ export const TOOL_MANIFEST = [
       reportsProgress: false,
       timeoutMs: 15_000,
       maxInputBytes: 16 * 1024 * 1024,
+    },
+  },
+  {
+    id: 'hash',
+    name: 'Hash',
+    summary: 'MD5, SHA-1, SHA-256, SHA-384 and SHA-512 digests of text or files.',
+    category: 'hashing',
+    keywords: ['md5', 'sha', 'sha1', 'sha256', 'digest', 'checksum', 'fingerprint'],
+    inputs: [
+      {
+        id: 'input',
+        label: 'Input',
+        types: ['text', 'bytes'],
+        required: true,
+        description: 'Text or a file to fingerprint.',
+      },
+    ],
+    outputs: [{ id: 'digest', label: 'Digest', types: ['text'] }],
+    execution: {
+      strategy: 'worker',
+      requiresWasm: false,
+      wasmModules: [],
+      reportsProgress: false,
+      timeoutMs: 30_000,
+      maxInputBytes: 64 * 1024 * 1024,
     },
   },
 ] as const satisfies readonly ToolManifestEntry[];
