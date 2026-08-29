@@ -1,0 +1,13 @@
+.main {
+  display: grid;
+  place-items: center;
+  min-block-size: 100dvh;
+  padding: var(--space-lg);
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(2rem, 6vw, 3.5rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}

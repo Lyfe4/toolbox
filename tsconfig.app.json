@@ -1,0 +1,21 @@
+{
+  // The browser project: application source and its tests.
+  // Deliberately has no Node types, so nothing here can reach for `process`
+  // or `fs` and quietly assume a server exists.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+
+    // `vite/client` types `*.module.css` imports and `import.meta.env`.
+    "types": ["vite/client"],
+
+    // `@/foo` resolves to `src/foo`. Paths without `baseUrl` are resolved
+    // relative to this file. Must be kept in sync with the matching
+    // `resolve.alias` entry in vite.config.ts - tsc and Vite resolve separately.
+    "paths": { "@/*": ["./src/*"] },
+
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+  },
+  "include": ["src", "vitest.setup.ts"],
+}

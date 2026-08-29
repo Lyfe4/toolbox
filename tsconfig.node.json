@@ -1,0 +1,11 @@
+{
+  // The tooling project: config files that run in Node, not in the browser.
+  // Separated so Node globals never leak into application code.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+  },
+  "include": ["vite.config.ts"],
+}

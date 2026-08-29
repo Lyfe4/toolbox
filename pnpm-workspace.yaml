@@ -1,0 +1,13 @@
+# pnpm settings for this repo.
+
+# Packages allowed to run install-time build scripts. pnpm blocks these by
+# default (a supply-chain safeguard), so each one must be opted in explicitly.
+# unrs-resolver ships the native module resolver used by eslint-plugin-import-x.
+allowBuilds:
+  unrs-resolver: true
+
+# pnpm refuses packages published more recently than its minimum-release-age
+# window (another supply-chain safeguard). These versions are deliberately
+# opted out so the pinned toolchain installs reproducibly.
+minimumReleaseAgeExclude:
+  - '@vitejs/plugin-react@6.1.1'

@@ -1,0 +1,67 @@
+# Cloudflare Pages `_headers` file.
+# Copied verbatim into the build output, applied to every response.
+#
+# Patchbay's core promise is that nothing you paste ever leaves your machine.
+# That promise is enforced here by the browser, not merely asserted in the
+# README - if application code ever tried to phone home, the request would be
+# blocked rather than silently succeed.
+
+/*
+  # --- Content Security Policy ------------------------------------------------
+  # default-src 'self'        Everything not named below may only load from this
+  #                           origin. The catch-all that makes the rest additive.
+  # script-src                Own scripts only. No 'unsafe-inline', so an
+  #                           injected <script> or onclick= cannot execute.
+  #                           'wasm-unsafe-eval' permits WebAssembly compilation
+  #                           (and only that) for the WASM-backed tools to come.
+  # style-src 'self'          Stylesheets come from our own bundle. No inline
+  #                           <style> blocks.
+  # style-src-attr            ...but inline `style=""` attributes are allowed,
+  #                           because React sets node positions on the canvas
+  #                           that way. Narrower than putting 'unsafe-inline'
+  #                           in style-src, which would also unlock <style>.
+  # img-src 'self' data: blob:  Tool output (previews, generated images) is held
+  #                           in memory as data:/blob: URLs, never uploaded.
+  # font-src 'self'           Self-hosted fonts only. No Google Fonts, no CDN.
+  # connect-src 'none'        The zero-network guarantee: fetch, XHR, WebSocket,
+  #                           EventSource and sendBeacon are all refused.
+  #                           NOTE: when ffmpeg.wasm lands this may have to
+  #                           become 'self' so its .wasm payload can be fetched
+  #                           from our own origin. It must never widen further.
+  # worker-src 'self' blob:   Heavy tools run off the main thread; bundlers ship
+  #                           workers as blob: URLs.
+  # object-src 'none'         No <object>/<embed>. Legacy plugin attack surface.
+  # base-uri 'self'           A <base> tag cannot be injected to re-point every
+  #                           relative URL on the page at an attacker's origin.
+  # form-action 'none'        No form may submit anywhere. Nothing to submit to.
+  # frame-ancestors 'none'    Nobody may iframe Patchbay - blocks clickjacking.
+  # frame-src 'none'          Patchbay embeds nobody either.
+  # manifest-src 'self'       PWA manifest from our origin only.
+  # upgrade-insecure-requests Any stray http:// subresource is upgraded to https.
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; manifest-src 'self'; upgrade-insecure-requests
+
+  # --- Cross-origin isolation ---------------------------------------------------
+  # Together these two put the page in a "cross-origin isolated" state, which is
+  # the precondition for SharedArrayBuffer and therefore for multi-threaded
+  # WASM (ffmpeg.wasm). Set now, before any code exists, so nothing is ever
+  # built against the assumption that isolation is off - turning it on later
+  # tends to break every third-party embed at once.
+  # COOP  severs the window.opener relationship with cross-origin openers.
+  # COEP  refuses cross-origin subresources unless they explicitly opt in.
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+
+  # Completes the isolation set: our own documents may only be read by us.
+  Cross-Origin-Resource-Policy: same-origin
+
+  # --- Transport and metadata ---------------------------------------------------
+  # Trust the declared Content-Type. Stops a .txt being sniffed as executable JS.
+  X-Content-Type-Options: nosniff
+
+  # Send no Referer header at all. Outbound navigations learn nothing about
+  # which tool the user was on.
+  Referrer-Policy: no-referrer
+
+  # Drop capabilities the app has no use for, so a compromise cannot reach them.
+  # interest-cohort=() additionally opts out of FLoC/Topics ad profiling.
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=(), payment=(), usb=(), midi=(), serial=(), bluetooth=()

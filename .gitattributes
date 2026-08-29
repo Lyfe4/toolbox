@@ -1,0 +1,8 @@
+# Normalise line endings: LF in the repository and in every working copy.
+# Without this, Git would hand Windows clones CRLF files and Prettier's
+# `endOfLine: "lf"` would fail `format:check` on those machines only.
+* text=auto eol=lf
+
+# Generated files: collapsed in diffs and excluded from language stats.
+pnpm-lock.yaml linguist-generated=true
+src/routeTree.gen.ts linguist-generated=true

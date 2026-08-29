@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+*.local
+
+# Test output
+coverage/
+
+# TypeScript incremental build metadata
+*.tsbuildinfo
+
+# Scratch directory used by the TanStack Router plugin
+.tanstack/
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Note: src/routeTree.gen.ts is generated but IS committed, so that a fresh
+# clone can typecheck before it has ever run a build.

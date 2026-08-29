@@ -1,0 +1,7 @@
+{
+  // Solution-style config: it holds no files of its own, it just points at the
+  // two real projects below. Editors and ESLint start here and follow the
+  // references, so every file in the repo is covered by exactly one project.
+  "files": [],
+  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.node.json" }],
+}

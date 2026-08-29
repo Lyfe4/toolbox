@@ -1,0 +1,54 @@
+{
+  // Options shared by the browser project and the tooling project.
+  // Anything strictness-related lives here so the two can never drift apart.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+
+    // `composite` lets the root tsconfig reference these projects.
+    // `noEmit` because Vite does the actual compiling - tsc is only a checker.
+    "composite": true,
+    "noEmit": true,
+
+    // Every file is compiled on its own by the bundler, so the type system must
+    // refuse anything that needs whole-program knowledge to emit correctly.
+    "isolatedModules": true,
+
+    // Imports are emitted exactly as written. If a value is only ever used as a
+    // type you must write `import type`, which makes erasure predictable.
+    "verbatimModuleSyntax": true,
+
+    // --- Strictness ---------------------------------------------------------
+    // Turns on the whole strict family (no implicit any, null checks, etc).
+    "strict": true,
+
+    // Indexing an array or record hands back `T | undefined`, because
+    // `items[5]` is not a promise that item 5 exists. Forces a real check.
+    "noUncheckedIndexedAccess": true,
+
+    // Makes `{ a?: string }` mean "absent or string" and NOT "string | undefined".
+    // So you cannot pass `{ a: undefined }` where the property is optional.
+    "exactOptionalPropertyTypes": true,
+
+    // A method that replaces a base-class method must say `override`, so a
+    // rename in the base class becomes a compile error instead of dead code.
+    "noImplicitOverride": true,
+
+    // A `case` that falls through into the next one is an error unless empty.
+    "noFallthroughCasesInSwitch": true,
+
+    // Unreachable/unused code is an error rather than silent dead weight.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+
+    // Class fields are emitted per the ECMAScript spec rather than TS's legacy
+    // assignment semantics - matches what the bundler actually does.
+    "useDefineForClassFields": true,
+
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+  },
+}
