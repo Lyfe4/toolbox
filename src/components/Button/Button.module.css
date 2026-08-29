@@ -1,0 +1,106 @@
+.button {
+  /* A control is a fixed-height slab: dense rows stay optically aligned. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pb-space-xs);
+
+  border: var(--pb-border-width) solid transparent;
+  border-radius: var(--pb-radius-control);
+
+  font-family: var(--pb-font-ui);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  white-space: nowrap;
+
+  cursor: pointer;
+  transition:
+    background-color var(--pb-motion-fast) var(--pb-ease),
+    border-color var(--pb-motion-fast) var(--pb-ease),
+    color var(--pb-motion-fast) var(--pb-ease);
+}
+
+/* --- Sizes ------------------------------------------------------------- */
+.sm {
+  block-size: var(--pb-control-height-sm);
+  padding-inline: var(--pb-control-pad-x-sm);
+  font-size: var(--pb-label-size);
+}
+
+.md {
+  block-size: var(--pb-control-height-md);
+  padding-inline: var(--pb-control-pad-x-md);
+  font-size: var(--pb-value-size);
+}
+
+/* --- Variants ---------------------------------------------------------- */
+.primary {
+  background-color: var(--pb-accent);
+  border-color: var(--pb-accent);
+  color: var(--pb-ink-on-accent);
+}
+
+.primary:is(:hover, [data-force='hover']):not(:disabled) {
+  background-color: var(--pb-accent-hover);
+  border-color: var(--pb-accent-hover);
+}
+
+.primary:is(:active, [data-force='active']):not(:disabled) {
+  background-color: var(--pb-accent-active);
+  border-color: var(--pb-accent-active);
+}
+
+.ghost {
+  background-color: var(--pb-control-surface);
+  border-color: var(--pb-control-border);
+  color: var(--pb-ink-primary);
+}
+
+.ghost:is(:hover, [data-force='hover']):not(:disabled) {
+  background-color: var(--pb-control-surface-hover);
+  border-color: var(--pb-control-border-hover);
+}
+
+.ghost:is(:active, [data-force='active']):not(:disabled) {
+  background-color: var(--pb-control-surface-active);
+}
+
+.danger {
+  background-color: transparent;
+  border-color: var(--pb-signal-error);
+  color: var(--pb-signal-error);
+}
+
+.danger:is(:hover, [data-force='hover']):not(:disabled) {
+  background-color: var(--pb-signal-error-surface);
+  color: var(--pb-signal-on-surface);
+}
+
+.danger:is(:active, [data-force='active']):not(:disabled) {
+  border-color: var(--pb-signal-error);
+  background-color: var(--pb-signal-error-surface);
+}
+
+/* --- Disabled ----------------------------------------------------------
+ * Kept perceivable rather than faded into nothing: the border stays, so the
+ * control's boundary is still identifiable per WCAG 1.4.11.
+ * -------------------------------------------------------------------- */
+.button:disabled {
+  background-color: var(--pb-control-surface-disabled);
+  border-color: var(--pb-border-hairline);
+  color: var(--pb-ink-disabled);
+  cursor: not-allowed;
+}
+
+/* Windows high-contrast: our colours are discarded, so re-assert a boundary. */
+@media (forced-colors: active) {
+  .button {
+    border-color: ButtonText;
+  }
+
+  .button:disabled {
+    border-color: GrayText;
+    color: GrayText;
+  }
+}

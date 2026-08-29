@@ -1,0 +1,221 @@
+/*
+ * LAYER 1 - PRIMITIVE TOKENS
+ *
+ * The raw scale. Numbers and hex values with no opinion about where they get
+ * used. Every primitive is prefixed `--raw-` as a deliberate warning label:
+ * components must never reference these directly, only the semantic tokens in
+ * semantic.css that are built from them.
+ *
+ * Why: a component that says `color: var(--raw-grey-300)` has hard-coded a
+ * shade, so it cannot be re-themed. A component that says
+ * `color: var(--pb-ink-secondary)` has described intent, and every theme gets
+ * to answer that intent differently. The rule is enforced by a test -
+ * see src/styles/token-layering.test.ts.
+ *
+ * Primitives are theme-invariant: this file is identical under every theme.
+ */
+
+:root {
+  /* ---------------------------------------------------------------------
+   * GREY - the default cool near-neutral ramp (graphite, phosphor chrome)
+   * ------------------------------------------------------------------ */
+  --raw-grey-1000: #06070a;
+  --raw-grey-950: #0b0d11;
+  --raw-grey-900: #111419;
+  --raw-grey-850: #171b21;
+  --raw-grey-800: #1d222a;
+  --raw-grey-750: #242a33;
+  --raw-grey-700: #2d343e;
+  --raw-grey-600: #3d4650;
+  --raw-grey-500: #525c68;
+  --raw-grey-450: #636a72; /* tuned: clears 3:1 on every graphite surface */
+  --raw-grey-400: #6d7885;
+  --raw-grey-300: #929ca8;
+  --raw-grey-200: #b6bfc9;
+  --raw-grey-100: #d8dee5;
+  --raw-grey-50: #eef1f5;
+  --raw-white: #ffffff;
+
+  /* ---------------------------------------------------------------------
+   * PAPER - warm neutral ramp for the light theme
+   * ------------------------------------------------------------------ */
+  --raw-paper-50: #fbfaf7;
+  --raw-paper-100: #f4f2ec;
+  --raw-paper-150: #ebe8e0;
+  --raw-paper-200: #ded9cd;
+  --raw-paper-300: #c3bcab;
+  --raw-paper-450: #908777; /* tuned: clears 3:1 on every vellum surface */
+  --raw-paper-400: #9d9482;
+  --raw-paper-500: #776e5d;
+  --raw-paper-600: #5a5246;
+  --raw-paper-700: #423c33;
+  --raw-paper-800: #2b2721;
+  --raw-paper-900: #1a1713;
+
+  /* ---------------------------------------------------------------------
+   * NAVY - blueprint theme chrome
+   * ------------------------------------------------------------------ */
+  --raw-navy-950: #041019;
+  --raw-navy-900: #071824;
+  --raw-navy-850: #0a1f2e;
+  --raw-navy-800: #0e2739;
+  --raw-navy-700: #163449;
+  --raw-navy-600: #21475f;
+  --raw-navy-450: #467089; /* tuned: clears 3:1 on every blueprint surface */
+  --raw-navy-500: #2f5e7b;
+  --raw-navy-400: #4b819f;
+  --raw-navy-300: #7fa9c6;
+  --raw-navy-200: #b0cde0;
+  --raw-navy-100: #d9e9f3;
+
+  /* ---------------------------------------------------------------------
+   * PHOSPHOR - CRT theme chrome, green-biased blacks
+   * ------------------------------------------------------------------ */
+  --raw-phos-950: #020705;
+  --raw-phos-900: #05100a;
+  --raw-phos-850: #07170f;
+  --raw-phos-800: #0a1e14;
+  --raw-phos-700: #10301f;
+  --raw-phos-600: #194a31;
+  --raw-phos-450: #2e714e; /* tuned: clears 3:1 on every phosphor surface */
+  --raw-phos-500: #246b46;
+  --raw-phos-400: #35a06a;
+  --raw-phos-300: #57d692;
+  --raw-phos-200: #8ff0b8;
+  --raw-phos-100: #c8ffdf;
+
+  /* ---------------------------------------------------------------------
+   * ACCENT RAMPS - one saturated hue per theme, used sparingly
+   * ------------------------------------------------------------------ */
+  --raw-amber-200: #ffe0b0;
+  --raw-amber-300: #ffc978;
+  --raw-amber-400: #ffb03d;
+  --raw-amber-500: #ff9500;
+  --raw-amber-600: #d97a00;
+  --raw-amber-700: #a35b00;
+  --raw-amber-800: #6b3c00;
+
+  --raw-vermilion-300: #ff9d7d;
+  --raw-vermilion-400: #f5663a;
+  --raw-vermilion-500: #d8400f;
+  --raw-vermilion-600: #b2320a;
+  --raw-vermilion-700: #8a2607;
+  --raw-vermilion-800: #5c1904;
+
+  --raw-cyan-200: #b3e6fa;
+  --raw-cyan-300: #7ed4f3;
+  --raw-cyan-400: #45bce8;
+  --raw-cyan-500: #1a9fd4;
+  --raw-cyan-600: #157fab;
+  --raw-cyan-700: #106080;
+
+  /* ---------------------------------------------------------------------
+   * SIGNAL RAMPS - ok / warn / error
+   * ------------------------------------------------------------------ */
+  --raw-green-200: #a8f0c4;
+  --raw-green-300: #6ede9b;
+  --raw-green-400: #3cc474;
+  --raw-green-500: #23a058;
+  --raw-green-600: #1a7d44;
+  --raw-green-700: #135c32;
+
+  --raw-yellow-200: #ffe9a3;
+  --raw-yellow-300: #ffd65c;
+  --raw-yellow-400: #f0b800;
+  --raw-yellow-500: #c79600;
+  --raw-yellow-600: #9a7400;
+  --raw-yellow-700: #6e5300;
+
+  --raw-red-200: #ffc4bc;
+  --raw-red-300: #ff9385;
+  --raw-red-400: #fa6250;
+  --raw-red-500: #e03a26;
+  --raw-red-600: #b62d1c;
+  --raw-red-700: #8a2214;
+
+  /* ---------------------------------------------------------------------
+   * SPACE - an 8px baseline grid. Names are the pixel value, so
+   * `--raw-space-8` really is 8px. No mental arithmetic.
+   * ------------------------------------------------------------------ */
+  --raw-space-0: 0px;
+  --raw-space-1: 1px;
+  --raw-space-2: 2px;
+  --raw-space-4: 4px;
+  --raw-space-6: 6px;
+  --raw-space-8: 8px;
+  --raw-space-12: 12px;
+  --raw-space-16: 16px;
+  --raw-space-20: 20px;
+  --raw-space-24: 24px;
+  --raw-space-32: 32px;
+  --raw-space-40: 40px;
+  --raw-space-48: 48px;
+  --raw-space-64: 64px;
+
+  /* ---------------------------------------------------------------------
+   * TYPE - small and dense. The 10-13px band carries the instrument labels.
+   * ------------------------------------------------------------------ */
+  --raw-font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --raw-font-sans: 'Archivo Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --raw-size-10: 0.625rem;
+  --raw-size-11: 0.6875rem;
+  --raw-size-12: 0.75rem;
+  --raw-size-13: 0.8125rem;
+  --raw-size-14: 0.875rem;
+  --raw-size-16: 1rem;
+  --raw-size-20: 1.25rem;
+  --raw-size-24: 1.5rem;
+  --raw-size-32: 2rem;
+
+  --raw-weight-regular: 400;
+  --raw-weight-medium: 500;
+  --raw-weight-bold: 600;
+
+  --raw-leading-flat: 1;
+  --raw-leading-tight: 1.2;
+  --raw-leading-snug: 1.35;
+  --raw-leading-normal: 1.6;
+
+  --raw-tracking-none: 0;
+  --raw-tracking-tight: -0.01em;
+  --raw-tracking-label: 0.09em;
+  --raw-tracking-wide: 0.14em;
+
+  /* ---------------------------------------------------------------------
+   * RADIUS - 2px is the ceiling. This is machined metal, not a soft card.
+   * ------------------------------------------------------------------ */
+  --raw-radius-0: 0px;
+  --raw-radius-1: 1px;
+  --raw-radius-2: 2px;
+
+  /* ---------------------------------------------------------------------
+   * BORDER WIDTH
+   * ------------------------------------------------------------------ */
+  --raw-border-hairline: 1px;
+  --raw-border-thick: 2px;
+
+  /* ---------------------------------------------------------------------
+   * MOTION - mechanical. Things snap and settle; nothing drifts.
+   * ------------------------------------------------------------------ */
+  --raw-duration-0: 0ms;
+  --raw-duration-instant: 1ms;
+  --raw-duration-fast: 120ms;
+  --raw-duration-base: 150ms;
+  --raw-duration-slow: 180ms;
+
+  /* Sharp start, hard settle - the feel of a switch throwing. */
+  --raw-ease-snap: cubic-bezier(0.2, 0, 0, 1);
+  --raw-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --raw-ease-linear: linear;
+
+  /* ---------------------------------------------------------------------
+   * Z-INDEX - a fixed ladder. Never invent a stacking value inline.
+   * ------------------------------------------------------------------ */
+  --raw-z-base: 0;
+  --raw-z-raised: 10;
+  --raw-z-sticky: 100;
+  --raw-z-overlay: 1000;
+  --raw-z-popover: 1100;
+  --raw-z-toast: 1200;
+}

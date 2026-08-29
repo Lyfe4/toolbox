@@ -1,0 +1,162 @@
+/*
+ * THEME PRESETS
+ *
+ * Each block re-declares the THEMED HALF of the semantic layer (colour only).
+ * Nothing here introduces a new token name - a theme may only answer the
+ * questions semantic.css already asked.
+ *
+ * `graphite` is deliberately absent: it is the default set declared on :root
+ * in semantic.css. `:root` and `[data-theme='...']` have equal specificity, so
+ * these blocks win purely by coming later in the cascade, and removing the
+ * attribute (or setting it to "graphite") falls back cleanly.
+ *
+ * Contrast for every preset is asserted in themes.contrast.test.ts. Do not
+ * hand-tune a value here without re-running that test.
+ */
+
+/* =======================================================================
+ * VELLUM - daylight bench. Warm paper greys, vermilion marking ink.
+ * ==================================================================== */
+[data-theme='vellum'] {
+  --pb-surface-sunken: var(--raw-paper-200);
+  --pb-surface-base: var(--raw-paper-100);
+  --pb-surface-raised: var(--raw-paper-50);
+  --pb-surface-overlay: var(--raw-white);
+  --pb-surface-inset: var(--raw-paper-150);
+
+  --pb-ink-primary: var(--raw-paper-900);
+  --pb-ink-secondary: var(--raw-paper-700);
+  --pb-ink-muted: var(--raw-paper-600);
+  --pb-ink-disabled: var(--raw-paper-400);
+  --pb-ink-inverse: var(--raw-paper-50);
+  --pb-ink-accent: var(--raw-vermilion-700);
+  --pb-ink-on-accent: var(--raw-white);
+
+  --pb-border-subtle: var(--raw-paper-200);
+  --pb-border-hairline: var(--raw-paper-450);
+  --pb-border-strong: var(--raw-paper-500);
+  --pb-border-accent: var(--raw-vermilion-600);
+
+  --pb-accent: var(--raw-vermilion-600);
+  --pb-accent-hover: var(--raw-vermilion-700);
+  --pb-accent-active: var(--raw-vermilion-800);
+  --pb-accent-subtle: var(--raw-vermilion-300);
+
+  --pb-control-surface: var(--raw-paper-50);
+  --pb-control-surface-hover: var(--raw-paper-150);
+  --pb-control-surface-active: var(--raw-paper-200);
+  --pb-control-surface-disabled: var(--raw-paper-150);
+  --pb-control-border: var(--raw-paper-450);
+  --pb-control-border-hover: var(--raw-paper-500);
+
+  --pb-signal-ok: var(--raw-green-700);
+  --pb-signal-ok-surface: var(--raw-green-200);
+  --pb-signal-warn: var(--raw-yellow-700);
+  --pb-signal-warn-surface: var(--raw-yellow-200);
+  --pb-signal-error: var(--raw-red-700);
+  --pb-signal-error-surface: var(--raw-red-200);
+  --pb-signal-on-surface: var(--raw-paper-900);
+
+  --pb-focus-ring: var(--raw-vermilion-600);
+
+  --pb-selection-surface: var(--raw-vermilion-600);
+  --pb-selection-ink: var(--raw-white);
+}
+
+/* =======================================================================
+ * PHOSPHOR - CRT screen. Green-biased blacks, single phosphor glow.
+ * ==================================================================== */
+[data-theme='phosphor'] {
+  --pb-surface-sunken: var(--raw-phos-950);
+  --pb-surface-base: var(--raw-phos-900);
+  --pb-surface-raised: var(--raw-phos-850);
+  --pb-surface-overlay: var(--raw-phos-800);
+  --pb-surface-inset: var(--raw-phos-950);
+
+  --pb-ink-primary: var(--raw-phos-100);
+  --pb-ink-secondary: var(--raw-phos-200);
+  --pb-ink-muted: var(--raw-phos-300);
+  --pb-ink-disabled: var(--raw-phos-500);
+  --pb-ink-inverse: var(--raw-phos-950);
+  --pb-ink-accent: var(--raw-phos-300);
+  --pb-ink-on-accent: var(--raw-phos-950);
+
+  --pb-border-subtle: var(--raw-phos-700);
+  --pb-border-hairline: var(--raw-phos-450);
+  --pb-border-strong: var(--raw-phos-400);
+  --pb-border-accent: var(--raw-phos-400);
+
+  --pb-accent: var(--raw-phos-300);
+  --pb-accent-hover: var(--raw-phos-200);
+  --pb-accent-active: var(--raw-phos-400);
+  --pb-accent-subtle: var(--raw-phos-700);
+
+  --pb-control-surface: var(--raw-phos-850);
+  --pb-control-surface-hover: var(--raw-phos-800);
+  --pb-control-surface-active: var(--raw-phos-700);
+  --pb-control-surface-disabled: var(--raw-phos-850);
+  --pb-control-border: var(--raw-phos-450);
+  --pb-control-border-hover: var(--raw-phos-300);
+
+  --pb-signal-ok: var(--raw-phos-200);
+  --pb-signal-ok-surface: var(--raw-phos-700);
+  --pb-signal-warn: var(--raw-yellow-300);
+  --pb-signal-warn-surface: var(--raw-yellow-700);
+  --pb-signal-error: var(--raw-red-300);
+  --pb-signal-error-surface: var(--raw-red-700);
+  --pb-signal-on-surface: var(--raw-white);
+
+  --pb-focus-ring: var(--raw-phos-200);
+
+  --pb-selection-surface: var(--raw-phos-300);
+  --pb-selection-ink: var(--raw-phos-950);
+}
+
+/* =======================================================================
+ * BLUEPRINT - drafting table. Deep navy stock, cyan draughting lines.
+ * ==================================================================== */
+[data-theme='blueprint'] {
+  --pb-surface-sunken: var(--raw-navy-950);
+  --pb-surface-base: var(--raw-navy-900);
+  --pb-surface-raised: var(--raw-navy-850);
+  --pb-surface-overlay: var(--raw-navy-800);
+  --pb-surface-inset: var(--raw-navy-950);
+
+  --pb-ink-primary: var(--raw-navy-100);
+  --pb-ink-secondary: var(--raw-navy-200);
+  --pb-ink-muted: var(--raw-navy-300);
+  --pb-ink-disabled: var(--raw-navy-500);
+  --pb-ink-inverse: var(--raw-navy-950);
+  --pb-ink-accent: var(--raw-cyan-300);
+  --pb-ink-on-accent: var(--raw-navy-950);
+
+  --pb-border-subtle: var(--raw-navy-700);
+  --pb-border-hairline: var(--raw-navy-450);
+  --pb-border-strong: var(--raw-navy-400);
+  --pb-border-accent: var(--raw-cyan-500);
+
+  --pb-accent: var(--raw-cyan-400);
+  --pb-accent-hover: var(--raw-cyan-300);
+  --pb-accent-active: var(--raw-cyan-500);
+  --pb-accent-subtle: var(--raw-navy-700);
+
+  --pb-control-surface: var(--raw-navy-850);
+  --pb-control-surface-hover: var(--raw-navy-800);
+  --pb-control-surface-active: var(--raw-navy-700);
+  --pb-control-surface-disabled: var(--raw-navy-850);
+  --pb-control-border: var(--raw-navy-450);
+  --pb-control-border-hover: var(--raw-navy-300);
+
+  --pb-signal-ok: var(--raw-green-300);
+  --pb-signal-ok-surface: var(--raw-green-700);
+  --pb-signal-warn: var(--raw-yellow-300);
+  --pb-signal-warn-surface: var(--raw-yellow-700);
+  --pb-signal-error: var(--raw-red-300);
+  --pb-signal-error-surface: var(--raw-red-700);
+  --pb-signal-on-surface: var(--raw-white);
+
+  --pb-focus-ring: var(--raw-cyan-300);
+
+  --pb-selection-surface: var(--raw-cyan-400);
+  --pb-selection-ink: var(--raw-navy-950);
+}

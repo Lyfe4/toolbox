@@ -1,0 +1,78 @@
+.list {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border-block-end: var(--pb-border-width) solid var(--pb-border-hairline);
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pb-space-xs);
+
+  block-size: var(--pb-control-height-md);
+  padding-inline: var(--pb-space-md);
+
+  background: none;
+  border: none;
+  /* Sits on top of the list's rule so the active tab can paint over it. */
+  margin-block-end: calc(var(--pb-border-width) * -1);
+
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+
+  cursor: pointer;
+  transition: color var(--pb-motion-fast) var(--pb-ease);
+}
+
+.tab:hover:not([data-disabled]) {
+  color: var(--pb-ink-primary);
+}
+
+/*
+ * The active tab is marked by a 2px accent rule along its bottom edge, the way
+ * a selected channel is marked on a mixing desk. Colour is never the only
+ * signal - the rule is a shape change too.
+ */
+.tab::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  block-size: var(--pb-border-width-strong);
+  background-color: transparent;
+  transition: background-color var(--pb-motion-fast) var(--pb-ease);
+}
+
+.tab[data-state='active'] {
+  color: var(--pb-ink-primary);
+}
+
+.tab[data-state='active']::after {
+  background-color: var(--pb-accent);
+}
+
+.tab[data-disabled] {
+  color: var(--pb-ink-disabled);
+  cursor: not-allowed;
+}
+
+.panel {
+  padding-block-start: var(--pb-space-md);
+}
+
+.panel:focus-visible {
+  outline: var(--pb-focus-width) solid var(--pb-focus-ring);
+  outline-offset: calc(var(--pb-focus-offset) * -1);
+}
+
+@media (forced-colors: active) {
+  .tab[data-state='active']::after {
+    background-color: Highlight;
+  }
+}

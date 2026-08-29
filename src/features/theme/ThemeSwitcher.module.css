@@ -1,0 +1,139 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-space-2xs);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.legend {
+  padding: 0;
+  margin-block-end: var(--pb-space-xs);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+}
+
+.option {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: var(--pb-space-sm);
+
+  padding: var(--pb-space-xs) var(--pb-space-sm);
+  border: var(--pb-border-width) solid transparent;
+  border-radius: var(--pb-radius-control);
+  cursor: pointer;
+
+  transition:
+    background-color var(--pb-motion-fast) var(--pb-ease),
+    border-color var(--pb-motion-fast) var(--pb-ease);
+}
+
+.option:hover {
+  background-color: var(--pb-control-surface-hover);
+}
+
+/*
+ * :has() lets the whole row react to the state of the radio inside it, so the
+ * native input keeps all the keyboard behaviour while the row carries the
+ * visual treatment.
+ */
+.option:has(input:checked) {
+  background-color: var(--pb-control-surface);
+  border-color: var(--pb-border-accent);
+}
+
+.option:has(input:focus-visible) {
+  outline: var(--pb-focus-width) solid var(--pb-focus-ring);
+  outline-offset: var(--pb-focus-offset);
+}
+
+.input {
+  /* Hidden visually, still focusable and still the thing being operated. */
+  position: absolute;
+  opacity: 0;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+
+/* The check mark doubles as the selected indicator, so state is not colour alone. */
+.marker {
+  inline-size: 10px;
+  block-size: 10px;
+  border: var(--pb-border-width) solid var(--pb-control-border);
+}
+
+.option:has(input:checked) .marker {
+  background-color: var(--pb-accent);
+  border-color: var(--pb-accent);
+}
+
+.swatch {
+  display: flex;
+  gap: 2px;
+}
+
+.chip {
+  inline-size: 8px;
+  block-size: 16px;
+  border: var(--pb-border-width) solid var(--pb-border-subtle);
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-inline-size: 0;
+}
+
+.label {
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-primary);
+}
+
+.meta {
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  color: var(--pb-ink-muted);
+}
+
+@media (forced-colors: active) {
+  .option:has(input:checked) {
+    border-color: Highlight;
+  }
+
+  .option:has(input:checked) .marker {
+    background-color: Highlight;
+  }
+}
+
+/*
+ * The chip group carries its own data-theme, so the custom properties it
+ * inherits are that theme's - letting each row preview a palette that is not
+ * the active one.
+ */
+.chipGroup {
+  display: flex;
+  gap: 2px;
+}
+
+.chip[data-role='surface'] {
+  background-color: var(--pb-surface-base);
+}
+
+.chip[data-role='ink'] {
+  background-color: var(--pb-ink-primary);
+}
+
+.chip[data-role='accent'] {
+  background-color: var(--pb-accent);
+}

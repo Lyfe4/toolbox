@@ -5,21 +5,30 @@
 # That promise is enforced here by the browser, not merely asserted in the
 # README - if application code ever tried to phone home, the request would be
 # blocked rather than silently succeed.
+#
+# {{INLINE_SCRIPT_HASHES}} below is replaced at build time by vite/plugins/
+# csp-hash.ts with the sha256 of the theme-bootstrap script in index.html.
+# The placeholder is not a valid CSP source, so a build that somehow skipped
+# the plugin yields an obviously broken policy rather than a silently
+# permissive one.
 
 /*
   # --- Content Security Policy ------------------------------------------------
   # default-src 'self'        Everything not named below may only load from this
   #                           origin. The catch-all that makes the rest additive.
-  # script-src                Own scripts only. No 'unsafe-inline', so an
+  # script-src                Own scripts only, plus the exact hash of the one
+  #                           inline bootstrap script. No 'unsafe-inline', so an
   #                           injected <script> or onclick= cannot execute.
   #                           'wasm-unsafe-eval' permits WebAssembly compilation
   #                           (and only that) for the WASM-backed tools to come.
   # style-src 'self'          Stylesheets come from our own bundle. No inline
-  #                           <style> blocks.
-  # style-src-attr            ...but inline `style=""` attributes are allowed,
-  #                           because React sets node positions on the canvas
-  #                           that way. Narrower than putting 'unsafe-inline'
-  #                           in style-src, which would also unlock <style>.
+  #                           <style> blocks and no style="" attributes.
+  #                           NOTE: no style-src-attr exception is needed. React
+  #                           applies the `style` prop through the CSSOM
+  #                           (element.style.setProperty), which CSP does not
+  #                           govern - only style attributes present in parsed
+  #                           markup are. Verified against the built app with
+  #                           these exact headers; zero violations.
   # img-src 'self' data: blob:  Tool output (previews, generated images) is held
   #                           in memory as data:/blob: URLs, never uploaded.
   # font-src 'self'           Self-hosted fonts only. No Google Fonts, no CDN.
@@ -28,8 +37,10 @@
   #                           NOTE: when ffmpeg.wasm lands this may have to
   #                           become 'self' so its .wasm payload can be fetched
   #                           from our own origin. It must never widen further.
-  # worker-src 'self' blob:   Heavy tools run off the main thread; bundlers ship
-  #                           workers as blob: URLs.
+  # worker-src 'self'         Heavy processing moves to Web Workers. Same-origin
+  #                           worker scripts only - an inline/blob: worker would
+  #                           be a way to run unreviewed code, so it stays out.
+  # child-src 'self'          Legacy fallback for worker-src in older engines.
   # object-src 'none'         No <object>/<embed>. Legacy plugin attack surface.
   # base-uri 'self'           A <base> tag cannot be injected to re-point every
   #                           relative URL on the page at an attacker's origin.
@@ -38,7 +49,7 @@
   # frame-src 'none'          Patchbay embeds nobody either.
   # manifest-src 'self'       PWA manifest from our origin only.
   # upgrade-insecure-requests Any stray http:// subresource is upgraded to https.
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; manifest-src 'self'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {{INLINE_SCRIPT_HASHES}}; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; worker-src 'self'; child-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; manifest-src 'self'; upgrade-insecure-requests
 
   # --- Cross-origin isolation ---------------------------------------------------
   # Together these two put the page in a "cross-origin isolated" state, which is

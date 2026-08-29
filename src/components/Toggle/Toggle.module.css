@@ -1,0 +1,96 @@
+/*
+ * A rocker switch, not a pill. Rectangular track, square thumb, hard snap -
+ * the affordance of a panel-mounted toggle rather than a mobile OS control.
+ */
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pb-space-sm);
+}
+
+.track {
+  position: relative;
+  flex-shrink: 0;
+  inline-size: 32px;
+  block-size: 18px;
+  padding: 0;
+
+  background-color: var(--pb-surface-inset);
+  border: var(--pb-border-width) solid var(--pb-control-border);
+  border-radius: var(--pb-radius-control);
+  cursor: pointer;
+
+  transition:
+    background-color var(--pb-motion-fast) var(--pb-ease),
+    border-color var(--pb-motion-fast) var(--pb-ease);
+}
+
+.thumb {
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-start: 2px;
+  inline-size: 12px;
+  block-size: 12px;
+
+  background-color: var(--pb-ink-muted);
+  transition:
+    translate var(--pb-motion-fast) var(--pb-ease),
+    background-color var(--pb-motion-fast) var(--pb-ease);
+}
+
+.track[aria-checked='true'] {
+  background-color: var(--pb-accent-subtle);
+  border-color: var(--pb-accent);
+}
+
+.track[aria-checked='true'] .thumb {
+  translate: 14px 0;
+  background-color: var(--pb-accent);
+}
+
+.track:is(:hover, [data-force='hover']):not(:disabled) {
+  border-color: var(--pb-control-border-hover);
+}
+
+.track:disabled {
+  cursor: not-allowed;
+  border-color: var(--pb-border-hairline);
+}
+
+.track:disabled .thumb {
+  background-color: var(--pb-ink-disabled);
+}
+
+.label {
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-primary);
+}
+
+.track:disabled + .label {
+  color: var(--pb-ink-disabled);
+}
+
+/*
+ * In forced-colors the accent fill is discarded, so state must also be carried
+ * by something the OS keeps: the thumb's position, plus a solid system colour.
+ */
+@media (forced-colors: active) {
+  .track {
+    border-color: ButtonText;
+  }
+
+  .thumb {
+    background-color: ButtonText;
+  }
+
+  .track[aria-checked='true'] .thumb {
+    background-color: Highlight;
+  }
+
+  .track:disabled,
+  .track:disabled .thumb {
+    border-color: GrayText;
+    background-color: GrayText;
+  }
+}

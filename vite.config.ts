@@ -4,6 +4,8 @@ import { tanstackRouter } from '@tanstack/router-plugin/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
+import { cspHash } from './vite/plugins/csp-hash.ts';
+
 // Absolute path to `src`, used for the `@/*` alias. Derived from this file's
 // own URL so it works no matter where the process was started from.
 const srcPath = fileURLToPath(new URL('./src', import.meta.url));
@@ -23,6 +25,8 @@ export default defineConfig({
       quoteStyle: 'single',
     }),
     react(),
+    // Must be last: it reads the finished index.html out of the build output.
+    cspHash(),
   ],
 
   resolve: {

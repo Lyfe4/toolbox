@@ -1,0 +1,73 @@
+/*
+ * The module chassis. Structure comes from a hairline border and a rule under
+ * the title bar - no shadow, no radius beyond 2px, nothing floating.
+ */
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+
+  background-color: var(--pb-surface-raised);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-panel);
+}
+
+.titleBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pb-space-sm);
+
+  /* 24px tall: three 8px units, so the bar sits on the baseline grid. */
+  block-size: var(--pb-control-height-sm);
+  padding-inline: var(--pb-space-sm);
+
+  background-color: var(--pb-surface-overlay);
+  border-block-end: var(--pb-border-width) solid var(--pb-border-hairline);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2xs);
+  flex-shrink: 0;
+}
+
+.body {
+  padding: var(--pb-space-md);
+  min-inline-size: 0;
+}
+
+.bodyFlush {
+  padding: 0;
+}
+
+.footer {
+  padding: var(--pb-space-xs) var(--pb-space-sm);
+  border-block-start: var(--pb-border-width) solid var(--pb-border-subtle);
+  background-color: var(--pb-surface-overlay);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  color: var(--pb-ink-muted);
+}
+
+@media (forced-colors: active) {
+  .panel,
+  .titleBar,
+  .footer {
+    border-color: CanvasText;
+  }
+}

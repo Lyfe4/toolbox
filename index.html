@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="graphite">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -8,6 +8,57 @@
       name="description"
       content="A developer toolbox that runs entirely in your browser. Nothing you paste ever leaves the page."
     />
+
+    <!--
+      The interface is monospace-first, so IBM Plex Mono is on the critical
+      path. Preloaded from a stable, unhashed path (see scripts/sync-fonts.js).
+      `crossorigin` is required on font preloads even for same-origin files.
+    -->
+    <link
+      rel="preload"
+      href="/fonts/ibm-plex-mono-400.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+
+    <!--
+      Theme bootstrap. Runs BEFORE first paint so the page never renders in the
+      wrong theme and then snaps. It is blocking on purpose and must stay tiny.
+
+      This is the one inline script in the app. Rather than weakening CSP with
+      'unsafe-inline', its sha256 hash is computed from the built output and
+      injected into script-src by the csp-hash Vite plugin. Editing this script
+      therefore changes the hash automatically - nothing to keep in sync by hand.
+    -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        var theme = null;
+        try {
+          var stored = window.localStorage.getItem('patchbay:theme:v1');
+          if (stored) {
+            var state = JSON.parse(stored);
+            var selection = state && state.selection;
+            if (selection && selection.kind === 'preset') {
+              theme = selection.name;
+            } else if (selection && selection.kind === 'custom') {
+              var list = state.customThemes || [];
+              for (var i = 0; i < list.length; i++) {
+                if (list[i] && list[i].id === selection.id) theme = list[i].base;
+              }
+            }
+          }
+        } catch (error) {
+          theme = null;
+        }
+        if (!theme) {
+          var light = window.matchMedia('(prefers-color-scheme: light)').matches;
+          theme = light ? 'vellum' : 'graphite';
+        }
+        root.setAttribute('data-theme', theme);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

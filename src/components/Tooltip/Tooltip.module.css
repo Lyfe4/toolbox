@@ -1,0 +1,43 @@
+.content {
+  z-index: var(--pb-z-popover);
+  max-inline-size: 240px;
+  padding: var(--pb-space-2xs) var(--pb-space-xs);
+
+  background-color: var(--pb-surface-overlay);
+  border: var(--pb-border-width) solid var(--pb-border-strong);
+  border-radius: var(--pb-radius-control);
+  color: var(--pb-ink-primary);
+
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  line-height: var(--pb-body-leading);
+}
+
+/*
+ * Appears instantly rather than fading in. Motion here is a hard cut, matching
+ * the mechanical feel of the rest of the system.
+ */
+.content[data-state='delayed-open'] {
+  animation: tooltip-in var(--pb-motion-fast) var(--pb-ease);
+}
+
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.arrow {
+  fill: var(--pb-border-strong);
+}
+
+@media (forced-colors: active) {
+  .content {
+    border-color: CanvasText;
+  }
+}

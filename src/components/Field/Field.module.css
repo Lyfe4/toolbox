@@ -1,0 +1,43 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-space-xs);
+  min-inline-size: 0;
+}
+
+.labelRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pb-space-xs);
+}
+
+.label {
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-secondary);
+}
+
+.required {
+  color: var(--pb-signal-error);
+  font-size: var(--pb-label-size);
+}
+
+.description {
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  color: var(--pb-ink-muted);
+}
+
+.error {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-xs);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  color: var(--pb-signal-error);
+}

@@ -1,0 +1,77 @@
+/*
+ * Minimal reset. Only what we actually need - no opinionated normalisation
+ * that a component would then have to undo.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+h1,
+h2,
+h3,
+h4,
+p,
+figure,
+blockquote,
+dl,
+dd,
+fieldset {
+  margin: 0;
+}
+
+fieldset,
+legend {
+  padding: 0;
+  border: 0;
+}
+
+ul[role='list'],
+ol[role='list'] {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-block-size: 100dvh;
+  line-height: var(--pb-body-leading);
+  -webkit-font-smoothing: antialiased;
+}
+
+img,
+picture,
+svg,
+video,
+canvas {
+  display: block;
+  max-inline-size: 100%;
+}
+
+/* Inputs do not inherit typography by default; make them behave. */
+input,
+button,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+/* Remove the default focus ring - a single treatment is applied in global.css. */
+:focus {
+  outline: none;
+}
+
+table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}

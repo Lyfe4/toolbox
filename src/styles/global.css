@@ -1,49 +1,118 @@
 /*
- * Global baseline only. Component styling lives in CSS Modules.
- * Fonts are system stacks on purpose: no external font requests, ever.
+ * Entry point for the whole style layer. Import order IS the cascade order:
+ *
+ *   fonts      -> @font-face only
+ *   primitives -> layer 1, the raw scale
+ *   semantic   -> layer 2, meanings + graphite defaults
+ *   themes     -> layer 2 overrides per [data-theme]
+ *   reset      -> element normalisation, needs the tokens above
+ *
+ * themes.css MUST come after semantic.css: the two selectors have equal
+ * specificity, so the later one wins.
  */
+@import './fonts.css';
+@import './primitives.css';
+@import './semantic.css';
+@import './themes.css';
+@import './reset.css';
 
+/* -----------------------------------------------------------------------
+ * Colour scheme - makes native scrollbars and form controls match the theme.
+ * -------------------------------------------------------------------- */
 :root {
-  --space-lg: 1.5rem;
-
-  --color-bg: #101014;
-  --color-fg: #e8e8ea;
-
-  --font-sans:
-    system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji',
-    'Segoe UI Emoji';
-  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
-
-  color-scheme: dark light;
+  color-scheme: dark;
 }
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
+[data-theme='vellum'] {
+  color-scheme: light;
 }
 
-html,
+/* -----------------------------------------------------------------------
+ * Document
+ * -------------------------------------------------------------------- */
 body {
-  margin: 0;
-  padding: 0;
+  background-color: var(--pb-surface-base);
+  color: var(--pb-ink-primary);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
 }
 
-body {
-  background-color: var(--color-bg);
-  color: var(--color-fg);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
+::selection {
+  background-color: var(--pb-selection-surface);
+  color: var(--pb-selection-ink);
 }
 
-/* Respect users who have asked their OS to reduce motion. */
+/* -----------------------------------------------------------------------
+ * Focus - ONE treatment for the entire application.
+ *
+ * :focus-visible (not :focus) so a mouse click does not leave a ring behind,
+ * while keyboard navigation always does. The 2px offset keeps the ring clear
+ * of the control's own hairline border so both stay readable.
+ * -------------------------------------------------------------------- */
+*:focus-visible,
+[data-force='focus'] {
+  outline: var(--pb-focus-width) solid var(--pb-focus-ring);
+  outline-offset: var(--pb-focus-offset);
+}
+
+/* -----------------------------------------------------------------------
+ * Reduced motion
+ *
+ * Collapsed to 1ms rather than "a bit quicker": the point is that the
+ * transition ENDS immediately, not that it runs fast. 1ms rather than 0
+ * so that transitionend still fires and no state machine stalls.
+ * -------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
+  :root {
+    --pb-motion-fast: var(--raw-duration-instant);
+    --pb-motion-base: var(--raw-duration-instant);
+    --pb-motion-slow: var(--raw-duration-instant);
+    --pb-ease: var(--raw-ease-linear);
+    --pb-ease-out: var(--raw-ease-linear);
+  }
+
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
+    animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    transition-duration: 1ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* -----------------------------------------------------------------------
+ * Increased contrast
+ *
+ * Promotes every boundary and the quietest ink one step. Because components
+ * only ever reference semantic tokens, this single block hardens the entire
+ * UI without touching a component file.
+ * -------------------------------------------------------------------- */
+@media (prefers-contrast: more) {
+  :root {
+    --pb-border-subtle: var(--pb-border-hairline);
+    --pb-border-hairline: var(--pb-border-strong);
+    --pb-control-border: var(--pb-border-strong);
+    --pb-ink-muted: var(--pb-ink-secondary);
+    --pb-ink-secondary: var(--pb-ink-primary);
+    --pb-ink-disabled: var(--pb-ink-muted);
+  }
+}
+
+/* -----------------------------------------------------------------------
+ * Windows forced-colors (high contrast)
+ *
+ * The OS replaces our palette wholesale. Our job is to make sure nothing
+ * relies on a colour that has just been thrown away: every boundary must be
+ * a real border, and the focus ring must use the system highlight.
+ * -------------------------------------------------------------------- */
+@media (forced-colors: active) {
+  *:focus-visible {
+    outline-color: Highlight;
+  }
+
+  /* Keep decorative icons visible against whichever ground the OS picks. */
+  svg {
+    forced-color-adjust: auto;
   }
 }

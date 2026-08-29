@@ -1,0 +1,181 @@
+/*
+ * LAYER 2 - SEMANTIC TOKENS
+ *
+ * The design system's public API. Every token here names a MEANING
+ * ("the ink for secondary text") rather than an appearance ("grey 300").
+ * Components may use these and nothing else.
+ *
+ * Two halves:
+ *
+ *   1. Theme-invariant semantics - spacing, type roles, radii, motion,
+ *      z-index, control metrics. Identical under every theme, because a
+ *      theme changes how Patchbay looks, not how densely it is laid out.
+ *
+ *   2. Themed semantics - every colour. The values below are the defaults
+ *      (the `graphite` preset); themes.css re-declares this exact set of
+ *      names under a [data-theme] selector. Swapping a theme therefore
+ *      swaps only these declarations, and no component has to know.
+ *
+ * If you add a themed token here you MUST add it to all four presets in
+ * themes.css, or that theme silently inherits graphite's value.
+ */
+
+:root {
+  /* =====================================================================
+   * 1. THEME-INVARIANT SEMANTICS
+   * ================================================================== */
+
+  /* --- Layout rhythm ------------------------------------------------
+   * The 8px baseline, exposed by role. Components lay out with these
+   * rather than reaching for the raw scale.
+   * --------------------------------------------------------------- */
+  --pb-space-hairline: var(--raw-space-1);
+  --pb-space-2xs: var(--raw-space-2);
+  --pb-space-xs: var(--raw-space-4);
+  --pb-space-sm: var(--raw-space-8);
+  --pb-space-md: var(--raw-space-12);
+  --pb-space-lg: var(--raw-space-16);
+  --pb-space-xl: var(--raw-space-24);
+  --pb-space-2xl: var(--raw-space-32);
+  --pb-space-3xl: var(--raw-space-48);
+  --pb-space-4xl: var(--raw-space-64);
+
+  /* --- Type roles ---------------------------------------------------
+   * Mono is the default voice of the interface. Sans is reserved for
+   * running prose, where a monospace face would hurt reading speed.
+   * --------------------------------------------------------------- */
+  --pb-font-ui: var(--raw-font-mono);
+  --pb-font-prose: var(--raw-font-sans);
+
+  /* Equipment labelling: tiny, uppercase, generously tracked. */
+  --pb-label-size: var(--raw-size-10);
+  --pb-label-weight: var(--raw-weight-medium);
+  --pb-label-tracking: var(--raw-tracking-label);
+  --pb-label-transform: uppercase;
+
+  /* Readouts and control text. */
+  --pb-value-size: var(--raw-size-12);
+  --pb-value-weight: var(--raw-weight-regular);
+  --pb-value-tracking: var(--raw-tracking-none);
+
+  --pb-body-size: var(--raw-size-14);
+  --pb-body-leading: var(--raw-leading-normal);
+
+  --pb-heading-size: var(--raw-size-16);
+  --pb-heading-weight: var(--raw-weight-bold);
+  --pb-heading-tracking: var(--raw-tracking-wide);
+
+  --pb-display-size: var(--raw-size-24);
+
+  /* --- Geometry ----------------------------------------------------- */
+  --pb-radius-control: var(--raw-radius-1);
+  --pb-radius-panel: var(--raw-radius-2);
+  --pb-border-width: var(--raw-border-hairline);
+  --pb-border-width-strong: var(--raw-border-thick);
+
+  /* --- Control metrics ---------------------------------------------
+   * Fixed heights keep dense rows of controls optically aligned.
+   * --------------------------------------------------------------- */
+  --pb-control-height-sm: var(--raw-space-24);
+  --pb-control-height-md: var(--raw-space-32);
+  --pb-control-pad-x-sm: var(--raw-space-8);
+  --pb-control-pad-x-md: var(--raw-space-12);
+
+  /* --- Motion -------------------------------------------------------
+   * Overridden wholesale under prefers-reduced-motion in global.css:
+   * every duration collapses to 1ms so transitions END rather than
+   * merely running faster.
+   * --------------------------------------------------------------- */
+  --pb-motion-fast: var(--raw-duration-fast);
+  --pb-motion-base: var(--raw-duration-base);
+  --pb-motion-slow: var(--raw-duration-slow);
+  --pb-ease: var(--raw-ease-snap);
+  --pb-ease-out: var(--raw-ease-out);
+
+  /* --- Stacking ----------------------------------------------------- */
+  --pb-z-raised: var(--raw-z-raised);
+  --pb-z-sticky: var(--raw-z-sticky);
+  --pb-z-overlay: var(--raw-z-overlay);
+  --pb-z-popover: var(--raw-z-popover);
+  --pb-z-toast: var(--raw-z-toast);
+
+  /* --- Focus geometry (colour is themed, below) --------------------- */
+  --pb-focus-width: var(--raw-border-thick);
+  --pb-focus-offset: var(--raw-space-2);
+}
+
+/*
+ * The themed half is declared for :root AND for an explicit graphite scope.
+ * The second selector matters because custom properties inherit: a nested
+ * element carrying data-theme="graphite" then previews graphite's palette
+ * even while another theme is active - which is how the theme switcher
+ * paints a swatch for a theme that is not currently applied.
+ */
+:root,
+[data-theme='graphite'] {
+  /* =====================================================================
+   * 2. THEMED SEMANTICS - default values (graphite)
+   * ================================================================== */
+
+  /* --- Surfaces: back to front -------------------------------------- */
+  --pb-surface-sunken: var(--raw-grey-1000);
+  --pb-surface-base: var(--raw-grey-950);
+  --pb-surface-raised: var(--raw-grey-900);
+  --pb-surface-overlay: var(--raw-grey-850);
+  --pb-surface-inset: var(--raw-grey-1000);
+
+  /* --- Ink: text and glyphs ------------------------------------------
+   * Every level below is used for real text, so every level is held to
+   * the 4.5:1 body-text ratio by themes.contrast.test.ts.
+   * --------------------------------------------------------------- */
+  --pb-ink-primary: var(--raw-grey-50);
+  --pb-ink-secondary: var(--raw-grey-200);
+  --pb-ink-muted: var(--raw-grey-300);
+  --pb-ink-disabled: var(--raw-grey-500);
+  --pb-ink-inverse: var(--raw-grey-1000);
+  --pb-ink-accent: var(--raw-amber-400);
+  --pb-ink-on-accent: var(--raw-grey-1000);
+
+  /* --- Borders -------------------------------------------------------
+   * `subtle` is decorative only (internal rules inside a panel) and is
+   * exempt from the 3:1 rule. `hairline` and `strong` carry structure
+   * and are contrast-tested.
+   * --------------------------------------------------------------- */
+  --pb-border-subtle: var(--raw-grey-800);
+  --pb-border-hairline: var(--raw-grey-450);
+  --pb-border-strong: var(--raw-grey-400);
+  --pb-border-accent: var(--raw-amber-500);
+
+  /* --- Accent: one saturated hue, used sparingly --------------------- */
+  --pb-accent: var(--raw-amber-500);
+  --pb-accent-hover: var(--raw-amber-400);
+  --pb-accent-active: var(--raw-amber-600);
+  --pb-accent-subtle: var(--raw-amber-800);
+
+  /* --- Controls ------------------------------------------------------ */
+  --pb-control-surface: var(--raw-grey-850);
+  --pb-control-surface-hover: var(--raw-grey-800);
+  --pb-control-surface-active: var(--raw-grey-750);
+  --pb-control-surface-disabled: var(--raw-grey-900);
+  --pb-control-border: var(--raw-grey-450);
+  --pb-control-border-hover: var(--raw-grey-400);
+
+  /* --- Signals: state and readouts ----------------------------------- */
+  --pb-signal-ok: var(--raw-green-300);
+  --pb-signal-ok-surface: var(--raw-green-700);
+  --pb-signal-warn: var(--raw-yellow-300);
+  --pb-signal-warn-surface: var(--raw-yellow-700);
+  --pb-signal-error: var(--raw-red-300);
+  --pb-signal-error-surface: var(--raw-red-700);
+  --pb-signal-on-surface: var(--raw-white);
+
+  /* --- Focus ring ----------------------------------------------------
+   * One treatment, applied globally in global.css. Contrast-tested
+   * against every surface in every theme.
+   * --------------------------------------------------------------- */
+  --pb-focus-ring: var(--raw-amber-400);
+
+  /* --- Selection ----------------------------------------------------- */
+  --pb-selection-surface: var(--raw-amber-500);
+  --pb-selection-ink: var(--raw-grey-1000);
+}

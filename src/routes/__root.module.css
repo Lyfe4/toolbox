@@ -1,0 +1,91 @@
+.shell {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-block-size: 100dvh;
+  background-color: var(--pb-surface-base);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-xl);
+
+  block-size: var(--pb-space-3xl);
+  padding-inline: var(--pb-space-lg);
+
+  background-color: var(--pb-surface-raised);
+  border-block-end: var(--pb-border-width) solid var(--pb-border-hairline);
+}
+
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-sm);
+
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  font-weight: var(--pb-heading-weight);
+  letter-spacing: var(--pb-heading-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-primary);
+  text-decoration: none;
+}
+
+.wordmarkGlyph {
+  display: flex;
+  color: var(--pb-accent);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2xs);
+}
+
+.navLink {
+  display: inline-flex;
+  align-items: center;
+
+  block-size: var(--pb-control-height-sm);
+  padding-inline: var(--pb-space-sm);
+
+  border: var(--pb-border-width) solid transparent;
+  border-radius: var(--pb-radius-control);
+
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+  text-decoration: none;
+
+  transition:
+    color var(--pb-motion-fast) var(--pb-ease),
+    border-color var(--pb-motion-fast) var(--pb-ease);
+}
+
+.navLink:hover {
+  color: var(--pb-ink-primary);
+  border-color: var(--pb-border-hairline);
+}
+
+/* TanStack Router marks the matching link, so the state is real, not guessed. */
+.navLink[data-status='active'] {
+  color: var(--pb-ink-primary);
+  border-color: var(--pb-border-accent);
+}
+
+.main {
+  min-inline-size: 0;
+}
+
+@media (forced-colors: active) {
+  .header {
+    border-color: CanvasText;
+  }
+
+  .navLink[data-status='active'] {
+    border-color: Highlight;
+  }
+}

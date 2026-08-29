@@ -15,6 +15,11 @@
     // refuse anything that needs whole-program knowledge to emit correctly.
     "isolatedModules": true,
 
+    // Lets an import name a .ts file directly. Safe here because nothing in
+    // this repo is emitted by tsc, and Vite 8 warns on extensionless
+    // relative imports in the config graph.
+    "allowImportingTsExtensions": true,
+
     // Imports are emitted exactly as written. If a value is only ever used as a
     // type you must write `import type`, which makes erasure predictable.
     "verbatimModuleSyntax": true,

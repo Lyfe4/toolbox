@@ -1,0 +1,29 @@
+/*
+ * Off-screen until focused. Keyboard users get it as the first tab stop;
+ * pointer users never see it.
+ */
+.root {
+  position: absolute;
+  inset-block-start: var(--pb-space-sm);
+  inset-inline-start: var(--pb-space-sm);
+  z-index: var(--pb-z-toast);
+  transform: translateY(calc(-100% - var(--pb-space-xl)));
+  transition: transform var(--pb-motion-fast) var(--pb-ease);
+
+  padding: var(--pb-space-xs) var(--pb-space-md);
+  background-color: var(--pb-accent);
+  color: var(--pb-ink-on-accent);
+  border: var(--pb-border-width) solid var(--pb-border-accent);
+  border-radius: var(--pb-radius-control);
+
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  text-decoration: none;
+}
+
+.root:focus-visible {
+  transform: translateY(0);
+}

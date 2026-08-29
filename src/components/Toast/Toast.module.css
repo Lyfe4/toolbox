@@ -1,0 +1,107 @@
+.viewport {
+  position: fixed;
+  inset-block-end: var(--pb-space-lg);
+  inset-inline-end: var(--pb-space-lg);
+  z-index: var(--pb-z-toast);
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-space-sm);
+
+  inline-size: 320px;
+  max-inline-size: calc(100vw - var(--pb-space-2xl));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  outline: none;
+}
+
+.toast {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: var(--pb-space-sm);
+
+  padding: var(--pb-space-sm);
+  background-color: var(--pb-surface-overlay);
+  border: var(--pb-border-width) solid var(--pb-border-strong);
+  border-radius: var(--pb-radius-panel);
+  border-inline-start-width: var(--pb-border-width-strong);
+}
+
+.toast[data-state='open'] {
+  animation: toast-in var(--pb-motion-base) var(--pb-ease);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    translate: 8px 0;
+  }
+
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+.info {
+  border-inline-start-color: var(--pb-accent);
+}
+
+.info .icon {
+  color: var(--pb-accent);
+}
+
+.ok {
+  border-inline-start-color: var(--pb-signal-ok);
+}
+
+.ok .icon {
+  color: var(--pb-signal-ok);
+}
+
+.warn {
+  border-inline-start-color: var(--pb-signal-warn);
+}
+
+.warn .icon {
+  color: var(--pb-signal-warn);
+}
+
+.error {
+  border-inline-start-color: var(--pb-signal-error);
+}
+
+.error .icon {
+  color: var(--pb-signal-error);
+}
+
+.icon {
+  display: flex;
+  padding-block-start: 1px;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-primary);
+}
+
+.description {
+  margin: var(--pb-space-2xs) 0 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  line-height: var(--pb-body-leading);
+  color: var(--pb-ink-secondary);
+}
+
+@media (forced-colors: active) {
+  .toast {
+    border-color: CanvasText;
+  }
+}

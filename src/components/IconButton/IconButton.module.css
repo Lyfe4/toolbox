@@ -1,0 +1,51 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  background-color: transparent;
+  border: var(--pb-border-width) solid transparent;
+  border-radius: var(--pb-radius-control);
+  color: var(--pb-ink-secondary);
+
+  cursor: pointer;
+  transition:
+    background-color var(--pb-motion-fast) var(--pb-ease),
+    border-color var(--pb-motion-fast) var(--pb-ease),
+    color var(--pb-motion-fast) var(--pb-ease);
+}
+
+.sm {
+  inline-size: var(--pb-control-height-sm);
+  block-size: var(--pb-control-height-sm);
+}
+
+.md {
+  inline-size: var(--pb-control-height-md);
+  block-size: var(--pb-control-height-md);
+}
+
+.button:is(:hover, [data-force='hover']):not(:disabled) {
+  background-color: var(--pb-control-surface-hover);
+  border-color: var(--pb-control-border);
+  color: var(--pb-ink-primary);
+}
+
+.button:is(:active, [data-force='active']):not(:disabled) {
+  background-color: var(--pb-control-surface-active);
+}
+
+.button:disabled {
+  color: var(--pb-ink-disabled);
+  cursor: not-allowed;
+}
+
+@media (forced-colors: active) {
+  .button:is(:hover, [data-force='hover']):not(:disabled) {
+    border-color: ButtonText;
+  }
+
+  .button:disabled {
+    color: GrayText;
+  }
+}

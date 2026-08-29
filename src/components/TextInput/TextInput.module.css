@@ -1,0 +1,61 @@
+.input {
+  inline-size: 100%;
+  min-inline-size: 0;
+  block-size: var(--pb-control-height-md);
+  padding-inline: var(--pb-control-pad-x-sm);
+
+  background-color: var(--pb-surface-inset);
+  border: var(--pb-border-width) solid var(--pb-control-border);
+  border-radius: var(--pb-radius-control);
+  color: var(--pb-ink-primary);
+
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+
+  transition:
+    border-color var(--pb-motion-fast) var(--pb-ease),
+    background-color var(--pb-motion-fast) var(--pb-ease);
+}
+
+.input::placeholder {
+  color: var(--pb-ink-muted);
+}
+
+.input:is(:hover, [data-force='hover']):not(:disabled):not(:read-only) {
+  border-color: var(--pb-control-border-hover);
+}
+
+.input:disabled {
+  background-color: var(--pb-control-surface-disabled);
+  color: var(--pb-ink-disabled);
+  cursor: not-allowed;
+}
+
+/*
+ * Error state is not colour alone: the border also thickens, so the state
+ * survives greyscale, colour-blindness and forced-colors mode.
+ */
+.invalid,
+.input[aria-invalid='true'] {
+  border-color: var(--pb-signal-error);
+  border-inline-start-width: var(--pb-border-width-strong);
+}
+
+.textarea {
+  block-size: auto;
+  min-block-size: calc(var(--pb-control-height-md) * 2.5);
+  padding-block: var(--pb-space-xs);
+  line-height: var(--pb-body-leading);
+  resize: vertical;
+}
+
+@media (forced-colors: active) {
+  .input {
+    border-color: ButtonText;
+  }
+
+  .input:disabled {
+    border-color: GrayText;
+    color: GrayText;
+  }
+}

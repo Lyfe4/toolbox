@@ -1,0 +1,113 @@
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pb-space-sm);
+
+  inline-size: 100%;
+  block-size: var(--pb-control-height-md);
+  padding-inline: var(--pb-control-pad-x-sm);
+
+  background-color: var(--pb-surface-inset);
+  border: var(--pb-border-width) solid var(--pb-control-border);
+  border-radius: var(--pb-radius-control);
+  color: var(--pb-ink-primary);
+
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  text-align: start;
+  cursor: pointer;
+
+  transition: border-color var(--pb-motion-fast) var(--pb-ease);
+}
+
+.trigger:is(:hover, [data-force='hover']):not(:disabled) {
+  border-color: var(--pb-control-border-hover);
+}
+
+.trigger:disabled {
+  background-color: var(--pb-control-surface-disabled);
+  color: var(--pb-ink-disabled);
+  cursor: not-allowed;
+}
+
+.trigger[aria-invalid='true'] {
+  border-color: var(--pb-signal-error);
+  border-inline-start-width: var(--pb-border-width-strong);
+}
+
+.trigger[data-placeholder] {
+  color: var(--pb-ink-muted);
+}
+
+.icon {
+  display: flex;
+  color: var(--pb-ink-muted);
+}
+
+.content {
+  z-index: var(--pb-z-popover);
+  min-inline-size: var(--radix-select-trigger-width);
+  max-block-size: var(--radix-select-content-available-height);
+  overflow: hidden;
+
+  background-color: var(--pb-surface-overlay);
+  border: var(--pb-border-width) solid var(--pb-border-strong);
+  border-radius: var(--pb-radius-panel);
+}
+
+.viewport {
+  padding: var(--pb-space-2xs);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-xs);
+
+  block-size: var(--pb-control-height-sm);
+  padding-inline: var(--pb-space-xs);
+
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-secondary);
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+
+/*
+ * Radix drives the roving highlight with data-highlighted rather than :hover,
+ * so keyboard and pointer produce exactly the same visual state.
+ */
+.item[data-highlighted] {
+  background-color: var(--pb-accent);
+  color: var(--pb-ink-on-accent);
+}
+
+.item[data-state='checked'] {
+  color: var(--pb-ink-primary);
+}
+
+.item[data-disabled] {
+  color: var(--pb-ink-disabled);
+  pointer-events: none;
+}
+
+.indicator {
+  display: flex;
+  inline-size: 12px;
+  flex-shrink: 0;
+}
+
+@media (forced-colors: active) {
+  .trigger,
+  .content {
+    border-color: ButtonText;
+  }
+
+  .item[data-highlighted] {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+}
