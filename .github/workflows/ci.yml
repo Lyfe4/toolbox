@@ -22,7 +22,7 @@ jobs:
 
       # pnpm must be installed before setup-node, so that setup-node can find
       # the pnpm store to cache.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v6
         with:
