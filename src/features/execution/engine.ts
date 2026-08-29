@@ -7,6 +7,7 @@ import {
   type ToolOutputs,
   type ToolResult,
 } from '@/features/registry/types';
+import { span } from '@/lib/perf';
 
 import {
   collectTransferables,
@@ -104,12 +105,38 @@ interface Pending {
   readonly settle: (result: ToolResult<ToolOutputs>) => void;
   readonly onProgress: ((fraction: number, label: string | null) => void) | undefined;
   readonly timer: number;
+  /** Main-thread time the request was posted, for placing the spans. */
+  readonly postedAt: number;
+  readonly toolId: ToolId;
+}
+
+/** Guarded because the perf timeline is instrumentation, never a dependency. */
+function now(): number {
+  return typeof performance === 'undefined' ? 0 : performance.now();
 }
 
 let nextRequestId = 0;
 
 export interface ExecutionEngine {
   readonly execute: (options: ExecuteOptions) => Promise<ToolResult<ToolOutputs>>;
+  /**
+   * Starts the worker and waits for it to answer, without running anything.
+   *
+   * Called when the canvas mounts. The boot is unavoidable; what is avoidable
+   * is paying for it inside the user's first run, where it reads as the tool
+   * being slow. Idempotent, and silent about failure - it is an optimisation,
+   * so a browser that will not give us a worker must simply get the old
+   * behaviour rather than a broken canvas.
+   */
+  readonly warmUp: () => void;
+  /**
+   * Imports a tool's chunk ahead of time, in whichever context will run it.
+   *
+   * Called when a node is added, which is a deliberate act. Deliberately NOT
+   * called on hover across the palette: prefetching eight tools to save one
+   * fetch trades a small latency problem for a large bandwidth one.
+   */
+  readonly prefetch: (id: ToolId) => void;
   /** Tears down the worker. Used on teardown and after a timeout. */
   readonly dispose: () => void;
 }
@@ -125,13 +152,28 @@ export interface ExecutionEngine {
 export function createExecutionEngine(dependencies: EngineDependencies): ExecutionEngine {
   const pending = new Map<string, Pending>();
   let worker: WorkerHandle | null = null;
+  /** When the current worker was constructed, for the boot span. */
+  let workerCreatedAt = 0;
+  let workerReady = false;
+  const prefetched = new Set<ToolId>();
 
   function attachWorker(): WorkerHandle {
     if (worker) return worker;
 
+    workerCreatedAt = now();
+    workerReady = false;
     const created = dependencies.createWorker();
 
     created.onMessage((response) => {
+      if (response.kind === 'ready') {
+        // The one message that is not about a particular request.
+        if (!workerReady) {
+          workerReady = true;
+          span('worker-boot', workerCreatedAt, now() - workerCreatedAt);
+        }
+        return;
+      }
+
       const entry = pending.get(response.requestId);
       if (!entry) return; // A late reply to something already settled.
 
@@ -142,6 +184,18 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
 
       dependencies.clearTimer(entry.timer);
       pending.delete(response.requestId);
+
+      /*
+       * The worker reports durations, not timestamps - its clock has a
+       * different origin. They are laid end to end from the moment the request
+       * was posted, which is close enough to place them on the timeline and
+       * exactly right for their lengths.
+       */
+      const postedAt = entry.postedAt;
+      span(`tool-import:${entry.toolId}`, postedAt, response.timing.importMs);
+      span(`tool-run:${entry.toolId}`, postedAt + response.timing.importMs, response.timing.runMs);
+      span(`execute:${entry.toolId}`, postedAt, now() - postedAt);
+
       entry.settle(response.result);
     });
 
@@ -163,6 +217,10 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
   function replaceWorker(): void {
     worker?.terminate();
     worker = null;
+    workerReady = false;
+    // Whatever the old worker had imported died with it, so the record of what
+    // has been prefetched has to die too or the new one never gets warmed.
+    prefetched.clear();
   }
 
   async function runOnMainThread(
@@ -251,13 +309,24 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
         // only reliable remedy is to destroy the worker and build a new one.
         replaceWorker();
         settle(
-          fail('timeout', 'The tool took too long and was stopped.', {
-            detail: `Exceeded ${(meta.timeoutMs / 1000).toString()}s.`,
-          }),
+          fail(
+            'timeout',
+            // A tool that knows WHY it is likely to run over says so itself.
+            // "This pattern is too slow" is actionable; "the tool took too
+            // long" invites the user to blame the app and try again.
+            meta.timeoutMessage ?? 'The tool took too long and was stopped.',
+            { detail: `Exceeded ${(meta.timeoutMs / 1000).toString()}s.` },
+          ),
         );
       }, meta.timeoutMs);
 
-      pending.set(requestId, { settle, onProgress: options.onProgress, timer });
+      pending.set(requestId, {
+        settle,
+        onProgress: options.onProgress,
+        timer,
+        postedAt: now(),
+        toolId: options.toolId,
+      });
       options.signal?.addEventListener('abort', onAbort, { once: true });
 
       handle.post(
@@ -276,11 +345,43 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
     });
   }
 
+  /** See ExecutionEngine.warmUp. Never throws. */
+  function warmUp(): void {
+    try {
+      attachWorker().post({ kind: 'ping' }, []);
+    } catch {
+      // No Worker here - a test environment, or a policy that forbids one.
+      // The engine still works; the first run just pays for the boot.
+    }
+  }
+
+  /** See ExecutionEngine.prefetch. Never throws. */
+  function prefetch(id: ToolId): void {
+    if (prefetched.has(id)) return;
+    prefetched.add(id);
+
+    try {
+      // A main-thread tool is imported into THIS realm; a worker tool has to
+      // be imported inside the worker, which has its own module registry.
+      if (dependencies.getExecutionMeta(id).strategy === 'main') {
+        void dependencies.loadTool(id).catch(() => undefined);
+        return;
+      }
+
+      attachWorker().post({ kind: 'preload', toolId: id }, []);
+    } catch {
+      // As above: an optimisation that fails must be invisible.
+    }
+  }
+
   return {
     execute,
+    warmUp,
+    prefetch,
     dispose: () => {
       for (const [, entry] of pending) dependencies.clearTimer(entry.timer);
       pending.clear();
+      prefetched.clear();
       replaceWorker();
     },
   };
@@ -292,12 +393,32 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * A tool's declared strategy, adjusted for what this browser can actually do.
+ *
+ * The only adjustment so far: a tool that needs OffscreenCanvas cannot run in
+ * a worker on a browser without it, so it runs on the main thread instead.
+ * Downgrading here rather than inside the tool is the difference between a
+ * documented fallback and a runtime failure - by the time the tool's `run`
+ * executes, it is already in the wrong context.
+ */
+export function resolveExecutionMeta(meta: ExecutionMeta): ExecutionMeta {
+  if (
+    meta.strategy === 'worker' &&
+    meta.requiresOffscreenCanvas &&
+    typeof OffscreenCanvas === 'undefined'
+  ) {
+    return { ...meta, strategy: 'main' };
+  }
+  return meta;
+}
+
 /** The engine wired to a real browser worker. */
 export function createDefaultEngine(): ExecutionEngine {
   return createExecutionEngine({
     createWorker: createBrowserWorker,
     loadTool: async (id) => (await import('@/features/registry/loader')).loadTool(id),
-    getExecutionMeta: (id) => getManifestEntry(id).execution,
+    getExecutionMeta: (id) => resolveExecutionMeta(getManifestEntry(id).execution),
     setTimer: (callback, ms) => window.setTimeout(callback, ms),
     clearTimer: (handle) => {
       window.clearTimeout(handle);

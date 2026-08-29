@@ -17,6 +17,25 @@ pipeline you can see. Nothing you paste ever leaves your machine.
 3. **The code is the portfolio.** Strict types, no `any`, no suppressed errors,
    clear module boundaries, meaningful tests.
 
+## The tools
+
+| Tool                | Does                                                         |
+| ------------------- | ------------------------------------------------------------ |
+| **Base64**          | Encode text or files, decode back to bytes.                  |
+| **Structured data** | JSON, YAML, CSV and TSV, with auto-detection.                |
+| **Hash**            | MD5 and the SHA family, over text or files.                  |
+| **JWT**             | Decode a token, and verify it when you supply the key.       |
+| **Diff**            | Compare two texts, with word-level highlighting.             |
+| **Regex**           | Test a pattern, with groups and replacement.                 |
+| **Colour**          | Convert hex, rgb(), hsl() and oklch(), with contrast checks. |
+| **Image**           | Convert and resize between PNG, JPEG and WebP.               |
+
+Each has its own README next to the code, which is where the interesting parts
+are written down: why [JWT](src/tools/jwt-decode/README.md) refuses `alg: none`,
+how [Regex](src/tools/regex-tester/README.md) survives a catastrophically
+backtracking pattern, and what stops [Image](src/tools/image-convert/README.md)
+being killed by a decompression bomb.
+
 ## Stack
 
 | Concern     | Choice                                              |
@@ -204,6 +223,44 @@ its declared ports, so a tool declaring a `bytes` input cannot be implemented
 with a function that expects a string. See
 [`types.ts`](src/features/registry/types.ts).
 
+## Cold start
+
+The first run of a tool used to pay for two things it did not need to:
+
+| Cost                       | Before  | After                           |
+| -------------------------- | ------- | ------------------------------- |
+| Worker boot                | ~22 ms  | 0 — paid when the canvas mounts |
+| Tool chunk import          | ~6 ms   | 0 — paid when the node is added |
+| The tool's own work        | ~0.8 ms | ~0.5 ms                         |
+| **First execution, total** | ~30 ms  | **~1.5 ms**                     |
+
+Both costs still exist; they have moved somewhere the user is not waiting. The
+worker is started when the canvas mounts, because a canvas exists to run things.
+A tool's chunk is fetched when its node is **added** — a deliberate act — and
+deliberately not on hover across the palette, which would trade a few
+milliseconds of latency for hundreds of kilobytes nobody asked for.
+
+The numbers come from the browser's own timeline. `src/lib/perf.ts` records
+`patchbay:worker-boot`, `patchbay:tool-import:<id>` and `patchbay:tool-run:<id>`
+as User Timing measures, so the breakdown is visible in devtools' Performance
+panel and readable with `performance.getEntriesByType('measure')`. Nothing is
+aggregated and nothing is sent anywhere — it is the platform's timeline, not
+telemetry.
+
+## Cross-browser
+
+`pnpm check:browsers` drives the **production build** in real engines with the
+real `_headers` policy applied: Firefox, and Playwright's WebKit — the engine
+behind Safari, not the Safari application, which is as close as a non-Mac gets.
+
+jsdom has no layout, no Worker, no OffscreenCanvas and no pointer events, so the
+unit suite cannot speak to any of the places engines actually differ. This can:
+it drags a node with real pointer events, runs a tool in a real worker, converts
+a real PNG, and asserts that nothing left the origin.
+
+It is not part of the CI gate — it needs ~165 MB of browser binaries — so run it
+after `pnpm build`.
+
 ## Design system
 
 The visual language is **instrument panel**: dense modular grids on an 8px
@@ -261,19 +318,21 @@ pnpm dev
 
 ## Scripts
 
-| Script               | Does                                      |
-| -------------------- | ----------------------------------------- |
-| `pnpm dev`           | Start the dev server                      |
-| `pnpm build`         | Typecheck, then build to `dist/`          |
-| `pnpm preview`       | Serve the production build locally        |
-| `pnpm typecheck`     | Run `tsc` across both TS projects         |
-| `pnpm lint`          | ESLint, zero warnings tolerated           |
-| `pnpm lint:fix`      | ESLint with autofix                       |
-| `pnpm format`        | Prettier, write                           |
-| `pnpm format:check`  | Prettier, check only                      |
-| `pnpm test`          | Run the test suite once                   |
-| `pnpm test:watch`    | Run the test suite in watch mode          |
-| `pnpm test:coverage` | Run the test suite with a coverage report |
+| Script                | Does                                           |
+| --------------------- | ---------------------------------------------- |
+| `pnpm dev`            | Start the dev server                           |
+| `pnpm build`          | Typecheck, then build to `dist/`               |
+| `pnpm preview`        | Serve the production build locally             |
+| `pnpm typecheck`      | Run `tsc` across both TS projects              |
+| `pnpm lint`           | ESLint, zero warnings tolerated                |
+| `pnpm lint:fix`       | ESLint with autofix                            |
+| `pnpm format`         | Prettier, write                                |
+| `pnpm format:check`   | Prettier, check only                           |
+| `pnpm test`           | Run the test suite once                        |
+| `pnpm test:watch`     | Run the test suite in watch mode               |
+| `pnpm test:coverage`  | Run the test suite with a coverage report      |
+| `pnpm bundle:check`   | Fail if the initial payload exceeds its budget |
+| `pnpm check:browsers` | Drive the built app in Firefox and WebKit      |
 
 ## Layout
 

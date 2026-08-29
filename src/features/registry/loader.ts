@@ -14,6 +14,11 @@ const LOADERS: Record<ToolId, () => Promise<{ readonly default: ErasedTool }>> =
   base64: () => import('@/tools/base64'),
   'structured-data': () => import('@/tools/structured-data'),
   hash: () => import('@/tools/hash'),
+  'jwt-decode': () => import('@/tools/jwt-decode'),
+  diff: () => import('@/tools/diff'),
+  'regex-tester': () => import('@/tools/regex-tester'),
+  'color-convert': () => import('@/tools/color-convert'),
+  'image-convert': () => import('@/tools/image-convert'),
 };
 
 /** Resolved tools, so switching back to a tool does not re-await the import. */

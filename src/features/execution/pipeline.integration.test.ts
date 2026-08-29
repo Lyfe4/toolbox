@@ -83,14 +83,14 @@ describe('a real pipeline', () => {
           toolId: 'base64',
           position: { x: 0, y: 0 },
           options: { mode: 'decode' },
-          input: payload,
+          inputs: { input: payload },
         },
         {
           id: 'b',
           toolId: 'structured-data',
           position: { x: 320, y: 0 },
           options: { source: 'auto', target: 'yaml', indent: 2 },
-          input: '',
+          inputs: {},
         },
       ],
       [['a', 'output', 'b', 'input']],
@@ -115,14 +115,14 @@ describe('a real pipeline', () => {
           toolId: 'structured-data',
           position: { x: 0, y: 0 },
           options: { source: 'csv', target: 'json', indent: 0 },
-          input: 'name,age\nada,36',
+          inputs: { input: 'name,age\nada,36' },
         },
         {
           id: 'b',
           toolId: 'hash',
           position: { x: 320, y: 0 },
           options: { algorithm: 'sha-256', encoding: 'hex' },
-          input: '',
+          inputs: {},
         },
       ],
       [['a', 'output', 'b', 'input']],
@@ -145,21 +145,21 @@ describe('a real pipeline', () => {
           toolId: 'base64',
           position: { x: 0, y: 0 },
           options: { mode: 'decode' },
-          input: 'aGVsbG8gd29ybGQ=',
+          inputs: { input: 'aGVsbG8gd29ybGQ=' },
         },
         {
           id: 'sha',
           toolId: 'hash',
           position: { x: 320, y: -100 },
           options: { algorithm: 'sha-256', encoding: 'hex' },
-          input: '',
+          inputs: {},
         },
         {
           id: 'md5',
           toolId: 'hash',
           position: { x: 320, y: 100 },
           options: { algorithm: 'md5', encoding: 'hex' },
-          input: '',
+          inputs: {},
         },
       ],
       [
@@ -188,9 +188,9 @@ describe('a real pipeline', () => {
           toolId: 'base64',
           position: { x: 0, y: 0 },
           options: { mode: 'decode' },
-          input: '!!!! not base64 !!!!',
+          inputs: { input: '!!!! not base64 !!!!' },
         },
-        { id: 'b', toolId: 'hash', position: { x: 320, y: 0 }, options: {}, input: '' },
+        { id: 'b', toolId: 'hash', position: { x: 320, y: 0 }, options: {}, inputs: {} },
       ],
       [['a', 'output', 'b', 'input']],
     );
@@ -219,14 +219,14 @@ describe('a real pipeline', () => {
         toolId: 'base64',
         position: { x: 0, y: 0 },
         options: { mode: 'encode' },
-        input: 'patchbay',
+        inputs: { input: 'patchbay' },
       },
       {
         id: 'b',
         toolId: 'hash',
         position: { x: 320, y: 0 },
         options: { algorithm: 'sha-256' },
-        input: '',
+        inputs: {},
       },
     ];
     const wires = [['a', 'output', 'b', 'input']] as const;
@@ -282,7 +282,7 @@ describe('the shipped presets', () => {
     if (!first) return;
 
     const seeded = nodes.map((node) =>
-      node.id === first.id ? { ...node, input: 'eyJhIjoxfQ==' } : node,
+      node.id === first.id ? { ...node, inputs: { input: 'eyJhIjoxfQ==' } } : node,
     );
 
     const graph: GraphData = {

@@ -1,5 +1,6 @@
 import { Field } from '@/components/Field';
 import { Select } from '@/components/Select';
+import { TextArea } from '@/components/TextArea';
 import { TextInput } from '@/components/TextInput';
 import { Toggle } from '@/components/Toggle';
 import type { OptionField } from '@/features/registry/types';
@@ -67,6 +68,46 @@ export function OptionsPanel({ fields, values, onChange, disabled = false }: Opt
                     }}
                   />
                 )}
+              </Field>
+            );
+
+          case 'text':
+            return (
+              <Field
+                key={field.key}
+                label={field.label}
+                {...(field.description !== undefined ? { description: field.description } : {})}
+              >
+                {(control) =>
+                  field.multiline === true ? (
+                    <TextArea
+                      {...control}
+                      rows={3}
+                      spellCheck={false}
+                      placeholder={field.placeholder ?? ''}
+                      disabled={disabled}
+                      value={typeof value === 'string' ? value : ''}
+                      onChange={(event) => {
+                        onChange(field.key, event.target.value);
+                      }}
+                    />
+                  ) : (
+                    <TextInput
+                      {...control}
+                      // A signing key is a password, so it gets a password
+                      // field: not security theatre, but it keeps a secret off
+                      // a shared screen and out of a screenshot.
+                      type={field.secret === true ? 'password' : 'text'}
+                      spellCheck={false}
+                      placeholder={field.placeholder ?? ''}
+                      disabled={disabled}
+                      value={typeof value === 'string' ? value : ''}
+                      onChange={(event) => {
+                        onChange(field.key, event.target.value);
+                      }}
+                    />
+                  )
+                }
               </Field>
             );
 

@@ -1,6 +1,5 @@
-import { z } from 'zod';
-
 import type { OptionField } from '@/features/registry/types';
+import { z } from '@/lib/zod';
 
 import { HASH_ALGORITHMS } from './digest';
 

@@ -25,7 +25,7 @@ function node(
   input = '',
   options: Record<string, unknown> = {},
 ): CanvasNode {
-  return { id, toolId, position: { x: 0, y: 0 }, options, input };
+  return { id, toolId, position: { x: 0, y: 0 }, options, inputs: { input } };
 }
 
 function graphOf(

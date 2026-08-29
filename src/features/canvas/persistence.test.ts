@@ -11,13 +11,13 @@ import { EMPTY_GRAPH, type GraphData } from './types';
 
 const graph: GraphData = {
   nodes: {
-    n1: { id: 'n1', toolId: 'base64', position: { x: 8, y: 16 }, options: {}, input: '' },
+    n1: { id: 'n1', toolId: 'base64', position: { x: 8, y: 16 }, options: {}, inputs: {} },
     n2: {
       id: 'n2',
       toolId: 'structured-data',
       position: { x: 400, y: 16 },
       options: { target: 'yaml' },
-      input: '',
+      inputs: {},
     },
   },
   nodeOrder: ['n1', 'n2'],
@@ -56,8 +56,8 @@ describe('graph persistence', () => {
 
   it('stores under a namespaced, versioned key', () => {
     saveGraph(graph);
-    expect(window.localStorage.getItem(GRAPH_STORAGE_KEY)).toContain('"version":2');
-    expect(GRAPH_STORAGE_KEY).toBe('patchbay:graph:v2');
+    expect(window.localStorage.getItem(GRAPH_STORAGE_KEY)).toContain('"version":3');
+    expect(GRAPH_STORAGE_KEY).toBe('patchbay:graph:v3');
   });
 
   /*
@@ -70,14 +70,14 @@ describe('graph persistence', () => {
     ['not json at all', 'unparseable text'],
     ['{"version":9,"nodes":[],"edges":[],"nextId":1}', 'a newer version'],
     ['{"nodes":[],"edges":[],"nextId":1}', 'a missing version'],
-    ['{"version":2,"nodes":"nope","edges":[],"nextId":1}', 'a wrong node type'],
-    ['{"version":2,"nodes":[],"edges":[],"nextId":0}', 'an invalid counter'],
+    ['{"version":3,"nodes":"nope","edges":[],"nextId":1}', 'a wrong node type'],
+    ['{"version":3,"nodes":[],"edges":[],"nextId":0}', 'an invalid counter'],
     [
-      '{"version":2,"nodes":[{"id":"n1","toolId":"ghost-tool","position":{"x":0,"y":0},"options":{},"input":""}],"edges":[],"nextId":2}',
+      '{"version":3,"nodes":[{"id":"n1","toolId":"ghost-tool","position":{"x":0,"y":0},"options":{},"inputs":{}}],"edges":[],"nextId":2}',
       'a tool that no longer exists',
     ],
     [
-      '{"version":2,"nodes":[{"id":"n1","toolId":"base64","position":{"x":"left","y":0},"options":{},"input":""}],"edges":[],"nextId":2}',
+      '{"version":3,"nodes":[{"id":"n1","toolId":"base64","position":{"x":"left","y":0},"options":{},"inputs":{}}],"edges":[],"nextId":2}',
       'a non-numeric position',
     ],
   ])('rejects %s (%s) with a message rather than throwing', (payload) => {
@@ -94,8 +94,8 @@ describe('graph persistence', () => {
     window.localStorage.setItem(
       GRAPH_STORAGE_KEY,
       JSON.stringify({
-        version: 2,
-        nodes: [{ id: 'n1', toolId: 'base64', position: { x: 0, y: 0 }, options: {}, input: '' }],
+        version: 3,
+        nodes: [{ id: 'n1', toolId: 'base64', position: { x: 0, y: 0 }, options: {}, inputs: {} }],
         edges: [
           {
             id: 'e1',
@@ -115,11 +115,75 @@ describe('graph persistence', () => {
     }
   });
 
+  /*
+   * Migration is the only reason old saves are not simply thrown away. A user
+   * who leaves a pipeline on the canvas and comes back after an update should
+   * find it, so each of these asserts the structure survives AND that the typed
+   * input lands on the right port rather than a guessed one.
+   */
+  it('migrates a v2 save, moving the single input onto the first port', () => {
+    window.localStorage.setItem(
+      'patchbay:graph:v3',
+      JSON.stringify({
+        version: 2,
+        nodes: [
+          {
+            id: 'n1',
+            toolId: 'base64',
+            position: { x: 0, y: 0 },
+            options: { mode: 'decode' },
+            input: 'aGk=',
+          },
+        ],
+        edges: [],
+        nextId: 2,
+      }),
+    );
+
+    const result = loadGraph();
+    expect(result.status).toBe('loaded');
+    if (result.status === 'loaded') {
+      // base64's first input port is called "input"; the id comes from the
+      // registry, so this stays right even if the port is renamed.
+      expect(result.graph.nodes.n1?.inputs).toEqual({ input: 'aGk=' });
+      expect(result.graph.nodes.n1?.options).toEqual({ mode: 'decode' });
+    }
+  });
+
+  it('migrates a v1 save, which never had any input to carry', () => {
+    window.localStorage.setItem(
+      GRAPH_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        nodes: [
+          {
+            id: 'n1',
+            toolId: 'base64',
+            position: { x: 0, y: 0 },
+            options: {},
+            status: 'idle',
+          },
+        ],
+        edges: [],
+        nextId: 2,
+      }),
+    );
+
+    const result = loadGraph();
+    expect(result.status).toBe('loaded');
+    if (result.status === 'loaded') {
+      expect(result.graph.nodes.n1?.inputs).toEqual({});
+      // `status` was document state in v1 and is derived now; it must not have
+      // ridden along into the restored node.
+      expect(result.graph.nodes.n1).not.toHaveProperty('status');
+    }
+  });
+
   it('flattens to a compact shape', () => {
     const persisted = toPersisted(graph);
     expect(persisted.nodes).toHaveLength(2);
     expect(persisted.edges).toHaveLength(1);
-    expect(persisted.version).toBe(2);
+    expect(persisted.version).toBe(3);
   });
 });
 

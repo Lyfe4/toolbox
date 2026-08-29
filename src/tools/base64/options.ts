@@ -1,6 +1,5 @@
-import { z } from 'zod';
-
 import type { OptionField } from '@/features/registry/types';
+import { z } from '@/lib/zod';
 
 /**
  * Every field has a `.default()`, which is what makes `defaultOptions` below a

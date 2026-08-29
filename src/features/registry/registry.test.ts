@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { z } from 'zod';
+
+import { z } from '@/lib/zod';
 
 import { canToolsConnect, findConnections } from './connections';
 import { loadableToolIds, loadTool } from './loader';
@@ -75,6 +76,19 @@ describe.each(ids)('tool %s', (id) => {
   it('has default options that satisfy its own schema', async () => {
     const tool = await loadTool(id);
     expect(tool.optionsSchema.safeParse(tool.defaultOptions).success).toBe(true);
+  });
+
+  it('agrees with the manifest about which options are secret', async () => {
+    const tool = await loadTool(id);
+    const entry = getManifestEntry(id);
+
+    // The manifest copy is what share.ts reads, and it reads it WITHOUT
+    // loading the tool. If the two ever disagreed, a key could travel in a
+    // link, so the agreement is asserted rather than assumed.
+    expect(tool.secretOptionKeys).toEqual(entry.secretOptionKeys ?? []);
+
+    const schemaKeys = Object.keys((tool.optionsSchema as z.ZodObject).shape);
+    for (const key of tool.secretOptionKeys) expect(schemaKeys).toContain(key);
   });
 
   it('declares a sane execution budget', async () => {

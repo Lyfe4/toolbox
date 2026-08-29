@@ -29,8 +29,15 @@ async function execute(request: Extract<WorkerRequest, { kind: 'execute' }>): Pr
 
   let result: ToolResult<ToolOutputs>;
 
+  // Split so the reply can say which half the time went to. An import that
+  // costs nothing means the chunk was already here; one that costs 40 ms is
+  // the thing prefetching removes.
+  const startedAt = performance.now();
+  let importedAt = startedAt;
+
   try {
     const tool = await loadTool(request.toolId);
+    importedAt = performance.now();
 
     result = await tool.run({
       inputs: request.inputs,
@@ -60,7 +67,18 @@ async function execute(request: Extract<WorkerRequest, { kind: 'execute' }>): Pr
 
   // Transfer any bytes back rather than copying them.
   const transfer = result.ok ? collectTransferables(Object.values(result.value)) : [];
-  post({ kind: 'settled', requestId: request.requestId, result }, transfer);
+  post(
+    {
+      kind: 'settled',
+      requestId: request.requestId,
+      result,
+      timing: {
+        importMs: importedAt - startedAt,
+        runMs: performance.now() - importedAt,
+      },
+    },
+    transfer,
+  );
 }
 
 self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
@@ -76,6 +94,17 @@ self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
     case 'cancel':
       inFlight.get(request.requestId)?.abort();
       inFlight.delete(request.requestId);
+      return;
+
+    case 'ping':
+      // Reaching here at all is the answer: the module graph has evaluated.
+      post({ kind: 'ready' });
+      return;
+
+    case 'preload':
+      // Fire and forget. A failure here is not worth reporting - the execute
+      // path will import the tool again and fail properly if it must.
+      void loadTool(request.toolId).catch(() => undefined);
       return;
   }
 });

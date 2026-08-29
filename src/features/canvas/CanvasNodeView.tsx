@@ -79,13 +79,13 @@ export interface CanvasNodeViewProps {
   readonly selected: boolean;
   readonly connections: number;
   readonly run: NodeRunState;
-  /** True when this node's first input has no wire, so it takes typed input. */
-  readonly acceptsTypedInput: boolean;
+  /** Input ports with no wire; each gets its own small editor. */
+  readonly typedInputPorts: readonly string[];
   readonly linkState: 'none' | 'valid' | 'invalid';
   readonly validInputPorts: ReadonlySet<string>;
   readonly connectedPorts: ReadonlySet<string>;
   readonly onPortPointerDown: (ref: PortRef, side: 'input' | 'output') => void;
-  readonly onInputChange: (nodeId: string, value: string) => void;
+  readonly onInputChange: (nodeId: string, portId: string, value: string) => void;
 }
 
 /**
@@ -99,7 +99,7 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   selected,
   connections,
   run,
-  acceptsTypedInput,
+  typedInputPorts,
   linkState,
   validInputPorts,
   connectedPorts,
@@ -108,7 +108,7 @@ export const CanvasNodeView = memo(function CanvasNodeView({
 }: CanvasNodeViewProps) {
   const entry: ToolManifestEntry = getManifestEntry(node.toolId);
   const Glyph = CATEGORY_GLYPHS[entry.category] ?? SignalIcon;
-  const height = nodeHeight(entry, acceptsTypedInput);
+  const height = nodeHeight(entry, typedInputPorts.length);
 
   /*
    * The accessible name carries everything a sighted user reads off the node
@@ -221,34 +221,41 @@ export const CanvasNodeView = memo(function CanvasNodeView({
       </div>
 
       {/*
-        A source node - one whose first input has no wire - takes its input
-        here. Nodes fed by a wire show the value they received instead of an
-        editor, because typing into them would have nowhere to go.
+        One editor per input port that has no wire. A tool with two required
+        inputs - diff - gets two, so neither is left permanently blocked just
+        because it is not the first port.
       */}
-      {acceptsTypedInput ? (
-        <textarea
-          className={styles.nodeInput}
-          /*
-           * Not a tab stop: Tab walks NODES, as documented. Enter on the
-           * focused node moves focus in here, Escape moves it back out - the
-           * usual way into and out of a composite widget.
-           */
-          tabIndex={-1}
-          data-node-input=""
-          aria-label={`${entry.name} input`}
-          placeholder="Type or paste input"
-          value={node.input}
-          spellCheck={false}
-          // The canvas listens for pointerdown to start a drag; a textarea has
-          // to keep its own selection behaviour.
-          onPointerDown={(event) => {
-            event.stopPropagation();
-          }}
-          onChange={(event) => {
-            onInputChange(node.id, event.target.value);
-          }}
-        />
-      ) : null}
+      {typedInputPorts.map((portId) => {
+        const port = entry.inputs.find((candidate) => candidate.id === portId);
+        return (
+          <textarea
+            key={portId}
+            className={styles.nodeInput}
+            /*
+             * Not a tab stop: Tab walks NODES, as documented. Enter on the
+             * focused node moves focus in here, Escape moves it back out.
+             */
+            tabIndex={-1}
+            data-node-input={portId}
+            aria-label={
+              entry.inputs.length > 1
+                ? `${entry.name} ${port?.label ?? portId} input`
+                : `${entry.name} input`
+            }
+            placeholder={entry.inputs.length > 1 ? (port?.label ?? portId) : 'Type or paste input'}
+            value={node.inputs[portId] ?? ''}
+            spellCheck={false}
+            // The canvas listens for pointerdown to start a drag; a textarea
+            // has to keep its own selection behaviour.
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+            onChange={(event) => {
+              onInputChange(node.id, portId, event.target.value);
+            }}
+          />
+        );
+      })}
 
       <div className={styles.nodeFooter}>
         <span>{STATUS_LABEL[run.status]}</span>

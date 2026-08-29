@@ -61,7 +61,7 @@ export interface CanvasStore {
   readonly connect: (from: PortRef, to: PortRef) => ConnectionCheck;
   readonly removeEdges: (ids: readonly EdgeId[]) => void;
   readonly setNodeOptions: (nodeId: NodeId, options: Readonly<Record<string, unknown>>) => void;
-  readonly setNodeInput: (nodeId: NodeId, input: string) => void;
+  readonly setNodeInput: (nodeId: NodeId, portId: string, value: string) => void;
   readonly select: (selection: Partial<Selection>) => void;
   readonly toggleNode: (id: NodeId) => void;
   readonly clearSelection: () => void;
@@ -137,7 +137,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
           toolId,
           position: snapPoint(position),
           options: {},
-          input: '',
+          inputs: {},
         },
       });
 
@@ -382,16 +382,19 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
       push({ kind: 'set-options', nodeId, from: node.options, to: options });
     },
 
-    setNodeInput: (nodeId, input) => {
-      // Typing is not an undo step of its own: it is coalesced into one
-      // command per node so that undo returns to the previous value rather
-      // than replaying every keystroke.
+    setNodeInput: (nodeId, portId, value) => {
+      // Typing is not an undo step: it would put one entry in the history per
+      // keystroke. The text is user data that is saved locally anyway.
       const node = get().graph.nodes[nodeId];
-      if (!node || node.input === input) return;
+      if (!node || node.inputs[portId] === value) return;
+
       set((state) => ({
         graph: {
           ...state.graph,
-          nodes: { ...state.graph.nodes, [nodeId]: { ...node, input } },
+          nodes: {
+            ...state.graph.nodes,
+            [nodeId]: { ...node, inputs: { ...node.inputs, [portId]: value } },
+          },
         },
       }));
     },

@@ -25,11 +25,16 @@ export interface CanvasNode {
   readonly position: Point;
   readonly options: Readonly<Record<string, unknown>>;
   /**
-   * Text the user typed into this node, feeding its first input port when no
-   * wire does. USER DATA: persisted locally, and deliberately never included
-   * in a share URL.
+   * Text the user typed into this node, keyed by input port id. A port takes
+   * typed input only while nothing is wired into it.
+   *
+   * Keyed per port rather than a single string because a tool can have more
+   * than one required input - `diff` compares two - and feeding only the first
+   * would leave the second permanently blocked.
+   *
+   * USER DATA: persisted locally, and deliberately never in a share URL.
    */
-  readonly input: string;
+  readonly inputs: Readonly<Record<string, string>>;
 }
 
 /*

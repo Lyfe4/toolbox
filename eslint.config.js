@@ -125,6 +125,36 @@ export default tseslint.config(
     },
   },
 
+  /*
+   * One place configures Zod.
+   *
+   * `src/lib/zod.ts` sets `jitless: true`, without which Zod compiles schemas
+   * with `new Function` on first parse and trips our CSP in every browser.
+   * A new file importing 'zod' directly would silently opt out of that, so it
+   * is a lint error rather than something to remember.
+   *
+   * Type-only imports are exempt: they are erased before the code runs and
+   * cannot reach the runtime configuration at all.
+   */
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/lib/zod.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'zod',
+              message: "Import { z } from '@/lib/zod' so the jitless configuration applies.",
+              allowTypeImports: true,
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   // --- React ------------------------------------------------------------------
   {
     files: ['**/*.tsx'],

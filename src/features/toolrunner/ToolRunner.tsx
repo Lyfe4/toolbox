@@ -73,7 +73,13 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
 
   const [tool, setTool] = useState<ErasedTool | null>(null);
   const [options, setOptions] = useState<Record<string, unknown>>({});
-  const [text, setText] = useState('');
+  /*
+   * Keyed by port id, because a tool can have more than one input - `diff`
+   * takes two. A single string would have made the second port unusable here
+   * while remaining usable on the canvas, which is exactly the kind of drift
+   * that leaves a route quietly half-built.
+   */
+  const [texts, setTexts] = useState<Record<string, string>>({});
   const [file, setFile] = useState<LoadedFile | null>(null);
   const announced = useRef<ExecutionState | null>(null);
 
@@ -113,10 +119,12 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
     }
   }, [state, notify, entry.name]);
 
-  const port = entry.inputs[0];
+  // A file goes to the first port that actually takes bytes, falling back to
+  // the first port so a text-only tool can still be handed a text file.
+  const filePort = entry.inputs.find((input) => input.types.includes('bytes')) ?? entry.inputs[0];
 
   async function onRun(): Promise<void> {
-    if (!tool || !port) return;
+    if (!tool) return;
 
     // Read from the File on each run rather than caching bytes in state: the
     // File is the source of truth and the read is cheap next to the run.
@@ -125,14 +133,28 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
     const buffer = file ? await file.file.arrayBuffer() : null;
     const bytes: Bytes | null = buffer === null ? null : new Uint8Array(buffer);
 
-    const built = buildInputValue(port, text, bytes, file);
-    if ('error' in built) {
-      notify({ title: 'Cannot run', description: built.error, tone: 'error' });
-      return;
+    // Built mutably and frozen into the readonly ToolInputs at the end: the
+    // engine's type says "you may not edit these", which is right for a
+    // consumer and unhelpful while assembling them.
+    const inputs: Record<string, ToolValue> = {};
+    for (const input of entry.inputs) {
+      const isFileTarget = file !== null && input.id === filePort?.id;
+      const built = buildInputValue(
+        input,
+        texts[input.id] ?? '',
+        isFileTarget ? bytes : null,
+        isFileTarget ? file : null,
+      );
+      if ('error' in built) {
+        notify({ title: 'Cannot run', description: built.error, tone: 'error' });
+        return;
+      }
+      // Assigned through a local so the union stays narrowed; the key is a
+      // port id from the manifest, never anything user-supplied.
+      inputs[input.id] = built.value;
     }
 
-    const inputs: ToolInputs = { [port.id]: built.value };
-    run(inputs, options);
+    run(inputs satisfies ToolInputs, options);
   }
 
   return (
@@ -140,24 +162,42 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
       <div className={styles.column}>
         <Panel title="Input">
           <div className={styles.stack}>
-            <TextArea
-              className={styles.output}
-              aria-label={`${entry.name} input`}
-              placeholder={port?.description ?? 'Paste your input here'}
-              value={text}
-              spellCheck={false}
-              disabled={file !== null}
-              onChange={(event) => {
-                setText(event.target.value);
-              }}
-              onKeyDown={(event) => {
-                // Ctrl/Cmd+Enter runs, the convention for "submit this box".
-                if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-                  event.preventDefault();
-                  void onRun();
-                }
-              }}
-            />
+            {entry.inputs.map((input) => (
+              <div key={input.id} className={styles.stack}>
+                {/*
+                  Only labelled visibly when there is more than one port. With
+                  one input the panel heading already says "Input"; with two,
+                  "Original" and "Changed" have to be distinguishable on screen
+                  as well as to a screen reader.
+                */}
+                {entry.inputs.length > 1 ? <p className={styles.hint}>{input.label}</p> : null}
+                <TextArea
+                  className={styles.output}
+                  // Naming the port only matters when there is more than one;
+                  // "Base64 Input input" is worse than "Base64 input".
+                  aria-label={
+                    entry.inputs.length > 1
+                      ? `${entry.name} ${input.label} input`
+                      : `${entry.name} input`
+                  }
+                  placeholder={input.description ?? 'Paste your input here'}
+                  value={texts[input.id] ?? ''}
+                  spellCheck={false}
+                  disabled={file !== null && input.id === filePort?.id}
+                  onChange={(event) => {
+                    const { value } = event.target;
+                    setTexts((current) => ({ ...current, [input.id]: value }));
+                  }}
+                  onKeyDown={(event) => {
+                    // Ctrl/Cmd+Enter runs, the convention for "submit this box".
+                    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                      event.preventDefault();
+                      void onRun();
+                    }
+                  }}
+                />
+              </div>
+            ))}
 
             <FileDrop
               loaded={file}
@@ -244,6 +284,9 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
                       value={value}
                       label={`${entry.name} ${output.label}`}
                       baseFilename={entry.id}
+                      {...(output.presentation === undefined
+                        ? {}
+                        : { presentation: output.presentation })}
                       onCopy={(copied) => {
                         void navigator.clipboard.writeText(copied).then(
                           () => {

@@ -1,8 +1,8 @@
-import { z } from 'zod';
-
-import { isToolId } from '@/features/registry';
+import { getManifestEntry, isToolId } from '@/features/registry';
 import type { Bytes } from '@/features/registry/types';
 import { decodeBase64, encodeBase64 } from '@/lib/base64';
+import { setOwnProperty } from '@/lib/safeObject';
+import { z } from '@/lib/zod';
 
 import { snapToGrid } from './geometry';
 import { MAX_SHARE_PARAM_LENGTH, SHARE_PARAM } from './shareSearch';
@@ -14,7 +14,7 @@ import { EMPTY_GRAPH, type CanvasEdge, type CanvasNode, type GraphData } from '.
  * A link carries the SHAPE of a pipeline - which tools, where, wired how, with
  * which settings - and nothing else.
  *
- * It never carries what the user typed. `CanvasNode.input` is deliberately
+ * It never carries what the user typed. `CanvasNode.inputs` is deliberately
  * absent from the payload below and from the schema that reads one back: a
  * share link is something people paste into chat and issue trackers, and the
  * whole premise of Patchbay is that pasted data does not leave the machine.
@@ -69,7 +69,30 @@ export type SharePayload = z.output<typeof sharePayloadSchema>;
  * ========================================================================== */
 
 /**
- * Structure only. Note what is NOT read from the node: `input`.
+ * Options minus anything the tool declared a secret.
+ *
+ * Options DO travel in a share link - that is the point, a link should
+ * reproduce the pipeline as configured. A JWT signing key is configuration by
+ * the type system's reckoning and a credential by any other, so the tool names
+ * it in `secretOptionKeys` and it is dropped here.
+ *
+ * Built by copying the keys that are allowed rather than deleting the ones
+ * that are not, so a bug in the key list omits an option rather than leaking
+ * one.
+ */
+function shareableOptions(node: CanvasNode): Record<string, unknown> {
+  const secrets = new Set<string>(getManifestEntry(node.toolId).secretOptionKeys ?? []);
+  const out: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(node.options)) {
+    if (!secrets.has(key)) setOwnProperty(out, key, value);
+  }
+
+  return out;
+}
+
+/**
+ * Structure only. Note what is NOT read from the node: `inputs`.
  *
  * Written as an explicit field list rather than a spread-and-delete, so adding
  * a field to CanvasNode cannot silently start leaking it into share links.
@@ -80,7 +103,7 @@ export function toSharePayload(graph: GraphData): SharePayload {
     n: graph.nodeOrder.flatMap((id): SharePayload['n'] => {
       const node = graph.nodes[id];
       if (!node) return [];
-      return [[node.id, node.toolId, node.position.x, node.position.y, { ...node.options }]];
+      return [[node.id, node.toolId, node.position.x, node.position.y, shareableOptions(node)]];
     }),
     e: graph.edgeOrder.flatMap((id): SharePayload['e'] => {
       const edge = graph.edges[id];
@@ -226,7 +249,7 @@ export function fromSharePayload(payload: SharePayload): GraphData {
       position: { x: snapToGrid(x), y: snapToGrid(y) },
       options,
       // Always empty: input never travels in a link, so it never comes back.
-      input: '',
+      inputs: {},
     };
     nodeOrder.push(id);
   }

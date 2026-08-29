@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { z } from 'zod';
+
+import { z } from '@/lib/zod';
 
 import {
   canAcceptValue,
@@ -52,6 +53,7 @@ defineTool({
     strategy: 'main',
     requiresWasm: false,
     wasmModules: [],
+    requiresOffscreenCanvas: false,
     reportsProgress: false,
     timeoutMs: 1000,
     maxInputBytes: 1024,
@@ -83,6 +85,7 @@ defineTool({
     strategy: 'main',
     requiresWasm: false,
     wasmModules: [],
+    requiresOffscreenCanvas: false,
     reportsProgress: false,
     timeoutMs: 1000,
     maxInputBytes: 1024,
@@ -106,6 +109,7 @@ defineTool({
     strategy: 'main',
     requiresWasm: false,
     wasmModules: [],
+    requiresOffscreenCanvas: false,
     reportsProgress: false,
     timeoutMs: 1000,
     maxInputBytes: 1024,
@@ -208,6 +212,7 @@ describe('eraseTool', () => {
       strategy: 'main',
       requiresWasm: false,
       wasmModules: [],
+      requiresOffscreenCanvas: false,
       reportsProgress: false,
       timeoutMs: 1000,
       maxInputBytes: 1024,

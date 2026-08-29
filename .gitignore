@@ -33,3 +33,6 @@ pnpm-debug.log*
 
 # Note: src/routeTree.gen.ts is generated but IS committed, so that a fresh
 # clone can typecheck before it has ever run a build.
+
+# Editor/agent workspace config (dev-server launch settings, scratch state).
+.claude/

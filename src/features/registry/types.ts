@@ -59,6 +59,18 @@ export function isJsonArray(value: JsonValue): value is readonly JsonValue[] {
   return Array.isArray(value);
 }
 
+/**
+ * True when a JsonValue is a plain object.
+ *
+ * Also a type predicate, and for the same reason as `isJsonArray`: writing the
+ * three checks inline does not narrow `JsonValue` down to the object member,
+ * because `Array.isArray` narrows to `any[]` rather than excluding the array
+ * member of a readonly union. Stating the predicate explicitly does.
+ */
+export function isJsonObject(value: JsonValue): value is Readonly<Record<string, JsonValue>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /** sRGB colour with an alpha channel, all channels 0-1 except alpha. */
 export interface ColorPayload {
   readonly r: number;
@@ -155,7 +167,19 @@ export interface InputPort extends PortBase {
   readonly required: boolean;
 }
 
-export type OutputPort = PortBase;
+export interface OutputPort extends PortBase {
+  /**
+   * A hint about how to draw this value, for the rare case where the data
+   * type alone is not enough.
+   *
+   * A diff is `json` - it has to be, because a screen reader needs the rows as
+   * structure rather than as a wall of prefixed text - but so is half of
+   * everything else, and a JSON tree is the wrong view for it. This says which
+   * renderer to reach for. It is a presentation hint only: the value is
+   * ordinary JSON, and any consumer that ignores this still gets valid data.
+   */
+  readonly presentation?: 'diff';
+}
 
 /** True when an output port's declared types overlap an input port's. */
 export function canConnect(from: OutputPort, to: InputPort): boolean {
@@ -269,6 +293,17 @@ export type OptionField<TOptions> =
       readonly min: number;
       readonly max: number;
       readonly step: number;
+    })
+  | (OptionFieldBase<TOptions> & {
+      readonly control: 'text';
+      readonly placeholder?: string;
+      /**
+       * Renders as a password field and is never echoed in a share link.
+       * Options DO travel in share links, so a secret must opt out - see
+       * `secretOptionKeys` on the tool definition.
+       */
+      readonly secret?: boolean;
+      readonly multiline?: boolean;
     });
 
 /* ========================================================================== *
@@ -290,12 +325,29 @@ export interface ExecutionMeta {
   /** Declared shape for WASM-backed tools. Nothing needs this yet. */
   readonly requiresWasm: boolean;
   readonly wasmModules: readonly string[];
+  /**
+   * True when the tool's worker path needs `OffscreenCanvas`.
+   *
+   * Declared rather than probed inside the tool, because by the time `run`
+   * executes the context has already been chosen and cannot be changed. The
+   * engine reads this and downgrades the tool to the main thread on browsers
+   * that lack the API - Safari before 16.4, Firefox before 105.
+   */
+  readonly requiresOffscreenCanvas: boolean;
   /** True when run() calls context.reportProgress, so the UI can show a bar. */
   readonly reportsProgress: boolean;
   /** Worker is terminated and replaced if a run exceeds this. */
   readonly timeoutMs: number;
   /** Inputs larger than this are rejected before the tool is even loaded. */
   readonly maxInputBytes: number;
+  /**
+   * Shown instead of the generic timeout text when this tool runs over.
+   *
+   * A regex that backtracks catastrophically needs to say "this pattern is too
+   * slow", not "the tool took too long" - the user has to know it is their
+   * pattern, not the app.
+   */
+  readonly timeoutMessage?: string;
 }
 
 export interface ToolRunContext {
@@ -370,6 +422,13 @@ export interface ToolDefinition<
 
   readonly execution: ExecutionMeta;
 
+  /**
+   * Option keys holding user secrets, stripped before a graph is shared.
+   *
+   * Options normally travel in a share link. A JWT signing key does not.
+   */
+  readonly secretOptionKeys?: readonly (keyof ZodOutput<TSchema> & string)[];
+
   readonly run: (
     args: ToolRunArgs<TInputs, ZodOutput<TSchema>>,
   ) => MaybePromise<ToolResult<OutputsOf<TOutputs>>>;
@@ -422,6 +481,7 @@ export interface ErasedTool {
   readonly defaultOptions: unknown;
   readonly optionFields: readonly OptionField<Record<string, unknown>>[];
   readonly execution: ExecutionMeta;
+  readonly secretOptionKeys: readonly string[];
   readonly run: (args: {
     readonly inputs: ToolInputs;
     readonly options: unknown;
@@ -479,6 +539,7 @@ export function eraseTool<
     defaultOptions: tool.defaultOptions,
     optionFields: tool.optionFields,
     execution: tool.execution,
+    secretOptionKeys: tool.secretOptionKeys ?? [],
     run: ({ inputs, options, context }) => {
       const checked = validateInputs(tool.inputs, inputs);
       if (!checked.ok) return checked;

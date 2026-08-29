@@ -46,31 +46,38 @@ export function portRowCount(entry: ToolManifestEntry): number {
   return Math.max(entry.inputs.length, entry.outputs.length);
 }
 
-export function nodeHeight(entry: ToolManifestEntry, withTypedInput = false): number {
+export function nodeHeight(entry: ToolManifestEntry, typedInputs = 0): number {
   return (
     HEADER_HEIGHT +
     SUMMARY_HEIGHT +
     portRowCount(entry) * PORT_ROW_HEIGHT +
     BODY_PADDING * 2 +
-    (withTypedInput ? INPUT_HEIGHT : 0) +
+    typedInputs * INPUT_HEIGHT +
     FOOTER_HEIGHT
   );
 }
 
 /**
- * True when a node takes typed input: its first input port exists and nothing
- * is wired into it. Ports sit above the editor, so this changes the node's
- * height without moving any port - wire geometry is unaffected.
+ * The input ports a node takes typed text for: every input port with no wire.
+ *
+ * The editors sit BELOW the ports, so adding one changes the node's height
+ * without moving any connector - wire geometry is unaffected.
  */
-export function nodeTakesTypedInput(graph: GraphData, node: CanvasNode): boolean {
-  const first = getManifestEntry(node.toolId).inputs[0];
-  if (!first) return false;
-
+export function typedInputPorts(graph: GraphData, node: CanvasNode): readonly string[] {
+  const wired = new Set<string>();
   for (const edgeId of graph.edgeOrder) {
     const edge = graph.edges[edgeId];
-    if (edge?.to.nodeId === node.id && edge.to.portId === first.id) return false;
+    if (edge?.to.nodeId === node.id) wired.add(edge.to.portId);
   }
-  return true;
+
+  return getManifestEntry(node.toolId)
+    .inputs.filter((port) => !wired.has(port.id))
+    .map((port) => port.id);
+}
+
+/** How many typed-input editors a node shows. */
+export function typedInputCount(graph: GraphData, node: CanvasNode): number {
+  return typedInputPorts(graph, node).length;
 }
 
 /** Vertical centre of the port at `index`, relative to the node's top edge. */
@@ -132,12 +139,12 @@ export interface Rect {
   readonly height: number;
 }
 
-export function nodeRect(node: CanvasNode, withTypedInput = false): Rect {
+export function nodeRect(node: CanvasNode, typedInputs = 0): Rect {
   return {
     x: node.position.x,
     y: node.position.y,
     width: NODE_WIDTH,
-    height: nodeHeight(getManifestEntry(node.toolId), withTypedInput),
+    height: nodeHeight(getManifestEntry(node.toolId), typedInputs),
   };
 }
 
@@ -153,7 +160,7 @@ export function graphBounds(graph: GraphData): Rect | null {
   for (const id of graph.nodeOrder) {
     const node = graph.nodes[id];
     if (!node) continue;
-    const rect = nodeRect(node, nodeTakesTypedInput(graph, node));
+    const rect = nodeRect(node, typedInputCount(graph, node));
     minX = Math.min(minX, rect.x);
     minY = Math.min(minY, rect.y);
     maxX = Math.max(maxX, rect.x + rect.width);

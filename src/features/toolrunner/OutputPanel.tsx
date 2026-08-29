@@ -1,9 +1,11 @@
 import { Button } from '@/components/Button';
 import { ErrorIcon } from '@/components/Icon';
 import { TextArea } from '@/components/TextArea';
-import type { ToolError, ToolValue } from '@/features/registry/types';
+import type { OutputPort, ToolError, ToolValue } from '@/features/registry/types';
 import { formatBytes, sniffBytes } from '@/lib/sniff';
 
+import { ColorView } from './ColorView';
+import { DiffView } from './DiffView';
 import styles from './runner.module.css';
 
 /* -------------------------------------------------------------------------- *
@@ -50,11 +52,26 @@ export interface OutputViewProps {
   readonly value: ToolValue;
   readonly label: string;
   readonly baseFilename: string;
+  /** The port's rendering hint, when it declared one. See OutputPort. */
+  readonly presentation?: OutputPort['presentation'];
   readonly onCopy: (text: string) => void;
   readonly onDownload: (blob: Blob, filename: string) => void;
 }
 
-export function OutputView({ value, label, baseFilename, onCopy, onDownload }: OutputViewProps) {
+export function OutputView({
+  value,
+  label,
+  baseFilename,
+  presentation,
+  onCopy,
+  onDownload,
+}: OutputViewProps) {
+  // The hint is checked before the type switch, because it exists precisely
+  // for values whose data type does not determine how to draw them.
+  if (presentation === 'diff' && value.type === 'json') {
+    return <DiffView value={value.data} label={label} />;
+  }
+
   switch (value.type) {
     case 'text':
       return (
@@ -149,8 +166,10 @@ export function OutputView({ value, label, baseFilename, onCopy, onDownload }: O
         />
       );
 
-    case 'image':
     case 'color':
+      return <ColorView color={value.color} label={label} />;
+
+    case 'image':
     case 'datetime':
       // Declared in the type system, but no tool produces one yet. Saying so is
       // better than rendering nothing and looking broken.

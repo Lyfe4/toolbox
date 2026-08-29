@@ -17,7 +17,7 @@ import { EMPTY_GRAPH, type CanvasNode, type GraphData, type PortRef } from './ty
 import { viewportForBounds, zoomAbout, DEFAULT_VIEWPORT } from './viewportStore';
 
 function node(id: string, toolId: 'base64' | 'structured-data', x = 0, y = 0): CanvasNode {
-  return { id, toolId, position: { x, y }, options: {}, input: '' };
+  return { id, toolId, position: { x, y }, options: {}, inputs: {} };
 }
 
 function graphOf(...nodes: CanvasNode[]): GraphData {

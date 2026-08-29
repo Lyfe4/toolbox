@@ -113,7 +113,7 @@ describe('adding tools', () => {
     const graph = useCanvasStore.getState().graph;
     expect(graph.edgeOrder).toHaveLength(1);
     // Structure only: a preset ships no data.
-    for (const id of graph.nodeOrder) expect(graph.nodes[id]?.input).toBe('');
+    for (const id of graph.nodeOrder) expect(graph.nodes[id]?.inputs).toEqual({});
     expect(announcer()).toHaveTextContent('No data included');
   });
 
@@ -122,7 +122,9 @@ describe('adding tools', () => {
     renderCanvas();
 
     await user.click(screen.getByRole('button', { name: /Add tool/ }));
-    await user.type(screen.getByRole('combobox', { name: 'Search tools' }), 'compare');
+    // The preset's own name, not a word from it: "compare" also matches the
+    // diff tool now, and the tool sorts above the preset.
+    await user.type(screen.getByRole('combobox', { name: 'Search tools' }), 'Encode, then');
     await user.keyboard('{Enter}');
 
     await waitFor(() => {
@@ -241,21 +243,21 @@ describe('nodes', () => {
             toolId: 'base64',
             position: { x: 400, y: 0 },
             options: {},
-            input: '',
+            inputs: {},
           },
           left: {
             id: 'left',
             toolId: 'base64',
             position: { x: 0, y: 0 },
             options: {},
-            input: '',
+            inputs: {},
           },
           below: {
             id: 'below',
             toolId: 'base64',
             position: { x: 200, y: 400 },
             options: {},
-            input: '',
+            inputs: {},
           },
         },
         // Insertion order deliberately does NOT match spatial order.
@@ -417,6 +419,13 @@ describe('connecting without a pointer', () => {
     await user.keyboard('{Enter}');
     await waitFor(() => {
       expect(useCanvasStore.getState().graph.edgeOrder).toHaveLength(1);
+    });
+    // The claim is about the SETTLED canvas. Running axe while the connect
+    // dialog is still unmounting scans a half-torn-down tree, which made this
+    // fail once in a while under parallel load - a flaky test, not a flaky
+    // canvas, but the assertion should say what it means either way.
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
     });
 
     await expectNoAxeViolations(container);

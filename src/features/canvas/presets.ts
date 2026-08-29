@@ -115,7 +115,7 @@ export function instantiatePreset(
       position: { x: origin.x + spec.offset.x, y: origin.y + spec.offset.y },
       options: { ...spec.options },
       // No bundled data, ever.
-      input: '',
+      inputs: {},
     };
   });
 

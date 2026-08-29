@@ -6,6 +6,7 @@ import { useToast } from '@/components/Toast';
 import { VisuallyHidden } from '@/components/VisuallyHidden';
 import { idleState } from '@/features/execution/graph';
 import { usePipelineStore } from '@/features/execution/pipelineStore';
+import { getSharedEngine } from '@/features/execution/sharedEngine';
 import { getManifestEntry, TOOL_MANIFEST, type ToolId } from '@/features/registry';
 import { cx } from '@/lib/cx';
 
@@ -13,14 +14,7 @@ import styles from './canvas.module.css';
 import { CanvasNodeView } from './CanvasNodeView';
 import { CommandDialog, type DialogOption } from './CommandDialog';
 import { checkConnection, connectionCount, validTargetsFor } from './connections';
-import {
-  GRID,
-  MAX_ZOOM,
-  MIN_ZOOM,
-  NODE_WIDTH,
-  nodeTakesTypedInput,
-  spatialOrder,
-} from './geometry';
+import { GRID, MAX_ZOOM, MIN_ZOOM, NODE_WIDTH, spatialOrder, typedInputPorts } from './geometry';
 import { useCanvasStore } from './graphStore';
 import { createDebouncedSaver, loadGraph } from './persistence';
 import { PIPELINE_PRESETS } from './presets';
@@ -39,6 +33,8 @@ type Overlay =
   | { readonly kind: 'shortcuts' }
   | { readonly kind: 'choose-output'; readonly nodeId: NodeId }
   | { readonly kind: 'choose-target'; readonly from: PortRef };
+
+const EMPTY_PORTS: readonly string[] = [];
 
 const NUDGE = GRID;
 const BIG_NUDGE = GRID * 8;
@@ -135,6 +131,41 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
   useEffect(() => {
     usePipelineStore.getState().schedule(graph);
   }, [graph]);
+
+  /*
+   * COLD START
+   *
+   * Two costs used to land inside the user's first run, where they read as the
+   * tool being slow rather than as the app starting up:
+   *
+   *   - booting the worker (fetching and evaluating its module graph), and
+   *   - importing the tool's own chunk inside that worker.
+   *
+   * Both are paid here instead. The worker is started when the canvas mounts,
+   * because a canvas exists to run things. A tool's chunk is fetched when its
+   * node is ADDED - a deliberate act - and not a moment sooner: prefetching
+   * every tool in the palette on hover would trade a few milliseconds of
+   * latency for hundreds of kilobytes nobody asked for.
+   *
+   * Both calls are optimisations and both swallow their own failures, so a
+   * browser that will not give us a worker gets the old behaviour rather than
+   * a broken canvas.
+   */
+  useEffect(() => {
+    getSharedEngine().warmUp();
+  }, []);
+
+  const toolsOnCanvas = useMemo(
+    () => [...new Set(graph.nodeOrder.flatMap((id) => graph.nodes[id]?.toolId ?? []))],
+    [graph],
+  );
+
+  useEffect(() => {
+    const engine = getSharedEngine();
+    // `prefetch` is idempotent per tool, so re-running this for an unrelated
+    // graph change costs a Set lookup.
+    for (const toolId of toolsOnCanvas) engine.prefetch(toolId);
+  }, [toolsOnCanvas]);
 
   useEffect(
     () => () => {
@@ -367,8 +398,8 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
   }, [store, notify]);
 
   const onInputChange = useCallback(
-    (nodeId: string, value: string) => {
-      store.getState().setNodeInput(nodeId, value);
+    (nodeId: string, portId: string, value: string) => {
+      store.getState().setNodeInput(nodeId, portId, value);
     },
     [store],
   );
@@ -716,6 +747,16 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
 
   const selectedNodes = useMemo(() => new Set(selection.nodes), [selection.nodes]);
 
+  /** Which ports on each node take typed input, computed once per graph. */
+  const typedInputFor = useMemo(() => {
+    const map = new Map<NodeId, readonly string[]>();
+    for (const id of graph.nodeOrder) {
+      const node = graph.nodes[id];
+      if (node) map.set(id, typedInputPorts(graph, node));
+    }
+    return map;
+  }, [graph]);
+
   /** Wires feeding a node that is running right now. */
   const activeEdges = useMemo(() => {
     const active = new Set<string>();
@@ -874,7 +915,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
               selected={selectedNodes.has(id)}
               connections={connectionCount(graph, id)}
               run={runStates[id] ?? idleState()}
-              acceptsTypedInput={nodeTakesTypedInput(graph, node)}
+              typedInputPorts={typedInputFor.get(id) ?? EMPTY_PORTS}
               linkState={draft === null ? 'none' : valid && valid.size > 0 ? 'valid' : 'invalid'}
               validInputPorts={valid ?? emptySet}
               connectedPorts={connectedPorts.get(id) ?? emptySet}

@@ -24,7 +24,7 @@ function node(
     toolId,
     position: { x: 0, y: 0 },
     options: { mode: 'decode' },
-    input,
+    inputs: { input },
   };
 }
 
@@ -118,7 +118,7 @@ describe('user data never enters a share link', () => {
       expect(JSON.stringify(decoded.graph)).not.toContain(secret);
       // Every node comes back with an empty input, whatever was typed.
       for (const id of decoded.graph.nodeOrder) {
-        expect(decoded.graph.nodes[id]?.input).toBe('');
+        expect(decoded.graph.nodes[id]?.inputs).toEqual({});
       }
     }
   });
@@ -137,6 +137,53 @@ describe('user data never enters a share link', () => {
 /* ========================================================================== *
  * Round trip
  * ========================================================================== */
+
+/*
+ * Options DO travel in a share link - that is the point of one. A JWT signing
+ * key is an option by the type system's reckoning and a credential by any
+ * other, so a tool can name such keys and they are dropped on the way out.
+ */
+describe('secret options never enter a share link', () => {
+  const withKey: GraphData = {
+    nodes: {
+      n1: {
+        id: 'n1',
+        toolId: 'jwt-decode',
+        position: { x: 0, y: 0 },
+        options: { key: 'super-secret-signing-key', keyEncoding: 'utf8', clockToleranceSec: 30 },
+        inputs: {},
+      },
+    },
+    nodeOrder: ['n1'],
+    edges: {},
+    edgeOrder: [],
+    nextId: 2,
+  };
+
+  it('drops the option the tool declared secret', () => {
+    const options = toSharePayload(withKey).n[0]?.[4];
+    expect(options).toEqual({ keyEncoding: 'utf8', clockToleranceSec: 30 });
+    expect(options).not.toHaveProperty('key');
+  });
+
+  it('keeps the secret out of the encoded parameter entirely', async () => {
+    const param = await encodeGraphToParam(withKey);
+    const url = await buildShareUrl(withKey, 'https://patchbay.test');
+
+    // The payload is compressed, so decode it back rather than searching the
+    // ciphertext-looking base64 for a substring that could never appear.
+    const restored = await decodeParamToGraph(param);
+    expect(restored.status).toBe('ok');
+    if (restored.status !== 'ok') return;
+    expect(restored.graph.nodes.n1?.options).not.toHaveProperty('key');
+    expect(url).not.toContain('super-secret');
+  });
+
+  it('does not disturb the options of a tool with no secrets', () => {
+    const options = toSharePayload(pipeline()).n[1]?.[4];
+    expect(options).toMatchObject({ target: 'yaml', indent: 2 });
+  });
+});
 
 describe('round trip', () => {
   it('restores the structure, positions, wires and options', async () => {

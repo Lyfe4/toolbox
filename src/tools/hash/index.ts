@@ -50,6 +50,7 @@ export const hashTool = defineTool({
     strategy: 'worker',
     requiresWasm: false,
     wasmModules: [],
+    requiresOffscreenCanvas: false,
     reportsProgress: false,
     timeoutMs: 30_000,
     maxInputBytes: 64 * 1024 * 1024,

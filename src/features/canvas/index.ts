@@ -34,7 +34,7 @@ export {
   zoomAbout,
   type Viewport,
 } from './viewportStore';
-export { canvasSearchSchema, type CanvasSearch } from './shareSearch';
+export { validateCanvasSearch, type CanvasSearch } from './shareSearch';
 export {
   buildShareUrl,
   decodeParamToGraph,

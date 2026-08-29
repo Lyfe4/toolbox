@@ -24,7 +24,31 @@ export interface CancelRequest {
   readonly requestId: string;
 }
 
-export type WorkerRequest = ExecuteRequest | CancelRequest;
+/**
+ * "Are you up yet?"
+ *
+ * Constructing a Worker starts fetching and evaluating its module graph, but
+ * says nothing about when that finished. A round trip is the only way to know,
+ * and knowing is what lets the canvas pay for the boot on mount instead of on
+ * the user's first run.
+ */
+export interface PingRequest {
+  readonly kind: 'ping';
+}
+
+/**
+ * "Import this tool now, you will need it shortly."
+ *
+ * The worker has its own module registry, so a tool imported on the main
+ * thread is still a fresh import inside the worker. Sent when a node is added
+ * to the canvas - a deliberate act by the user, not a guess.
+ */
+export interface PreloadRequest {
+  readonly kind: 'preload';
+  readonly toolId: ToolId;
+}
+
+export type WorkerRequest = ExecuteRequest | CancelRequest | PingRequest | PreloadRequest;
 
 export interface ProgressResponse {
   readonly kind: 'progress';
@@ -34,13 +58,33 @@ export interface ProgressResponse {
   readonly label: string | null;
 }
 
+/**
+ * Where a run's time actually went, measured inside the worker.
+ *
+ * Durations rather than timestamps: a worker's `performance.now()` is measured
+ * from its own time origin, so its clock readings mean nothing on the main
+ * thread. Durations survive the trip.
+ */
+export interface RunTiming {
+  /** Fetching and evaluating the tool's chunk. Zero once it is cached. */
+  readonly importMs: number;
+  /** The tool's own work. */
+  readonly runMs: number;
+}
+
 export interface SettledResponse {
   readonly kind: 'settled';
   readonly requestId: string;
   readonly result: ToolResult<ToolOutputs>;
+  readonly timing: RunTiming;
 }
 
-export type WorkerResponse = ProgressResponse | SettledResponse;
+/** Sent once, in reply to a ping, when the worker's module graph is live. */
+export interface ReadyResponse {
+  readonly kind: 'ready';
+}
+
+export type WorkerResponse = ProgressResponse | SettledResponse | ReadyResponse;
 
 /**
  * Collects the ArrayBuffers inside a set of values so they can be TRANSFERRED

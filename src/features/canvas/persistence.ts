@@ -1,6 +1,5 @@
-import { z } from 'zod';
-
-import { isToolId } from '@/features/registry';
+import { getManifestEntry, isToolId } from '@/features/registry';
+import { z } from '@/lib/zod';
 
 import { EMPTY_GRAPH, type GraphData } from './types';
 
@@ -12,10 +11,10 @@ import { EMPTY_GRAPH, type GraphData } from './types';
  * simply be corrupt - so it is parsed with Zod and cross-checked against the
  * live tool registry before it is allowed anywhere near the store.
  */
-export const GRAPH_STORAGE_KEY = 'patchbay:graph:v2';
+export const GRAPH_STORAGE_KEY = 'patchbay:graph:v3';
 
 /** Bump when the persisted shape changes, and add a migration below. */
-export const CURRENT_GRAPH_VERSION = 2;
+export const CURRENT_GRAPH_VERSION = 3;
 
 const pointSchema = z.object({
   // z.number() already rejects NaN and Infinity in Zod 4.
@@ -35,8 +34,8 @@ const nodeSchema = z.object({
   toolId: z.string().refine(isToolId, 'Unknown tool'),
   position: pointSchema,
   options: z.record(z.string(), z.unknown()),
-  /** User data. Saved locally; never serialised into a share URL. */
-  input: z.string(),
+  /** User data, per input port. Saved locally; never in a share URL. */
+  inputs: z.record(z.string(), z.string()),
 });
 
 const edgeSchema = z.object({
@@ -78,9 +77,10 @@ export function toPersisted(graph: GraphData): PersistedGraph {
 /**
  * Upgrades an older payload to the current version.
  *
- * There is only one version so far, so this is a pass-through - but it exists
- * now, with the switch already in place, so that adding v2 is a new `case`
- * rather than a refactor of the loading path under time pressure.
+ * Migrations chain: v1 is rewritten to v2 and handed straight back in, so each
+ * step only has to know about the one before it. Whatever comes out is still
+ * validated against the current schema, so a migration is allowed to be
+ * optimistic - it cannot let a malformed graph through.
  */
 function migrate(raw: unknown): unknown {
   if (typeof raw !== 'object' || raw === null) return raw;
@@ -88,7 +88,9 @@ function migrate(raw: unknown): unknown {
 
   switch (version) {
     case 1:
-      return migrateV1ToV2(raw as Record<string, unknown>);
+      return migrate(migrateV1ToV2(raw as Record<string, unknown>));
+    case 2:
+      return migrateV2ToV3(raw as Record<string, unknown>);
     case CURRENT_GRAPH_VERSION:
       return raw;
     default:
@@ -106,7 +108,11 @@ function migrate(raw: unknown): unknown {
  * user only has to retype what was never saved in the first place.
  */
 function migrateV1ToV2(raw: Record<string, unknown>): unknown {
-  const nodes: readonly unknown[] = Array.isArray(raw.nodes) ? raw.nodes : [];
+  // A corrupt `nodes` is passed through untouched rather than quietly replaced
+  // with an empty array: silently repairing it would turn a broken save into a
+  // successfully-loaded empty canvas with no explanation.
+  if (!Array.isArray(raw.nodes)) return { ...raw, version: 2 };
+  const nodes: readonly unknown[] = raw.nodes;
 
   return {
     ...raw,
@@ -122,6 +128,44 @@ function migrateV1ToV2(raw: Record<string, unknown>): unknown {
         if (key in source) carried[key] = source[key];
       }
       return { ...carried, input: '' };
+    }),
+  };
+}
+
+/**
+ * v2 -> v3.
+ *
+ * v3 replaced the node's single `input` string with a map keyed by input port,
+ * so a tool with two required inputs (diff) can take both. The old value
+ * belonged to the tool's first port, which is where it goes.
+ */
+function migrateV2ToV3(raw: Record<string, unknown>): unknown {
+  if (!Array.isArray(raw.nodes)) return { ...raw, version: CURRENT_GRAPH_VERSION };
+  const nodes: readonly unknown[] = raw.nodes;
+
+  return {
+    ...raw,
+    version: CURRENT_GRAPH_VERSION,
+    nodes: nodes.map((node): unknown => {
+      if (typeof node !== 'object' || node === null) return node;
+
+      const source = node as Record<string, unknown>;
+      const { input, ...rest } = source;
+      const toolId = source.toolId;
+
+      // The port id comes from the registry rather than being assumed to be
+      // "input", so this stays correct if a tool ever renames its first port.
+      const firstPort =
+        typeof toolId === 'string' && isToolId(toolId)
+          ? getManifestEntry(toolId).inputs[0]?.id
+          : undefined;
+
+      const inputs =
+        typeof input === 'string' && input !== '' && firstPort !== undefined
+          ? { [firstPort]: input }
+          : {};
+
+      return { ...rest, inputs };
     }),
   };
 }

@@ -26,6 +26,12 @@ export interface ToolManifestEntry {
    * in step with the implementation by registry.test.ts.
    */
   readonly execution: ExecutionMeta;
+  /**
+   * Option keys holding user secrets. Eager, unlike the rest of the tool,
+   * because share links are built without loading a single tool module and the
+   * encoder has to know what to leave out before it can do that.
+   */
+  readonly secretOptionKeys?: readonly string[];
 }
 
 /**
@@ -54,6 +60,7 @@ export const TOOL_MANIFEST = [
       strategy: 'worker',
       requiresWasm: false,
       wasmModules: [],
+      requiresOffscreenCanvas: false,
       reportsProgress: false,
       timeoutMs: 15_000,
       maxInputBytes: 32 * 1024 * 1024,
@@ -87,6 +94,7 @@ export const TOOL_MANIFEST = [
       strategy: 'worker',
       requiresWasm: false,
       wasmModules: [],
+      requiresOffscreenCanvas: false,
       reportsProgress: false,
       timeoutMs: 15_000,
       maxInputBytes: 16 * 1024 * 1024,
@@ -112,14 +120,206 @@ export const TOOL_MANIFEST = [
       strategy: 'worker',
       requiresWasm: false,
       wasmModules: [],
+      requiresOffscreenCanvas: false,
       reportsProgress: false,
       timeoutMs: 30_000,
       maxInputBytes: 64 * 1024 * 1024,
     },
   },
+  {
+    id: 'jwt-decode',
+    name: 'JWT',
+    summary: 'Decode a JSON Web Token, and verify its signature when you supply the key.',
+    category: 'encoding',
+    keywords: ['jwt', 'jws', 'token', 'bearer', 'claims', 'signature', 'hs256', 'rs256'],
+    inputs: [
+      {
+        id: 'input',
+        label: 'Token',
+        types: ['text'],
+        required: true,
+        description: 'A compact JWT: header.payload.signature.',
+      },
+    ],
+    outputs: [
+      {
+        id: 'output',
+        label: 'Decoded',
+        types: ['json'],
+        description: 'Signature verdict first, then the header and payload.',
+      },
+    ],
+    secretOptionKeys: ['key'],
+    execution: {
+      strategy: 'worker',
+      requiresWasm: false,
+      wasmModules: [],
+      requiresOffscreenCanvas: false,
+      reportsProgress: false,
+      timeoutMs: 10_000,
+      maxInputBytes: 256 * 1024,
+    },
+  },
+  {
+    id: 'diff',
+    name: 'Diff',
+    summary: 'Compare two texts line by line, with word-level highlighting.',
+    category: 'text',
+    keywords: ['compare', 'patch', 'unified', 'changes', 'delta'],
+    inputs: [
+      {
+        id: 'original',
+        label: 'Original',
+        types: ['text', 'json', 'bytes'],
+        required: true,
+        description: 'The text to compare against.',
+      },
+      {
+        id: 'changed',
+        label: 'Changed',
+        types: ['text', 'json', 'bytes'],
+        required: true,
+        description: 'The text to compare.',
+      },
+    ],
+    outputs: [
+      {
+        id: 'output',
+        label: 'Unified patch',
+        types: ['text'],
+        description: 'Standard unified diff, ready to paste into a review or apply.',
+      },
+      {
+        id: 'changes',
+        label: 'Changes',
+        types: ['json'],
+        description: 'Row-by-row structure, rendered here as an accessible diff.',
+        presentation: 'diff',
+      },
+    ],
+    execution: {
+      strategy: 'worker',
+      requiresWasm: false,
+      wasmModules: [],
+      requiresOffscreenCanvas: false,
+      reportsProgress: false,
+      timeoutMs: 20_000,
+      maxInputBytes: 8 * 1024 * 1024,
+    },
+  },
+  {
+    id: 'regex-tester',
+    name: 'Regex',
+    summary: 'Test a regular expression against text, with groups and replacement.',
+    category: 'text',
+    keywords: ['regexp', 'pattern', 'match', 'replace', 'capture group'],
+    inputs: [
+      {
+        id: 'input',
+        label: 'Subject',
+        types: ['text'],
+        required: true,
+        description: 'The text to search. The pattern itself is an option.',
+      },
+    ],
+    outputs: [
+      {
+        id: 'output',
+        label: 'Result',
+        types: ['text'],
+        description: 'The replaced text, or a list of matches with their offsets.',
+      },
+      { id: 'matches', label: 'Matches', types: ['json'] },
+    ],
+    execution: {
+      strategy: 'worker',
+      requiresWasm: false,
+      wasmModules: [],
+      requiresOffscreenCanvas: false,
+      reportsProgress: false,
+      timeoutMs: 2_000,
+      timeoutMessage:
+        'That pattern is too slow on this input and was stopped. It is almost certainly backtracking catastrophically - nested quantifiers like (a+)+ are the usual cause.',
+      maxInputBytes: 4 * 1024 * 1024,
+    },
+  },
+  {
+    id: 'color-convert',
+    name: 'Colour',
+    summary: 'Convert between hex, rgb(), hsl() and oklch(), with contrast checks.',
+    category: 'colour',
+    keywords: ['color', 'colour', 'hex', 'rgb', 'hsl', 'oklch', 'contrast', 'wcag', 'a11y'],
+    inputs: [
+      {
+        id: 'input',
+        label: 'Colour',
+        types: ['text', 'color'],
+        required: true,
+        description: '#3b82f6, rgb(59 130 246), hsl(217 91% 60%) or oklch(0.62 0.19 259).',
+      },
+    ],
+    outputs: [
+      { id: 'output', label: 'Converted', types: ['text'] },
+      {
+        id: 'swatch',
+        label: 'Colour',
+        types: ['color'],
+        description: 'The parsed colour, previewed with its contrast against black and white.',
+      },
+      {
+        id: 'all',
+        label: 'Every notation',
+        types: ['json'],
+        description: 'The same colour in all four notations, for wiring into another tool.',
+      },
+    ],
+    execution: {
+      strategy: 'main',
+      requiresWasm: false,
+      wasmModules: [],
+      requiresOffscreenCanvas: false,
+      reportsProgress: false,
+      timeoutMs: 5_000,
+      maxInputBytes: 4 * 1024,
+    },
+  },
+  {
+    id: 'image-convert',
+    name: 'Image',
+    summary: 'Convert and resize images between PNG, JPEG and WebP.',
+    category: 'encoding',
+    keywords: ['png', 'jpeg', 'jpg', 'webp', 'resize', 'compress', 'convert', 'optimise'],
+    inputs: [
+      {
+        id: 'input',
+        label: 'Image',
+        types: ['bytes'],
+        required: true,
+        description: 'A PNG, JPEG, GIF or WebP file. The format is read from the bytes.',
+      },
+    ],
+    outputs: [
+      { id: 'output', label: 'Converted image', types: ['bytes'] },
+      {
+        id: 'info',
+        label: 'Details',
+        types: ['json'],
+        description: 'Dimensions and sizes before and after.',
+      },
+    ],
+    execution: {
+      strategy: 'worker',
+      requiresWasm: false,
+      wasmModules: [],
+      requiresOffscreenCanvas: true,
+      reportsProgress: false,
+      timeoutMs: 60_000,
+      maxInputBytes: 64 * 1024 * 1024,
+    },
+  },
 ] as const satisfies readonly ToolManifestEntry[];
 
-/** The union of every tool id: 'base64' | 'structured-data'. */
+/** The union of every tool id: 'base64' | 'diff' | 'hash' | ... */
 export type ToolId = (typeof TOOL_MANIFEST)[number]['id'];
 
 const BY_ID = new Map<string, ToolManifestEntry>(TOOL_MANIFEST.map((entry) => [entry.id, entry]));

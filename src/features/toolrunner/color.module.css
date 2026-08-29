@@ -1,0 +1,91 @@
+.wrapper {
+  display: grid;
+  gap: var(--pb-space-sm);
+}
+
+.swatch {
+  block-size: 96px;
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-control);
+  /* A chequerboard behind the swatch, so a translucent colour reads as
+     translucent rather than as a slightly different opaque colour. */
+  background-image:
+    linear-gradient(45deg, var(--pb-surface-raised) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--pb-surface-raised) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--pb-surface-raised) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--pb-surface-raised) 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+}
+
+.table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+}
+
+.caption {
+  text-align: start;
+  padding-block-end: var(--pb-space-2xs);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+}
+
+.table th,
+.table td {
+  text-align: start;
+  padding: var(--pb-space-2xs) var(--pb-space-xs);
+  border-block-end: var(--pb-border-width) solid var(--pb-border-hairline);
+}
+
+.table thead th {
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+  font-weight: var(--pb-label-weight);
+}
+
+.table tbody th {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-xs);
+  font-weight: var(--pb-value-weight);
+  color: var(--pb-ink-secondary);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 28px;
+  block-size: 20px;
+  border-radius: var(--pb-radius-control);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+}
+
+.ratio {
+  font-variant-numeric: tabular-nums;
+  color: var(--pb-ink-primary);
+}
+
+.pass {
+  color: var(--pb-signal-ok);
+}
+
+.fail {
+  color: var(--pb-signal-error);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-muted);
+}

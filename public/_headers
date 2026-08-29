@@ -49,6 +49,13 @@
   # frame-src 'none'          Patchbay embeds nobody either.
   # manifest-src 'self'       PWA manifest from our origin only.
   # upgrade-insecure-requests Any stray http:// subresource is upgraded to https.
+  #                           NOTE: WebKit applies this to loopback too, where
+  #                           Chromium and Gecko exempt it. Serving the built
+  #                           app over plain http://127.0.0.1 with this header
+  #                           therefore loads nothing at all in Safari's engine.
+  #                           It is harmless in production (https) and the
+  #                           cross-browser harness drops it for http, but it
+  #                           is worth knowing before debugging it twice.
   Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {{INLINE_SCRIPT_HASHES}}; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; worker-src 'self'; child-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; manifest-src 'self'; upgrade-insecure-requests
 
   # --- Cross-origin isolation ---------------------------------------------------

@@ -50,6 +50,7 @@ export const base64Tool = defineTool({
     strategy: 'worker',
     requiresWasm: false,
     wasmModules: [],
+    requiresOffscreenCanvas: false,
     reportsProgress: false,
     timeoutMs: 15_000,
     maxInputBytes: 32 * 1024 * 1024,
