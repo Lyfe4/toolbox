@@ -64,6 +64,83 @@ The guarantee is enforced rather than promised:
 Turning any of these off is a visible change to a reviewed file, not a silent
 regression.
 
+## The canvas
+
+`/` is the node canvas: tools as modules on an infinite pannable plane, wired
+output-to-input. `/tools` is the same set of tools as a plain list. Neither is
+a fallback for the other, and the header switches between them from the
+keyboard on every page.
+
+The canvas is hand-built - no React Flow. It is lazily loaded, so a visitor who
+only ever opens `/tools` never downloads it.
+
+### Keyboard map
+
+Every canvas action works from the keyboard alone. Press `?` on the canvas for
+this list; it is generated from the same array the canvas binds, so it cannot
+drift.
+
+| Keys                              | Action                                                                                                                                                                                                                                                                              |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Tab` / `Shift+Tab`               | Move between nodes, **top to bottom, then left to right**. Rows are bucketed into 64px bands first, so nodes that look like one row are treated as one row. The DOM is rendered in that order, so this is the browser's own Tab sequence rather than a hand-rolled roving tabindex. |
+| `Arrows`                          | Move the selected nodes by 8px                                                                                                                                                                                                                                                      |
+| `Shift+Arrows`                    | Move them by 64px                                                                                                                                                                                                                                                                   |
+| `Shift+Enter`                     | Add the focused node to the selection                                                                                                                                                                                                                                               |
+| `Ctrl/Cmd+A`                      | Select every node                                                                                                                                                                                                                                                                   |
+| `Ctrl/Cmd+D`                      | Duplicate the selection                                                                                                                                                                                                                                                             |
+| `Delete` / `Backspace`            | Delete the selection                                                                                                                                                                                                                                                                |
+| `Ctrl/Cmd+Z` / `Ctrl/Cmd+Shift+Z` | Undo / redo                                                                                                                                                                                                                                                                         |
+| `K`                               | Open the tool palette                                                                                                                                                                                                                                                               |
+| `C`                               | Connect from the focused node, without dragging                                                                                                                                                                                                                                     |
+| `Escape`                          | Cancel the current dialog, drag or connection                                                                                                                                                                                                                                       |
+| `F`                               | Fit every node in view                                                                                                                                                                                                                                                              |
+| `0`                               | Reset zoom to 100%                                                                                                                                                                                                                                                                  |
+| `?`                               | Show the shortcut reference                                                                                                                                                                                                                                                         |
+| `Space+drag`, middle-drag, scroll | Pan                                                                                                                                                                                                                                                                                 |
+| `Ctrl+scroll`, pinch              | Zoom about the pointer                                                                                                                                                                                                                                                              |
+
+**Connecting without a pointer:** focus a node, press `C`. If the tool has one
+output the flow skips straight to picking a target; otherwise it asks which
+output first. The target list contains exactly the ports a pointer drop would
+be allowed to land on - the same `checkConnection` decides both - so type
+mismatches, occupied inputs and cycles are never offered rather than being
+offered and then refused.
+
+The canvas is a `role="application"` region, which is what lets arrow keys and
+single letters reach it instead of being swallowed by a screen reader's browse
+mode. Each node is a focusable `role="group"` whose accessible name states its
+tool, position, connection count, status and selection: _"Base64, at 280, 0,
+1 connection, idle, selected"_.
+
+Announcements are split deliberately. Movement and selection chatter goes to
+the canvas's own polite live region; a refused connection also raises a toast,
+so the reason reaches sighted users as well as screen-reader users rather than
+only one of them.
+
+Data types on ports are shown as **shapes**, not colours - square for text,
+diamond for JSON, circle for bytes, and so on - because colour-only encoding
+fails for colour-blind users and disappears entirely in forced-colors mode.
+Wires and ports switch to `CanvasText` and `Highlight` there so they stay
+visible.
+
+### Undo/redo
+
+A command history, not a stack of snapshots. Each mutation is a small object
+holding just enough to do and to undo it - see
+[`commands.ts`](src/features/canvas/commands.ts). Memory is proportional to the
+change rather than to the graph, a drag or a run of arrow-key nudges coalesces
+into one step, and each entry can describe itself ("Undid move 3 nodes") for
+the live region. Snapshots could do none of those. The price is that every
+command needs a correct inverse, which `graph.test.ts` checks by applying and
+reverting each kind and asserting deep equality.
+
+### Persistence
+
+The graph is saved to `patchbay:graph:v1`, debounced so a drag writes once
+rather than sixty times. It is validated with Zod on load and cross-checked
+against the live tool registry; anything corrupt, older, or referring to a tool
+that no longer exists produces an empty canvas and a message, never a crash.
+
 ## Adding a tool
 
 A tool is one directory plus one manifest entry:

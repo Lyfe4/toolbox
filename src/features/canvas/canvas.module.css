@@ -1,0 +1,566 @@
+/*
+ * The canvas surface.
+ *
+ * Only two elements ever move: `.plane` (one transform for pan and zoom) and,
+ * during a drag, the node being dragged. Everything else is static.
+ */
+
+.root {
+  position: relative;
+  inline-size: 100%;
+  block-size: 100%;
+  overflow: hidden;
+  background-color: var(--pb-surface-sunken);
+  touch-action: none;
+  outline: none;
+}
+
+.root:focus-visible {
+  outline: var(--pb-focus-width) solid var(--pb-focus-ring);
+  outline-offset: calc(var(--pb-focus-offset) * -1);
+}
+
+.panning {
+  cursor: grabbing;
+}
+
+.panReady {
+  cursor: grab;
+}
+
+/*
+ * The grid lives on the static root, not on the transformed plane, so it is
+ * painted by the compositor from a background image rather than being scaled
+ * geometry. Its size and offset are set inline from the viewport.
+ *
+ * Two layers: a dense minor rule and a sparse major one, both hairlines. It
+ * should read as measurement backing, not as decoration.
+ */
+.grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, var(--pb-border-subtle) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--pb-border-subtle) 1px, transparent 1px),
+    linear-gradient(to right, var(--pb-border-hairline) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--pb-border-hairline) 1px, transparent 1px);
+}
+
+.plane {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  inline-size: 0;
+  block-size: 0;
+  /* Scale outward from the origin so the maths in viewportStore holds. */
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* --- Wires -------------------------------------------------------------- */
+
+.wireLayer {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  overflow: visible;
+  /* The layer itself is inert; individual wire hit paths opt back in. */
+  pointer-events: none;
+}
+
+.wire {
+  fill: none;
+  stroke: var(--pb-border-strong);
+  stroke-width: 1.5;
+}
+
+.wireSelected {
+  stroke: var(--pb-accent);
+  stroke-width: 2.5;
+}
+
+/*
+ * A 1.5px line is far too thin to hit with a pointer, so every wire has an
+ * invisible companion path with a fat stroke that takes the clicks.
+ */
+.wireHit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.wireDraft {
+  fill: none;
+  stroke: var(--pb-accent);
+  stroke-width: 2;
+  stroke-dasharray: 4 4;
+}
+
+/* --- Nodes -------------------------------------------------------------- */
+
+.node {
+  position: absolute;
+  inline-size: 224px;
+  display: flex;
+  flex-direction: column;
+
+  background-color: var(--pb-surface-raised);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-panel);
+  cursor: grab;
+  user-select: none;
+}
+
+.node:focus-visible {
+  outline: var(--pb-focus-width) solid var(--pb-focus-ring);
+  outline-offset: var(--pb-focus-offset);
+}
+
+/*
+ * Selection is a 2px accent border AND a raised stacking order, so an
+ * overlapping node can still be picked out and brought forward. Never colour
+ * alone: the border also thickens.
+ */
+.nodeSelected {
+  border-color: var(--pb-accent);
+  border-width: var(--pb-border-width-strong);
+  z-index: var(--pb-z-raised);
+}
+
+.nodeDragging {
+  cursor: grabbing;
+}
+
+.nodeHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-xs);
+  block-size: 24px;
+  padding-inline: var(--pb-space-xs);
+  border-block-end: var(--pb-border-width) solid var(--pb-border-hairline);
+  background-color: var(--pb-surface-overlay);
+}
+
+.nodeGlyph {
+  display: flex;
+  color: var(--pb-ink-muted);
+  flex-shrink: 0;
+}
+
+.nodeTitle {
+  flex: 1;
+  min-inline-size: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * Status LED. The colour is the obvious signal, but the SHAPE changes too -
+ * idle is hollow, running is hollow with a ring, ok is filled, error is filled
+ * with a slash - so the state survives greyscale and forced-colors.
+ */
+.led {
+  inline-size: 8px;
+  block-size: 8px;
+  flex-shrink: 0;
+  border: var(--pb-border-width) solid var(--pb-ink-muted);
+}
+
+.ledIdle {
+  background-color: transparent;
+}
+
+.ledRunning {
+  border-color: var(--pb-accent);
+  background-image: linear-gradient(135deg, var(--pb-accent) 0 50%, transparent 50% 100%);
+}
+
+.ledOk {
+  border-color: var(--pb-signal-ok);
+  background-color: var(--pb-signal-ok);
+}
+
+.ledError {
+  border-color: var(--pb-signal-error);
+  background-color: var(--pb-signal-error);
+  /* A diagonal cut, so "error" is a shape and not only a hue. */
+  clip-path: polygon(0 0, 100% 0, 100% 60%, 60% 100%, 0 100%);
+}
+
+.nodeSummary {
+  block-size: 32px;
+  padding: var(--pb-space-xs);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  line-height: 1.3;
+  color: var(--pb-ink-muted);
+  overflow: hidden;
+}
+
+.nodeBody {
+  position: relative;
+  padding-block: var(--pb-space-sm);
+  flex: 1;
+}
+
+.nodeFooter {
+  block-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-inline: var(--pb-space-xs);
+  border-block-start: var(--pb-border-width) solid var(--pb-border-subtle);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+}
+
+/* --- Ports -------------------------------------------------------------- */
+
+.portRow {
+  position: absolute;
+  inset-inline: 0;
+  block-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.port {
+  position: absolute;
+  /* Matches PORT_ROW_HEIGHT so the connector's centre is exactly where
+     geometry.ts says the wire should attach. */
+  block-size: 24px;
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2xs);
+
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--pb-ink-muted);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  cursor: crosshair;
+  pointer-events: auto;
+  white-space: nowrap;
+}
+
+.portInput {
+  inset-inline-start: -6px;
+}
+
+.portOutput {
+  inset-inline-end: -6px;
+  flex-direction: row-reverse;
+}
+
+.portConnector {
+  flex-shrink: 0;
+  color: var(--pb-border-strong);
+}
+
+.port:hover .portConnector,
+.port:focus-visible .portConnector {
+  color: var(--pb-accent);
+}
+
+.portLabel {
+  max-inline-size: 84px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Connection-drag feedback: valid targets lift, invalid ones recede. */
+.portValid {
+  color: var(--pb-ink-primary);
+}
+
+.portValid .portConnector {
+  color: var(--pb-accent);
+}
+
+.portInvalid {
+  opacity: 0.3;
+}
+
+.nodeInvalid {
+  opacity: 0.45;
+}
+
+/* --- Overlays ----------------------------------------------------------- */
+
+.toolbar {
+  position: absolute;
+  inset-block-start: var(--pb-space-md);
+  inset-inline-start: var(--pb-space-md);
+  z-index: var(--pb-z-sticky);
+
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2xs);
+  padding: var(--pb-space-2xs);
+
+  background-color: var(--pb-surface-raised);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-panel);
+}
+
+.readout {
+  position: absolute;
+  inset-block-end: var(--pb-space-md);
+  inset-inline-start: var(--pb-space-md);
+  z-index: var(--pb-z-sticky);
+
+  display: flex;
+  gap: var(--pb-space-md);
+  padding: var(--pb-space-2xs) var(--pb-space-xs);
+
+  background-color: var(--pb-surface-raised);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-control);
+
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: var(--pb-space-sm);
+  justify-items: center;
+  text-align: center;
+  pointer-events: none;
+  color: var(--pb-ink-muted);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+}
+
+.emptyTitle {
+  font-size: var(--pb-heading-size);
+  font-weight: var(--pb-heading-weight);
+  letter-spacing: var(--pb-heading-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-secondary);
+}
+
+.kbd {
+  display: inline-block;
+  padding: 1px var(--pb-space-2xs);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-control);
+  background-color: var(--pb-surface-inset);
+  color: var(--pb-ink-secondary);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  white-space: nowrap;
+}
+
+/* --- Dialogs (palette, connect, shortcuts) ------------------------------ */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--pb-z-overlay);
+  display: grid;
+  place-items: start center;
+  padding-block-start: 12vh;
+  background-color: rgb(0 0 0 / 45%);
+}
+
+.dialog {
+  inline-size: min(560px, calc(100vw - var(--pb-space-2xl)));
+  max-block-size: 70vh;
+  display: flex;
+  flex-direction: column;
+
+  background-color: var(--pb-surface-raised);
+  border: var(--pb-border-width) solid var(--pb-border-strong);
+  border-radius: var(--pb-radius-panel);
+}
+
+.dialogHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pb-space-sm);
+  padding: var(--pb-space-xs) var(--pb-space-sm);
+  border-block-end: var(--pb-border-width) solid var(--pb-border-hairline);
+}
+
+.dialogTitle {
+  margin: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-heading-weight);
+  letter-spacing: var(--pb-heading-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-primary);
+}
+
+.dialogBody {
+  padding: var(--pb-space-sm);
+  overflow-y: auto;
+  min-block-size: 0;
+}
+
+.optionList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--pb-space-2xs);
+}
+
+.groupLabel {
+  padding-block: var(--pb-space-xs) var(--pb-space-2xs);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-heading-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+}
+
+.option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--pb-space-sm);
+
+  padding: var(--pb-space-xs) var(--pb-space-sm);
+  border: var(--pb-border-width) solid transparent;
+  border-radius: var(--pb-radius-control);
+  cursor: pointer;
+  color: var(--pb-ink-secondary);
+  text-align: start;
+  background: none;
+  inline-size: 100%;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+}
+
+.option[aria-selected='true'] {
+  background-color: var(--pb-accent);
+  border-color: var(--pb-accent);
+  color: var(--pb-ink-on-accent);
+}
+
+.optionName {
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.optionMeta {
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  opacity: 0.75;
+}
+
+.shortcutTable {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-secondary);
+}
+
+.shortcutTable th {
+  text-align: start;
+  padding-block: var(--pb-space-xs);
+  border-block-end: var(--pb-border-width) solid var(--pb-border-hairline);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-heading-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+}
+
+.shortcutTable td {
+  padding-block: var(--pb-space-2xs);
+  border-block-end: var(--pb-border-width) solid var(--pb-border-subtle);
+  vertical-align: top;
+}
+
+.shortcutKeys {
+  inline-size: 180px;
+  white-space: nowrap;
+}
+
+/* --- Motion and forced colours ------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  .plane,
+  .node {
+    /* No easing on programmatic viewport changes; they jump instead. */
+    transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .node {
+    border-color: CanvasText;
+  }
+
+  .nodeSelected {
+    border-color: Highlight;
+  }
+
+  /*
+   * The OS discards our stroke colours, so wires would vanish. CanvasText and
+   * Highlight are guaranteed to contrast with the forced background.
+   */
+  .wire {
+    stroke: CanvasText;
+  }
+
+  .wireSelected,
+  .wireDraft {
+    stroke: Highlight;
+  }
+
+  .portConnector {
+    color: CanvasText;
+  }
+
+  .portInvalid,
+  .nodeInvalid {
+    opacity: 1;
+    /* Opacity is ignored as a signal here, so fall back to a dashed outline. */
+    outline: 1px dashed GrayText;
+  }
+
+  .led {
+    border-color: CanvasText;
+  }
+
+  .ledOk,
+  .ledError,
+  .ledRunning {
+    background-color: Highlight;
+    border-color: Highlight;
+  }
+}

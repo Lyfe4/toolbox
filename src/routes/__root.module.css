@@ -77,7 +77,11 @@
 }
 
 .main {
+  /* The canvas fills this row, so it needs a definite size and must be
+     allowed to shrink below its content. */
   min-inline-size: 0;
+  min-block-size: 0;
+  overflow: hidden;
 }
 
 @media (forced-colors: active) {

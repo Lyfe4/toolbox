@@ -131,6 +131,16 @@ export default tseslint.config(
     // `configs.flat` is the flat-config build of these presets; the top-level
     // `configs` entry is still the legacy eslintrc shape.
     extends: [reactHooks.configs.flat['recommended-latest'], jsxA11y.flatConfigs.strict],
+    rules: {
+      // The canvas is a role="application" widget and its nodes are focusable
+      // role="group" elements. Both legitimately take tabIndex; `roles` is the
+      // rule's own extension point for exactly this, and every other
+      // non-interactive element is still caught.
+      'jsx-a11y/no-noninteractive-tabindex': [
+        'error',
+        { tags: [], roles: ['tabpanel', 'application', 'group'], allowExpressionValues: true },
+      ],
+    },
   },
 
   // --- Config files that run in Node ------------------------------------------

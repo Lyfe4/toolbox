@@ -203,13 +203,35 @@ describe('execution engine, worker path', () => {
     expect(onProgress).toHaveBeenCalledWith(0.5, 'halfway');
   });
 
-  it('transfers binary inputs instead of copying them', async () => {
+  it('borrows binary inputs by default, so nothing is detached', async () => {
     const { engine, workers } = setup();
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const promise = engine.execute({
       toolId: TOOL_ID,
       inputs: { input: { type: 'bytes', bytes, mediaType: null, filename: null } },
       options: {},
+    });
+
+    const worker = workers[0];
+    const entry = worker?.posted[0];
+    // Empty transfer list: the structured clone copies, the caller keeps its
+    // buffer, and a second consumer can still read it. See fanout.test.ts.
+    expect(entry?.transfer).toEqual([]);
+    expect(bytes.byteLength).toBe(4);
+
+    const sent = entry?.message;
+    if (sent?.kind === 'execute') worker?.reply(settled(sent.requestId, ok({})));
+    await promise;
+  });
+
+  it('transfers binary inputs when the caller hands over ownership', async () => {
+    const { engine, workers } = setup();
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const promise = engine.execute({
+      toolId: TOOL_ID,
+      inputs: { input: { type: 'bytes', bytes, mediaType: null, filename: null } },
+      options: {},
+      ownership: 'transfer',
     });
 
     const worker = workers[0];

@@ -60,12 +60,29 @@ export function createBrowserWorker(): WorkerHandle {
   };
 }
 
+/**
+ * Who owns a binary input's memory once `execute` is called.
+ *
+ * 'borrow' (the default) structured-clones the input, so the caller's
+ * Uint8Array stays intact and can be handed to another run afterwards. That is
+ * what makes fan-out possible: on the canvas one output feeds several inputs,
+ * and a transferred buffer would be detached by the first consumer, leaving
+ * the second with a zero-length view and no error to explain it.
+ *
+ * 'transfer' moves the buffer to the worker with zero copy, detaching the
+ * caller's view. Only pass it when the caller can prove the bytes are consumed
+ * exactly once and will never be read again.
+ */
+export type InputOwnership = 'borrow' | 'transfer';
+
 export interface ExecuteOptions {
   readonly toolId: ToolId;
   readonly inputs: ToolInputs;
   readonly options: unknown;
   readonly signal?: AbortSignal;
   readonly onProgress?: (fraction: number, label: string | null) => void;
+  /** Defaults to 'borrow'. See InputOwnership. */
+  readonly ownership?: InputOwnership;
 }
 
 export interface EngineDependencies {
@@ -100,10 +117,10 @@ export interface ExecutionEngine {
 /**
  * Creates the execution engine.
  *
- * IMPORTANT: binary inputs are CONSUMED. Their backing buffers are transferred
- * to the worker, which detaches the caller's view. Callers that need to run the
- * same bytes twice should read them fresh each time - the tool UI re-reads the
- * dropped File per run for exactly this reason.
+ * Binary inputs are BORROWED by default: they are structured-cloned into the
+ * worker and the caller's buffer stays valid, so the same bytes can feed
+ * several runs. Pass `ownership: 'transfer'` to hand the memory over instead,
+ * which is free but detaches the caller's view.
  */
 export function createExecutionEngine(dependencies: EngineDependencies): ExecutionEngine {
   const pending = new Map<string, Pending>();
@@ -251,7 +268,10 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
           inputs: options.inputs,
           options: options.options,
         },
-        collectTransferables(Object.values(options.inputs)),
+        // Empty transfer list under 'borrow': structured clone copies the
+        // bytes and leaves the caller's buffer usable. Outputs are still
+        // transferred the other way (see worker.ts), where nothing reuses them.
+        options.ownership === 'transfer' ? collectTransferables(Object.values(options.inputs)) : [],
       );
     });
   }

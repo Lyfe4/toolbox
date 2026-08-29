@@ -38,6 +38,14 @@ function renderRunner(entry: ToolManifestEntry) {
   );
 }
 
+/**
+ * These waits carry an explicit timeout because the runner dynamically imports
+ * the tool module before it can run anything. Under a full parallel suite that
+ * import can take longer than Testing Library's 1s default, which showed up as
+ * an intermittent failure rather than a real one.
+ */
+const IMPORT_TIMEOUT = { timeout: 5000 };
+
 const base64 = getManifestEntry('base64');
 const structured = getManifestEntry('structured-data');
 
@@ -51,7 +59,7 @@ describe('ToolRunner', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('textbox', { name: 'Base64 Output' })).toHaveValue('Zm9vYmFy');
-    });
+    }, IMPORT_TIMEOUT);
   });
 
   it('announces completion through the live region', async () => {
@@ -65,7 +73,7 @@ describe('ToolRunner', () => {
     // announced there rather than being visual-only.
     await waitFor(() => {
       expect(screen.getByText('Base64 finished')).toBeInTheDocument();
-    });
+    }, IMPORT_TIMEOUT);
   });
 
   it('renders a parse error with its position', async () => {
@@ -74,7 +82,7 @@ describe('ToolRunner', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('combobox', { name: 'Mode' })).toBeInTheDocument();
-    });
+    }, IMPORT_TIMEOUT);
 
     // Switch to decode, then feed it something that is not base64.
     await user.click(screen.getByRole('combobox', { name: 'Mode' }));
@@ -86,7 +94,7 @@ describe('ToolRunner', () => {
     // Errors are announced as well as drawn, never visual-only.
     await waitFor(() => {
       expect(screen.getAllByText(/is not a valid base64 character/)).toHaveLength(2);
-    });
+    }, IMPORT_TIMEOUT);
     expect(screen.getByText(/Line 1, column 1/)).toBeInTheDocument();
     expect(screen.getByText(/Code: parse-error/)).toBeInTheDocument();
   });
@@ -102,7 +110,7 @@ describe('ToolRunner', () => {
       expect(
         screen.getByRole('textbox', { name: 'Structured data Converted' }),
       ).toBeInTheDocument();
-    });
+    }, IMPORT_TIMEOUT);
     expect(
       screen.getByRole('textbox', { name: 'Structured data Parsed data' }),
     ).toBeInTheDocument();
@@ -116,7 +124,7 @@ describe('ToolRunner', () => {
     await user.click(screen.getByRole('button', { name: 'Run' }));
     await waitFor(() => {
       expect(screen.getByRole('textbox', { name: 'Base64 Output' })).toBeInTheDocument();
-    });
+    }, IMPORT_TIMEOUT);
 
     await expectNoAxeViolations(container);
   });

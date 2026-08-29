@@ -17,6 +17,7 @@ import {
   TextInput,
   Toggle,
   Tooltip,
+  TooltipProvider,
   useToast,
 } from '@/components';
 import { ThemeSwitcher, useTheme } from '@/features/theme';
@@ -449,360 +450,377 @@ export function StyleguidePage() {
   const [monitor, setMonitor] = useState(true);
 
   return (
-    <div className={styles.page}>
-      <div className={styles.content}>
-        <header className={styles.head}>
-          <p className={styles.eyebrow}>Reference</p>
-          <h1 className={styles.pageTitle}>Styleguide</h1>
-          <p className={styles.pageLede}>
-            Every token and every primitive Patchbay is built from. The palette values below are
-            read out of the live document, so they are whatever the stylesheet actually produces for
-            the theme you have selected &mdash; including the measured contrast ratios.
-          </p>
-        </header>
+    /*
+     * The tooltip provider is mounted here rather than in the root layout, so
+     * Radix's Popper and floating-ui load with this route instead of with the
+     * initial payload. See the comment in __root.tsx.
+     */
+    <TooltipProvider>
+      <div className={styles.page}>
+        <div className={styles.content}>
+          <header className={styles.head}>
+            <p className={styles.eyebrow}>Reference</p>
+            <h1 className={styles.pageTitle}>Styleguide</h1>
+            <p className={styles.pageLede}>
+              Every token and every primitive Patchbay is built from. The palette values below are
+              read out of the live document, so they are whatever the stylesheet actually produces
+              for the theme you have selected &mdash; including the measured contrast ratios.
+            </p>
+          </header>
 
-        <Section
-          title="Themes"
-          note="Four presets. Switching one swaps only the semantic colour layer; every component keeps describing intent and picks up the change for free."
-        >
-          <div className={styles.specimens}>
-            <Specimen label="Active">
-              <div className={styles.specimenStack}>
-                <strong className={styles.swatchName}>{activePreset.label}</strong>
-                <span className={styles.hint}>{activePreset.description}</span>
-              </div>
-            </Specimen>
-            <Specimen label="Contrast">
-              <div className={styles.specimenStack}>
-                {CONTRAST_CHECKS.map(([label, fg, bg, threshold]) => {
-                  const ratio = safeContrast(tokens[fg], tokens[bg]);
-                  const passes = ratio !== null && ratio >= threshold;
-                  return (
-                    <span className={styles.readoutRow} key={label}>
-                      <span>{label}</span>
-                      <span className={cx(styles.readoutValue, passes ? styles.pass : styles.fail)}>
-                        {ratio === null ? '-' : `${ratio.toFixed(2)}:1`}
-                        {' / '}
-                        {threshold.toFixed(1)}
+          <Section
+            title="Themes"
+            note="Four presets. Switching one swaps only the semantic colour layer; every component keeps describing intent and picks up the change for free."
+          >
+            <div className={styles.specimens}>
+              <Specimen label="Active">
+                <div className={styles.specimenStack}>
+                  <strong className={styles.swatchName}>{activePreset.label}</strong>
+                  <span className={styles.hint}>{activePreset.description}</span>
+                </div>
+              </Specimen>
+              <Specimen label="Contrast">
+                <div className={styles.specimenStack}>
+                  {CONTRAST_CHECKS.map(([label, fg, bg, threshold]) => {
+                    const ratio = safeContrast(tokens[fg], tokens[bg]);
+                    const passes = ratio !== null && ratio >= threshold;
+                    return (
+                      <span className={styles.readoutRow} key={label}>
+                        <span>{label}</span>
+                        <span
+                          className={cx(styles.readoutValue, passes ? styles.pass : styles.fail)}
+                        >
+                          {ratio === null ? '-' : `${ratio.toFixed(2)}:1`}
+                          {' / '}
+                          {threshold.toFixed(1)}
+                        </span>
                       </span>
-                    </span>
-                  );
-                })}
-              </div>
-            </Specimen>
-          </div>
-        </Section>
-
-        <Section
-          title="Semantic colour"
-          note="Layer 2. These are the only colour tokens a component may name."
-        >
-          {SEMANTIC_GROUPS.map((group) => (
-            <div className={styles.ramp} key={group.title}>
-              <span className={styles.rampName}>{group.title}</span>
-              <div className={styles.swatchGrid}>
-                {group.tokens.map((token) => (
-                  <Swatch key={token} token={token} value={tokens[token] ?? ''} />
-                ))}
-              </div>
+                    );
+                  })}
+                </div>
+              </Specimen>
             </div>
-          ))}
-        </Section>
+          </Section>
 
-        <Section
-          title="Primitive ramps"
-          note="Layer 1. Theme-invariant raw scales. Components never reference these; the semantic layer does."
-        >
-          {RAMPS.map((ramp) => (
-            <div className={styles.ramp} key={ramp.name}>
-              <span className={styles.rampName}>{ramp.name}</span>
-              <div className={styles.rampSteps}>
-                {ramp.steps.map((step) => (
-                  <span
-                    key={step}
-                    className={styles.rampStep}
-                    style={{ backgroundColor: tokens[step] ?? 'transparent' }}
-                    title={`${step.replace('--raw-', '')} ${tokens[step] ?? ''}`}
-                  />
-                ))}
+          <Section
+            title="Semantic colour"
+            note="Layer 2. These are the only colour tokens a component may name."
+          >
+            {SEMANTIC_GROUPS.map((group) => (
+              <div className={styles.ramp} key={group.title}>
+                <span className={styles.rampName}>{group.title}</span>
+                <div className={styles.swatchGrid}>
+                  {group.tokens.map((token) => (
+                    <Swatch key={token} token={token} value={tokens[token] ?? ''} />
+                  ))}
+                </div>
               </div>
+            ))}
+          </Section>
+
+          <Section
+            title="Primitive ramps"
+            note="Layer 1. Theme-invariant raw scales. Components never reference these; the semantic layer does."
+          >
+            {RAMPS.map((ramp) => (
+              <div className={styles.ramp} key={ramp.name}>
+                <span className={styles.rampName}>{ramp.name}</span>
+                <div className={styles.rampSteps}>
+                  {ramp.steps.map((step) => (
+                    <span
+                      key={step}
+                      className={styles.rampStep}
+                      style={{ backgroundColor: tokens[step] ?? 'transparent' }}
+                      title={`${step.replace('--raw-', '')} ${tokens[step] ?? ''}`}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </Section>
+
+          <Section
+            title="Type"
+            note="IBM Plex Mono carries the interface. Archivo is for prose only."
+          >
+            <div className={styles.ramp}>
+              {TYPE_SCALE.map((token) => (
+                <div className={styles.scaleRow} key={token}>
+                  <span className={styles.scaleName}>{token.replace('--pb-', '')}</span>
+                  <span className={styles.scaleValue}>{tokens[token] ?? '-'}</span>
+                  <span className={styles.typeSample} style={{ fontSize: tokens[token] }}>
+                    Patchbay 0123456789
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
-        </Section>
+            <p className={styles.proseSample}>
+              Archivo handles running prose like this paragraph, where a monospace face would slow
+              reading down. Everything else &mdash; labels, readouts, values, code &mdash; stays
+              monospace, because alignment is what makes a dense panel legible.
+            </p>
+          </Section>
 
-        <Section
-          title="Type"
-          note="IBM Plex Mono carries the interface. Archivo is for prose only."
-        >
-          <div className={styles.ramp}>
-            {TYPE_SCALE.map((token) => (
-              <div className={styles.scaleRow} key={token}>
-                <span className={styles.scaleName}>{token.replace('--pb-', '')}</span>
-                <span className={styles.scaleValue}>{tokens[token] ?? '-'}</span>
-                <span className={styles.typeSample} style={{ fontSize: tokens[token] }}>
-                  Patchbay 0123456789
-                </span>
-              </div>
-            ))}
-          </div>
-          <p className={styles.proseSample}>
-            Archivo handles running prose like this paragraph, where a monospace face would slow
-            reading down. Everything else &mdash; labels, readouts, values, code &mdash; stays
-            monospace, because alignment is what makes a dense panel legible.
-          </p>
-        </Section>
+          <Section
+            title="Space"
+            note="An 8px baseline grid, exposed by role rather than by number."
+          >
+            <div className={styles.ramp}>
+              {SPACE_SCALE.map((token) => (
+                <div className={styles.scaleRow} key={token}>
+                  <span className={styles.scaleName}>{token.replace('--pb-space-', '')}</span>
+                  <span className={styles.scaleValue}>{tokens[token] ?? '-'}</span>
+                  <span className={styles.scaleBar} style={{ inlineSize: tokens[token] }} />
+                </div>
+              ))}
+            </div>
+          </Section>
 
-        <Section title="Space" note="An 8px baseline grid, exposed by role rather than by number.">
-          <div className={styles.ramp}>
-            {SPACE_SCALE.map((token) => (
-              <div className={styles.scaleRow} key={token}>
-                <span className={styles.scaleName}>{token.replace('--pb-space-', '')}</span>
-                <span className={styles.scaleValue}>{tokens[token] ?? '-'}</span>
-                <span className={styles.scaleBar} style={{ inlineSize: tokens[token] }} />
-              </div>
-            ))}
-          </div>
-        </Section>
+          <Section
+            title="Radius and motion"
+            note="2px is the ceiling. Transitions are 120-180ms on a sharp curve."
+          >
+            <div className={styles.ramp}>
+              {RADIUS_SCALE.map((token) => (
+                <div className={styles.scaleRow} key={token}>
+                  <span className={styles.scaleName}>{token.replace('--pb-radius-', '')}</span>
+                  <span className={styles.scaleValue}>{tokens[token] ?? '-'}</span>
+                  <span className={styles.radiusSample} style={{ borderRadius: tokens[token] }} />
+                </div>
+              ))}
+              {MOTION_SCALE.map((token) => (
+                <div className={styles.scaleRow} key={token}>
+                  <span className={styles.scaleName}>{token.replace('--pb-motion-', '')}</span>
+                  <span className={styles.scaleValue}>{tokens[token] ?? '-'}</span>
+                  <span className={styles.hint}>Collapses to 1ms under prefers-reduced-motion</span>
+                </div>
+              ))}
+            </div>
+          </Section>
 
-        <Section
-          title="Radius and motion"
-          note="2px is the ceiling. Transitions are 120-180ms on a sharp curve."
-        >
-          <div className={styles.ramp}>
-            {RADIUS_SCALE.map((token) => (
-              <div className={styles.scaleRow} key={token}>
-                <span className={styles.scaleName}>{token.replace('--pb-radius-', '')}</span>
-                <span className={styles.scaleValue}>{tokens[token] ?? '-'}</span>
-                <span className={styles.radiusSample} style={{ borderRadius: tokens[token] }} />
-              </div>
-            ))}
-            {MOTION_SCALE.map((token) => (
-              <div className={styles.scaleRow} key={token}>
-                <span className={styles.scaleName}>{token.replace('--pb-motion-', '')}</span>
-                <span className={styles.scaleValue}>{tokens[token] ?? '-'}</span>
-                <span className={styles.hint}>Collapses to 1ms under prefers-reduced-motion</span>
-              </div>
-            ))}
-          </div>
-        </Section>
+          <Section
+            title="Button"
+            note="Three variants, two sizes. Hover, focus and active are shown forced as well as live, so the whole state machine is visible at once."
+          >
+            <div className={styles.specimens}>
+              <Specimen label="Primary">
+                <Button>Default</Button>
+                <Button data-force="hover">Hover</Button>
+                <Button data-force="focus">Focus</Button>
+                <Button data-force="active">Active</Button>
+                <Button disabled>Disabled</Button>
+              </Specimen>
+              <Specimen label="Ghost">
+                <Button variant="ghost">Default</Button>
+                <Button variant="ghost" data-force="hover">
+                  Hover
+                </Button>
+                <Button variant="ghost" data-force="focus">
+                  Focus
+                </Button>
+                <Button variant="ghost" data-force="active">
+                  Active
+                </Button>
+                <Button variant="ghost" disabled>
+                  Disabled
+                </Button>
+              </Specimen>
+              <Specimen label="Danger">
+                <Button variant="danger">Default</Button>
+                <Button variant="danger" data-force="hover">
+                  Hover
+                </Button>
+                <Button variant="danger" data-force="focus">
+                  Focus
+                </Button>
+                <Button variant="danger" disabled>
+                  Disabled
+                </Button>
+              </Specimen>
+              <Specimen label="Small">
+                <Button size="sm">Primary</Button>
+                <Button size="sm" variant="ghost">
+                  Ghost
+                </Button>
+                <Button size="sm" variant="danger">
+                  Danger
+                </Button>
+              </Specimen>
+            </div>
+          </Section>
 
-        <Section
-          title="Button"
-          note="Three variants, two sizes. Hover, focus and active are shown forced as well as live, so the whole state machine is visible at once."
-        >
-          <div className={styles.specimens}>
-            <Specimen label="Primary">
-              <Button>Default</Button>
-              <Button data-force="hover">Hover</Button>
-              <Button data-force="focus">Focus</Button>
-              <Button data-force="active">Active</Button>
-              <Button disabled>Disabled</Button>
-            </Specimen>
-            <Specimen label="Ghost">
-              <Button variant="ghost">Default</Button>
-              <Button variant="ghost" data-force="hover">
-                Hover
-              </Button>
-              <Button variant="ghost" data-force="focus">
-                Focus
-              </Button>
-              <Button variant="ghost" data-force="active">
-                Active
-              </Button>
-              <Button variant="ghost" disabled>
-                Disabled
-              </Button>
-            </Specimen>
-            <Specimen label="Danger">
-              <Button variant="danger">Default</Button>
-              <Button variant="danger" data-force="hover">
-                Hover
-              </Button>
-              <Button variant="danger" data-force="focus">
-                Focus
-              </Button>
-              <Button variant="danger" disabled>
-                Disabled
-              </Button>
-            </Specimen>
-            <Specimen label="Small">
-              <Button size="sm">Primary</Button>
-              <Button size="sm" variant="ghost">
-                Ghost
-              </Button>
-              <Button size="sm" variant="danger">
-                Danger
-              </Button>
-            </Specimen>
-          </div>
-        </Section>
-
-        <Section
-          title="Icon button"
-          note="The accessible label is a required prop, so a nameless icon button will not compile."
-        >
-          <div className={styles.specimens}>
-            <Specimen label="States">
-              <IconButton label="Copy output" icon={<CopyIcon />} />
-              <IconButton label="Copy output, hovered" icon={<CopyIcon />} data-force="hover" />
-              <IconButton label="Copy output, focused" icon={<CopyIcon />} data-force="focus" />
-              <IconButton label="Copy output, disabled" icon={<CopyIcon />} disabled />
-              <IconButton label="Copy output, small" icon={<CopyIcon size={12} />} size="sm" />
-            </Specimen>
-          </div>
-        </Section>
-
-        <Section
-          title="Panel"
-          note="The module chassis: hairline border, optional title bar, optional footer."
-        >
-          <div className={styles.stateGrid}>
-            <Panel title="Encoder" style={{ inlineSize: '260px' }}>
-              <p className={styles.hint}>Body content sits on the 8px grid.</p>
-            </Panel>
-            <Panel
-              title="Signal"
-              style={{ inlineSize: '260px' }}
-              actions={
-                <IconButton label="Panel options" size="sm" icon={<SignalIcon size={12} />} />
-              }
-              footer="Ready / 0 errors"
-            >
-              <p className={styles.hint}>With actions and a footer.</p>
-            </Panel>
-            <Panel style={{ inlineSize: '200px' }}>
-              <p className={styles.hint}>No title bar.</p>
-            </Panel>
-          </div>
-        </Section>
-
-        <Section
-          title="Field and inputs"
-          note="Field owns the ids: label, description and error are wired to the control with htmlFor, aria-describedby and aria-invalid."
-        >
-          <div className={styles.specimens}>
-            <Specimen label="Default">
-              <div className={styles.specimenStack}>
-                <Field label="Input" description="Anything you paste stays in this tab.">
-                  {(control) => (
-                    <TextInput
-                      {...control}
-                      value={text}
-                      onChange={(event) => {
-                        setText(event.target.value);
-                      }}
-                    />
-                  )}
-                </Field>
-              </div>
-            </Specimen>
-            <Specimen label="Error">
-              <div className={styles.specimenStack}>
-                <Field label="Payload" error="Not valid base64" required>
-                  {(control) => <TextInput {...control} defaultValue="not base64!" />}
-                </Field>
-              </div>
-            </Specimen>
-            <Specimen label="Disabled">
-              <div className={styles.specimenStack}>
-                <Field label="Locked" description="Read only in this mode.">
-                  {(control) => <TextInput {...control} value="0x00" disabled readOnly />}
-                </Field>
-              </div>
-            </Specimen>
-            <Specimen label="Textarea">
-              <div className={styles.specimenStack}>
-                <Field label="Multi-line">
-                  {(control) => <TextArea {...control} defaultValue={'one\ntwo\nthree'} />}
-                </Field>
-              </div>
-            </Specimen>
-            <Specimen label="Select">
-              <div className={styles.specimenStack}>
-                <Field label="Encoding" description="Radix Select, styled with our tokens.">
-                  {(control) => (
-                    <Select
-                      {...control}
-                      value={encoding}
-                      onValueChange={setEncoding}
-                      options={ENCODINGS}
-                    />
-                  )}
-                </Field>
-              </div>
-            </Specimen>
-          </div>
-        </Section>
-
-        <Section
-          title="Toggle"
-          note="A real button with role=switch, so Space and Enter work without any key handling of our own."
-        >
-          <div className={styles.specimens}>
-            <Specimen label="States">
-              <Toggle checked={monitor} label="Monitor" onCheckedChange={setMonitor} />
-              <Toggle checked label="On" onCheckedChange={() => undefined} />
-              <Toggle checked={false} label="Off" onCheckedChange={() => undefined} />
-              <Toggle checked={false} label="Disabled" disabled onCheckedChange={() => undefined} />
-            </Specimen>
-          </div>
-        </Section>
-
-        <Section
-          title="Tabs"
-          note="Arrow keys move between tabs, Home and End jump to the ends, per the WAI-ARIA pattern."
-        >
-          <Tabs defaultValue="input">
-            <TabList aria-label="Styleguide tab example">
-              <Tab value="input">Input</Tab>
-              <Tab value="output">Output</Tab>
-              <Tab value="about" disabled>
-                Disabled
-              </Tab>
-            </TabList>
-            <TabPanel value="input">
-              <p className={styles.hint}>The active tab is marked by a 2px accent rule.</p>
-            </TabPanel>
-            <TabPanel value="output">
-              <p className={styles.hint}>Second panel.</p>
-            </TabPanel>
-          </Tabs>
-        </Section>
-
-        <Section
-          title="Tooltip"
-          note="Opens on keyboard focus as well as hover, and closes on Escape. Never the only label on a control."
-        >
-          <div className={styles.specimens}>
-            <Specimen label="Trigger">
-              <Tooltip content="Copies the output to the clipboard">
-                <Button variant="ghost">Focus or hover me</Button>
-              </Tooltip>
-              <Tooltip content="Tooltips work on icon buttons too" side="right">
+          <Section
+            title="Icon button"
+            note="The accessible label is a required prop, so a nameless icon button will not compile."
+          >
+            <div className={styles.specimens}>
+              <Specimen label="States">
                 <IconButton label="Copy output" icon={<CopyIcon />} />
-              </Tooltip>
-            </Specimen>
-          </div>
-        </Section>
+                <IconButton label="Copy output, hovered" icon={<CopyIcon />} data-force="hover" />
+                <IconButton label="Copy output, focused" icon={<CopyIcon />} data-force="focus" />
+                <IconButton label="Copy output, disabled" icon={<CopyIcon />} disabled />
+                <IconButton label="Copy output, small" icon={<CopyIcon size={12} />} size="sm" />
+              </Specimen>
+            </div>
+          </Section>
 
-        <Section
-          title="Toast"
-          note="A live region that exists before any message does, so screen readers actually announce what arrives in it."
-        >
-          <div className={styles.specimens}>
-            <Specimen label="Tones">
-              <ToastDemo />
-            </Specimen>
-          </div>
-        </Section>
+          <Section
+            title="Panel"
+            note="The module chassis: hairline border, optional title bar, optional footer."
+          >
+            <div className={styles.stateGrid}>
+              <Panel title="Encoder" style={{ inlineSize: '260px' }}>
+                <p className={styles.hint}>Body content sits on the 8px grid.</p>
+              </Panel>
+              <Panel
+                title="Signal"
+                style={{ inlineSize: '260px' }}
+                actions={
+                  <IconButton label="Panel options" size="sm" icon={<SignalIcon size={12} />} />
+                }
+                footer="Ready / 0 errors"
+              >
+                <p className={styles.hint}>With actions and a footer.</p>
+              </Panel>
+              <Panel style={{ inlineSize: '200px' }}>
+                <p className={styles.hint}>No title bar.</p>
+              </Panel>
+            </div>
+          </Section>
+
+          <Section
+            title="Field and inputs"
+            note="Field owns the ids: label, description and error are wired to the control with htmlFor, aria-describedby and aria-invalid."
+          >
+            <div className={styles.specimens}>
+              <Specimen label="Default">
+                <div className={styles.specimenStack}>
+                  <Field label="Input" description="Anything you paste stays in this tab.">
+                    {(control) => (
+                      <TextInput
+                        {...control}
+                        value={text}
+                        onChange={(event) => {
+                          setText(event.target.value);
+                        }}
+                      />
+                    )}
+                  </Field>
+                </div>
+              </Specimen>
+              <Specimen label="Error">
+                <div className={styles.specimenStack}>
+                  <Field label="Payload" error="Not valid base64" required>
+                    {(control) => <TextInput {...control} defaultValue="not base64!" />}
+                  </Field>
+                </div>
+              </Specimen>
+              <Specimen label="Disabled">
+                <div className={styles.specimenStack}>
+                  <Field label="Locked" description="Read only in this mode.">
+                    {(control) => <TextInput {...control} value="0x00" disabled readOnly />}
+                  </Field>
+                </div>
+              </Specimen>
+              <Specimen label="Textarea">
+                <div className={styles.specimenStack}>
+                  <Field label="Multi-line">
+                    {(control) => <TextArea {...control} defaultValue={'one\ntwo\nthree'} />}
+                  </Field>
+                </div>
+              </Specimen>
+              <Specimen label="Select">
+                <div className={styles.specimenStack}>
+                  <Field label="Encoding" description="Radix Select, styled with our tokens.">
+                    {(control) => (
+                      <Select
+                        {...control}
+                        value={encoding}
+                        onValueChange={setEncoding}
+                        options={ENCODINGS}
+                      />
+                    )}
+                  </Field>
+                </div>
+              </Specimen>
+            </div>
+          </Section>
+
+          <Section
+            title="Toggle"
+            note="A real button with role=switch, so Space and Enter work without any key handling of our own."
+          >
+            <div className={styles.specimens}>
+              <Specimen label="States">
+                <Toggle checked={monitor} label="Monitor" onCheckedChange={setMonitor} />
+                <Toggle checked label="On" onCheckedChange={() => undefined} />
+                <Toggle checked={false} label="Off" onCheckedChange={() => undefined} />
+                <Toggle
+                  checked={false}
+                  label="Disabled"
+                  disabled
+                  onCheckedChange={() => undefined}
+                />
+              </Specimen>
+            </div>
+          </Section>
+
+          <Section
+            title="Tabs"
+            note="Arrow keys move between tabs, Home and End jump to the ends, per the WAI-ARIA pattern."
+          >
+            <Tabs defaultValue="input">
+              <TabList aria-label="Styleguide tab example">
+                <Tab value="input">Input</Tab>
+                <Tab value="output">Output</Tab>
+                <Tab value="about" disabled>
+                  Disabled
+                </Tab>
+              </TabList>
+              <TabPanel value="input">
+                <p className={styles.hint}>The active tab is marked by a 2px accent rule.</p>
+              </TabPanel>
+              <TabPanel value="output">
+                <p className={styles.hint}>Second panel.</p>
+              </TabPanel>
+            </Tabs>
+          </Section>
+
+          <Section
+            title="Tooltip"
+            note="Opens on keyboard focus as well as hover, and closes on Escape. Never the only label on a control."
+          >
+            <div className={styles.specimens}>
+              <Specimen label="Trigger">
+                <Tooltip content="Copies the output to the clipboard">
+                  <Button variant="ghost">Focus or hover me</Button>
+                </Tooltip>
+                <Tooltip content="Tooltips work on icon buttons too" side="right">
+                  <IconButton label="Copy output" icon={<CopyIcon />} />
+                </Tooltip>
+              </Specimen>
+            </div>
+          </Section>
+
+          <Section
+            title="Toast"
+            note="A live region that exists before any message does, so screen readers actually announce what arrives in it."
+          >
+            <div className={styles.specimens}>
+              <Specimen label="Tones">
+                <ToastDemo />
+              </Specimen>
+            </div>
+          </Section>
+        </div>
+
+        <aside className={styles.sidebar} aria-label="Theme controls">
+          <Panel title="Theme">
+            <ThemeSwitcher legend="Preset" />
+          </Panel>
+        </aside>
       </div>
-
-      <aside className={styles.sidebar} aria-label="Theme controls">
-        <Panel title="Theme">
-          <ThemeSwitcher legend="Preset" />
-        </Panel>
-      </aside>
-    </div>
+    </TooltipProvider>
   );
 }
 

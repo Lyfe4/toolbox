@@ -118,11 +118,10 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
   async function onRun(): Promise<void> {
     if (!tool || !port) return;
 
-    // Read the file FRESH on every run. The engine transfers binary buffers to
-    // the worker, which detaches them, so a cached Uint8Array would be empty
-    // the second time around.
+    // Read from the File on each run rather than caching bytes in state: the
+    // File is the source of truth and the read is cheap next to the run.
     // Split across two statements so the buffer is inferred as a plain
-    // ArrayBuffer, which is what makes the view transferable.
+    // ArrayBuffer rather than ArrayBufferLike.
     const buffer = file ? await file.file.arrayBuffer() : null;
     const bytes: Bytes | null = buffer === null ? null : new Uint8Array(buffer);
 
