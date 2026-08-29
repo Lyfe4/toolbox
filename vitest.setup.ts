@@ -51,6 +51,22 @@ beforeAll(() => {
     };
   }
 
+  // jsdom has no matchMedia at all, and the theme engine subscribes to
+  // prefers-color-scheme. A stub that always reports "no match" is enough:
+  // the tests that care about theme resolution call the pure functions.
+  if (typeof window.matchMedia !== 'function') {
+    window.matchMedia = (query: string): MediaQueryList => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => false,
+    });
+  }
+
   Element.prototype.scrollIntoView = function scrollIntoView(): void {
     // no-op
   };

@@ -11,3 +11,4 @@ allowBuilds:
 # opted out so the pinned toolchain installs reproducibly.
 minimumReleaseAgeExclude:
   - '@vitejs/plugin-react@6.1.1'
+  - zod@4.5.2

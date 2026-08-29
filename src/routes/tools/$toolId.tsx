@@ -5,4 +5,4 @@ import { createFileRoute } from '@tanstack/react-router';
  * file, which the bundler emits as its own chunk and the router fetches
  * on first navigation - so none of this page is in the initial download.
  */
-export const Route = createFileRoute('/styleguide')({});
+export const Route = createFileRoute('/tools/$toolId')({});

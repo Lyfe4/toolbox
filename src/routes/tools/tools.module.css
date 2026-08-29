@@ -1,0 +1,177 @@
+.page {
+  display: grid;
+  gap: var(--pb-space-xl);
+  align-content: start;
+  padding: var(--pb-space-xl) var(--pb-space-lg) var(--pb-space-4xl);
+}
+
+.head {
+  display: grid;
+  gap: var(--pb-space-sm);
+  padding-block-end: var(--pb-space-lg);
+  border-block-end: var(--pb-border-width) solid var(--pb-border-hairline);
+}
+
+.eyebrow {
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-heading-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-accent);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--pb-display-size);
+  font-weight: var(--pb-heading-weight);
+  letter-spacing: var(--pb-heading-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-primary);
+}
+
+.lede {
+  margin: 0;
+  max-inline-size: 68ch;
+  font-family: var(--pb-font-prose);
+  font-size: var(--pb-body-size);
+  line-height: var(--pb-body-leading);
+  color: var(--pb-ink-secondary);
+}
+
+/* --- Filters ------------------------------------------------------------ */
+
+.filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--pb-space-md);
+  align-items: end;
+}
+
+@media (min-width: 720px) {
+  .filters {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto;
+  }
+}
+
+.count {
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+  padding-block-end: var(--pb-space-sm);
+}
+
+/* --- Tool list ---------------------------------------------------------- */
+
+.list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--pb-space-md);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: grid;
+  gap: var(--pb-space-xs);
+  block-size: 100%;
+
+  padding: var(--pb-space-md);
+  background-color: var(--pb-surface-raised);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-panel);
+  text-decoration: none;
+
+  transition:
+    border-color var(--pb-motion-fast) var(--pb-ease),
+    background-color var(--pb-motion-fast) var(--pb-ease);
+}
+
+.card:hover {
+  border-color: var(--pb-border-accent);
+  background-color: var(--pb-surface-overlay);
+}
+
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pb-space-sm);
+}
+
+.cardName {
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  font-weight: var(--pb-heading-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-primary);
+}
+
+.badge {
+  padding: 1px var(--pb-space-xs);
+  border: var(--pb-border-width) solid var(--pb-border-subtle);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+  white-space: nowrap;
+}
+
+.cardSummary {
+  margin: 0;
+  font-family: var(--pb-font-prose);
+  font-size: var(--pb-body-size);
+  line-height: var(--pb-body-leading);
+  color: var(--pb-ink-secondary);
+}
+
+.cardPorts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pb-space-xs);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+}
+
+.empty {
+  padding: var(--pb-space-xl);
+  text-align: center;
+  border: var(--pb-border-width) dashed var(--pb-border-hairline);
+  border-radius: var(--pb-radius-panel);
+  color: var(--pb-ink-muted);
+  font-size: var(--pb-value-size);
+}
+
+/* --- Tool page ---------------------------------------------------------- */
+
+.toolHead {
+  display: grid;
+  gap: var(--pb-space-sm);
+}
+
+.breadcrumb {
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+}
+
+.breadcrumbLink {
+  color: var(--pb-ink-accent);
+  text-decoration: none;
+}
+
+.breadcrumbLink:hover {
+  text-decoration: underline;
+}
+
+@media (forced-colors: active) {
+  .card,
+  .empty {
+    border-color: CanvasText;
+  }
+}

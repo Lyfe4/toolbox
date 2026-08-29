@@ -77,6 +77,51 @@ export default tseslint.config(
 
       // Allow `void someAsyncCall()` as the explicit "I am not awaiting this" marker.
       '@typescript-eslint/no-confusing-void-expression': ['error', { ignoreArrowShorthand: true }],
+
+      // --- No code from strings, no HTML from strings ---------------------
+      // Patchbay's whole security posture is that pasted input is DATA. These
+      // rules keep it that way, and pair with the CSP: script-src has no
+      // 'unsafe-inline' and no 'unsafe-eval', so most of this would fail at
+      // runtime anyway - failing at lint time is a much better place to learn.
+      'no-eval': 'error',
+      'no-implied-eval': 'error',
+      'no-new-func': 'error',
+      'no-script-url': 'error',
+      'no-restricted-properties': [
+        'error',
+        {
+          property: 'innerHTML',
+          message: 'Assigning innerHTML injects markup. Render through React instead.',
+        },
+        {
+          property: 'outerHTML',
+          message: 'Assigning outerHTML injects markup. Render through React instead.',
+        },
+        {
+          property: 'insertAdjacentHTML',
+          message: 'insertAdjacentHTML injects markup. Render through React instead.',
+        },
+        {
+          object: 'document',
+          property: 'write',
+          message: 'document.write injects markup and blocks parsing.',
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']",
+          message: 'dangerouslySetInnerHTML defeats React escaping. Render the value as text.',
+        },
+        {
+          selector: "NewExpression[callee.name='Function']",
+          message: 'new Function is eval by another name.',
+        },
+        {
+          selector: "CallExpression[callee.name='Function']",
+          message: 'Function() is eval by another name.',
+        },
+      ],
     },
   },
 

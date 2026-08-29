@@ -1,0 +1,275 @@
+/*
+ * One stylesheet for the tool runner. The pieces below are small and only ever
+ * appear together, so a single module keeps their shared metrics in one place
+ * rather than scattered across five near-identical files.
+ */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--pb-space-lg);
+  align-items: start;
+}
+
+@media (min-width: 1000px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
+}
+
+.column {
+  display: grid;
+  gap: var(--pb-space-lg);
+  min-inline-size: 0;
+}
+
+.stack {
+  display: grid;
+  gap: var(--pb-space-md);
+  min-inline-size: 0;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pb-space-sm);
+}
+
+.spread {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pb-space-sm);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  color: var(--pb-ink-muted);
+}
+
+.mono {
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* --- File drop ---------------------------------------------------------- */
+
+.dropZone {
+  display: grid;
+  gap: var(--pb-space-sm);
+  justify-items: start;
+
+  padding: var(--pb-space-md);
+  border: var(--pb-border-width) dashed var(--pb-border-hairline);
+  border-radius: var(--pb-radius-panel);
+  background-color: var(--pb-surface-inset);
+
+  transition:
+    border-color var(--pb-motion-fast) var(--pb-ease),
+    background-color var(--pb-motion-fast) var(--pb-ease);
+}
+
+.dropZoneActive {
+  border-style: solid;
+  border-color: var(--pb-border-accent);
+  background-color: var(--pb-accent-subtle);
+}
+
+/*
+ * The real <input type="file"> is hidden but still focusable and still the
+ * control being operated - the styled <label> is its label, so clicking the
+ * label and pressing Enter on the focused input do exactly the same thing.
+ * Drag and drop is a pointer-only convenience layered on top; the input is the
+ * keyboard path, not an afterthought.
+ */
+.fileInput {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.fileButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pb-space-xs);
+
+  block-size: var(--pb-control-height-sm);
+  padding-inline: var(--pb-control-pad-x-sm);
+
+  background-color: var(--pb-control-surface);
+  border: var(--pb-border-width) solid var(--pb-control-border);
+  border-radius: var(--pb-radius-control);
+  color: var(--pb-ink-primary);
+
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  cursor: pointer;
+}
+
+.fileButton:hover {
+  background-color: var(--pb-control-surface-hover);
+  border-color: var(--pb-control-border-hover);
+}
+
+/* The ring belongs on the label, because the input itself is off-screen. */
+.fileInput:focus-visible + .fileButton {
+  outline: var(--pb-focus-width) solid var(--pb-focus-ring);
+  outline-offset: var(--pb-focus-offset);
+}
+
+.fileSummary {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-sm);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  color: var(--pb-ink-secondary);
+}
+
+.fileBadge {
+  padding: 1px var(--pb-space-xs);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  color: var(--pb-ink-muted);
+  text-transform: var(--pb-label-transform);
+}
+
+/* --- Output ------------------------------------------------------------- */
+
+.output {
+  inline-size: 100%;
+  min-block-size: 200px;
+  resize: vertical;
+  font-variant-ligatures: none;
+}
+
+.binarySummary {
+  display: grid;
+  gap: var(--pb-space-xs);
+  padding: var(--pb-space-md);
+  background-color: var(--pb-surface-inset);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-control);
+}
+
+.preview {
+  margin: 0;
+  max-block-size: 160px;
+  overflow: auto;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* --- Errors ------------------------------------------------------------- */
+
+.error {
+  display: grid;
+  gap: var(--pb-space-xs);
+  padding: var(--pb-space-md);
+  background-color: var(--pb-surface-inset);
+  border: var(--pb-border-width) solid var(--pb-signal-error);
+  border-inline-start-width: var(--pb-border-width-strong);
+  border-radius: var(--pb-radius-control);
+}
+
+.errorHead {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-xs);
+  color: var(--pb-signal-error);
+  font-size: var(--pb-value-size);
+}
+
+.errorMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pb-space-md);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  color: var(--pb-ink-muted);
+  text-transform: var(--pb-label-transform);
+}
+
+.errorDetail {
+  margin: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  color: var(--pb-ink-muted);
+  overflow-wrap: anywhere;
+}
+
+/* --- Busy --------------------------------------------------------------- */
+
+.busy {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-sm);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-secondary);
+}
+
+.progressTrack {
+  inline-size: 120px;
+  block-size: 6px;
+  background-color: var(--pb-surface-inset);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+}
+
+.progressBar {
+  block-size: 100%;
+  background-color: var(--pb-accent);
+  transition: inline-size var(--pb-motion-fast) var(--pb-ease);
+}
+
+/*
+ * An indeterminate run has no fraction to show, so the marker sweeps instead.
+ * Under prefers-reduced-motion the shared override collapses this to 1ms, so
+ * the bar simply sits still rather than pulsing.
+ */
+.progressIndeterminate {
+  inline-size: 33%;
+  animation: sweep 1s var(--pb-ease) infinite;
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(300%);
+  }
+}
+
+@media (forced-colors: active) {
+  .dropZone,
+  .binarySummary,
+  .error,
+  .progressTrack {
+    border-color: CanvasText;
+  }
+
+  .progressBar {
+    background-color: Highlight;
+  }
+}

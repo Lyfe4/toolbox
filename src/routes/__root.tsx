@@ -34,6 +34,9 @@ function RootLayout() {
               <Link to="/" className={styles.navLink}>
                 Home
               </Link>
+              <Link to="/tools" className={styles.navLink}>
+                Tools
+              </Link>
               <Link to="/styleguide" className={styles.navLink}>
                 Styleguide
               </Link>

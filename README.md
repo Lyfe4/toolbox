@@ -33,6 +33,56 @@ pipeline you can see. Nothing you paste ever leaves your machine.
 | Testing     | Vitest + Testing Library + axe-core                 |
 | Package mgr | pnpm                                                |
 
+## Why local processing is a security property
+
+Patchbay is not "local-first for convenience". Running in the tab is the
+security model.
+
+A developer toolbox is the kind of thing you paste secrets into: a JWT you are
+debugging, a config file with a connection string, an API response with customer
+records, a certificate. Every hosted equivalent of these tools receives all of
+that on a server you do not control, where it may be logged, cached by a proxy,
+retained in a backup, or exposed by a future breach. The only way to be sure
+that does not happen is for the data never to leave the machine.
+
+The guarantee is enforced rather than promised:
+
+- `connect-src 'none'` in [`public/_headers`](public/_headers) means the browser
+  itself refuses `fetch`, `XMLHttpRequest`, WebSocket, EventSource and
+  `sendBeacon`. Application code _cannot_ phone home, whether by mistake, via a
+  compromised dependency, or through injected script.
+- `script-src` has no `'unsafe-inline'` and no `'unsafe-eval'`; the one inline
+  bootstrap script is allowed by its sha256 hash.
+- ESLint bans `eval`, `new Function`, `innerHTML`, `insertAdjacentHTML` and
+  `dangerouslySetInnerHTML`, so pasted input can never become code or markup.
+- Files are read with `FileReader`/`Blob`, size-capped before they are read, and
+  identified by **magic bytes** rather than by the media type the OS guessed
+  from the extension.
+- Everything ships as static files, so there is no server-side component that
+  could be compromised.
+
+Turning any of these off is a visible change to a reviewed file, not a silent
+regression.
+
+## Adding a tool
+
+A tool is one directory plus one manifest entry:
+
+1. `src/tools/<id>/` containing the implementation, an options schema, tests and
+   a README.
+2. An entry in [`src/features/registry/manifest.ts`](src/features/registry/manifest.ts)
+   and a matching line in [`loader.ts`](src/features/registry/loader.ts).
+
+The manifest is eager (so the index, search and the canvas can reason about
+tools without loading code) while implementations are behind dynamic imports, so
+each tool is its own chunk. `registry.test.ts` loads every tool for real and
+asserts the two descriptions agree, so they cannot drift.
+
+Ports are checked at compile time: a tool's `run` signature is _derived from_
+its declared ports, so a tool declaring a `bytes` input cannot be implemented
+with a function that expects a string. See
+[`types.ts`](src/features/registry/types.ts).
+
 ## Design system
 
 The visual language is **instrument panel**: dense modular grids on an 8px
@@ -110,8 +160,12 @@ pnpm dev
 src/
   app/          router setup and root providers
   routes/       TanStack file-based routes
-  features/     feature modules (canvas, registry, ...)
-  tools/        individual tool implementations
+  features/     feature modules
+    registry/   tool types, manifest, lazy loader, port compatibility
+    execution/  Web Worker engine, message protocol, run state machine
+    theme/      theming engine
+    toolrunner/ the plain accessible tool UI
+  tools/        individual tool implementations, one directory each
   components/   shared presentational components
   lib/          pure utilities
   styles/       global CSS and design tokens

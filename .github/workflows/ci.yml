@@ -49,3 +49,8 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      # Fails if the initial (non-lazy) JS payload grows past its budget, so a
+      # tool or a heavy dependency cannot drift into the entry chunk unnoticed.
+      - name: Check bundle budget
+        run: pnpm bundle:check

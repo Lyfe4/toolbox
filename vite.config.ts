@@ -23,6 +23,9 @@ export default defineConfig({
       // dot, written as a character class to keep the string escape-free.
       routeFileIgnorePattern: '[.](test|spec)[.]tsx?$',
       quoteStyle: 'single',
+      // Every route component becomes its own chunk, so /styleguide and the
+      // tool pages are not carried by the initial load.
+      autoCodeSplitting: true,
     }),
     react(),
     // Must be last: it reads the finished index.html out of the build output.
