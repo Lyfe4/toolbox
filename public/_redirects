@@ -1,0 +1,23 @@
+# Netlify `_redirects`. Copied verbatim into the build output by Vite.
+#
+# SPA fallback: hand every path that is not a real file to index.html, with a
+# 200 rather than a redirect, so the URL the visitor typed survives and the
+# router decides what it means. `/tools/base64` and a share link's long query
+# string both have to arrive intact.
+#
+# Netlify matches static files FIRST, so this never shadows a real asset. That
+# is not an assumption: served through `netlify dev`, /robots.txt, /sw.js and
+# /favicon.svg all came back as themselves with their own content types, and
+# only /tools/base64 and /nothing-here fell through to the document. A forced
+# rewrite (`/*  /index.html  200!`) would have shadowed all of them, which is
+# the mistake this rule is one exclamation mark away from.
+#
+# The 404 is therefore rendered by the app (src/routes/NotFound.tsx), not by a
+# static 404.html: only the router knows the route table, and a static page
+# could not tell /tools/base64 (real) from /tools/base46 (a typo).
+#
+# One consequence worth naming: an unknown URL returns 200, not 404. That is
+# how every client-routed site behaves and it is what makes deep links work at
+# all - the alternative is serving a 404 body to a URL the app can handle.
+
+/*    /index.html   200

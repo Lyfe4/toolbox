@@ -1,5 +1,10 @@
-# Cloudflare Pages `_headers` file.
-# Copied verbatim into the build output, applied to every response.
+# Netlify `_headers` file.
+# Copied verbatim into the build output by Vite, applied to every response.
+#
+# Netlify and Cloudflare Pages share this format, and the whole file was
+# checked against Netlify's own edge emulation (`netlify dev`) rather than
+# assumed - see the note on /sw.js below, which is the one place the answer
+# actually mattered.
 #
 # Patchbay's core promise is that nothing you paste ever leaves your machine.
 # That promise is enforced here by the browser, not merely asserted in the
@@ -83,3 +88,102 @@
   # Drop capabilities the app has no use for, so a compromise cannot reach them.
   # interest-cohort=() additionally opts out of FLoC/Topics ad profiling.
   Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=(), payment=(), usb=(), midi=(), serial=(), bluetooth=()
+
+# ============================================================================
+# CACHING
+#
+# Netlify has TWO caches and they are configured separately:
+#
+#   Cache-Control              what the BROWSER does
+#   Netlify-CDN-Cache-Control  what Netlify's edge does
+#
+# The edge is left alone deliberately. Netlify holds static assets at the edge
+# for up to a year and purges them on every deploy, which is already exactly
+# right for a site where a deploy is the only thing that can change a file -
+# and it documents that it ignores attempts to set a SHORTER max-age there. So
+# these rules govern the browser, and the edge governs itself.
+#
+# These blocks come after /* on purpose. Netlify applies the most specific
+# matching rule's value for a given header name rather than concatenating
+# across blocks - verified, because concatenation would have been a real
+# problem for /sw.js below. (Repeated names WITHIN one block do concatenate;
+# that is a different thing, and is not used here.)
+# ============================================================================
+
+# Vite writes a content hash into every filename here, so the URL changes
+# whenever the bytes do. `immutable` additionally tells the browser not to
+# revalidate on reload, which is the difference between a warm reload doing
+# nothing and doing a conditional request per chunk.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# NOT immutable, and this is the interesting one.
+#
+# These paths are hand-written and unhashed - index.html preloads
+# /fonts/ibm-plex-mono-400.woff2 by name, so the name has to stay stable. That
+# makes the URL a mutable pointer: re-running `pnpm fonts:sync` after changing
+# the subset or the weights would replace the bytes behind an unchanged path.
+# A year of `immutable` would serve the old subset to every returning visitor,
+# with no way to bust it short of renaming the file. A week, revalidated, keeps
+# the request off the critical path without making it unfixable.
+#
+# Netlify's edge is not the exposure here - a deploy purges it - but the
+# browser cache is nobody's to purge, which is why this is a browser rule.
+/fonts/*
+  Cache-Control: public, max-age=604800, must-revalidate
+
+# The document is the index of everything else. It names the current asset
+# hashes, so caching it is caching the whole build.
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
+
+# ----------------------------------------------------------------------------
+# THE SERVICE WORKER, AND THE ONE PLACE connect-src IS NOT 'none'
+#
+# A worker is governed by the CSP served with its OWN script, not the page's.
+# Under the global policy above it inherits `connect-src 'none'`, which refuses
+# `cache.addAll` and every `fetch` inside it - verified against a real browser,
+# not assumed - so the worker installs and then can never fill its cache.
+#
+# This rule REPLACES the policy for that one file with `connect-src 'self'`,
+# and "replaces" is load-bearing. Netlify's docs are explicit that repeating a
+# header name inside one block concatenates the values, and silent about what
+# happens across two matching blocks. Two Content-Security-Policy headers would
+# not merge into something permissive - the browser enforces the INTERSECTION,
+# `connect-src 'none'` would win, and offline support would die in production
+# while every local test still passed. Checked against `netlify dev`: this file
+# is served with only the policy below.
+# What that permits: the service worker may request files from Patchbay's own
+# origin, which is the only place its cache could come from. What it still
+# forbids: any request to any other origin, from the worker or from the page.
+# The document keeps `connect-src 'none'`, so application code - including a
+# compromised dependency - still cannot make a network request at all.
+#
+# The exception is narrow, deliberate, and written down in SECURITY.md rather
+# than left for someone to find in a header file.
+#
+# Cache-Control: the worker decides what the offline copy is, so a stale worker
+# is a stale application. `no-cache` makes the update check on every navigation
+# a real conditional request rather than a cache hit.
+# ----------------------------------------------------------------------------
+/sw.js
+  Content-Security-Policy: default-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'
+  Cache-Control: no-cache
+
+# Small, rarely changed, and not on any critical path.
+/site.webmanifest
+  Cache-Control: public, max-age=3600
+/favicon.svg
+  Cache-Control: public, max-age=86400
+/favicon.ico
+  Cache-Control: public, max-age=86400
+/apple-touch-icon.png
+  Cache-Control: public, max-age=86400
+/icon-192.png
+  Cache-Control: public, max-age=86400
+/icon-512.png
+  Cache-Control: public, max-age=86400
+/social-preview.png
+  Cache-Control: public, max-age=86400

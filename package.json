@@ -14,6 +14,8 @@
     "build": "tsc -b && vite build",
     "bundle:check": "node scripts/check-bundle-budget.js",
     "check:browsers": "node scripts/cross-browser-check.mjs",
+    "serve:dist": "node scripts/serve-dist.mjs",
+    "assets:generate": "node scripts/generate-assets.mjs",
     "preview": "vite preview",
     "fonts:sync": "node scripts/sync-fonts.js",
     "typecheck": "tsc -b --force",

@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
 import { cspHash } from './vite/plugins/csp-hash.ts';
+import { serviceWorker } from './vite/plugins/service-worker.ts';
 
 // Absolute path to `src`, used for the `@/*` alias. Derived from this file's
 // own URL so it works no matter where the process was started from.
@@ -28,6 +29,9 @@ export default defineConfig({
       autoCodeSplitting: true,
     }),
     react(),
+    // Emits dist/sw.js with the real asset list. Before cspHash so the
+    // ordering of the two closeBundle hooks is stated rather than incidental.
+    serviceWorker(),
     // Must be last: it reads the finished index.html out of the build output.
     cspHash(),
   ],

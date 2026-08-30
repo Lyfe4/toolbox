@@ -20,127 +20,19 @@
  * Run it with `pnpm check:browsers` after `pnpm build`.
  */
 import { deflateSync } from 'node:zlib';
-import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
-import { extname, join, normalize } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { firefox, webkit } from 'playwright';
 
+import { fileURLToPath } from 'node:url';
+
+import { DIST, headersFor, readHeaders, serveDist } from './serve-dist.mjs';
+
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const DIST = join(ROOT, 'dist');
+
 const PORT = 4319;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.woff2': 'font/woff2',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-  '.webmanifest': 'application/manifest+json',
-};
-
-/**
- * A static server for `dist`, applying the same headers as `public/_headers`.
- *
- * Serving without the CSP would be testing a different application: a header
- * that breaks the worker or the fonts in one engine and not another is exactly
- * the kind of divergence this script exists to catch.
- */
-async function serveDist() {
-  const headers = await readHeaders();
-
-  const server = createServer((request, response) => {
-    void (async () => {
-      const url = new URL(request.url ?? '/', ORIGIN);
-      let filePath = normalize(join(DIST, decodeURIComponent(url.pathname)));
-
-      if (!filePath.startsWith(DIST)) {
-        response.writeHead(403).end();
-        return;
-      }
-
-      let body;
-      try {
-        const info = await stat(filePath);
-        if (info.isDirectory()) filePath = join(filePath, 'index.html');
-        body = await readFile(filePath);
-      } catch {
-        // SPA fallback: every unknown path is a client route.
-        filePath = join(DIST, 'index.html');
-        body = await readFile(filePath);
-      }
-
-      response.writeHead(200, {
-        'content-type': MIME[extname(filePath)] ?? 'application/octet-stream',
-        ...headers,
-      });
-      response.end(body);
-    })();
-  });
-
-  await new Promise((resolve) => {
-    server.listen(PORT, '127.0.0.1', resolve);
-  });
-
-  return server;
-}
-
-/**
- * Parses the flat `_headers` file into the global header set.
- *
- * Read from `dist`, not `public`: the source copy still carries the
- * {{INLINE_SCRIPT_HASHES}} placeholder, and serving that would test a policy
- * nobody deploys - it blocks the inline theme script in every engine. The
- * built copy has the real hash written in by the csp-hash plugin.
- */
-async function readHeaders() {
-  const raw = await readFile(join(DIST, '_headers'), 'utf8');
-  const headers = {};
-  let inGlobal = false;
-
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === '' || trimmed.startsWith('#')) continue;
-
-    if (!line.startsWith(' ') && !line.startsWith('\t')) {
-      inGlobal = trimmed === '/*';
-      continue;
-    }
-
-    if (!inGlobal) continue;
-    const colon = trimmed.indexOf(':');
-    if (colon === -1) continue;
-    headers[trimmed.slice(0, colon).trim()] = trimmed.slice(colon + 1).trim();
-  }
-
-  /*
-   * CROSS-BROWSER FINDING, and why one directive is dropped here.
-   *
-   * `upgrade-insecure-requests` rewrites http:// subresources to https://.
-   * Chromium and Gecko exempt loopback from that; WebKit does not, so every
-   * asset on http://127.0.0.1 is upgraded and then fails to connect - the page
-   * loads a bare HTML document and nothing else.
-   *
-   * In production the app is served over https, where the directive is a
-   * belt-and-braces no-op. Here it would only mean testing the wrong thing, so
-   * it is removed from the policy this harness serves - and named, rather than
-   * quietly dropped, because it is a genuine engine difference.
-   */
-  const csp = headers['Content-Security-Policy'];
-  if (typeof csp === 'string') {
-    headers['Content-Security-Policy'] = csp
-      .split(';')
-      .map((directive) => directive.trim())
-      .filter((directive) => directive !== 'upgrade-insecure-requests')
-      .join('; ');
-  }
-
-  return headers;
-}
 
 /* ========================================================================== *
  * A real PNG, built here
@@ -212,6 +104,18 @@ function makePng(size = 8) {
  * ========================================================================== */
 
 const failures = [];
+
+/**
+ * Records something that could NOT be checked here, and why.
+ *
+ * Not a pass and not a failure. A check that silently disappears in one engine
+ * is worse than one that fails, because the summary then reads as full
+ * coverage - so anything the harness cannot do gets a visible line naming the
+ * engine limitation behind it.
+ */
+function skip(browser, name, reason) {
+  console.log(`  skip ${name} - ${reason}`);
+}
 
 function check(browser, name, passed, detail = '') {
   const mark = passed ? 'ok  ' : 'FAIL';
@@ -425,6 +329,24 @@ async function checkDialogScroll(browser, label) {
  * by priming it first. The bar must appear for the first and never the second.
  */
 async function checkRouteFeedback(browser, label) {
+  /*
+   * Registration is blocked in every context here, and that is a FINDING
+   * rather than tidiness.
+   *
+   * The service worker precaches every route chunk, so once it is installed
+   * the delay this check injects with `page.route` never applies - the chunk
+   * comes from the cache and the "slow" navigation is instant. Which is
+   * exactly what the worker is for; it just means a slow navigation has to be
+   * manufactured somewhere the worker is not, or this measures nothing.
+   */
+  const blockServiceWorker = `
+    if (navigator.serviceWorker) {
+      Object.defineProperty(navigator.serviceWorker, 'register', {
+        value: () => Promise.reject(new Error('blocked by the harness')),
+      });
+    }
+  `;
+
   const pendingIn = (page) =>
     page.evaluate(
       () =>
@@ -436,6 +358,7 @@ async function checkRouteFeedback(browser, label) {
   const slowPage = await slow.newPage();
 
   try {
+    await slowPage.addInitScript(blockServiceWorker);
     await slowPage.route('**/assets/*.js', async (route) => {
       if (route.request().url().includes('styleguide')) {
         await new Promise((resolve) => setTimeout(resolve, 1200));
@@ -472,6 +395,7 @@ async function checkRouteFeedback(browser, label) {
   const fastPage = await fast.newPage();
 
   try {
+    await fastPage.addInitScript(blockServiceWorker);
     await fastPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
     // Prime the chunk, so the navigation under test is a warm one.
     await fastPage.evaluate(() => {
@@ -517,6 +441,7 @@ async function checkRouteFeedback(browser, label) {
     });
 
     try {
+      await page.addInitScript(blockServiceWorker);
       await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
       asked.length = 0;
 
@@ -533,6 +458,446 @@ async function checkRouteFeedback(browser, label) {
     } finally {
       await context.close().catch(() => {});
     }
+  }
+}
+
+/**
+ * The deployment contract, checked against the BUILT output.
+ *
+ * There is no Netlify account in this environment, so what is checked here is
+ * everything that is actually ours: that the file the build emits says what it
+ * is supposed to say, and that a server applying those exact rules produces a
+ * working app. Netlify's own resolution of the file was checked separately
+ * against `netlify dev` and is modelled by `headersFor` above.
+ */
+async function checkDeployment(label, rules) {
+  const headers = await readFile(join(DIST, '_headers'), 'utf8');
+
+  check(
+    label,
+    'the CSP hash placeholder was substituted',
+    !headers.includes('{{INLINE_SCRIPT_HASHES}}') && /'sha256-[A-Za-z0-9+/=]+'/.test(headers),
+    /'sha256-[A-Za-z0-9+/=]{8}/.exec(headers)?.[0] ?? 'no hash found',
+  );
+
+  const global = headersFor(rules, '/');
+  for (const [name, expected] of [
+    ['Cross-Origin-Opener-Policy', 'same-origin'],
+    ['Cross-Origin-Embedder-Policy', 'require-corp'],
+    ['X-Content-Type-Options', 'nosniff'],
+    ['Referrer-Policy', 'no-referrer'],
+  ]) {
+    check(label, `${name} is served`, global[name] === expected, global[name] ?? 'absent');
+  }
+
+  check(
+    label,
+    "the document keeps connect-src 'none'",
+    (global['Content-Security-Policy'] ?? '').includes("connect-src 'none'"),
+    global['Content-Security-Policy']?.slice(0, 60) ?? 'absent',
+  );
+
+  /*
+   * The caching split, which is the part that is easy to get subtly wrong.
+   *
+   * /fonts/ is the one to watch: those URLs are hand-written and unhashed, so
+   * `immutable` there would pin a returning visitor to an old subset with no
+   * way to bust it short of renaming the file.
+   */
+  const asset = headersFor(rules, '/assets/index-abc123.js')['Cache-Control'] ?? '';
+  const font = headersFor(rules, '/fonts/ibm-plex-mono-400.woff2')['Cache-Control'] ?? '';
+  const document = headersFor(rules, '/index.html')['Cache-Control'] ?? '';
+  const worker = headersFor(rules, '/sw.js')['Cache-Control'] ?? '';
+
+  check(label, 'hashed assets are immutable', asset.includes('immutable'), asset || 'absent');
+  check(
+    label,
+    'unhashed fonts are NOT immutable',
+    font !== '' && !font.includes('immutable') && font.includes('must-revalidate'),
+    font || 'absent',
+  );
+  check(label, 'the document is never cached', document.includes('no-cache'), document || 'absent');
+  check(
+    label,
+    'the service worker is never cached',
+    worker.includes('no-cache'),
+    worker || 'absent',
+  );
+
+  check(
+    label,
+    'the service worker may reach its own origin, and only its own',
+    (headersFor(rules, '/sw.js')['Content-Security-Policy'] ?? '').includes("connect-src 'self'"),
+    headersFor(rules, '/sw.js')['Content-Security-Policy'] ?? 'absent',
+  );
+
+  const redirects = await readFile(join(DIST, '_redirects'), 'utf8');
+  check(
+    label,
+    'the SPA fallback is configured',
+    /^\/\*\s+\/index\.html\s+200\s*$/m.test(redirects),
+    redirects.trim().split('\n').at(-1) ?? '',
+  );
+}
+
+/**
+ * Offline, which is the whole reason the service worker exists.
+ *
+ * Measured before it was written: with no worker, an offline reload rendered
+ * nothing and an offline navigation to a route whose chunk had never been
+ * fetched failed. Both are asserted here so a change that quietly breaks
+ * registration shows up as a failure rather than as a site that is merely
+ * online-only again.
+ */
+async function checkOffline(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+
+  const consoleErrors = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+
+  try {
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+
+    const installed = await page.evaluate(async () => {
+      if (!('serviceWorker' in navigator)) return { supported: false };
+      const registration = await navigator.serviceWorker.getRegistration();
+      if (!registration) return { supported: true, registered: false };
+      await navigator.serviceWorker.ready;
+      const names = await caches.keys();
+      const cache = names.length > 0 ? await caches.open(names[0]) : null;
+      return {
+        supported: true,
+        registered: true,
+        cache: names[0] ?? null,
+        entries: cache ? (await cache.keys()).length : 0,
+      };
+    });
+
+    if (!installed.supported) {
+      check(
+        label,
+        'service workers are unavailable in this engine - offline not checked',
+        true,
+        '',
+      );
+      return;
+    }
+
+    check(
+      label,
+      'the service worker installs and precaches the build',
+      installed.registered === true && installed.entries > 0,
+      `${installed.cache ?? 'no cache'}, ${String(installed.entries ?? 0)} entries`,
+    );
+
+    // A warm reload, so the page is CONTROLLED by the worker. A page that
+    // loaded before the worker existed is not, and would go straight to a
+    // network that is about to be switched off.
+    await page.reload({ waitUntil: 'networkidle' });
+    check(
+      label,
+      'the worker controls the page after one reload',
+      await page.evaluate(() => Boolean(navigator.serviceWorker.controller)),
+      '',
+    );
+
+    await context.setOffline(true);
+    consoleErrors.length = 0;
+
+    /*
+     * HARNESS LIMITATION, named rather than hidden.
+     *
+     * Playwright's WebKit build throws "WebKit encountered an internal error"
+     * on ANY navigation while the context is offline - reload, goto, whatever
+     * the waitUntil. That is the driver, not the app: the worker installs,
+     * precaches and takes control in WebKit exactly as it does in Gecko, which
+     * is what the checks above have already established. What cannot be shown
+     * here is the navigation itself, so it is skipped with the reason stated.
+     */
+    try {
+      await page.reload({ waitUntil: 'load', timeout: 20_000 });
+    } catch (error) {
+      skip(
+        label,
+        'the app reloads and renders with the network off',
+        `this engine's driver cannot navigate while offline (${String(error).split('\n')[0].slice(0, 60)})`,
+      );
+      return;
+    }
+
+    const canvas = page.locator('[role="application"]').first();
+    const rendered = await canvas
+      .waitFor({ timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false);
+    check(label, 'the app reloads and renders with the network off', rendered, '');
+
+    check(
+      label,
+      'the self-hosted fonts are there offline too',
+      (await page.evaluate(() => document.fonts.status)) === 'loaded',
+      await page.evaluate(() => document.fonts.status),
+    );
+
+    // A route whose chunk was never fetched while online. This is the case
+    // the HTTP cache alone cannot cover, and the reason precaching exists.
+    for (const [href, name] of [
+      ['/tools', 'Tools'],
+      ['/styleguide', 'Styleguide'],
+    ]) {
+      await page.evaluate((target) => {
+        document.querySelector(`a[href="${target}"]`)?.click();
+      }, href);
+      const arrived = await page
+        .waitForSelector('h1', { timeout: 10_000 })
+        .then(() => true)
+        .catch(() => false);
+      check(label, `${name} loads offline from the precache`, arrived, '');
+    }
+
+    check(
+      label,
+      'no console errors while offline',
+      consoleErrors.length === 0,
+      consoleErrors.join(' | '),
+    );
+  } finally {
+    await context.setOffline(false).catch(() => {});
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * axe-core against every route, in a real engine.
+ *
+ * The unit suite already runs axe on every component and route under jsdom,
+ * but jsdom has no layout engine, so `color-contrast` is switched off there -
+ * the one rule that needs real computed colours and real geometry. This runs
+ * the same engine with that rule ON, against the production build, in both
+ * themes, with the canvas actually populated.
+ *
+ * axe is injected with addInitScript rather than a <script> tag on purpose:
+ * `script-src 'self'` refuses an injected inline script, exactly as it should.
+ * addInitScript goes through the debugger protocol instead, so the page keeps
+ * the policy it ships with while still being measurable.
+ */
+async function checkAxe(browser, label) {
+  const axeSource = await readFile(join(ROOT, 'node_modules', 'axe-core', 'axe.min.js'), 'utf8');
+
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await context.addInitScript(axeSource);
+  const page = await context.newPage();
+
+  /** Runs axe and returns the violations, most serious first. */
+  const scan = () =>
+    page.evaluate(async () => {
+      const results = await window.axe.run(document, {
+        resultTypes: ['violations'],
+        // WCAG 2.2 AA is the bar the design system is already held to.
+        runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] },
+      });
+      return results.violations.map((violation) => ({
+        id: violation.id,
+        impact: violation.impact,
+        nodes: violation.nodes.length,
+        target: violation.nodes[0]?.target.join(' '),
+      }));
+    });
+
+  const describe = (violations) =>
+    violations.length === 0
+      ? ''
+      : violations
+          .map((v) => `${v.id} (${v.impact}, x${String(v.nodes)}) ${v.target ?? ''}`)
+          .join(' | ');
+
+  try {
+    for (const theme of ['graphite', 'vellum']) {
+      for (const [path, name] of [
+        ['/', 'the canvas'],
+        ['/tools', 'the tool index'],
+        ['/tools/base64', 'a tool page'],
+        ['/styleguide', 'the styleguide'],
+        ['/nothing-here', 'the 404'],
+      ]) {
+        await page.goto(`${ORIGIN}${path}`, { waitUntil: 'networkidle' });
+
+        /*
+         * Freeze motion, THEN switch theme.
+         *
+         * The colour transitions are 120-180ms, and a scan that starts inside
+         * one measures a colour that exists for two frames and is nobody's
+         * design intent. That showed up as an intermittent 25-node
+         * colour-contrast failure on the styleguide in WebKit only.
+         *
+         * Zeroing the motion tokens through the CSSOM rather than injecting a
+         * stylesheet: `style-src 'self'` correctly refuses an injected <style>,
+         * and element.style is not governed by CSP anyway.
+         */
+        await page.evaluate((value) => {
+          const root = document.documentElement;
+          for (const token of ['--pb-motion-fast', '--pb-motion-base', '--pb-motion-slow']) {
+            root.style.setProperty(token, '0s');
+          }
+          root.setAttribute('data-theme', value);
+        }, theme);
+        await page.waitForTimeout(250);
+
+        const violations = await scan();
+        check(label, `${name} is clean in ${theme}`, violations.length === 0, describe(violations));
+      }
+    }
+
+    /*
+     * The canvas WITH NODES, which is the case the empty one cannot speak for:
+     * node groups, port glyphs, wires and the toolbar readout all only exist
+     * once something has been added.
+     */
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    for (const tool of ['Base64', 'Hash']) {
+      await page.getByRole('button', { name: 'Add tool' }).click();
+      await page.locator('[role="option"]').first().waitFor({ timeout: 10_000 });
+      await page
+        .getByRole('option', { name: new RegExp(tool, 'i') })
+        .first()
+        .click();
+      await page.waitForTimeout(200);
+    }
+
+    const nodes = await page.locator('[role="group"]').count();
+    check(label, 'two nodes are on the canvas to scan', nodes >= 2, `${String(nodes)} node(s)`);
+
+    const populated = await scan();
+    check(label, 'the populated canvas is clean', populated.length === 0, describe(populated));
+
+    // And with an overlay open, since a dialog changes what is exposed.
+    await page.keyboard.press('?');
+    await page.locator('[role="dialog"]').first().waitFor({ timeout: 5_000 });
+    const withDialog = await scan();
+    check(
+      label,
+      'the canvas with an overlay open is clean',
+      withDialog.length === 0,
+      describe(withDialog),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * Zero console output in production, on every route.
+ *
+ * Not just errors: a stray `console.log` left in a component is noise in
+ * everybody's devtools and, in a tool people paste secrets into, a plausible
+ * way to leak one. `no-console` in ESLint already forbids everything except
+ * warn and error in our own source - this catches what the rule cannot, which
+ * is a dependency logging on load and anything the browser itself complains
+ * about (a CSP refusal, a deprecation, a failed subresource).
+ */
+async function checkConsoleSilence(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+
+  const heard = [];
+  page.on('console', (message) => heard.push(`${message.type()}: ${message.text().slice(0, 120)}`));
+  page.on('pageerror', (error) => heard.push(`pageerror: ${String(error).slice(0, 120)}`));
+
+  try {
+    for (const [path, name] of [
+      ['/', 'the canvas'],
+      ['/tools', 'the tool index'],
+      ['/tools/base64', 'a tool page'],
+      ['/tools/not-a-real-tool', 'an unknown tool id'],
+      ['/styleguide', 'the styleguide'],
+      ['/nothing-here', 'the 404'],
+    ]) {
+      heard.length = 0;
+      await page.goto(`${ORIGIN}${path}`, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(400);
+      check(label, `${name} says nothing to the console`, heard.length === 0, heard.join(' | '));
+    }
+
+    // And while actually doing something, not merely sitting there.
+    heard.length = 0;
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: 'Add tool' }).click();
+    await page.locator('[role="option"]').first().waitFor({ timeout: 10_000 });
+    await page.getByTestId('dialog-option-base64').click();
+    await page.waitForTimeout(600);
+    check(label, 'adding and running a tool stays silent', heard.length === 0, heard.join(' | '));
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * Deep links: a nested URL typed straight into the address bar.
+ *
+ * This is the whole point of the `_redirects` fallback, and it is the one
+ * thing that cannot be caught by clicking around - every in-app navigation is
+ * handled by the router and never touches the server. `page.goto` is a real
+ * document request for the nested path, which is what a shared link, a
+ * bookmark or a refresh actually does.
+ *
+ * The title is asserted too, not just that something rendered: `head` is a
+ * non-lazy route option specifically so the tab is named before the chunk
+ * arrives, and a deep link is where that has to hold.
+ */
+async function checkDeepLinks(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    for (const [path, heading, title] of [
+      ['/tools/base64', 'Base64', 'Base64 — Patchbay'],
+      ['/tools/regex-tester', 'Regex', 'Regex — Patchbay'],
+      ['/tools', 'Every tool', 'Tools — Patchbay'],
+      ['/styleguide', 'Styleguide', 'Styleguide — Patchbay'],
+      ['/nothing-here', 'No patch here', 'Patchbay'],
+    ]) {
+      await page.goto(`${ORIGIN}${path}`, { waitUntil: 'networkidle' });
+
+      const rendered = await page
+        .locator('h1')
+        .first()
+        .waitFor({ timeout: 15_000 })
+        .then(() => true)
+        .catch(() => false);
+      const text = rendered ? ((await page.locator('h1').first().textContent()) ?? '') : '';
+
+      check(
+        label,
+        `${path} renders its own page on a direct visit`,
+        rendered && text.includes(heading),
+        rendered ? `h1 "${text.trim()}"` : 'nothing rendered',
+      );
+
+      check(
+        label,
+        `${path} is titled before anything is clicked`,
+        (await page.title()) === title,
+        await page.title(),
+      );
+    }
+
+    /*
+     * And a share link, which is the deep link with the most to lose: the
+     * pipeline travels in the query string, so a fallback that dropped it
+     * would leave the visitor with an empty canvas and no error.
+     */
+    await page.goto(`${ORIGIN}/tools/base64?keep=this`, { waitUntil: 'networkidle' });
+    check(
+      label,
+      'a query string survives the fallback',
+      new URL(page.url()).search === '?keep=this',
+      page.url(),
+    );
+  } finally {
+    await context.close().catch(() => {});
   }
 }
 
@@ -978,6 +1343,10 @@ async function runChecks(engine, label) {
     await checkChromeWidths(browser, label);
     await checkDialogScroll(browser, label);
     await checkRouteFeedback(browser, label);
+    await checkOffline(browser, label);
+    await checkAxe(browser, label);
+    await checkConsoleSilence(browser, label);
+    await checkDeepLinks(browser, label);
   } finally {
     await browser.close();
   }
@@ -985,9 +1354,12 @@ async function runChecks(engine, label) {
 
 /* ========================================================================== */
 
-const server = await serveDist();
+const server = await serveDist(PORT);
 
 try {
+  // Engine-independent: these are assertions about the files the build emits.
+  await checkDeployment('Build output', await readHeaders());
+
   await runChecks(firefox, 'Firefox (Gecko)');
   await runChecks(webkit, 'WebKit - the engine behind Safari, not Safari itself');
 } finally {

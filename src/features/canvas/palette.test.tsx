@@ -402,3 +402,81 @@ describe('accessibility', () => {
     await expectNoAxeViolations(container);
   });
 });
+
+describe('where a new node lands', () => {
+  /*
+   * Found by walking the whole add-connect-run flow from the keyboard.
+   *
+   * Every palette add went to the exact centre of the viewport, so a second
+   * tool landed perfectly on top of the first - both nodes reporting "at 608,
+   * 368". With a pointer you drag the top one off without thinking; from the
+   * keyboard the only way out is arrow keys, 8px at a time, on a node you
+   * cannot see is there twice.
+   */
+
+  /**
+   * Adds one tool by its id.
+   *
+   * By id rather than by accessible name: several tools mention each other in
+   * their summaries, so a name match finds more than one row - "Base64" is in
+   * the base64 tool AND in the base64-decode pipeline's description.
+   */
+  async function addTool(
+    user: ReturnType<typeof userEvent.setup>,
+    query: string,
+    id = query,
+  ): Promise<void> {
+    const search = await openPalette(user);
+    // Narrow the list first, then pick the exact row - searching matches names,
+    // summaries and keywords, so a query alone can leave several rows standing.
+    await user.type(search, query);
+    await user.click(await screen.findByTestId(`dialog-option-${id}`));
+  }
+
+  it('does not stack a second node on top of the first', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+
+    await addTool(user, 'base64');
+    await waitFor(() => {
+      expect(graphOf().nodeOrder).toHaveLength(1);
+    });
+
+    await addTool(user, 'hash');
+    await waitFor(() => {
+      expect(graphOf().nodeOrder).toHaveLength(2);
+    });
+
+    const [first, second] = graphOf().nodeOrder.map((id) => graphOf().nodes[id]?.position);
+    expect(first).toBeDefined();
+    expect(second).not.toEqual(first);
+  });
+
+  it('keeps every node in a run of adds on its own spot', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+
+    for (const [index, [query, id]] of (
+      [
+        ['base64', 'base64'],
+        ['hash', 'hash'],
+        ['diff', 'diff'],
+        ['regex', 'regex-tester'],
+      ] as const
+    ).entries()) {
+      await addTool(user, query, id);
+      await waitFor(() => {
+        expect(graphOf().nodeOrder).toHaveLength(index + 1);
+      });
+    }
+
+    const positions = graphOf().nodeOrder.map((id) => {
+      const point = graphOf().nodes[id]?.position;
+      return `${String(point?.x)},${String(point?.y)}`;
+    });
+
+    // Four adds, four distinct positions - the cascade steps every time
+    // rather than only once.
+    expect(new Set(positions).size).toBe(4);
+  });
+});

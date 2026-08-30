@@ -37,6 +37,7 @@ import {
   MIN_ZOOM,
   NODE_WIDTH,
   portPositionById,
+  snapPoint,
   spatialOrder,
   typedInputPorts,
   type PortSide,
@@ -51,7 +52,7 @@ import { ShortcutsOverlay } from './ShortcutsOverlay';
 import { toWorld, useViewportStore } from './viewportStore';
 import { Wires } from './Wires';
 
-import type { NodeId, Point, PortRef } from './types';
+import type { GraphData, NodeId, Point, PortRef } from './types';
 
 /**
  * The order tool categories appear in the palette.
@@ -136,6 +137,49 @@ const SHARE_NOTE = 'Link holds structure only, never your input';
 
 const NUDGE = GRID;
 const BIG_NUDGE = GRID * 8;
+
+/**
+ * How far a new node steps when the spot it wanted is taken, and how many
+ * times it will try before giving up and stacking anyway.
+ */
+const CASCADE = GRID * 4;
+const CASCADE_LIMIT = 12;
+
+/**
+ * Finds a free position at or near `wanted`.
+ *
+ * The palette always placed a new node at the exact centre of the viewport,
+ * which meant adding two tools in a row put the second one perfectly on top of
+ * the first - two nodes both reporting "at 608, 368". A pointer user drags the
+ * top one off and never thinks about it; from the keyboard the only way out is
+ * arrow keys, 8px at a time, on a node you cannot see is there twice. Found by
+ * walking the whole add-connect-run flow with the keyboard only.
+ *
+ * NOT `clearOfExistingNodes`, which is what presets use: that pushes the new
+ * thing below EVERYTHING on the canvas, which is right for a whole subgraph
+ * read left-to-right and wrong for a single node - after a few tools you would
+ * be adding them off the bottom of the screen, which is the problem the
+ * centre-of-viewport placement existed to avoid. A short diagonal cascade
+ * keeps the node where the user is looking.
+ *
+ * The candidate is snapped first, because the store snaps too - comparing an
+ * unsnapped candidate against stored positions never matches, which is exactly
+ * how the first version of this quietly did nothing at all.
+ */
+function freeSpot(graph: GraphData, wanted: Point): Point {
+  const key = (point: Point): string => `${point.x.toString()},${point.y.toString()}`;
+  const taken = new Set(Object.values(graph.nodes).map((node) => key(node.position)));
+
+  let spot = snapPoint(wanted);
+  for (let step = 0; step < CASCADE_LIMIT; step += 1) {
+    if (!taken.has(key(spot))) return spot;
+    spot = { x: spot.x + CASCADE, y: spot.y + CASCADE };
+  }
+
+  // Twelve nodes already stacked on one spot is not a case worth more code
+  // than this; the last candidate is returned rather than looping forever.
+  return spot;
+}
 
 export interface CanvasProps {
   /** Validated and length-bounded by the route's search schema. */
@@ -636,7 +680,10 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
 
       const id = store
         .getState()
-        .addNode(toolId, { x: centre.x - NODE_WIDTH / 2, y: centre.y - 60 });
+        .addNode(
+          toolId,
+          freeSpot(store.getState().graph, { x: centre.x - NODE_WIDTH / 2, y: centre.y - 60 }),
+        );
 
       // Focus follows the new node, so the next keystroke acts on it.
       requestAnimationFrame(() => {

@@ -73,7 +73,22 @@ export function ShortcutsOverlay({ onClose }: ShortcutsOverlayProps) {
           />
         </div>
 
-        <div className={styles.dialogScroll} data-scroll-region="">
+        {/*
+          tabIndex={0} and a name, because this region SCROLLS.
+          A scrollable box that nothing can focus is unreachable from the
+          keyboard: there is no listbox here to arrow through, so the only way
+          to see the shortcuts below the fold is to focus the region itself and
+          use the arrow keys. Caught by axe's scrollable-region-focusable in a
+          real browser - jsdom cannot see it, because whether a box scrolls is
+          a question about layout.
+        */}
+        <div
+          className={styles.dialogScroll}
+          data-scroll-region=""
+          tabIndex={0}
+          role="group"
+          aria-label="Shortcut reference"
+        >
           {SHORTCUT_GROUPS.map((group) => (
             <table className={styles.shortcutTable} key={group}>
               <caption className={styles.groupLabel}>{group}</caption>

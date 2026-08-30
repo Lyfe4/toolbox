@@ -3,11 +3,55 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      The title and description here are the DEFAULTS, for a crawler that does
+      not run scripts and for the moment before React mounts. Once it has, the
+      router owns them: `head` on each route feeds <HeadContent/>, which
+      replaces this title rather than adding a second one (see src/app/head.ts).
+    -->
     <title>Patchbay</title>
     <meta
       name="description"
       content="A developer toolbox that runs entirely in your browser. Nothing you paste ever leaves the page."
     />
+
+    <!--
+      Icons. The SVG is the one browsers prefer and the only one that adapts to
+      the OS light/dark setting; favicon.ico is there purely so the bare
+      /favicon.ico request that some clients still make gets an icon rather
+      than the SPA fallback's HTML. All of them are generated from the design
+      tokens by scripts/generate-assets.mjs.
+    -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!--
+      Browser UI colour. Two of them, because the app follows the OS setting
+      when nothing is stored, and a dark chrome above a light page looks like a
+      bug. The values are the surface-raised token of each default theme, and
+      index.head.test.ts fails if they drift from it.
+    -->
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111419" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fbfaf7" />
+
+    <!--
+      Open Graph and Twitter cards. Static, because the crawlers that read them
+      do not run the router - the per-route versions the router renders are for
+      the tab strip and for anything that does.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Patchbay" />
+    <meta property="og:title" content="Patchbay" />
+    <meta
+      property="og:description"
+      content="A developer toolbox that runs entirely in your browser. Nothing you paste ever leaves the page."
+    />
+    <meta property="og:image" content="/social-preview.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
 
     <!--
       The interface is monospace-first, so IBM Plex Mono is on the critical

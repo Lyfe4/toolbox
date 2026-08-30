@@ -1,0 +1,125 @@
+/*
+ * 404, in the instrument aesthetic: a panel on the base surface, hairline
+ * border, no shadow, no illustration. It reads as a labelled module that
+ * happens to say "nothing here" rather than as an error screen.
+ */
+.root {
+  display: grid;
+  place-items: center;
+  block-size: 100%;
+  padding: var(--pb-space-xl);
+  overflow-y: auto;
+}
+
+.panel {
+  display: grid;
+  justify-items: start;
+  gap: var(--pb-space-sm);
+
+  inline-size: min(100%, 44ch);
+  padding: var(--pb-space-xl);
+
+  background-color: var(--pb-surface-raised);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-panel);
+  /* The one saturated element on the page, on the leading edge. */
+  border-inline-start: var(--pb-border-width-strong) solid var(--pb-accent);
+}
+
+.glyph {
+  display: flex;
+  color: var(--pb-accent);
+}
+
+/*
+ * The status number as an instrument readout: monospace, tracked out, muted.
+ * It is decoration for the heading below rather than the heading itself, so it
+ * is a <p> and the real <h1> follows it.
+ */
+.code {
+  margin: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-heading-size);
+  font-weight: var(--pb-heading-weight);
+  letter-spacing: var(--pb-heading-tracking);
+  color: var(--pb-ink-primary);
+}
+
+.body {
+  margin: 0;
+  font-family: var(--pb-font-prose);
+  font-size: var(--pb-body-size);
+  color: var(--pb-ink-secondary);
+  /* A long unknown path must wrap rather than widen the panel. */
+  overflow-wrap: anywhere;
+}
+
+.path {
+  /* Its own block, so a long path wraps as a unit instead of breaking a
+     sentence across lines. */
+  display: block;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-primary);
+  background-color: var(--pb-surface-inset);
+  padding: var(--pb-space-2xs) var(--pb-space-xs);
+  border: var(--pb-border-width) solid var(--pb-border-subtle);
+  border-radius: var(--pb-radius-control);
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pb-space-xs);
+  margin-block-start: var(--pb-space-sm);
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+
+  block-size: var(--pb-control-height-md);
+  padding-inline: var(--pb-control-pad-x-md);
+
+  background-color: var(--pb-control-surface);
+  border: var(--pb-border-width) solid var(--pb-control-border);
+  border-radius: var(--pb-radius-control);
+
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-primary);
+  text-decoration: none;
+
+  transition: border-color var(--pb-motion-fast) var(--pb-ease);
+}
+
+.link:hover {
+  border-color: var(--pb-control-border-hover);
+  background-color: var(--pb-control-surface-hover);
+}
+
+@media (forced-colors: active) {
+  .panel {
+    border-color: CanvasText;
+    border-inline-start-color: Highlight;
+  }
+
+  .link {
+    border-color: CanvasText;
+  }
+}

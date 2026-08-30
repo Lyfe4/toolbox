@@ -1,0 +1,13 @@
+# Everything here is public and static, and there is nothing to protect from a
+# crawler - no accounts, no user content, no server.
+#
+# This file exists mainly because it has to exist. `_redirects` sends every
+# unmatched path to index.html, so without a real robots.txt a crawler asking
+# for one is handed an HTML document with a 200, which is not a parse failure
+# it can do anything sensible with. Lighthouse flags exactly that.
+
+User-agent: *
+Allow: /
+
+# The canvas holds no server-side state and share links carry only a pipeline's
+# shape, so there is nothing here that should not be indexed.

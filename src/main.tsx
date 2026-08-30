@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from '@/app/App';
+import { registerServiceWorker } from '@/app/registerServiceWorker';
 
 import '@/styles/global.css';
 
@@ -18,3 +19,6 @@ createRoot(rootElement).render(
     <App />
   </StrictMode>,
 );
+
+// After render, not before: the first paint is not waiting on this.
+registerServiceWorker();

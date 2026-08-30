@@ -1,0 +1,29 @@
+# Netlify build configuration.
+#
+# The headers and the SPA fallback deliberately live in `public/_headers` and
+# `public/_redirects` rather than in this file. Both are copied verbatim into
+# `dist/` by Vite, which means:
+#
+#   - the exact bytes that get deployed are the ones in the repo, and
+#   - `scripts/serve-dist.mjs` and the cross-browser harness can read the same
+#     file and serve the built app under the real policy, so what is tested
+#     locally is what ships.
+#
+# A `[[headers]]` block here would be a second source of truth that nothing
+# local could apply. The one thing that must be configured here is the build.
+
+[build]
+  command = "pnpm build"
+  publish = "dist"
+
+[build.environment]
+  # Matches .nvmrc, so the deploy and the CI gate use the same major.
+  NODE_VERSION = "22"
+  # Vite only exposes VITE_-prefixed variables to the client, and there are
+  # none: the app has no configuration to inject and no origin to point at.
+  NPM_FLAGS = "--frozen-lockfile"
+
+# `pnpm build` runs `tsc -b` first, so a type error fails the deploy rather
+# than shipping. The rest of the gate (lint, format, tests, bundle budget)
+# runs in CI on the pull request, which is where it belongs - a deploy that
+# has to wait for the whole suite is a deploy nobody runs.

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Patchbay">
+  <style>
+    .surface { fill: #111419 }
+    .border  { stroke: #636a72 }
+    .accent  { stroke: #ff9500; fill: none }
+    .core    { fill: #ff9500 }
+    .cord    { stroke: #6d7885 }
+    @media (prefers-color-scheme: light) {
+      .surface { fill: #fbfaf7 }
+      .border  { stroke: #908777 }
+      .accent  { stroke: #b2320a }
+      .core    { fill: #b2320a }
+      .cord    { stroke: #776e5d }
+    }
+  </style>
+  <rect class="surface" width="64" height="64"/>
+  <rect class="border" x="0.5" y="0.5" width="63" height="63" fill="none" stroke-width="1"/>
+  <path class="cord" d="M0 32 H18 M46 32 H64" stroke-width="4" stroke-linecap="butt"/>
+  <circle class="accent" cx="32" cy="32" r="13" stroke-width="5"/>
+  <circle class="core" cx="32" cy="32" r="4.5"/>
+</svg>

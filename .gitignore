@@ -36,3 +36,9 @@ pnpm-debug.log*
 
 # Editor/agent workspace config (dev-server launch settings, scratch state).
 .claude/
+
+# Written by the Netlify CLI when `netlify dev` is run locally. Neither is
+# configuration - netlify.toml and public/_headers are - and deno.lock is a
+# lockfile for Netlify's own edge runtime, not for anything in this repo.
+.netlify/
+deno.lock

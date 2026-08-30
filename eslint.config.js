@@ -180,6 +180,15 @@ export default tseslint.config(
     extends: [tseslint.configs.disableTypeChecked],
   },
 
+  // --- The service worker -----------------------------------------------------
+  // Not Node and not a window: its own global scope, with `self`, `caches` and
+  // the rest. Listed explicitly rather than lumped in with the browser files,
+  // because `window` genuinely does not exist here.
+  {
+    files: ['vite/service-worker.js'],
+    languageOptions: { globals: globals.serviceworker },
+  },
+
   // Must stay last: switches off every rule Prettier already handles, so the
   // formatter and the linter can never disagree about the same line.
   prettierConfig,
