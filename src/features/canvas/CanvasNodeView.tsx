@@ -8,15 +8,28 @@ import { cx } from '@/lib/cx';
 import styles from './canvas.module.css';
 import {
   BODY_PADDING,
-  HEADER_HEIGHT,
   nodeHeight,
-  portOffsetY,
+  portRowCount,
+  portStackGap,
+  portInsetStyle,
+  portTopStyle,
   PORT_ROW_HEIGHT,
-  SUMMARY_HEIGHT,
+  type PortSide,
 } from './geometry';
-import { describeTypes, PortGlyph } from './PortGlyph';
+import { describeTypes, PortGlyph, PORT_GLYPH_SIZE } from './PortGlyph';
 
 import type { CanvasNode, PortRef } from './types';
+
+/** How a port is keyed in the state sets below: "input:document". */
+export function portKey(side: PortSide, portId: string): string {
+  return `${side}:${portId}`;
+}
+
+/** Inputs first, then outputs: the order the two stacks appear down the node. */
+const PORT_SIDES: readonly PortSide[] = ['input', 'output'];
+
+/** Where a port row starts, so its glyph's centre lands on the wire anchor. */
+const PORT_INSET = portInsetStyle(PORT_GLYPH_SIZE);
 
 const CATEGORY_GLYPHS: Partial<Record<ToolCategory, typeof PortIcon>> = {
   encoding: PortIcon,
@@ -66,14 +79,6 @@ function ledClass(status: NodeRunStatus): string {
   }
 }
 
-/**
- * Where a port sits inside `.nodeBody`, derived from the same function the
- * wire geometry uses so the two can never disagree by a pixel.
- */
-function portTopInBody(index: number): number {
-  return portOffsetY(index) - HEADER_HEIGHT - SUMMARY_HEIGHT - PORT_ROW_HEIGHT / 2 + BODY_PADDING;
-}
-
 export interface CanvasNodeViewProps {
   readonly node: CanvasNode;
   readonly selected: boolean;
@@ -81,10 +86,18 @@ export interface CanvasNodeViewProps {
   readonly run: NodeRunState;
   /** Input ports with no wire; each gets its own small editor. */
   readonly typedInputPorts: readonly string[];
-  readonly linkState: 'none' | 'valid' | 'invalid';
-  readonly validInputPorts: ReadonlySet<string>;
+  /** Whether a wire is being dragged anywhere on the canvas. */
+  readonly linking: boolean;
+  /** Ports on THIS node the current drag could legally land on. Keyed by portKey. */
+  readonly validPorts: ReadonlySet<string>;
+  /** The port the current drag started from, if it is on this node. */
+  readonly heldPort: string | null;
+  /** The port the drag would snap to right now, if it is on this node. */
+  readonly armedPort: string | null;
+  /** The port that just refused a drop, if it is on this node. */
+  readonly refusedPort: string | null;
   readonly connectedPorts: ReadonlySet<string>;
-  readonly onPortPointerDown: (ref: PortRef, side: 'input' | 'output') => void;
+  readonly onPortPointerDown: (ref: PortRef, side: PortSide) => void;
   readonly onInputChange: (nodeId: string, portId: string, value: string) => void;
 }
 
@@ -100,8 +113,11 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   connections,
   run,
   typedInputPorts,
-  linkState,
-  validInputPorts,
+  linking,
+  validPorts,
+  heldPort,
+  armedPort,
+  refusedPort,
   connectedPorts,
   onPortPointerDown,
   onInputChange,
@@ -109,6 +125,16 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   const entry: ToolManifestEntry = getManifestEntry(node.toolId);
   const Glyph = CATEGORY_GLYPHS[entry.category] ?? SignalIcon;
   const height = nodeHeight(entry, typedInputPorts.length);
+  /** The space the two port stacks reserve, so the footer sits below them. */
+  const bodyHeight = portRowCount(entry) * PORT_ROW_HEIGHT + portStackGap(entry) + BODY_PADDING * 2;
+
+  /*
+   * "Needs input" is true but not actionable, and it is the first thing a
+   * first-time visitor reads. On a node with nothing wired to it, say what to
+   * DO - and name the direction, because nothing else on the canvas does.
+   */
+  const blockedHint =
+    run.status === 'blocked' && connections === 0 ? hintFor(entry, node, typedInputPorts) : null;
 
   /*
    * The accessible name carries everything a sighted user reads off the node
@@ -131,7 +157,9 @@ export const CanvasNodeView = memo(function CanvasNodeView({
       className={cx(
         styles.node,
         selected && styles.nodeSelected,
-        linkState === 'invalid' && styles.nodeInvalid,
+        // Not the node the drag started from: its own ports are never legal
+        // partners, and dimming the thing you are holding reads as a refusal.
+        linking && heldPort === null && validPorts.size === 0 && styles.nodeInvalid,
       )}
       style={{ left: node.position.x, top: node.position.y, height }}
       data-node-id={node.id}
@@ -159,66 +187,84 @@ export const CanvasNodeView = memo(function CanvasNodeView({
       <p className={styles.nodeSummary}>
         {run.status === 'error' && run.error
           ? run.error.message
-          : (run.blockedReason ?? entry.summary)}
+          : (blockedHint ?? run.blockedReason ?? entry.summary)}
       </p>
 
-      <div className={styles.nodeBody}>
-        {entry.inputs.map((port, index) => {
-          const dimmed = linkState !== 'none' && !validInputPorts.has(port.id);
+      {/*
+        PORTS
+        ─────
+        Two independent stacks, one after the other: every input, then a gap,
+        then every output. They used to be side-by-side columns sharing rows,
+        which made "the single input" read as paired with "the first output" on
+        a node that has one of the former and two of the latter. They are
+        separate lists and are now laid out as separate lists.
+
+        Positioned against the NODE rather than the body, using the very
+        function the wire layer uses, so a connector and the wire that lands on
+        it cannot drift apart.
+      */}
+      <div className={styles.nodeBody} style={{ blockSize: bodyHeight }} aria-hidden="true" />
+
+      {PORT_SIDES.map((side) =>
+        (side === 'input' ? entry.inputs : entry.outputs).map((port, index) => {
+          const key = portKey(side, port.id);
+          const valid = validPorts.has(key);
+          const held = heldPort === key;
+          const armed = armedPort === key;
+          const refused = refusedPort === key;
+          // Receding is only meaningful while a drag is looking for a home.
+          const receded = linking && !valid && !held;
+
           return (
             <button
-              key={port.id}
+              key={key}
               type="button"
               tabIndex={-1}
               className={cx(
                 styles.port,
-                styles.portInput,
-                linkState !== 'none' && !dimmed && styles.portValid,
-                dimmed && styles.portInvalid,
+                side === 'input' ? styles.portInput : styles.portOutput,
+                linking && valid && styles.portValid,
+                receded && styles.portReceded,
+                held && styles.portHeld,
+                armed && styles.portArmed,
+                refused && styles.portRefused,
               )}
-              style={{ top: portTopInBody(index) }}
+              style={{
+                top: portTopStyle(entry, side, index),
+                [side === 'input' ? 'insetInlineStart' : 'insetInlineEnd']: PORT_INSET,
+              }}
               data-port-id={port.id}
-              data-port-side="input"
-              aria-label={`Input ${port.label}, accepts ${describeTypes(port.types)}`}
+              data-port-side={side}
+              data-port-state={
+                held ? 'held' : armed ? 'armed' : refused ? 'refused' : valid ? 'valid' : 'idle'
+              }
+              aria-label={
+                side === 'input'
+                  ? `Input ${port.label}, accepts ${describeTypes(port.types)}`
+                  : `Output ${port.label}, carries ${describeTypes(port.types)}`
+              }
               onPointerDown={(event) => {
                 event.stopPropagation();
-                onPortPointerDown({ nodeId: node.id, portId: port.id }, 'input');
+                onPortPointerDown({ nodeId: node.id, portId: port.id }, side);
               }}
             >
+              {/*
+                A real element rather than a border or an outline, so the state
+                rings hold their space and nothing reflows when one appears.
+                It is also what carries held/armed/valid SHAPE-wise, which is
+                what keeps these states legible without colour.
+              */}
+              <span className={styles.portHalo} aria-hidden="true" />
               <PortGlyph
                 types={port.types}
-                connected={connectedPorts.has(`in:${port.id}`)}
+                connected={connectedPorts.has(key)}
                 className={styles.portConnector}
               />
               <span className={styles.portLabel}>{port.label}</span>
             </button>
           );
-        })}
-
-        {entry.outputs.map((port, index) => (
-          <button
-            key={port.id}
-            type="button"
-            tabIndex={-1}
-            className={cx(styles.port, styles.portOutput)}
-            style={{ top: portTopInBody(index) }}
-            data-port-id={port.id}
-            data-port-side="output"
-            aria-label={`Output ${port.label}, carries ${describeTypes(port.types)}`}
-            onPointerDown={(event) => {
-              event.stopPropagation();
-              onPortPointerDown({ nodeId: node.id, portId: port.id }, 'output');
-            }}
-          >
-            <PortGlyph
-              types={port.types}
-              connected={connectedPorts.has(`out:${port.id}`)}
-              className={styles.portConnector}
-            />
-            <span className={styles.portLabel}>{port.label}</span>
-          </button>
-        ))}
-      </div>
+        }),
+      )}
 
       {/*
         One editor per input port that has no wire. A tool with two required
@@ -266,6 +312,29 @@ export const CanvasNodeView = memo(function CanvasNodeView({
     </div>
   );
 });
+
+/**
+ * What to do about a blocked node that has nothing wired into it.
+ *
+ * Returns null when the node is only waiting on something upstream: telling
+ * someone to type into a port that already has a wire would be wrong.
+ */
+function hintFor(
+  entry: ToolManifestEntry,
+  node: CanvasNode,
+  unwired: readonly string[],
+): string | null {
+  const waiting = entry.inputs.find(
+    (port) => port.required && unwired.includes(port.id) && (node.inputs[port.id] ?? '') === '',
+  );
+  if (!waiting) return null;
+
+  const named = entry.inputs.length > 1 ? ` ${waiting.label}` : '';
+
+  return waiting.types.includes('text')
+    ? `Type below, or drag a wire from another node's output into${named || ' the input'} on the left.`
+    : `Drag a wire from another node's output on the right into${named || ' the input'} on the left.`;
+}
 
 /** Sub-millisecond runs read as "<1ms" rather than "0ms". */
 export function formatDuration(ms: number): string {

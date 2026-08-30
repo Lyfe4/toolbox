@@ -16,17 +16,27 @@ import {
 import { cx } from '@/lib/cx';
 
 import styles from './canvas.module.css';
-import { CanvasNodeView } from './CanvasNodeView';
+import { CanvasNodeView, portKey } from './CanvasNodeView';
 import { CommandDialog, type DialogGroup, type DialogOption } from './CommandDialog';
-import { checkConnection, connectionCount, validTargetsFor } from './connections';
+import {
+  checkConnection,
+  connectionCount,
+  nearestCompatiblePort,
+  nearestPortOfSide,
+  orientEnds,
+  validPartnersFor,
+  type PortEnd,
+} from './connections';
 import {
   clearOfExistingNodes,
   GRID,
   MAX_ZOOM,
   MIN_ZOOM,
   NODE_WIDTH,
+  portPositionById,
   spatialOrder,
   typedInputPorts,
+  type PortSide,
 } from './geometry';
 import { useCanvasStore } from './graphStore';
 import { createDebouncedSaver, loadGraph } from './persistence';
@@ -72,16 +82,40 @@ export const PALETTE_GROUPS: readonly DialogGroup[] = [
 ];
 
 /** The connection flow has one group each; declared for the same reason. */
-const OUTPUT_GROUPS: readonly DialogGroup[] = [{ id: 'outputs', label: 'Outputs' }];
-const TARGET_GROUPS: readonly DialogGroup[] = [{ id: 'targets', label: 'Valid targets' }];
+/** Outputs lead: connecting forwards is the common case and stays one Enter. */
+const PORT_GROUPS: readonly DialogGroup[] = [
+  { id: 'outputs', label: 'Outputs', note: 'wire onwards' },
+  { id: 'inputs', label: 'Inputs', note: 'wire backwards' },
+];
+const PARTNER_GROUPS: readonly DialogGroup[] = [{ id: 'partners', label: 'Valid ports' }];
 
 /** Which overlay, if any, is open. */
 type Overlay =
   | { readonly kind: 'none' }
   | { readonly kind: 'palette' }
   | { readonly kind: 'shortcuts' }
-  | { readonly kind: 'choose-output'; readonly nodeId: NodeId }
-  | { readonly kind: 'choose-target'; readonly from: PortRef };
+  /* Step one of the keyboard connect flow: which of this node's ports? */
+  | { readonly kind: 'choose-port'; readonly nodeId: NodeId }
+  /* Step two: which port on another node does it join? */
+  | { readonly kind: 'choose-partner'; readonly origin: PortEnd };
+
+/**
+ * Encodes a port end into a dialog option id, and back.
+ *
+ * `|` because a tool id or a port id may contain a hyphen, and a node id may
+ * not contain a pipe. Round-tripped rather than parsed loosely, so a malformed
+ * id resolves to null instead of half a port reference.
+ */
+function encodeEnd(end: PortEnd): string {
+  return `${end.ref.nodeId}|${end.side}|${end.ref.portId}`;
+}
+
+function decodeEnd(id: string): PortEnd | null {
+  const [nodeId, side, portId] = id.split('|');
+  if (nodeId === undefined || portId === undefined) return null;
+  if (side !== 'input' && side !== 'output') return null;
+  return { ref: { nodeId, portId }, side };
+}
 
 const EMPTY_PORTS: readonly string[] = [];
 
@@ -108,7 +142,20 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
   const { notify } = useToast();
   const [overlay, setOverlay] = useState<Overlay>({ kind: 'none' });
   const [spacePressed, setSpacePressed] = useState(false);
-  const [draft, setDraft] = useState<{ from: PortRef; at: Point } | null>(null);
+  /**
+   * The wire being dragged.
+   *
+   * `origin` carries the SIDE as well as the port, because a drag may start
+   * from either end - see `onPortPointerDown`. `snapped` is the port it would
+   * land on if released now.
+   */
+  const [draft, setDraft] = useState<{
+    origin: PortEnd;
+    at: Point;
+    snapped: PortEnd | null;
+  } | null>(null);
+  /** The port that just refused a drop, cleared on the next interaction. */
+  const [refused, setRefused] = useState<PortEnd | null>(null);
 
   /* ---------------------------------------------------------------------- *
    * Persistence
@@ -305,7 +352,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
   const dragging = useRef<
     | { readonly kind: 'pan'; readonly last: Point }
     | { readonly kind: 'node'; readonly origin: Point }
-    | { readonly kind: 'wire'; readonly from: PortRef }
+    | { readonly kind: 'wire'; readonly origin: PortEnd }
     | null
   >(null);
 
@@ -318,17 +365,38 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     return toWorld(point, useViewportStore.getState().viewport);
   }, []);
 
-  const onPortPointerDown = useCallback((ref: PortRef, side: 'input' | 'output') => {
-    // Wires are drawn from outputs. Grabbing an input is a no-op rather than
-    // a confusing backwards drag.
-    if (side !== 'output') return;
-    dragging.current = { kind: 'wire', from: ref };
-    setDraft({ from: ref, at: { x: 0, y: 0 } });
-  }, []);
+  /**
+   * Starting a wire, from EITHER end.
+   *
+   * Inputs used to be a no-op here while still styling themselves as grabbable
+   * - a hover highlight and a crosshair cursor advertising an interaction that
+   * did not exist. Rather than take the affordance away, the affordance is now
+   * true: a drag may start at either end and is put the right way round when
+   * it lands. That is what every established node editor does, and it halves
+   * the number of attempts that go nowhere.
+   *
+   * The draft starts anchored at the port itself, not at the world origin, so
+   * there is no frame where the line shoots off to the top-left.
+   */
+  const onPortPointerDown = useCallback(
+    (ref: PortRef, side: PortSide) => {
+      const origin: PortEnd = { ref, side };
+      const at = portPositionById(store.getState().graph, ref.nodeId, side, ref.portId);
+
+      setRefused(null);
+      dragging.current = { kind: 'wire', origin };
+      setDraft({ origin, at: at ?? { x: 0, y: 0 }, snapped: null });
+    },
+    [store],
+  );
 
   const onPointerDown = (event: PointerEvent): void => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+
+    // The refusal marker is transient: it explains one drop, then gets out of
+    // the way at the next thing the user does.
+    setRefused(null);
 
     const nodeElement = target.closest('[data-node-id]');
     const nodeId = nodeElement?.getAttribute('data-node-id') ?? null;
@@ -382,7 +450,15 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       return;
     }
 
-    setDraft({ from: current.from, at: screenToWorld(event) });
+    const at = screenToWorld(event);
+    // The snap is recomputed on every move so the armed port and the released
+    // port are decided by exactly the same rule.
+    const snap = nearestCompatiblePort(store.getState().graph, current.origin, at);
+    setDraft({
+      origin: current.origin,
+      at,
+      snapped: snap ? { ref: snap.ref, side: snap.side } : null,
+    });
   };
 
   const onPointerUp = (event: PointerEvent): void => {
@@ -399,17 +475,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
 
     if (current.kind === 'wire') {
       setDraft(null);
-      // Hit-test what is under the pointer rather than relying on enter/leave
-      // events, which a fast drag can miss entirely.
-      const dropped = document.elementFromPoint(event.clientX, event.clientY);
-      const port = dropped?.closest('[data-port-side="input"]');
-      const node = port?.closest('[data-node-id]');
-      const nodeId = node?.getAttribute('data-node-id');
-      const portId = port?.getAttribute('data-port-id');
-
-      if (nodeId && portId) {
-        tryConnect(current.from, { nodeId, portId });
-      }
+      dropWire(current.origin, screenToWorld(event));
     }
   };
 
@@ -469,6 +535,44 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       return true;
     },
     [store, notify],
+  );
+
+  /**
+   * Where a dragged wire lands.
+   *
+   * Three outcomes, in order:
+   *
+   *  1. A legal partner within the snap radius - connect to it. Snapping is
+   *     geometric rather than a DOM hit test, so a release NEAR an 11px port
+   *     still counts, and the nearest of two close candidates wins.
+   *  2. No legal partner, but a port of the opposite side is close - connect
+   *     anyway so the refusal runs and SAYS why, and mark that port refused so
+   *     the reason is visible at the place the user was aiming.
+   *  3. Nothing nearby - empty canvas. Cancel silently; the draft is already
+   *     gone, so there is nothing to orphan.
+   */
+  const dropWire = useCallback(
+    (origin: PortEnd, at: Point) => {
+      const graph = store.getState().graph;
+
+      const snap = nearestCompatiblePort(graph, origin, at);
+      if (snap) {
+        const oriented = orientEnds(origin, { ref: snap.ref, side: snap.side });
+        if (oriented) tryConnect(oriented.from, oriented.to);
+        return;
+      }
+
+      const opposite: PortSide = origin.side === 'output' ? 'input' : 'output';
+      const near = nearestPortOfSide(graph, opposite, at);
+      if (!near) return;
+
+      const oriented = orientEnds(origin, { ref: near.ref, side: near.side });
+      if (!oriented) return;
+      if (!tryConnect(oriented.from, oriented.to)) {
+        setRefused({ ref: near.ref, side: near.side });
+      }
+    },
+    [store, tryConnect],
   );
 
   /* ---------------------------------------------------------------------- *
@@ -544,20 +648,36 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     return active.closest('[data-node-id]')?.getAttribute('data-node-id') ?? null;
   }, []);
 
+  /**
+   * The C flow, step one.
+   *
+   * Lists EVERY port on the node - outputs first, then inputs - because the
+   * pointer can now start a drag from either end and the keyboard is not a
+   * second-class route to the same graph. Outputs lead, so the highlight
+   * starts where it always did and `C, Enter` still means "from my output".
+   *
+   * The chooser is skipped only for a node with a single port, where there is
+   * genuinely nothing to choose.
+   */
   const beginConnectFrom = useCallback(
     (nodeId: NodeId) => {
       const node = store.getState().graph.nodes[nodeId];
       if (!node) return;
 
       const entry = getManifestEntry(node.toolId);
-      const only = entry.outputs.length === 1 ? entry.outputs[0] : undefined;
+      const ends: PortEnd[] = [
+        ...entry.outputs.map((port): PortEnd => ({
+          ref: { nodeId, portId: port.id },
+          side: 'output',
+        })),
+        ...entry.inputs.map((port): PortEnd => ({
+          ref: { nodeId, portId: port.id },
+          side: 'input',
+        })),
+      ];
 
-      // One output means there is nothing to choose; skip straight to targets.
-      setOverlay(
-        only
-          ? { kind: 'choose-target', from: { nodeId, portId: only.id } }
-          : { kind: 'choose-output', nodeId },
-      );
+      const only = ends.length === 1 ? ends[0] : undefined;
+      setOverlay(only ? { kind: 'choose-partner', origin: only } : { kind: 'choose-port', nodeId });
     },
     [store],
   );
@@ -793,22 +913,27 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       const edge = graph.edges[id];
       if (!edge) continue;
       const out = map.get(edge.from.nodeId) ?? new Set<string>();
-      out.add(`out:${edge.from.portId}`);
+      out.add(portKey('output', edge.from.portId));
       map.set(edge.from.nodeId, out);
       const into = map.get(edge.to.nodeId) ?? new Set<string>();
-      into.add(`in:${edge.to.portId}`);
+      into.add(portKey('input', edge.to.portId));
       map.set(edge.to.nodeId, into);
     }
     return map;
   }, [graph]);
 
-  /** While a wire is in flight, which input ports could accept it. */
+  /**
+   * While a wire is in flight, which ports could legally accept it.
+   *
+   * Keyed by side as well as id, because a drag from an input is looking for
+   * outputs and both sides can share a port id.
+   */
   const validTargets = useMemo(() => {
     if (!draft) return new Map<NodeId, Set<string>>();
     const map = new Map<NodeId, Set<string>>();
-    for (const target of validTargetsFor(graph, draft.from)) {
+    for (const target of validPartnersFor(graph, draft.origin)) {
       const ports = map.get(target.nodeId) ?? new Set<string>();
-      ports.add(target.portId);
+      ports.add(portKey(target.side, target.portId));
       map.set(target.nodeId, ports);
     }
     return map;
@@ -837,17 +962,41 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
   }, [graph, runStates]);
   const emptySet = useMemo(() => new Set<string>(), []);
 
+  /**
+   * The wire being dragged.
+   *
+   * The origin comes from `portPositionById` - the same function the committed
+   * wires use. It used to be `node.position.y + 64 + index * 24`, a private
+   * copy of the layout arithmetic that was 21px out, so the line left from
+   * roughly where the PREVIOUS port is drawn. On a two-output node that made
+   * both outputs look like they started in the same place.
+   *
+   * When a snap is armed the line ends ON that port rather than under the
+   * pointer, so what the release will do is visible before releasing.
+   */
   const draftPath = useMemo(() => {
     if (!draft) return null;
-    const node = graph.nodes[draft.from.nodeId];
-    if (!node) return null;
-    const entry = getManifestEntry(node.toolId);
-    const index = entry.outputs.findIndex((port) => port.id === draft.from.portId);
-    if (index === -1) return null;
-    return {
-      from: { x: node.position.x + NODE_WIDTH, y: node.position.y + 64 + index * 24 },
-      to: draft.at,
-    };
+
+    const from = portPositionById(
+      graph,
+      draft.origin.ref.nodeId,
+      draft.origin.side,
+      draft.origin.ref.portId,
+    );
+    if (!from) return null;
+
+    const snappedTo = draft.snapped
+      ? portPositionById(
+          graph,
+          draft.snapped.ref.nodeId,
+          draft.snapped.side,
+          draft.snapped.ref.portId,
+        )
+      : null;
+
+    // A wire is drawn output -> input, whichever end the drag began at.
+    const to = snappedTo ?? draft.at;
+    return draft.origin.side === 'output' ? { from, to } : { from: to, to: from };
   }, [draft, graph]);
 
   /* ---------------------------------------------------------------------- *
@@ -875,25 +1024,37 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     [],
   );
 
-  const outputOptions: readonly DialogOption[] = useMemo(() => {
-    if (overlay.kind !== 'choose-output') return [];
+  const portOptions: readonly DialogOption[] = useMemo(() => {
+    if (overlay.kind !== 'choose-port') return [];
     const node = graph.nodes[overlay.nodeId];
     if (!node) return [];
-    return getManifestEntry(node.toolId).outputs.map((port) => ({
-      id: port.id,
-      name: port.label,
-      detail: port.types.join(' or '),
-      group: 'outputs',
-    }));
+
+    const entry = getManifestEntry(node.toolId);
+    const nodeId = overlay.nodeId;
+
+    return [
+      ...entry.outputs.map((port) => ({
+        id: encodeEnd({ ref: { nodeId, portId: port.id }, side: 'output' }),
+        name: port.label,
+        detail: `carries ${port.types.join(' or ')}`,
+        group: 'outputs',
+      })),
+      ...entry.inputs.map((port) => ({
+        id: encodeEnd({ ref: { nodeId, portId: port.id }, side: 'input' }),
+        name: port.label,
+        detail: `accepts ${port.types.join(' or ')}`,
+        group: 'inputs',
+      })),
+    ];
   }, [overlay, graph]);
 
-  const targetOptions: readonly DialogOption[] = useMemo(() => {
-    if (overlay.kind !== 'choose-target') return [];
-    return validTargetsFor(graph, overlay.from).map((target) => ({
-      id: `${target.nodeId}:${target.portId}`,
+  const partnerOptions: readonly DialogOption[] = useMemo(() => {
+    if (overlay.kind !== 'choose-partner') return [];
+    return validPartnersFor(graph, overlay.origin).map((target) => ({
+      id: encodeEnd({ ref: { nodeId: target.nodeId, portId: target.portId }, side: target.side }),
       name: `${target.nodeLabel} - ${target.portLabel}`,
       detail: target.types.join(' or '),
-      group: 'targets',
+      group: 'partners',
     }));
   }, [overlay, graph]);
 
@@ -983,8 +1144,21 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
               connections={connectionCount(graph, id)}
               run={runStates[id] ?? idleState()}
               typedInputPorts={typedInputFor.get(id) ?? EMPTY_PORTS}
-              linkState={draft === null ? 'none' : valid && valid.size > 0 ? 'valid' : 'invalid'}
-              validInputPorts={valid ?? emptySet}
+              linking={draft !== null}
+              validPorts={valid ?? emptySet}
+              heldPort={
+                draft?.origin.ref.nodeId === id
+                  ? portKey(draft.origin.side, draft.origin.ref.portId)
+                  : null
+              }
+              armedPort={
+                draft?.snapped?.ref.nodeId === id
+                  ? portKey(draft.snapped.side, draft.snapped.ref.portId)
+                  : null
+              }
+              refusedPort={
+                refused?.ref.nodeId === id ? portKey(refused.side, refused.ref.portId) : null
+              }
               connectedPorts={connectedPorts.get(id) ?? emptySet}
               onPortPointerDown={onPortPointerDown}
               onInputChange={onInputChange}
@@ -1109,34 +1283,47 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
         />
       ) : null}
 
-      {overlay.kind === 'choose-output' ? (
+      {overlay.kind === 'choose-port' ? (
         <CommandDialog
-          title="Connect from which output?"
-          searchLabel="Search outputs"
-          placeholder="Filter outputs"
-          options={outputOptions}
-          groups={OUTPUT_GROUPS}
-          emptyMessage="This tool has no outputs."
+          title="Connect from which port?"
+          searchLabel="Search ports"
+          placeholder="Filter ports"
+          options={portOptions}
+          groups={PORT_GROUPS}
+          emptyMessage="This tool has no ports."
           onClose={closeOverlay}
-          onChoose={(portId) => {
-            setOverlay({ kind: 'choose-target', from: { nodeId: overlay.nodeId, portId } });
+          onChoose={(id) => {
+            const origin = decodeEnd(id);
+            if (origin) setOverlay({ kind: 'choose-partner', origin });
           }}
         />
       ) : null}
 
-      {overlay.kind === 'choose-target' ? (
+      {overlay.kind === 'choose-partner' ? (
         <CommandDialog
-          title="Connect to which input?"
-          searchLabel="Search valid targets"
-          placeholder="Filter targets"
-          options={targetOptions}
-          groups={TARGET_GROUPS}
-          emptyMessage="Nothing on the canvas can accept this output yet."
+          title={
+            overlay.origin.side === 'output'
+              ? 'Connect to which input?'
+              : 'Connect from which output?'
+          }
+          searchLabel="Search valid ports"
+          placeholder="Filter ports"
+          options={partnerOptions}
+          groups={PARTNER_GROUPS}
+          emptyMessage={
+            overlay.origin.side === 'output'
+              ? 'Nothing on the canvas can accept this output yet.'
+              : 'Nothing on the canvas can feed this input yet.'
+          }
           onClose={closeOverlay}
           onChoose={(id) => {
-            const [nodeId, portId] = id.split(':');
+            const partner = decodeEnd(id);
             closeOverlay();
-            if (nodeId && portId) tryConnect(overlay.from, { nodeId, portId });
+            if (!partner) return;
+            // Oriented through the same helper the pointer drop uses, so the
+            // two routes cannot disagree about which end is which.
+            const oriented = orientEnds(overlay.origin, partner);
+            if (oriented) tryConnect(oriented.from, oriented.to);
           }}
         />
       ) : null}

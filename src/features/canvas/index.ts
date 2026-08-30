@@ -8,6 +8,7 @@ export {
   connectionCount,
   edgesTouching,
   edgeInto,
+  validPartnersFor,
   validTargetsFor,
   type ConnectionTarget,
 } from './connections';

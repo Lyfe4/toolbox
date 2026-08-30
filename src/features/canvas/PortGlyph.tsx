@@ -11,7 +11,9 @@ import type { DataType } from '@/features/registry';
  * A port that accepts several types shows the "multi" glyph rather than
  * guessing which one to display, and names all of them in its label.
  */
-const SIZE = 11;
+/** Exported so the layout can centre the glyph without guessing at it. */
+export const PORT_GLYPH_SIZE = 11;
+const SIZE = PORT_GLYPH_SIZE;
 
 function shapeFor(type: DataType): string {
   switch (type) {

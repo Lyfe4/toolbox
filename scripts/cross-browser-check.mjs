@@ -338,7 +338,7 @@ async function runChecks(engine, label) {
 
     /* -- Pointer events: drag a node ------------------------------------ */
     const search = page.getByRole('combobox', { name: 'Search tools' });
-    await search.fill('base64');
+    await search.fill('structured');
     await search.press('Enter');
 
     const node = page.locator('[data-node-id]').first();
@@ -364,6 +364,104 @@ async function runChecks(engine, label) {
       'a node can be dragged with pointer events',
       moved,
       `moved ${(after.x - before.x).toFixed(0)}x${(after.y - before.y).toFixed(0)}`,
+    );
+
+    /* -- Port layout, which jsdom cannot see ----------------------------- */
+    const ports = await page.evaluate(() => {
+      const target = document.querySelector('[data-node-id]');
+      const box = target.getBoundingClientRect();
+
+      const rows = [...target.querySelectorAll('[data-port-id]')].map((port) => {
+        const glyph = port.querySelector('svg').getBoundingClientRect();
+        const hit = port.getBoundingClientRect();
+        const label = port.querySelector('span:last-child').getBoundingClientRect();
+        return {
+          side: port.dataset.portSide,
+          id: port.dataset.portId,
+          centreX: glyph.left + glyph.width / 2 - box.left,
+          centreY: glyph.top + glyph.height / 2 - box.top,
+          glyphLeft: glyph.left - box.left,
+          glyphRight: box.right - glyph.right,
+          hitWidth: hit.width,
+          hitHeight: hit.height,
+          glyphWidth: glyph.width,
+          labelBox: { left: label.left, right: label.right, top: label.top, bottom: label.bottom },
+          glyphBox: { left: glyph.left, right: glyph.right, top: glyph.top, bottom: glyph.bottom },
+        };
+      });
+
+      const inputs = rows.filter((row) => row.side === 'input');
+      const outputs = rows.filter((row) => row.side === 'output');
+
+      const overlaps = (a, b) =>
+        a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+
+      return {
+        nodeWidth: box.width,
+        rows,
+        // No input may share a row with an output: they are separate lists.
+        sharedRows: inputs.filter((input) =>
+          outputs.some((output) => Math.abs(output.centreY - input.centreY) < 1),
+        ).length,
+        // Nothing may sit on the node's border.
+        flushToBorder: rows.filter((row) =>
+          row.side === 'input' ? row.glyphLeft < 2 : row.glyphRight < 2,
+        ).length,
+        labelCollisions: rows.filter((row) => overlaps(row.labelBox, row.glyphBox)).length,
+        labelOverlaps: rows.filter((row, index) =>
+          rows.some(
+            (other, otherIndex) => otherIndex > index && overlaps(row.labelBox, other.labelBox),
+          ),
+        ).length,
+        hitAreaRatio: Math.min(
+          ...rows.map((row) => (row.hitWidth * row.hitHeight) / (row.glyphWidth * row.glyphWidth)),
+        ),
+      };
+    });
+
+    check(
+      label,
+      'inputs and outputs never share a row',
+      ports.sharedRows === 0 && ports.rows.length > 2,
+      `${ports.rows.length.toString()} ports, ${ports.sharedRows.toString()} shared`,
+    );
+    check(
+      label,
+      'connector glyphs stand clear of the node border',
+      ports.flushToBorder === 0,
+      `min inset ${Math.min(...ports.rows.map((row) => (row.side === 'input' ? row.glyphLeft : row.glyphRight))).toFixed(1)}px`,
+    );
+    check(
+      label,
+      'port labels collide with nothing',
+      ports.labelCollisions === 0 && ports.labelOverlaps === 0,
+      `${ports.labelCollisions.toString()} on glyphs, ${ports.labelOverlaps.toString()} on each other`,
+    );
+    check(
+      label,
+      'each port has a hit area far larger than its glyph',
+      ports.hitAreaRatio > 6,
+      `smallest is ${ports.hitAreaRatio.toFixed(1)}x the glyph`,
+    );
+
+    /* -- Wires actually paint -------------------------------------------- */
+    const wireLayer = await page.evaluate(() => {
+      const svg = document.querySelector('svg[class*="wireLayer"]');
+      if (!svg) return null;
+      const box = svg.getBoundingClientRect();
+      return {
+        width: box.width,
+        height: box.height,
+        maxInlineSize: getComputedStyle(svg).maxInlineSize,
+      };
+    });
+    check(
+      label,
+      'the wire layer is not collapsed by the svg reset',
+      wireLayer !== null && wireLayer.width > 0,
+      wireLayer
+        ? `${wireLayer.width.toString()}x${wireLayer.height.toString()}, max-inline-size ${wireLayer.maxInlineSize}`
+        : 'no layer',
     );
 
     /* -- A tool actually executes, in a real worker ---------------------- */

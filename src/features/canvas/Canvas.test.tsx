@@ -308,7 +308,16 @@ describe('connecting without a pointer', () => {
     source.focus();
     await user.keyboard('c');
 
-    // base64 has one output, so the flow skips straight to choosing a target.
+    /*
+     * Step one lists every port on the node, because a pointer drag can now
+     * start from either end and the keyboard is not a lesser route. Outputs
+     * lead, so `C, Enter` still means "from my output" - the same two
+     * keystrokes this flow always took.
+     */
+    const ports = await screen.findByRole('dialog', { name: /Connect from which port/ });
+    expect(within(ports).getAllByRole('option')[0]).toHaveTextContent('Output');
+    await user.keyboard('{Enter}');
+
     const dialog = await screen.findByRole('dialog', { name: /Connect to which input/ });
     const options = within(dialog).getAllByRole('option');
     expect(options).toHaveLength(1);
@@ -322,7 +331,7 @@ describe('connecting without a pointer', () => {
     expect(announcer()).toHaveTextContent('Connected Base64 to Structured data');
   });
 
-  it('asks which output first when a tool has more than one', async () => {
+  it('lists every port of the node, both sides, before asking where to', async () => {
     const user = userEvent.setup();
     renderCanvas();
     await twoNodes(user);
@@ -331,9 +340,11 @@ describe('connecting without a pointer', () => {
     source.focus();
     await user.keyboard('c');
 
-    // structured-data has two outputs, so the output step is not skipped.
-    const dialog = await screen.findByRole('dialog', { name: /Connect from which output/ });
-    expect(within(dialog).getAllByRole('option')).toHaveLength(2);
+    const dialog = await screen.findByRole('dialog', { name: /Connect from which port/ });
+    // structured-data: two outputs and one input, each reachable.
+    expect(within(dialog).getAllByRole('option')).toHaveLength(3);
+    expect(within(dialog).getByRole('group', { name: 'Outputs' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('group', { name: 'Inputs' })).toBeInTheDocument();
   });
 
   it('offers only targets a pointer drop would also be allowed to land on', async () => {
@@ -347,7 +358,7 @@ describe('connecting without a pointer', () => {
     source.focus();
     await user.keyboard('c');
 
-    await user.type(await screen.findByRole('combobox', { name: 'Search outputs' }), 'Parsed');
+    await user.type(await screen.findByRole('combobox', { name: 'Search ports' }), 'Parsed');
     await user.keyboard('{Enter}');
 
     const dialog = await screen.findByRole('dialog', { name: /Connect to which input/ });
@@ -415,7 +426,9 @@ describe('connecting without a pointer', () => {
 
     screen.getByRole('group', { name: /Base64/ }).focus();
     await user.keyboard('c');
-    await screen.findByRole('dialog');
+    await screen.findByRole('dialog', { name: /Connect from which port/ });
+    await user.keyboard('{Enter}');
+    await screen.findByRole('dialog', { name: /Connect to which input/ });
     await user.keyboard('{Enter}');
     await waitFor(() => {
       expect(useCanvasStore.getState().graph.edgeOrder).toHaveLength(1);

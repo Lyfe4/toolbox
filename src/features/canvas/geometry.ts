@@ -15,13 +15,60 @@ import type { CanvasNode, GraphData, NodeId, Point } from './types';
 export const GRID = 8;
 
 export const NODE_WIDTH = 224;
+/**
+ * The node's own border.
+ *
+ * Counted because `CanvasNode.position` is the BORDER box's top-left, while a
+ * CSS `top` on an absolutely positioned child is measured from the padding
+ * edge - one pixel further down. Leaving it out is what put every wire a pixel
+ * above its port, and the drift only got worse from there.
+ */
+export const NODE_BORDER = 1;
 export const HEADER_HEIGHT = 24;
 export const PORT_ROW_HEIGHT = 24;
 export const BODY_PADDING = 8;
 export const SUMMARY_HEIGHT = 32;
 export const FOOTER_HEIGHT = 24;
-/** The typed-input editor, shown only on nodes whose first port has no wire. */
-export const INPUT_HEIGHT = 56;
+/**
+ * The typed-input editor: a 48px box plus the 4px gap under it.
+ *
+ * Matched to the CSS rather than rounded up. Over-reserving here left the
+ * footer floating a few pixels above the node's bottom edge.
+ */
+export const INPUT_HEIGHT = 52;
+
+/**
+ * Clear space between the input stack and the output stack.
+ *
+ * The two are separate lists, and they are laid out as separate lists: inputs
+ * from the top, then a gap, then outputs. Side-by-side columns of unequal
+ * length read as ROWS - "DOCUMENT goes with CONVERTED" - which is a
+ * relationship that does not exist.
+ */
+export const PORT_STACK_GAP = 8;
+
+/**
+ * How far in from the node's edge a connector glyph's centre sits.
+ *
+ * The glyph is 11px across, so this leaves it comfortably inside the panel
+ * instead of straddling the border. Wires attach here too; the wire layer sits
+ * beneath the nodes, so the last few pixels are hidden and a wire reads as
+ * terminating cleanly at the edge.
+ */
+export const PORT_GLYPH_INSET = 14;
+
+/** The invisible grab area around a port, measured from the glyph's centre. */
+export const PORT_HIT_RADIUS = 18;
+
+/**
+ * How far from a port a drop may land and still connect.
+ *
+ * Ports are 11px targets on a plane that pans and zooms. Requiring a direct
+ * hit means missing, and missing means the wire silently vanishes. Snapping
+ * within this radius - to the NEAREST compatible port, never an incompatible
+ * one - is what makes the drag forgiving without making it inaccurate.
+ */
+export const PORT_SNAP_RADIUS = 28;
 
 export const MIN_ZOOM = 0.25;
 export const MAX_ZOOM = 2.5;
@@ -41,17 +88,29 @@ export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/** Rows of ports a node shows: the taller of its two sides. */
+/**
+ * Rows of ports a node shows.
+ *
+ * The SUM of both sides, not the taller of them: the two stacks follow each
+ * other down the node rather than sharing rows.
+ */
 export function portRowCount(entry: ToolManifestEntry): number {
-  return Math.max(entry.inputs.length, entry.outputs.length);
+  return entry.inputs.length + entry.outputs.length;
+}
+
+/** The gap only exists when there is something on both sides of it. */
+export function portStackGap(entry: ToolManifestEntry): number {
+  return entry.inputs.length > 0 && entry.outputs.length > 0 ? PORT_STACK_GAP : 0;
 }
 
 export function nodeHeight(entry: ToolManifestEntry, typedInputs = 0): number {
   return (
+    NODE_BORDER * 2 +
     HEADER_HEIGHT +
     SUMMARY_HEIGHT +
-    portRowCount(entry) * PORT_ROW_HEIGHT +
     BODY_PADDING * 2 +
+    portRowCount(entry) * PORT_ROW_HEIGHT +
+    portStackGap(entry) +
     typedInputs * INPUT_HEIGHT +
     FOOTER_HEIGHT
   );
@@ -80,20 +139,56 @@ export function typedInputCount(graph: GraphData, node: CanvasNode): number {
   return typedInputPorts(graph, node).length;
 }
 
-/** Vertical centre of the port at `index`, relative to the node's top edge. */
-export function portOffsetY(index: number): number {
-  return (
-    HEADER_HEIGHT + SUMMARY_HEIGHT + BODY_PADDING + index * PORT_ROW_HEIGHT + PORT_ROW_HEIGHT / 2
-  );
-}
-
 export type PortSide = 'input' | 'output';
 
-/** World-space position of a port's connector. */
-export function portPosition(node: CanvasNode, side: PortSide, index: number): Point {
+/**
+ * Vertical centre of a port, relative to the node's top edge.
+ *
+ * THE single source of truth for where a port is. The wire layer reads it, and
+ * so does the DOM (through `portTopStyle`), so the two cannot disagree - which
+ * they previously did, by nine pixels, because the view had its own copy of
+ * the arithmetic and the draft wire had a third.
+ */
+export function portOffsetY(entry: ToolManifestEntry, side: PortSide, index: number): number {
+  const top = NODE_BORDER + HEADER_HEIGHT + SUMMARY_HEIGHT + BODY_PADDING;
+  const stack = side === 'input' ? 0 : entry.inputs.length * PORT_ROW_HEIGHT + portStackGap(entry);
+
+  return top + stack + index * PORT_ROW_HEIGHT + PORT_ROW_HEIGHT / 2;
+}
+
+/**
+ * The CSS inset for a port row, measured from the node's padding edge.
+ *
+ * The glyph's centre has to land `PORT_GLYPH_INSET` inside the node's BORDER
+ * box, but a CSS inset is measured from the padding edge - one border further
+ * in. Same correction as `portTopStyle`, same reason, and set inline for the
+ * same reason: so no stylesheet holds a second copy of the number.
+ */
+export function portInsetStyle(glyphWidth: number): number {
+  return PORT_GLYPH_INSET - glyphWidth / 2 - NODE_BORDER;
+}
+
+/**
+ * The CSS `top` for a port row, positioned against the node.
+ *
+ * Derived from `portOffsetY` rather than computed alongside it. The row is
+ * PORT_ROW_HEIGHT tall and its centre must land on the offset, and `top` is
+ * measured from the padding edge - inside the border - hence the subtraction.
+ */
+export function portTopStyle(entry: ToolManifestEntry, side: PortSide, index: number): number {
+  return portOffsetY(entry, side, index) - PORT_ROW_HEIGHT / 2 - NODE_BORDER;
+}
+
+/** World-space position of a port's connector glyph, at its exact centre. */
+export function portPosition(
+  entry: ToolManifestEntry,
+  node: CanvasNode,
+  side: PortSide,
+  index: number,
+): Point {
   return {
-    x: node.position.x + (side === 'output' ? NODE_WIDTH : 0),
-    y: node.position.y + portOffsetY(index),
+    x: node.position.x + (side === 'output' ? NODE_WIDTH - PORT_GLYPH_INSET : PORT_GLYPH_INSET),
+    y: node.position.y + portOffsetY(entry, side, index),
   };
 }
 
@@ -113,8 +208,9 @@ export function portPositionById(
   const node = graph.nodes[nodeId];
   if (!node) return null;
 
-  const index = portIndex(getManifestEntry(node.toolId), side, portId);
-  return index === null ? null : portPosition(node, side, index);
+  const entry = getManifestEntry(node.toolId);
+  const index = portIndex(entry, side, portId);
+  return index === null ? null : portPosition(entry, node, side, index);
 }
 
 /**

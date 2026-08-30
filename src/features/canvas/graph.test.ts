@@ -7,7 +7,12 @@ import { checkConnection, connectionCount, edgeInto, validTargetsFor } from './c
 import {
   graphBounds,
   nodeHeight,
+  NODE_BORDER,
+  portOffsetY,
   portPosition,
+  portTopStyle,
+  PORT_GLYPH_INSET,
+  PORT_ROW_HEIGHT,
   snapToGrid,
   spatialOrder,
   wirePath,
@@ -235,13 +240,48 @@ describe('geometry', () => {
     expect(snapToGrid(60)).toBe(64);
   });
 
-  it('puts inputs on the left edge and outputs on the right', () => {
+  it('puts inputs on the left edge and outputs on the right, inset from the border', () => {
+    const entry = getManifestEntry('structured-data');
     const n = node('n1', 'structured-data', 100, 200);
-    const input = portPosition(n, 'input', 0);
-    const output = portPosition(n, 'output', 0);
-    expect(input.x).toBe(100);
-    expect(output.x).toBe(100 + 224);
-    expect(input.y).toBe(output.y);
+    const input = portPosition(entry, n, 'input', 0);
+    const output = portPosition(entry, n, 'output', 0);
+
+    // Inset rather than sitting on the border, so the glyph is inside the
+    // panel with room around it instead of straddling the edge.
+    expect(input.x).toBe(100 + PORT_GLYPH_INSET);
+    expect(output.x).toBe(100 + 224 - PORT_GLYPH_INSET);
+    expect(PORT_GLYPH_INSET).toBeGreaterThan(0);
+  });
+
+  it('stacks inputs and outputs instead of pairing them into rows', () => {
+    const entry = getManifestEntry('structured-data');
+    const n = node('n1', 'structured-data', 0, 0);
+
+    // One input, two outputs. Every port gets its own row: the input must not
+    // share a line with the first output, which is what made them read as a
+    // pair that means something.
+    const ys = [
+      portPosition(entry, n, 'input', 0).y,
+      portPosition(entry, n, 'output', 0).y,
+      portPosition(entry, n, 'output', 1).y,
+    ];
+    expect(new Set(ys).size).toBe(3);
+    expect(ys[0]).toBeLessThan(ys[1] ?? 0);
+    expect(ys[1]).toBeLessThan(ys[2] ?? 0);
+  });
+
+  it('keeps the rendered port row centred on the offset the wires use', () => {
+    const entry = getManifestEntry('diff');
+    for (const side of ['input', 'output'] as const) {
+      for (let index = 0; index < 2; index += 1) {
+        // The DOM `top` is measured from inside the border; the wire offset is
+        // measured from the border box. One derived from the other, asserted
+        // here so a stray constant cannot pull them apart again.
+        expect(portTopStyle(entry, side, index) + PORT_ROW_HEIGHT / 2 + NODE_BORDER).toBe(
+          portOffsetY(entry, side, index),
+        );
+      }
+    }
   });
 
   it('gives a taller node to a tool with more ports', () => {

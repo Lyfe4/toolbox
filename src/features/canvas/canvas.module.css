@@ -60,10 +60,22 @@
 
 /* --- Wires -------------------------------------------------------------- */
 
+/*
+ * The wire layer is a 1x1 SVG that paints outside its own viewport, because
+ * the plane it lives on is 0x0 by design - the transform is the coordinate
+ * system, not the box.
+ *
+ * `max-inline-size: none` is load-bearing. reset.css gives every svg
+ * `max-inline-size: 100%`, and 100% of a zero-width parent is zero, which
+ * collapsed this viewport to nothing and clipped every wire out of existence -
+ * committed and in-flight alike. The wires were all there in the DOM, with
+ * correct paths, painting nowhere.
+ */
 .wireLayer {
   position: absolute;
   inset-block-start: 0;
   inset-inline-start: 0;
+  max-inline-size: none;
   overflow: visible;
   /* The layer itself is inert; individual wire hit paths opt back in. */
   pointer-events: none;
@@ -207,14 +219,23 @@
   overflow: hidden;
 }
 
+/*
+ * A spacer, not a container.
+ *
+ * The ports are positioned against the NODE now - the same coordinate space
+ * the wire layer works in - so all this has to do is reserve the height they
+ * occupy. Its size is computed by `nodeHeight`'s own arithmetic and set
+ * inline, so the two cannot disagree.
+ */
 .nodeBody {
-  position: relative;
-  padding-block: var(--pb-space-sm);
-  flex: 1;
+  flex-shrink: 0;
 }
 
 .nodeFooter {
   block-size: 24px;
+  /* Pinned to the bottom, so any rounding slack collects above it rather than
+     leaving the footer floating clear of the node's edge. */
+  margin-block-start: auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -229,20 +250,19 @@
 
 /* --- Ports -------------------------------------------------------------- */
 
-.portRow {
-  position: absolute;
-  inset-inline: 0;
-  block-size: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  pointer-events: none;
-}
-
+/*
+ * PORTS
+ *
+ * Positioned against the node from `portTopStyle`, which is derived from the
+ * same offset the wire layer uses. Nothing here computes a position.
+ *
+ * The row is deliberately taller and wider than the 11px glyph: it is the grab
+ * target, and an 11px target on a plane that pans and zooms is not one. It
+ * reaches past the node's edge as well, so the connector can be grabbed from
+ * just outside the panel.
+ */
 .port {
   position: absolute;
-  /* Matches PORT_ROW_HEIGHT so the connector's centre is exactly where
-     geometry.ts says the wire should attach. */
   block-size: 24px;
   display: flex;
   align-items: center;
@@ -259,20 +279,62 @@
   cursor: crosshair;
   pointer-events: auto;
   white-space: nowrap;
+  transition:
+    opacity var(--pb-motion-fast) var(--pb-ease),
+    color var(--pb-motion-fast) var(--pb-ease);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .port {
+    transition: none;
+  }
+}
+
+/*
+ * The inset itself is set inline from `portInsetStyle`; only the grab overhang
+ * lives here. The padding/negative-margin pair widens the hit area past the
+ * node's edge without moving the glyph.
+ */
 .portInput {
-  inset-inline-start: -6px;
+  padding-inline-start: 10px;
+  margin-inline-start: -10px;
 }
 
 .portOutput {
-  inset-inline-end: -6px;
+  padding-inline-end: 10px;
+  margin-inline-end: -10px;
   flex-direction: row-reverse;
 }
 
 .portConnector {
   flex-shrink: 0;
   color: var(--pb-border-strong);
+  transition: color var(--pb-motion-fast) var(--pb-ease);
+}
+
+/*
+ * The state ring.
+ *
+ * A real element, always present and always the same size, so a state can
+ * appear without reflowing the row. It sits behind the glyph and is what
+ * carries held/armed/valid as SHAPE - a ring that is there or is not - so none
+ * of these states depends on colour to be read.
+ */
+.portHalo {
+  position: absolute;
+  inline-size: 22px;
+  block-size: 22px;
+  border-radius: 50%;
+  border: var(--pb-border-width) solid transparent;
+  pointer-events: none;
+}
+
+.portInput .portHalo {
+  inset-inline-start: 3px;
+}
+
+.portOutput .portHalo {
+  inset-inline-end: 3px;
 }
 
 .port:hover .portConnector,
@@ -286,17 +348,96 @@
   text-overflow: ellipsis;
 }
 
-/* Connection-drag feedback: valid targets lift, invalid ones recede. */
+/* --- Drag states --------------------------------------------------------- */
+
+/** The port the drag started from: filled ring, held for the whole drag. */
+.portHeld .portHalo {
+  border-color: var(--pb-accent);
+  background-color: color-mix(in srgb, var(--pb-accent) 22%, transparent);
+}
+
+.portHeld .portConnector,
+.portHeld .portLabel {
+  color: var(--pb-ink-accent);
+}
+
+/** A legal destination: prominent, with a ring to say "this one is open". */
 .portValid {
   color: var(--pb-ink-primary);
+}
+
+.portValid .portHalo {
+  border-color: var(--pb-accent);
 }
 
 .portValid .portConnector {
   color: var(--pb-accent);
 }
 
-.portInvalid {
-  opacity: 0.3;
+/**
+ * Armed: the port a release right now would land on.
+ *
+ * Thicker and filled, so it is distinguishable from merely-valid without
+ * reading the colour - the ring goes from a hairline outline to a solid disc.
+ */
+.portArmed .portHalo {
+  border-width: var(--pb-border-width-strong);
+  border-color: var(--pb-accent);
+  background-color: color-mix(in srgb, var(--pb-accent) 30%, transparent);
+}
+
+.portArmed .portConnector {
+  color: var(--pb-ink-accent);
+}
+
+/** Incompatible while a drag is looking for a home: recedes, ring stays off. */
+.portReceded {
+  opacity: 0.28;
+}
+
+/** Where a drop was just refused. Marked with a slash, not only a tint. */
+.portRefused .portHalo {
+  border-color: var(--pb-signal-error);
+  background-image: linear-gradient(
+    45deg,
+    transparent calc(50% - 1px),
+    var(--pb-signal-error) calc(50% - 1px),
+    var(--pb-signal-error) calc(50% + 1px),
+    transparent calc(50% + 1px)
+  );
+}
+
+.portRefused .portConnector,
+.portRefused .portLabel {
+  color: var(--pb-signal-error);
+}
+
+@media (forced-colors: active) {
+  /*
+   * Every colour above is replaced by the OS here, so the ring's PRESENCE and
+   * its border width are what remain - which is why they were made to carry
+   * the distinction in the first place.
+   */
+  .portHeld .portHalo,
+  .portValid .portHalo,
+  .portArmed .portHalo {
+    border-color: Highlight;
+  }
+
+  .portArmed .portHalo {
+    border-width: var(--pb-border-width-strong);
+  }
+
+  .portRefused .portHalo {
+    border-color: LinkText;
+  }
+
+  .portReceded {
+    opacity: 1;
+    /* Opacity is unreliable against a forced background; hide the label so a
+       receding port still reads as out of play. */
+    text-decoration: line-through;
+  }
 }
 
 .nodeInvalid {
@@ -768,4 +909,71 @@
   letter-spacing: var(--pb-label-tracking);
   color: var(--pb-ink-muted);
   line-height: 1.2;
+}
+
+/* --- Ports and wires key ------------------------------------------------- */
+
+/*
+ * The shortcuts overlay's own scroller.
+ *
+ * `.dialogBody` deliberately does NOT scroll - in the command dialog the list
+ * inside it does, so the search input stays put. This reference has no list,
+ * just a long column, so it scrolls as a whole.
+ */
+.dialogScroll {
+  display: grid;
+  gap: var(--pb-space-sm);
+  padding: var(--pb-space-sm);
+  overflow-y: auto;
+  min-block-size: 0;
+  overscroll-behavior: contain;
+}
+
+.legend {
+  display: grid;
+  gap: var(--pb-space-sm);
+  padding-block-start: var(--pb-space-sm);
+  border-block-start: var(--pb-border-width) solid var(--pb-border-hairline);
+}
+
+.legendFlow {
+  margin: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  line-height: var(--pb-body-leading);
+  color: var(--pb-ink-secondary);
+}
+
+.legendFlow strong {
+  font-weight: var(--pb-label-weight);
+  color: var(--pb-ink-primary);
+}
+
+.legendList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--pb-space-2xs) var(--pb-space-md);
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-xs);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  color: var(--pb-ink-muted);
+}
+
+.legendGlyph {
+  flex-shrink: 0;
+  color: var(--pb-ink-accent);
+}
+
+.legendType {
+  text-transform: var(--pb-label-transform);
+  letter-spacing: var(--pb-label-tracking);
+  color: var(--pb-ink-secondary);
 }

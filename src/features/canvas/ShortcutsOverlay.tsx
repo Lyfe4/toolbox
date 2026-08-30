@@ -2,9 +2,21 @@ import { useEffect, useId, useRef } from 'react';
 
 import { CloseIcon } from '@/components/Icon';
 import { IconButton } from '@/components/IconButton';
+import { DATA_TYPES } from '@/features/registry';
 
 import styles from './canvas.module.css';
+import { PortGlyph } from './PortGlyph';
 import { SHORTCUT_GROUPS, SHORTCUTS } from './shortcuts';
+
+/** What each data type actually carries, in a few words. */
+const TYPE_MEANING: Record<(typeof DATA_TYPES)[number], string> = {
+  text: 'plain text',
+  json: 'structured data',
+  bytes: 'raw bytes or a file',
+  image: 'an image',
+  color: 'a colour',
+  datetime: 'a moment in time',
+};
 
 export interface ShortcutsOverlayProps {
   readonly onClose: () => void;
@@ -13,6 +25,7 @@ export interface ShortcutsOverlayProps {
 /** The `?` reference. Reads the same array the canvas actually binds. */
 export function ShortcutsOverlay({ onClose }: ShortcutsOverlayProps) {
   const titleId = useId();
+  const legendId = useId();
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -60,7 +73,7 @@ export function ShortcutsOverlay({ onClose }: ShortcutsOverlayProps) {
           />
         </div>
 
-        <div className={styles.dialogBody}>
+        <div className={styles.dialogScroll}>
           {SHORTCUT_GROUPS.map((group) => (
             <table className={styles.shortcutTable} key={group}>
               <caption className={styles.groupLabel}>{group}</caption>
@@ -89,6 +102,62 @@ export function ShortcutsOverlay({ onClose }: ShortcutsOverlayProps) {
               </tbody>
             </table>
           ))}
+
+          {/*
+            THE KEY
+            ───────
+            Nothing else on the canvas says which way data flows or what the
+            connector shapes mean, and a node editor is close to unusable until
+            you know both. It lives here rather than on the canvas itself
+            because it is reference material, not a tour: opened when wanted,
+            gone the rest of the time.
+          */}
+          <section className={styles.legend} aria-labelledby={legendId}>
+            <h3 className={styles.groupLabel} id={legendId}>
+              Ports and wires
+            </h3>
+
+            <p className={styles.legendFlow}>
+              Data flows <strong>left to right</strong>. Every wire leaves an{' '}
+              <strong>output</strong> on a node&rsquo;s right edge and enters an{' '}
+              <strong>input</strong> on another node&rsquo;s left edge. Inputs are listed first,
+              then outputs. Drag from either end.
+            </p>
+
+            <ul className={styles.legendList}>
+              <li className={styles.legendItem}>
+                <PortGlyph types={['text']} connected={false} className={styles.legendGlyph} />
+                <span>Hollow &mdash; nothing connected here yet</span>
+              </li>
+              <li className={styles.legendItem}>
+                <PortGlyph types={['text']} connected className={styles.legendGlyph} />
+                <span>Filled &mdash; a wire is attached</span>
+              </li>
+              <li className={styles.legendItem}>
+                <PortGlyph
+                  types={['text', 'bytes']}
+                  connected={false}
+                  className={styles.legendGlyph}
+                />
+                <span>Two squares &mdash; accepts more than one type</span>
+              </li>
+            </ul>
+
+            {/*
+              Shape, not colour: the same reason PortGlyph draws silhouettes.
+              The list reads correctly in greyscale and in forced-colors.
+            */}
+            <ul className={styles.legendList}>
+              {DATA_TYPES.map((type) => (
+                <li className={styles.legendItem} key={type}>
+                  <PortGlyph types={[type]} connected={false} className={styles.legendGlyph} />
+                  <span>
+                    <span className={styles.legendType}>{type}</span> &mdash; {TYPE_MEANING[type]}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
         </div>
       </div>
     </div>
