@@ -317,6 +317,79 @@ export const TOOL_MANIFEST = [
       maxInputBytes: 64 * 1024 * 1024,
     },
   },
+  {
+    id: 'markdown',
+    name: 'Markdown',
+    summary: 'Convert Markdown to HTML and HTML back to Markdown, with GitHub Flavoured syntax.',
+    category: 'text',
+    keywords: ['md', 'gfm', 'commonmark', 'readme', 'render', 'rich text', 'html'],
+    inputs: [
+      {
+        id: 'input',
+        label: 'Input',
+        types: ['text'],
+        required: true,
+        description: 'Markdown, or HTML - whichever the direction expects.',
+      },
+    ],
+    outputs: [
+      {
+        id: 'output',
+        label: 'Converted',
+        types: ['text'],
+        description: 'HTML, or Markdown, depending on the direction.',
+      },
+      {
+        id: 'rendered',
+        label: 'Rendered HTML',
+        types: ['text'],
+        description: 'Always HTML, sanitised. This is what the preview shows.',
+        presentation: 'html',
+      },
+    ],
+    execution: {
+      strategy: 'worker',
+      requiresWasm: false,
+      wasmModules: [],
+      requiresOffscreenCanvas: false,
+      reportsProgress: false,
+      timeoutMs: 15_000,
+      maxInputBytes: 4 * 1024 * 1024,
+    },
+  },
+  {
+    id: 'html-text',
+    name: 'HTML to text',
+    summary: 'Turn HTML into Markdown, or strip it down to plain text.',
+    category: 'text',
+    keywords: ['strip tags', 'plain', 'markdown', 'scrape', 'clean', 'unhtml'],
+    inputs: [
+      {
+        id: 'input',
+        label: 'HTML',
+        types: ['text'],
+        required: true,
+        description: 'Any HTML fragment. It is sanitised before anything reads it.',
+      },
+    ],
+    outputs: [
+      {
+        id: 'output',
+        label: 'Converted',
+        types: ['text'],
+        description: 'Markdown or plain text, depending on the mode.',
+      },
+    ],
+    execution: {
+      strategy: 'worker',
+      requiresWasm: false,
+      wasmModules: [],
+      requiresOffscreenCanvas: false,
+      reportsProgress: false,
+      timeoutMs: 15_000,
+      maxInputBytes: 4 * 1024 * 1024,
+    },
+  },
 ] as const satisfies readonly ToolManifestEntry[];
 
 /** The union of every tool id: 'base64' | 'diff' | 'hash' | ... */

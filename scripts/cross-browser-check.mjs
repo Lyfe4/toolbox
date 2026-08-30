@@ -805,6 +805,8 @@ async function checkAxe(browser, label) {
         ['/', 'the canvas'],
         ['/tools', 'the tool index'],
         ['/tools/base64', 'a tool page'],
+        ['/tools/markdown', 'the Markdown tool'],
+        ['/tools/html-text', 'the HTML to text tool'],
         ['/styleguide', 'the styleguide'],
         ['/nothing-here', 'the 404'],
       ]) {
@@ -1406,6 +1408,129 @@ async function checkTouch(browser, label) {
   }
 }
 
+/**
+ * The Markdown preview's sandboxed iframe.
+ *
+ * TWO INDEPENDENT LAYERS, and the second one was verified rather than assumed
+ * because the brief for these tools was right to be suspicious of it: a frame
+ * with no `allow-same-origin` has an OPAQUE origin, and it is reasonable to
+ * wonder whether a page's Content-Security-Policy reaches inside one.
+ *
+ * It does. Measured here, in both engines:
+ *
+ *   sandbox=""               inline script blocked
+ *   sandbox="allow-scripts"  inline script blocked  <- the interesting one
+ *   no sandbox attribute     inline script blocked
+ *
+ * The middle row is the finding. The sandbox explicitly PERMITS scripts there,
+ * and the script still does not run - so what stopped it is the inherited
+ * `script-src 'self'`. The preview therefore survives someone removing the
+ * sandbox attribute, and survives someone weakening the CSP, but not both.
+ */
+async function checkPreviewSandbox(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${ORIGIN}/tools/markdown`, { waitUntil: 'networkidle' });
+
+    const results = await page.evaluate(async () => {
+      /** Frames a script that reports back, and says whether it ever did. */
+      const probe = (sandbox) =>
+        new Promise((resolve) => {
+          const token = `t${String(Math.floor(performance.now() * 1000))}`;
+          let settled = false;
+
+          const onMessage = (event) => {
+            if (event.data === token) {
+              settled = true;
+              finish('ran');
+            }
+          };
+          const finish = (verdict) => {
+            window.removeEventListener('message', onMessage);
+            frame.remove();
+            resolve(verdict);
+          };
+
+          window.addEventListener('message', onMessage);
+
+          const frame = document.createElement('iframe');
+          if (sandbox !== null) frame.setAttribute('sandbox', sandbox);
+          // postMessage rather than reading the frame: an opaque origin cannot
+          // be read from out here, but it can still talk back.
+          frame.srcdoc = `<!doctype html><html><body><script>parent.postMessage(${JSON.stringify(
+            token,
+          )},'*')<\/script></body></html>`;
+          document.body.appendChild(frame);
+
+          setTimeout(() => {
+            if (!settled) finish('blocked');
+          }, 800);
+        });
+
+      return {
+        sealed: await probe(''),
+        scriptsAllowed: await probe('allow-scripts'),
+        noSandbox: await probe(null),
+      };
+    });
+
+    check(
+      label,
+      'a sealed sandbox runs nothing in the preview frame',
+      results.sealed === 'blocked',
+      results.sealed,
+    );
+
+    check(
+      label,
+      "the page's CSP reaches inside the frame, even where the sandbox allows scripts",
+      results.scriptsAllowed === 'blocked',
+      results.scriptsAllowed,
+    );
+
+    check(
+      label,
+      'an inline script in a srcdoc frame is refused with no sandbox at all',
+      results.noSandbox === 'blocked',
+      results.noSandbox,
+    );
+
+    /* -- And the real preview, as the tool renders it ---------------------- */
+    await page.getByRole('textbox', { name: /Input/i }).first().fill('# Hi\n\nSome **text**.\n');
+    await page.getByRole('button', { name: /^Run/ }).first().click();
+    await page.getByRole('button', { name: 'Preview' }).first().waitFor({ timeout: 15_000 });
+    await page.getByRole('button', { name: 'Preview' }).first().click();
+    await page.waitForTimeout(300);
+
+    const frame = await page.evaluate(() => {
+      const element = document.querySelector('iframe[srcdoc]');
+      return element
+        ? {
+            sandbox: element.getAttribute('sandbox'),
+            title: element.getAttribute('title'),
+            hasSrc: element.hasAttribute('src'),
+            rendersHeading: (element.getAttribute('srcdoc') ?? '').includes('<h1'),
+          }
+        : null;
+    });
+
+    check(
+      label,
+      'the preview frame is sealed, named and populated by srcdoc',
+      frame !== null &&
+        frame.sandbox === '' &&
+        !frame.hasSrc &&
+        (frame.title ?? '').includes('preview') &&
+        frame.rendersHeading,
+      JSON.stringify(frame),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 async function runChecks(engine, label) {
   console.log(`\n${label}`);
   const browser = await engine.launch();
@@ -1854,6 +1979,7 @@ async function runChecks(engine, label) {
     await checkDeepLinks(browser, label);
     await checkHead(browser, label);
     await checkTouch(browser, label);
+    await checkPreviewSandbox(browser, label);
   } finally {
     await browser.close();
   }

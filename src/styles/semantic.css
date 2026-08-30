@@ -124,6 +124,21 @@
   --pb-surface-overlay: var(--raw-grey-850);
   --pb-surface-inset: var(--raw-grey-1000);
 
+  /*
+   * The surface a user's OWN rendered document sits on, and the one token here
+   * that every theme leaves alone.
+   *
+   * The HTML preview is a sandboxed iframe with no allow-same-origin, so it is
+   * an opaque origin this page cannot style: it cannot be handed our
+   * stylesheet or our custom properties. Theming it would mean either inlining
+   * a stylesheet into content the user did not write, or relaxing the sandbox -
+   * neither worth it for a colour. So it renders as a plain document on white,
+   * which is how it will look wherever it is pasted. This token exists so the
+   * decision is written down in the design system rather than as a stray hex
+   * in one component.
+   */
+  --pb-surface-document: var(--raw-white);
+
   /* --- Ink: text and glyphs ------------------------------------------
    * Every level below is used for real text, so every level is held to
    * the 4.5:1 body-text ratio by themes.contrast.test.ts.

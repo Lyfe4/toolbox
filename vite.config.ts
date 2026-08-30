@@ -6,6 +6,7 @@ import { defineConfig } from 'vitest/config';
 
 import { cspHash } from './vite/plugins/csp-hash.ts';
 import { indexHtml } from './vite/plugins/index-html.ts';
+import { pureEntityDecoder } from './vite/plugins/pure-entity-decoder.ts';
 import { serviceWorker } from './vite/plugins/service-worker.ts';
 
 // Absolute path to `src`, used for the `@/*` alias. Derived from this file's
@@ -30,6 +31,9 @@ export default defineConfig({
       autoCodeSplitting: true,
     }),
     react(),
+    // Keeps a DOM-based entity decoder out of the worker. Must be early:
+    // it rewrites a module id before anything else resolves it.
+    pureEntityDecoder(),
     // Strips comments from the shipped HTML and refuses to build if a site
     // URL failed to substitute. transformIndexHtml, so it runs before the
     // file is written and therefore before cspHash reads it back.
@@ -44,6 +48,38 @@ export default defineConfig({
   resolve: {
     // Mirror of the `paths` entry in tsconfig.app.json.
     alias: { '@': srcPath },
+  },
+
+  /*
+   * The worker is built as an ES MODULE, not the default IIFE.
+   *
+   * `engine.ts` already constructs it with `{ type: 'module' }`, but Vite's
+   * build defaults to `format: 'iife'` for workers - and an IIFE cannot be
+   * code-split, so Rollup sets `inlineDynamicImports` and every tool the
+   * worker can reach is concatenated into one file.
+   *
+   * Measured: that put every tool's code, including the Markdown libraries,
+   * into a single 621 kB worker chunk which is fetched when the canvas mounts.
+   * As ES modules the worker loads each tool as its own chunk, on first use -
+   * the same bargain the registry makes on the main thread.
+   *
+   * Module workers need Chrome 80, Safari 15 and Firefox 114, all of which are
+   * inside the support window this project already states. `pnpm
+   * check:browsers` runs a real tool in a real worker in Firefox and WebKit.
+   */
+  worker: {
+    format: 'es',
+    /*
+     * The worker is a SEPARATE Rollup build and does not inherit `plugins`
+     * above, so the entity-decoder fix has to be registered again here. It is a
+     * function because Vite calls it per worker build.
+     *
+     * Found by measurement: with the plugin only in the main list, the main
+     * bundle used the table implementation and the worker bundle still
+     * carried the DOM one - two `pipelines-*.js` chunks, one of them still
+     * crashing.
+     */
+    plugins: () => [pureEntityDecoder()],
   },
 
   build: {

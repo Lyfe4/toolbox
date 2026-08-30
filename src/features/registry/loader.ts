@@ -19,6 +19,8 @@ const LOADERS: Record<ToolId, () => Promise<{ readonly default: ErasedTool }>> =
   'regex-tester': () => import('@/tools/regex-tester'),
   'color-convert': () => import('@/tools/color-convert'),
   'image-convert': () => import('@/tools/image-convert'),
+  markdown: () => import('@/tools/markdown'),
+  'html-text': () => import('@/tools/html-text'),
 };
 
 /** Resolved tools, so switching back to a tool does not re-await the import. */

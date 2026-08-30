@@ -27,13 +27,16 @@ re-run, without anything you paste ever leaving the page.
 | **Regex**           | Test a pattern, with groups and replacement.                       |
 | **Colour**          | Convert hex, `rgb()`, `hsl()` and `oklch()`, with contrast checks. |
 | **Image**           | Convert and resize between PNG, JPEG and WebP.                     |
+| **Markdown**        | Markdown ⇄ HTML, GitHub Flavoured, with a sandboxed preview.       |
+| **HTML to text**    | Turn HTML into Markdown, or strip it to plain text.                |
 
 Each has its own README next to the code, which is where the interesting parts
 are written down: why [JWT](src/tools/jwt-decode/README.md) refuses
 `alg: none`, how [Regex](src/tools/regex-tester/README.md) survives a
-catastrophically backtracking pattern, and what stops
+catastrophically backtracking pattern, what stops
 [Image](src/tools/image-convert/README.md) being killed by a decompression
-bomb.
+bomb, and why [Markdown](src/tools/markdown/README.md) round-trips are checked
+for _meaning_ rather than byte equality.
 
 `/` is the node canvas; `/tools` is the same set as a plain list. Neither is a
 fallback for the other.
@@ -158,7 +161,7 @@ that resolves the real CSS and measures each pair.
 
 ## Testing
 
-990 tests across 53 files. The count is not the interesting part; what the
+1,327 tests across 61 files. The count is not the interesting part; what the
 tests caught is.
 
 ### What property-based testing actually found
@@ -179,6 +182,16 @@ literally named `toString` came back with the source of `function toString() {
 `Object.prototype` member rather than the row's own (absent) value. Every
 column name in `Object.prototype` had the same problem. Fixed with
 `Object.hasOwn` before the read.
+
+**Identifier namespacing that was not idempotent.** The Markdown tools
+namespace author-supplied `id` attributes so that markup defining
+`id="location"` cannot shadow a global wherever the output is pasted. The
+sanitiser's built-in version prefixes whatever it finds — _including an id that
+already carries the prefix_ — so `user-content-fn-1` became
+`user-content-user-content-fn-1` on the next pass and grew again on every pass
+after. It also never touched `href`, so every footnote reference and heading
+anchor pointed at a name that no longer existed. Both were caught by a
+`md → html → md → html` stability property, and neither by any example.
 
 **Swallowed YAML errors.** The parser was configured `logLevel: 'silent'` to
 quiet unresolved-tag warnings — which also suppressed genuine syntax errors, so

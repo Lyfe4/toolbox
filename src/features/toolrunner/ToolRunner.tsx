@@ -16,6 +16,7 @@ import type {
 import { formatBytes } from '@/lib/sniff';
 
 import { FileDrop, type LoadedFile } from './FileDrop';
+import { copyRichText } from './HtmlView';
 import { OptionsPanel } from './OptionsPanel';
 import { ErrorReport, OutputView } from './OutputPanel';
 import styles from './runner.module.css';
@@ -304,6 +305,30 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
                             });
                           },
                         );
+                      }}
+                      onCopyRich={(html) => {
+                        /*
+                         * Both outcomes are announced. A clipboard write that
+                         * silently did nothing is the worst version of this:
+                         * the user pastes somewhere else and finds the old
+                         * contents, with no idea when it went wrong.
+                         */
+                        void copyRichText(html, html).then((result) => {
+                          if (result.ok) {
+                            notify({
+                              title: 'Copied as rich text',
+                              description:
+                                'Formatted for a document editor, and as markup for anything else.',
+                              tone: 'ok',
+                            });
+                            return;
+                          }
+                          notify({
+                            title: 'Could not copy as rich text',
+                            description: result.reason,
+                            tone: 'error',
+                          });
+                        });
                       }}
                       onDownload={(blob, filename) => {
                         const url = URL.createObjectURL(blob);

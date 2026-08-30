@@ -6,6 +6,7 @@ import { formatBytes, sniffBytes } from '@/lib/sniff';
 
 import { ColorView } from './ColorView';
 import { DiffView } from './DiffView';
+import { HtmlView } from './HtmlView';
 import styles from './runner.module.css';
 
 /* -------------------------------------------------------------------------- *
@@ -55,6 +56,8 @@ export interface OutputViewProps {
   /** The port's rendering hint, when it declared one. See OutputPort. */
   readonly presentation?: OutputPort['presentation'];
   readonly onCopy: (text: string) => void;
+  /** Writes both text/html and text/plain. Only ever called for HTML output. */
+  readonly onCopyRich: (html: string) => void;
   readonly onDownload: (blob: Blob, filename: string) => void;
 }
 
@@ -64,12 +67,29 @@ export function OutputView({
   baseFilename,
   presentation,
   onCopy,
+  onCopyRich,
   onDownload,
 }: OutputViewProps) {
   // The hint is checked before the type switch, because it exists precisely
   // for values whose data type does not determine how to draw them.
   if (presentation === 'diff' && value.type === 'json') {
     return <DiffView value={value.data} label={label} />;
+  }
+
+  // A port that declares it carries HTML gets the preview and the rich-text
+  // copy. Declared on the port rather than sniffed from the string, so the
+  // affordance is a fact about the tool rather than a guess about its output.
+  if (presentation === 'html' && value.type === 'text') {
+    return (
+      <HtmlView
+        html={value.text}
+        label={label}
+        baseFilename={baseFilename}
+        onCopy={onCopy}
+        onCopyRich={onCopyRich}
+        onDownload={onDownload}
+      />
+    );
   }
 
   switch (value.type) {
@@ -162,6 +182,7 @@ export function OutputView({
           label={label}
           baseFilename={baseFilename}
           onCopy={onCopy}
+          onCopyRich={onCopyRich}
           onDownload={onDownload}
         />
       );

@@ -89,6 +89,24 @@ export const PIPELINE_PRESETS: readonly PipelinePreset[] = [
       [0, 'output', 2, 'input'],
     ],
   },
+  {
+    id: 'clean-pasted-html',
+    name: 'Clean up pasted HTML',
+    summary: 'Strip messy HTML down to Markdown, then render it back as clean, sanitised markup.',
+    nodes: [
+      {
+        toolId: 'html-text',
+        offset: { x: 0, y: 0 },
+        options: { mode: 'markdown', bullet: '-', emphasis: '_', fence: '`', unsupported: 'text' },
+      },
+      {
+        toolId: 'markdown',
+        offset: { x: COLUMN, y: 0 },
+        options: { direction: 'md-to-html', headingIds: true, linkify: true },
+      },
+    ],
+    wires: [[0, 'output', 1, 'input']],
+  },
 ];
 
 export function getPreset(id: string): PipelinePreset | null {

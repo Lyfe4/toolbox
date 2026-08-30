@@ -178,7 +178,7 @@ export interface OutputPort extends PortBase {
    * renderer to reach for. It is a presentation hint only: the value is
    * ordinary JSON, and any consumer that ignores this still gets valid data.
    */
-  readonly presentation?: 'diff';
+  readonly presentation?: 'diff' | 'html';
 }
 
 /** True when an output port's declared types overlap an input port's. */
