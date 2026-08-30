@@ -95,14 +95,21 @@ export const PIPELINE_PRESETS: readonly PipelinePreset[] = [
     summary: 'Strip messy HTML down to Markdown, then render it back as clean, sanitised markup.',
     nodes: [
       {
-        toolId: 'html-text',
+        toolId: 'text-convert',
         offset: { x: 0, y: 0 },
-        options: { mode: 'markdown', bullet: '-', emphasis: '_', fence: '`', unsupported: 'text' },
+        options: {
+          source: 'html',
+          target: 'markdown',
+          bullet: '-',
+          emphasis: '_',
+          fence: '`',
+          unsupported: 'text',
+        },
       },
       {
-        toolId: 'markdown',
+        toolId: 'text-convert',
         offset: { x: COLUMN, y: 0 },
-        options: { direction: 'md-to-html', headingIds: true, linkify: true },
+        options: { source: 'markdown', target: 'html', headingIds: true, linkify: true },
       },
     ],
     wires: [[0, 'output', 1, 'input']],

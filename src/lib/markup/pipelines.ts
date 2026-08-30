@@ -328,8 +328,25 @@ export function htmlToMarkdown(html: string, options: HtmlToMarkdownOptions): st
         // Fenced, always. Indented code blocks cannot carry a language hint,
         // and losing the hint is a real loss on the way back to HTML.
         fences: true,
-        // Escape only what has to be escaped, so the output stays readable.
-        resourceLink: false,
+        /*
+         * ALWAYS `[text](url)`, never the `<url>` autolink shorthand.
+         *
+         * Not cosmetic. The serialiser decides to write an autolink on a
+         * looser rule than the parser uses to read one back, and the gap is
+         * real: `<a href="mailto:+@.A">+@.A</a>` came out as `<+@.A>`, which
+         * CommonMark's email-autolink grammar rejects (a domain label cannot
+         * begin with a dot), so re-rendering it produced escaped text and a
+         * stray angle bracket instead of the link. GFM's linkify manufactures
+         * exactly this from ordinary prose, so it is reachable from a paste
+         * rather than only from a hand-written oddity.
+         *
+         * The resource form always parses back to the link it came from. It
+         * costs the prettier spelling of a plain URL, which is the category of
+         * thing the round-trip explicitly does not promise to preserve, and
+         * buys an invariant that actually holds. Found by the semantic
+         * stability property; asserted directly below it.
+         */
+        resourceLink: true,
         rule: '-',
       })
       .processSync(html),

@@ -24,13 +24,21 @@ export interface OptionsPanelProps {
  * couple the UI to the validator's internals.
  */
 export function OptionsPanel({ fields, values, onChange, disabled = false }: OptionsPanelProps) {
+  /*
+   * Fields can declare `when`, so a tool whose options depend on what it is
+   * converting shows only the ones that apply. Filtered here rather than in
+   * each tool so every tool gets it, and so a field with no predicate keeps
+   * behaving exactly as before.
+   */
+  const visible = fields.filter((field) => field.when?.(values) ?? true);
+
   if (fields.length === 0) {
     return <p className={styles.hint}>This tool has no options.</p>;
   }
 
   return (
     <div className={styles.stack}>
-      {fields.map((field) => {
+      {visible.map((field) => {
         const value = values[field.key];
 
         // The switch is exhaustive over the OptionField union, so adding a new

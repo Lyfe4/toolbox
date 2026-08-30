@@ -805,8 +805,7 @@ async function checkAxe(browser, label) {
         ['/', 'the canvas'],
         ['/tools', 'the tool index'],
         ['/tools/base64', 'a tool page'],
-        ['/tools/markdown', 'the Markdown tool'],
-        ['/tools/html-text', 'the HTML to text tool'],
+        ['/tools/text-convert', 'the text conversion tool'],
         ['/styleguide', 'the styleguide'],
         ['/nothing-here', 'the 404'],
       ]) {
@@ -1432,7 +1431,7 @@ async function checkPreviewSandbox(browser, label) {
   const page = await context.newPage();
 
   try {
-    await page.goto(`${ORIGIN}/tools/markdown`, { waitUntil: 'networkidle' });
+    await page.goto(`${ORIGIN}/tools/text-convert`, { waitUntil: 'networkidle' });
 
     const results = await page.evaluate(async () => {
       /** Frames a script that reports back, and says whether it ever did. */

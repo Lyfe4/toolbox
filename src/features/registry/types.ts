@@ -280,6 +280,24 @@ interface OptionFieldBase<TOptions> {
   readonly key: keyof TOptions & string;
   readonly label: string;
   readonly description?: string;
+  /**
+   * Shows this control only when the current options satisfy it.
+   *
+   * For a tool whose options depend on the conversion it is doing - Markdown
+   * output settings mean nothing when the target is plain text - the
+   * alternative is rendering controls that silently do nothing, which is the
+   * `cursor: pointer` with no handler problem in another costume.
+   *
+   * A HIDDEN FIELD KEEPS ITS VALUE. This governs display only; the option is
+   * still in the object, still travels in a share link, and comes back the
+   * moment its condition holds again. Nothing is reset by looking away.
+   *
+   * Keep the predicate a function of as FEW options as possible. A panel whose
+   * shape shifts on every toggle feels broken even when it is right; one whose
+   * shape is a function of a single deliberate choice reads as the panel
+   * answering you.
+   */
+  readonly when?: (options: TOptions) => boolean;
 }
 
 export type OptionField<TOptions> =
@@ -537,7 +555,22 @@ export function eraseTool<
     outputs: tool.outputs,
     optionsSchema: tool.optionsSchema,
     defaultOptions: tool.defaultOptions,
-    optionFields: tool.optionFields,
+    /*
+     * The one cast in the erasure, and it is `when` that forces it.
+     *
+     * A field holding `(options: TOptions) => boolean` makes OptionField
+     * CONTRAVARIANT in TOptions, so `OptionField<Base64Options>[]` is no
+     * longer assignable to `OptionField<Record<string, unknown>>[]` - which is
+     * TypeScript being right: a predicate expecting Base64Options must not be
+     * handed an arbitrary record.
+     *
+     * It is sound here for the same reason the erased `run` below is sound.
+     * These descriptors are only ever evaluated against THIS tool's own
+     * options object, by the panel rendering THIS tool. The predicates are
+     * also written to be total: they compare a string, so a missing key yields
+     * false and the field is hidden rather than anything throwing.
+     */
+    optionFields: tool.optionFields as unknown as readonly OptionField<Record<string, unknown>>[],
     execution: tool.execution,
     secretOptionKeys: tool.secretOptionKeys ?? [],
     run: ({ inputs, options, context }) => {

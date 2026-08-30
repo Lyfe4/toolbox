@@ -5,6 +5,7 @@ import { setOwnProperty } from '@/lib/safeObject';
 import { z } from '@/lib/zod';
 
 import { snapToGrid } from './geometry';
+import { isRetiredToolId, migrateRetiredOptions, REPLACEMENT_TOOL_ID } from './retiredTools';
 import { MAX_SHARE_PARAM_LENGTH, SHARE_PARAM } from './shareSearch';
 import { EMPTY_GRAPH, type CanvasEdge, type CanvasNode, type GraphData } from './types';
 
@@ -22,7 +23,7 @@ import { EMPTY_GRAPH, type CanvasEdge, type CanvasNode, type GraphData } from '.
  * enforced by `toSharePayload` and asserted by share.test.ts.
  */
 
-export const SHARE_FORMAT_VERSION = 1;
+export const SHARE_FORMAT_VERSION = 2;
 
 // Re-exported so callers have one import for everything share-related, while
 // the route keeps importing the tiny module directly.
@@ -191,6 +192,51 @@ export type ShareResult =
 const BAD_LINK = 'That shared pipeline link could not be read, so the canvas was left empty.';
 
 /**
+ * Rewrites a v1 payload to v2.
+ *
+ * MIGRATE, NOT REJECT, and the reasoning is about what a share link is for. A
+ * link is something people paste into a chat or an issue and come back to
+ * weeks later; breaking every previously-shared pipeline that happened to
+ * contain a Markdown node would be a real cost to real people, and the mapping
+ * is exact - both retired tools correspond to a source/target pair with
+ * nothing lost.
+ *
+ * RUN BEFORE VALIDATION, deliberately. The schema checks tool ids against the
+ * live registry, so a v1 link naming `markdown` would be refused outright if
+ * this ran afterwards. Rewriting first and validating second means the schema
+ * is still the last word on every field - the migration is allowed to be
+ * optimistic because it cannot let anything through.
+ *
+ * THE ALL-OR-NOTHING PROPERTY IS UNCHANGED. This returns a new payload; it
+ * never mutates a graph or applies anything. If what comes out fails the
+ * schema for any reason, the link is refused whole, exactly as before. There
+ * is no path here that half-applies a pipeline.
+ */
+function migrateSharePayload(parsed: unknown): unknown {
+  if (typeof parsed !== 'object' || parsed === null) return parsed;
+
+  const payload = parsed as Record<string, unknown>;
+  if (payload.v !== 1 || !Array.isArray(payload.n)) return parsed;
+
+  const nodes: readonly unknown[] = payload.n;
+
+  return {
+    ...payload,
+    v: SHARE_FORMAT_VERSION,
+    n: nodes.map((node): unknown => {
+      // Positional tuples: [id, toolId, x, y, options]. Anything not shaped
+      // like one is left alone for the schema to reject.
+      if (!Array.isArray(node) || node.length < 5) return node;
+
+      const [id, toolId, x, y, options] = node as readonly unknown[];
+      if (!isRetiredToolId(toolId)) return node;
+
+      return [id, REPLACEMENT_TOOL_ID, x, y, migrateRetiredOptions(toolId, options) ?? {}];
+    }),
+  };
+}
+
+/**
  * Rebuilds a graph from a link.
  *
  * Every step can fail on hostile input and every step therefore returns a
@@ -223,10 +269,14 @@ export async function decodeParamToGraph(param: string): Promise<ShareResult> {
     return { status: 'error', message: BAD_LINK };
   }
 
-  const payload = sharePayloadSchema.safeParse(parsed);
+  // Rewrites retired tool ids before the schema sees them. See above: this
+  // cannot let anything through, because the schema still runs afterwards.
+  const payload = sharePayloadSchema.safeParse(migrateSharePayload(parsed));
   if (!payload.success) {
-    // Includes the version check: a link from a future format is refused
-    // cleanly rather than half-understood.
+    // Includes the version check: a link from a FUTURE format is refused
+    // cleanly rather than half-understood. Older ones are migrated above
+    // rather than refused, so this is genuinely "cannot read" and not
+    // "will not bother".
     return {
       status: 'error',
       message: 'That shared pipeline link is in a format this version cannot read.',

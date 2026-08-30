@@ -27,8 +27,7 @@ re-run, without anything you paste ever leaving the page.
 | **Regex**           | Test a pattern, with groups and replacement.                       |
 | **Colour**          | Convert hex, `rgb()`, `hsl()` and `oklch()`, with contrast checks. |
 | **Image**           | Convert and resize between PNG, JPEG and WebP.                     |
-| **Markdown**        | Markdown ⇄ HTML, GitHub Flavoured, with a sandboxed preview.       |
-| **HTML to text**    | Turn HTML into Markdown, or strip it to plain text.                |
+| **Text convert**    | Markdown, HTML and plain text, with a sandboxed preview.           |
 
 Each has its own README next to the code, which is where the interesting parts
 are written down: why [JWT](src/tools/jwt-decode/README.md) refuses

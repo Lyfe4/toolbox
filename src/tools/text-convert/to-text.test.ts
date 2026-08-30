@@ -3,8 +3,15 @@ import { describe, expect, it } from 'vitest';
 
 import { htmlToMarkdown, htmlToText, markdownToHtml } from '@/lib/markup/pipelines';
 
-import { htmlTextDefaultOptions } from './options';
+import { textConvertDefaultOptions } from './options';
 
+/**
+ * MOVED, NOT REWRITTEN, from the html-text tool this one replaces.
+ *
+ * Every option is passed explicitly rather than read from a default, so these
+ * cases keep asserting the same behaviour they asserted before the merge no
+ * matter what the merged tool chooses to default to.
+ */
 const TO_MD = {
   bullet: '-',
   emphasis: '_',
@@ -189,11 +196,40 @@ describe('invariants', () => {
 });
 
 describe('defaults', () => {
-  it('start on Markdown, which is what people paste HTML in for', () => {
-    expect(htmlTextDefaultOptions.mode).toBe('markdown');
-    expect(htmlTextDefaultOptions.keepLinkUrls).toBe(true);
-    // 'text' rather than 'keep': someone converting HTML to Markdown is trying
-    // to get AWAY from the HTML.
-    expect(htmlTextDefaultOptions.unsupported).toBe('text');
+  it('keeps link URLs when producing text', () => {
+    expect(textConvertDefaultOptions.keepLinkUrls).toBe(true);
+    expect(textConvertDefaultOptions.listMarker).toBe('-');
+    expect(textConvertDefaultOptions.tables).toBe('rows');
+  });
+
+  /*
+   * THE ONE DEFAULT THE MERGE HAD TO PICK. `markdown` defaulted `unsupported`
+   * to 'keep'; `html-text` defaulted it to 'text'. One tool cannot have two.
+   *
+   * 'text' wins, and the case below is the reason rather than a preference.
+   * 'keep' reads as the lossless choice, but keeping an element means writing
+   * it out verbatim - subtree and all - and a <div> is an element Markdown
+   * cannot express. Pasted HTML almost always arrives inside one, so 'keep'
+   * would make the commonest input convert to itself. A default that can
+   * silently no-op is worse than one that unwraps a container, especially when
+   * 'keep' is one control away.
+   */
+  it('unwraps containers by default, so real pasted HTML actually converts', () => {
+    expect(textConvertDefaultOptions.unsupported).toBe('text');
+
+    const wrapped = htmlToMarkdown('<div><h2>Notes</h2><p>Body</p></div>', {
+      ...TO_MD,
+      unsupported: textConvertDefaultOptions.unsupported,
+    });
+
+    expect(wrapped).toContain('## Notes');
+    expect(wrapped).not.toContain('<div>');
+  });
+
+  it('still carries unconvertible markup through when asked to', () => {
+    // The lossless behaviour is not gone, it is opt-in.
+    const kept = htmlToMarkdown('<p>Press <kbd>Esc</kbd></p>', { ...TO_MD, unsupported: 'keep' });
+
+    expect(kept).toContain('<kbd>Esc</kbd>');
   });
 });

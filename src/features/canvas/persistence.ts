@@ -1,6 +1,12 @@
 import { getManifestEntry, isToolId } from '@/features/registry';
 import { z } from '@/lib/zod';
 
+import {
+  isRetiredToolId,
+  migrateRetiredOptions,
+  REPLACEMENT_TOOL_ID,
+  retiredFirstInputPort,
+} from './retiredTools';
 import { EMPTY_GRAPH, type GraphData } from './types';
 
 /**
@@ -10,11 +16,19 @@ import { EMPTY_GRAPH, type GraphData } from './types';
  * it is user-writable, it may have been written by an older build, and it may
  * simply be corrupt - so it is parsed with Zod and cross-checked against the
  * live tool registry before it is allowed anywhere near the store.
+ *
+ * THE KEY AND THE PAYLOAD VERSION ARE DECOUPLED, DELIBERATELY. The payload
+ * carries its own `version` and is migrated in place, so the key only has to
+ * change when a save becomes genuinely unreadable rather than merely old.
+ * Bumping it alongside CURRENT_GRAPH_VERSION would orphan exactly the data the
+ * migration chain exists to rescue: the reader would look under a key nothing
+ * had ever been written to, find nothing, and present an empty canvas as if
+ * that were the user's own.
  */
 export const GRAPH_STORAGE_KEY = 'patchbay:graph:v3';
 
 /** Bump when the persisted shape changes, and add a migration below. */
-export const CURRENT_GRAPH_VERSION = 3;
+export const CURRENT_GRAPH_VERSION = 4;
 
 const pointSchema = z.object({
   // z.number() already rejects NaN and Infinity in Zod 4.
@@ -90,7 +104,9 @@ function migrate(raw: unknown): unknown {
     case 1:
       return migrate(migrateV1ToV2(raw as Record<string, unknown>));
     case 2:
-      return migrateV2ToV3(raw as Record<string, unknown>);
+      return migrate(migrateV2ToV3(raw as Record<string, unknown>));
+    case 3:
+      return migrateV3ToV4(raw as Record<string, unknown>);
     case CURRENT_GRAPH_VERSION:
       return raw;
     default:
@@ -140,6 +156,57 @@ function migrateV1ToV2(raw: Record<string, unknown>): unknown {
  * belonged to the tool's first port, which is where it goes.
  */
 function migrateV2ToV3(raw: Record<string, unknown>): unknown {
+  if (!Array.isArray(raw.nodes)) return { ...raw, version: 3 };
+  const nodes: readonly unknown[] = raw.nodes;
+
+  return {
+    ...raw,
+    version: 3,
+    nodes: nodes.map((node): unknown => {
+      if (typeof node !== 'object' || node === null) return node;
+
+      const source = node as Record<string, unknown>;
+      const { input, ...rest } = source;
+      const toolId = source.toolId;
+
+      // The port id comes from the registry rather than being assumed to be
+      // "input", so this stays correct if a tool ever renames its first port.
+      /*
+       * The retired-tool fallback is not optional here. This looks the port
+       * name up in the LIVE registry, and `markdown` and `html-text` are no
+       * longer in it - so without the second branch, a v2 graph containing
+       * either of them would lose its typed input on the way through, in
+       * exactly the nodes the v3 -> v4 step below exists to rescue.
+       */
+      const firstPort =
+        typeof toolId === 'string' && isToolId(toolId)
+          ? getManifestEntry(toolId).inputs[0]?.id
+          : typeof toolId === 'string'
+            ? retiredFirstInputPort(toolId)
+            : undefined;
+
+      const inputs =
+        typeof input === 'string' && input !== '' && firstPort !== undefined
+          ? { [firstPort]: input }
+          : {};
+
+      return { ...rest, inputs };
+    }),
+  };
+}
+
+/**
+ * v3 -> v4.
+ *
+ * v4 merged the `markdown` and `html-text` tools into `text-convert`. A saved
+ * canvas can contain either id, so each such node is rewritten to the new id
+ * with the equivalent source/target pair. Positions, wires and typed inputs are
+ * untouched: the node is the same node doing the same job under a new name.
+ *
+ * Every other node passes through unread. A migration that rebuilt nodes it had
+ * no reason to touch would be a chance to break something for nothing.
+ */
+function migrateV3ToV4(raw: Record<string, unknown>): unknown {
   if (!Array.isArray(raw.nodes)) return { ...raw, version: CURRENT_GRAPH_VERSION };
   const nodes: readonly unknown[] = raw.nodes;
 
@@ -150,22 +217,10 @@ function migrateV2ToV3(raw: Record<string, unknown>): unknown {
       if (typeof node !== 'object' || node === null) return node;
 
       const source = node as Record<string, unknown>;
-      const { input, ...rest } = source;
-      const toolId = source.toolId;
+      if (!isRetiredToolId(source.toolId)) return node;
 
-      // The port id comes from the registry rather than being assumed to be
-      // "input", so this stays correct if a tool ever renames its first port.
-      const firstPort =
-        typeof toolId === 'string' && isToolId(toolId)
-          ? getManifestEntry(toolId).inputs[0]?.id
-          : undefined;
-
-      const inputs =
-        typeof input === 'string' && input !== '' && firstPort !== undefined
-          ? { [firstPort]: input }
-          : {};
-
-      return { ...rest, inputs };
+      const options = migrateRetiredOptions(source.toolId, source.options);
+      return { ...source, toolId: REPLACEMENT_TOOL_ID, options: options ?? {} };
     }),
   };
 }

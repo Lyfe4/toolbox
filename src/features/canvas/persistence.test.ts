@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createDebouncedSaver,
+  CURRENT_GRAPH_VERSION,
   GRAPH_STORAGE_KEY,
   loadGraph,
   saveGraph,
@@ -56,7 +57,9 @@ describe('graph persistence', () => {
 
   it('stores under a namespaced, versioned key', () => {
     saveGraph(graph);
-    expect(window.localStorage.getItem(GRAPH_STORAGE_KEY)).toContain('"version":3');
+    expect(window.localStorage.getItem(GRAPH_STORAGE_KEY)).toContain('"version":4');
+    // The KEY stays at v3 while the payload moves to v4: they version
+    // separately, so a save is migrated rather than orphaned.
     expect(GRAPH_STORAGE_KEY).toBe('patchbay:graph:v3');
   });
 
@@ -183,7 +186,7 @@ describe('graph persistence', () => {
     const persisted = toPersisted(graph);
     expect(persisted.nodes).toHaveLength(2);
     expect(persisted.edges).toHaveLength(1);
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(CURRENT_GRAPH_VERSION);
   });
 });
 

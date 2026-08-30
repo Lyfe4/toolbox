@@ -36,16 +36,21 @@ const asText = (value: ToolValue | undefined): string => (value?.type === 'text'
 
 const MESSY = '<div><h2>Notes</h2><p>Some <b>bold</b> text.</p><ul><li>one</li></ul></div>';
 
-describe('html-text → markdown', () => {
+describe('text-convert → text-convert', () => {
   it('turns messy HTML into Markdown and back into clean HTML', async () => {
-    // The "Clean up pasted HTML" preset, run for real.
-    const markdown = asText((await run('html-text', MESSY, { mode: 'markdown' })).output);
+    // The "Clean up pasted HTML" preset, run for real. Both nodes are the same
+    // tool now - which is the point of the merge: one entry, two settings.
+    const markdown = asText(
+      (await run('text-convert', MESSY, { source: 'html', target: 'markdown' })).output,
+    );
 
     expect(markdown).toContain('## Notes');
     expect(markdown).toContain('**bold**');
     expect(markdown).toContain('- one');
 
-    const html = asText((await run('markdown', markdown, { direction: 'md-to-html' })).output);
+    const html = asText(
+      (await run('text-convert', markdown, { source: 'markdown', target: 'html' })).output,
+    );
 
     expect(html).toContain('<h2');
     expect(html).toContain('<strong>bold</strong>');
@@ -55,14 +60,13 @@ describe('html-text → markdown', () => {
   });
 });
 
-describe('markdown → diff', () => {
+describe('text-convert → diff', () => {
   it('compares two rendered outputs', async () => {
-    const a = asText(
-      (await run('markdown', '# Title\n\nOne\n', { direction: 'md-to-html' })).output,
-    );
-    const b = asText(
-      (await run('markdown', '# Title\n\nTwo\n', { direction: 'md-to-html' })).output,
-    );
+    const render = async (source: string): Promise<string> =>
+      asText((await run('text-convert', source, { source: 'markdown', target: 'html' })).output);
+
+    const a = await render('# Title\n\nOne\n');
+    const b = await render('# Title\n\nTwo\n');
 
     const diff = await loadTool('diff');
     const result = await diff.run({
@@ -82,10 +86,10 @@ describe('markdown → diff', () => {
   });
 });
 
-describe('markdown → hash', () => {
+describe('text-convert → hash', () => {
   it('fingerprints rendered content, and the fingerprint tracks the content', async () => {
     const render = async (source: string): Promise<string> =>
-      asText((await run('markdown', source, { direction: 'md-to-html' })).rendered);
+      asText((await run('text-convert', source, { source: 'markdown', target: 'html' })).rendered);
 
     const hash = await loadTool('hash');
     const digest = async (value: string): Promise<string> => {
@@ -112,7 +116,7 @@ describe('markdown → hash', () => {
     // than the source is what makes that true, and is the reason to chain
     // through this tool rather than hashing the Markdown directly.
     const render = async (source: string): Promise<string> =>
-      asText((await run('markdown', source, { direction: 'md-to-html' })).rendered);
+      asText((await run('text-convert', source, { source: 'markdown', target: 'html' })).rendered);
 
     expect(await render('*em* and **strong**\n')).toBe(await render('_em_ and __strong__\n'));
   });

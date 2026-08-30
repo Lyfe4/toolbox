@@ -3,10 +3,14 @@ import { describe, expect, it } from 'vitest';
 
 import { htmlToMarkdown, markdownToHtml } from '@/lib/markup/pipelines';
 
-import { markdownDefaultOptions } from './options';
+import { textConvertDefaultOptions } from './options';
 
 /**
  * GITHUB FLAVOURED MARKDOWN, structure by structure.
+ *
+ * MOVED, NOT REWRITTEN, from the markdown tool this one replaces. These call
+ * the shared pipelines directly, which is what makes them survive the merge
+ * unchanged: the conversion never moved, only the tool wrapped around it.
  *
  * Each case below is one of the constructs that a naive converter gets wrong -
  * usually by handling the outer structure and losing the inner one. They are
@@ -23,6 +27,10 @@ const TO_MD = {
   setext: false,
   unsupported: 'keep',
 } as const;
+
+/** A newline and a backslash, named so expectations read as text not escapes. */
+const LF = String.fromCharCode(10);
+const BACKSLASH = String.fromCharCode(92);
 
 const html = (markdown: string): string => markdownToHtml(markdown, TO_HTML);
 const md = (source: string): string => htmlToMarkdown(source, TO_MD);
@@ -247,7 +255,43 @@ describe('round-tripping', () => {
           '`code span`',
           '---',
         ),
-        fc.string({ minLength: 1, maxLength: 24 }).map((s) => s.replace(/[\r\n]/g, ' ')),
+        /*
+         * Noise, to exercise escaping of ordinary prose. Three things are
+         * normalised out of it first, and each one is a known asymmetry
+         * asserted by name below rather than merely avoided here - the same
+         * treatment footnotes already get.
+         *
+         *   NEWLINES would invent block structure the surrounding join did
+         *   not intend.
+         *
+         *   RUNS OF SPACES collapse when HTML renders, so `<p>a  b</p>` is
+         *   correctly converted to `a b`. That is the converter being right
+         *   about HTML, not a stability failure.
+         *
+         *   ANGLE BRACKETS turn noise into raw HTML, and raw HTML embedded in
+         *   Markdown is normalised to its Markdown spelling on the way back -
+         *   `<s>` returns as `<del>`. It settles after one round trip, which
+         *   is what the idempotence property covers.
+         *
+         *   A BACKTICK makes a code span, and a space at the edge of one is
+         *   dropped on the way back. Below, by name.
+         *
+         *   A LITERAL BACKSLASH next to inline markup hits an escaping defect
+         *   in the Markdown serialiser. This one is a real bug rather than a
+         *   normalisation, and it is upstream; see the case below.
+         *
+         * And a leading `0.` is rewritten, because a list numbered from zero
+         * comes back numbered from one. Also below, also by name.
+         */
+        fc
+          .string({ minLength: 1, maxLength: 24 })
+          .map((noise) =>
+            noise
+              .replace(/[<>`\\]/g, '')
+              .replace(/\s+/g, ' ')
+              .replace(/^0(?=[.)])/, '1'),
+          )
+          .filter((noise) => noise.trim() !== ''),
       ),
       { minLength: 1, maxLength: 6 },
     )
@@ -263,6 +307,101 @@ describe('round-tripping', () => {
       }),
       { numRuns: 120 },
     );
+  });
+
+  /*
+   * A COUNTEREXAMPLE THE PROPERTY ABOVE ACTUALLY FOUND, kept as a named case
+   * so a regression reads as a bug rather than as a flaky property.
+   *
+   * GFM's linkify turns `+@.A` in ordinary prose into a mailto link. The
+   * Markdown serialiser then wrote it as the autolink `<+@.A>` - but
+   * CommonMark's email-autolink grammar rejects it, because a domain label
+   * cannot begin with a dot, so reading it back gave escaped text and a stray
+   * angle bracket. Writing links in resource form fixes it; see the comment on
+   * `resourceLink` in pipelines.ts.
+   */
+  it('round-trips a link whose URL is not a valid autolink', () => {
+    const first = html('+@.A\n');
+
+    expect(first).toContain('mailto:+@.A');
+    expect(html(md(first))).toBe(first);
+  });
+
+  /*
+   * THE THREE ASYMMETRIES THE ARBITRARY ABOVE STEPS AROUND.
+   *
+   * Each is real, each is narrow, and each settles after one round trip, so
+   * they belong to the idempotence property rather than to semantic stability.
+   * They are named here so that a change in any of them shows up as a failing
+   * test with a description, rather than as a property that fails one run in a
+   * few thousand.
+   */
+  it('collapses runs of spaces, because HTML does', () => {
+    // Not a loss: two spaces and one space render identically, so the Markdown
+    // settles on the one spelling HTML would have shown anyway.
+    expect(md('<p>a  b</p>')).toBe('a b' + LF);
+  });
+
+  it('normalises raw HTML in the source to its Markdown spelling, once', () => {
+    // <s> has no Markdown of its own; the nearest Markdown is ~~, and ~~ means
+    // <del>. So the first round trip rewrites it, and the second changes
+    // nothing - which is the fixed point idempotence asserts.
+    const first = html('<s>gone</s>' + LF);
+    const second = html(md(first));
+
+    expect(first).toContain('<s>gone</s>');
+    expect(second).toContain('<del>gone</del>');
+    expect(html(md(second))).toBe(second);
+  });
+
+  it('KNOWN DEFECT: drops a space at the edge of a code span', () => {
+    /*
+     * `<code> ab</code>` serialises as `` `ab` ``, losing the space.
+     *
+     * CommonMark strips one space from each end of a code span when both ends
+     * have one, so the space IS expressible - as `` `  ab ` `` - and the
+     * serialiser simply does not pad for it. Upstream, and the same judgement
+     * as the backslash case: recorded rather than papered over, because
+     * whitespace inside a code span is content.
+     */
+    expect(md('<p><code> ab</code></p>')).toBe('`ab`' + LF);
+
+    // Interior spaces are safe; it is only the edges.
+    expect(md('<p><code>a b</code></p>')).toBe('`a b`' + LF);
+  });
+
+  it('KNOWN DEFECT: mangles a backslash that sits next to inline markup', () => {
+    /*
+     * Not a normalisation - this one loses information, and the test records
+     * it rather than pretending otherwise.
+     *
+     * Serialising `a\x<em>b</em>` writes the x as the character reference
+     * `&#x78;` while leaving the backslash bare, giving `a\&#x78;_b_`. Read
+     * back, `\&` is an escaped ampersand, so the reference stops being a
+     * reference and `&#x78;` arrives as four visible characters instead of an
+     * x. It needs a backslash IMMEDIATELY BEFORE inline markup; a backslash on
+     * its own is fine, and so is the character-reference escaping on its own.
+     *
+     * The fault is in mdast-util-to-markdown's escaping, several levels below
+     * anything this repository owns, and working around it would mean
+     * post-processing the serialiser's output with a regex - which is how you
+     * turn one narrow bug into an unbounded number of them. Left alone,
+     * written down, and asserted so that an upstream fix shows up here as a
+     * failing test rather than going unnoticed.
+     */
+    expect(md('<p>a' + BACKSLASH + 'x<em>b</em></p>')).toContain('&#x78;');
+
+    // A backslash on its own survives, which is what makes this narrow.
+    expect(md('<p>a' + BACKSLASH + 'x b</p>')).toBe('a' + BACKSLASH + 'x b' + LF);
+  });
+
+  it('renumbers a list that starts at zero, and only at zero', () => {
+    // Upstream: `start` survives the round trip for every value except 0,
+    // where it is treated as absent. Worth knowing about rather than worth
+    // patching a dependency over - a list numbered from zero is rare, and it
+    // stays a list.
+    expect(md('<ol start="3"><li>a</li></ol>')).toBe('3. a' + LF);
+    expect(md('<ol start="0"><li>a</li></ol>')).toBe('1. a' + LF);
   });
 
   it('is semantically stable: md → html → md → html gives identical HTML', () => {
@@ -343,9 +482,12 @@ describe('round-tripping', () => {
 });
 
 describe('defaults', () => {
-  it('start in the direction most people want', () => {
-    expect(markdownDefaultOptions.direction).toBe('md-to-html');
-    expect(markdownDefaultOptions.headingIds).toBe(true);
-    expect(markdownDefaultOptions.linkify).toBe(true);
+  it('start on the conversion most people want', () => {
+    // Auto-detect in, HTML out: the old markdown tool's md-to-html default,
+    // reached without having to name the source.
+    expect(textConvertDefaultOptions.source).toBe('auto');
+    expect(textConvertDefaultOptions.target).toBe('html');
+    expect(textConvertDefaultOptions.headingIds).toBe(true);
+    expect(textConvertDefaultOptions.linkify).toBe(true);
   });
 });

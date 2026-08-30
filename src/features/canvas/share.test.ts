@@ -8,6 +8,7 @@ import {
   encodeGraphToParam,
   fromSharePayload,
   MAX_SHARE_PARAM_LENGTH,
+  SHARE_FORMAT_VERSION,
   sharePayloadSchema,
   toSharePayload,
 } from './share';
@@ -126,7 +127,7 @@ describe('user data never enters a share link', () => {
   it('has no field for input in the payload schema at all', () => {
     // Belt and braces: even a hand-crafted payload cannot carry input.
     const withInput = sharePayloadSchema.safeParse({
-      v: 1,
+      v: SHARE_FORMAT_VERSION,
       n: [['n1', 'base64', 0, 0, {}, 'smuggled']],
       e: [],
     });
@@ -280,7 +281,7 @@ describe('a share link is untrusted input', () => {
     // must fail schema validation, so nothing ever reaches the dynamic import.
     for (const evil of ['../../evil', 'http://example.com/x', 'ghost-tool', '']) {
       const result = sharePayloadSchema.safeParse({
-        v: 1,
+        v: SHARE_FORMAT_VERSION,
         n: [['n1', evil, 0, 0, {}]],
         e: [],
       });
@@ -288,8 +289,10 @@ describe('a share link is untrusted input', () => {
     }
   });
 
-  it('rejects a payload from a different format version', () => {
-    expect(sharePayloadSchema.safeParse({ v: 2, n: [], e: [] }).success).toBe(false);
+  it('rejects a payload from a format version it cannot read', () => {
+    // A FUTURE version. v1 is not in this list on purpose - it is migrated on
+    // the way in rather than refused; see the migration tests.
+    expect(sharePayloadSchema.safeParse({ v: 3, n: [], e: [] }).success).toBe(false);
     expect(sharePayloadSchema.safeParse({ n: [], e: [] }).success).toBe(false);
   });
 
@@ -301,12 +304,14 @@ describe('a share link is untrusted input', () => {
       0,
       {},
     ]);
-    expect(sharePayloadSchema.safeParse({ v: 1, n: many, e: [] }).success).toBe(false);
+    expect(sharePayloadSchema.safeParse({ v: SHARE_FORMAT_VERSION, n: many, e: [] }).success).toBe(
+      false,
+    );
   });
 
   it('drops edges whose endpoints are missing rather than applying half a graph', () => {
     const graph = fromSharePayload({
-      v: 1,
+      v: SHARE_FORMAT_VERSION,
       n: [['n1', 'base64', 0, 0, {}]],
       e: [['n1', 'output', 'ghost', 'input']],
     });
@@ -316,7 +321,7 @@ describe('a share link is untrusted input', () => {
 
   it('ignores duplicate node ids', () => {
     const graph = fromSharePayload({
-      v: 1,
+      v: SHARE_FORMAT_VERSION,
       n: [
         ['n1', 'base64', 0, 0, {}],
         ['n1', 'hash', 100, 100, {}],
@@ -329,7 +334,7 @@ describe('a share link is untrusted input', () => {
 
   it('snaps hostile positions onto the grid', () => {
     const graph = fromSharePayload({
-      v: 1,
+      v: SHARE_FORMAT_VERSION,
       n: [['n1', 'base64', 3.7, -11.2, {}]],
       e: [],
     });
