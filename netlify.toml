@@ -19,8 +19,17 @@
 [build.environment]
   # Matches .nvmrc, so the deploy and the CI gate use the same major.
   NODE_VERSION = "22"
-  # Vite only exposes VITE_-prefixed variables to the client, and there are
-  # none: the app has no configuration to inject and no origin to point at.
+
+  # VITE_SITE_URL is deliberately NOT set here. It lives in `.env`, committed,
+  # so that a local build produces the same absolute og:image and canonical
+  # URLs as a deploy. Setting it in the Netlify UI overrides that per-deploy,
+  # which is the path to take for a custom domain or a branch preview - no
+  # code change needed. The build fails outright if it is missing or relative;
+  # see vite/plugins/index-html.ts.
+
+  # Install exactly what the lockfile says, the same as CI. A deploy that
+  # silently resolved different versions than the ones that were reviewed is
+  # not the thing that was tested.
   NPM_FLAGS = "--frozen-lockfile"
 
 # `pnpm build` runs `tsc -b` first, so a type error fails the deploy rather

@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 
-import { pageMeta } from '@/app/head';
+import { pageHead } from '@/app/head';
 
 /**
  * Route declaration only. The component lives in the matching .lazy.tsx
@@ -8,11 +8,11 @@ import { pageMeta } from '@/app/head';
  * on first navigation - so none of this page is in the initial download.
  */
 export const Route = createFileRoute('/tools/')({
-  head: () => ({
-    meta: pageMeta({
+  head: () =>
+    pageHead({
       page: 'Tools',
+      path: '/tools',
       description:
         'Every Patchbay tool as a plain, keyboard-first list: encoders, hashes, formatters, diff, regex, colour and image conversion.',
     }),
-  }),
 });

@@ -386,6 +386,23 @@ Netlify, from `main`. [`public/_headers`](public/_headers) and
 the bytes that get deployed are the ones in the repo and `pnpm serve:dist` can
 serve the built app under the real policy.
 
+The site's public origin is one value, `VITE_SITE_URL` in [`.env`](.env). It is
+substituted into index.html as `%VITE_SITE_URL%` and read at runtime as
+`import.meta.env.VITE_SITE_URL`, so a custom domain is one edit rather than a
+search for stragglers. The build fails if it is missing or relative — an
+og:image that does not resolve is a shared link with a blank card, and nobody
+notices until someone shares one.
+
+### Link previews
+
+Crawlers and link-preview bots do not run JavaScript, so the complete Open
+Graph and Twitter set is **static markup in index.html**, not something the
+router applies. Those tags carry `data-default`; the router replaces them on
+mount and `dropStaticHead()` removes them, because React hoists its own copies
+into `<head>` without removing what was already there — which produced two of
+every tag until it was fixed. Both halves are asserted: the static set against
+the built file, and the one-of-each result in two real browsers.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

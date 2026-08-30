@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 
-import { pageMeta } from '@/app/head';
+import { pageHead } from '@/app/head';
 import { validateCanvasSearch } from '@/features/canvas/shareSearch';
 
 /**
@@ -19,10 +19,10 @@ import { validateCanvasSearch } from '@/features/canvas/shareSearch';
 export const Route = createFileRoute('/')({
   validateSearch: validateCanvasSearch,
   // No `page`, so this is the bare site name rather than "Canvas - Patchbay".
-  head: () => ({
-    meta: pageMeta({
+  head: () =>
+    pageHead({
+      path: '/',
       description:
         'Wire developer tools together on a node canvas that runs entirely in your browser. Nothing you paste ever leaves the page.',
     }),
-  }),
 });

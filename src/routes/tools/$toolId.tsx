@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 
-import { pageMeta } from '@/app/head';
+import { pageHead } from '@/app/head';
 import { getManifestEntry, isToolId } from '@/features/registry/manifest';
 
 /**
@@ -16,9 +16,10 @@ import { getManifestEntry, isToolId } from '@/features/registry/manifest';
  */
 export const Route = createFileRoute('/tools/$toolId')({
   head: ({ params }) => {
-    if (!isToolId(params.toolId)) return { meta: pageMeta({ page: 'Tool not found' }) };
+    const path = `/tools/${params.toolId}`;
+    if (!isToolId(params.toolId)) return pageHead({ page: 'Tool not found', path });
 
     const tool = getManifestEntry(params.toolId);
-    return { meta: pageMeta({ page: tool.name, description: tool.summary }) };
+    return pageHead({ page: tool.name, path, description: tool.summary });
   },
 });

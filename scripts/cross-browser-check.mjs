@@ -34,6 +34,19 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PORT = 4319;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 
+/*
+ * The site's public origin, read out of the BUILT html rather than hardcoded
+ * here. It comes from VITE_SITE_URL (see .env), and a harness carrying its own
+ * copy would be one more place to forget when a custom domain lands.
+ */
+const SITE_URL = /<link[^>]*rel="canonical"[^>]*href="(https:\/\/[^/"]+)/.exec(
+  await readFile(join(DIST, 'index.html'), 'utf8'),
+)?.[1];
+
+if (!SITE_URL) {
+  throw new Error('cross-browser: no absolute canonical link in dist/index.html');
+}
+
 /* ========================================================================== *
  * A real PNG, built here
  * ========================================================================== */
@@ -531,6 +544,49 @@ async function checkDeployment(label, rules) {
     headersFor(rules, '/sw.js')['Content-Security-Policy'] ?? 'absent',
   );
 
+  /*
+   * The static head, which is the ONLY head a crawler or a link-preview bot
+   * ever sees - none of them run the router. Asserted against the built file
+   * rather than the source, because %VITE_SITE_URL% substitution and comment
+   * stripping both happen during the build.
+   */
+  const html = await readFile(join(DIST, 'index.html'), 'utf8');
+
+  for (const needle of [
+    'property="og:title"',
+    'property="og:description"',
+    'property="og:image"',
+    'property="og:image:width"',
+    'property="og:image:height"',
+    'property="og:image:alt"',
+    'property="og:url"',
+    'property="og:type"',
+    'property="og:site_name"',
+    'property="og:locale"',
+    'name="twitter:card"',
+    'name="twitter:title"',
+    'name="twitter:description"',
+    'name="twitter:image"',
+    'name="description"',
+    'rel="canonical"',
+  ]) {
+    check(label, `the static head carries ${needle}`, html.includes(needle), '');
+  }
+
+  check(
+    label,
+    'every site URL in the static head was substituted and is absolute',
+    !html.includes('%VITE_') && (html.match(/https:\/\//g) ?? []).length >= 4,
+    `${String((html.match(/https:\/\//g) ?? []).length)} absolute URL(s)`,
+  );
+
+  check(
+    label,
+    'no source comments ship in the html',
+    !html.includes('<!--'),
+    html.includes('<!--') ? 'comment found' : `${String(html.length)} bytes`,
+  );
+
   const redirects = await readFile(join(DIST, '_redirects'), 'utf8');
   check(
     label,
@@ -896,6 +952,98 @@ async function checkDeepLinks(browser, label) {
       new URL(page.url()).search === '?keep=this',
       page.url(),
     );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * The head, in a real browser, after the router has taken it over.
+ *
+ * The failure this exists to catch: React hoists the tags `head.ts` produces
+ * into <head> but does NOT remove the static baseline in index.html, so every
+ * route ended up with two <title>, two og:title, two og:description, two
+ * description and two og:image - with no defined winner for a consumer reading
+ * the document. `dropStaticHead()` retires the marked set on mount; this
+ * asserts it actually happened, per route.
+ */
+async function checkHead(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+
+  const SINGLE = [
+    ['title', 'title'],
+    ['meta[name="description"]', 'description'],
+    ['meta[property="og:title"]', 'og:title'],
+    ['meta[property="og:description"]', 'og:description'],
+    ['meta[property="og:url"]', 'og:url'],
+    ['meta[property="og:image"]', 'og:image'],
+    ['meta[name="twitter:title"]', 'twitter:title'],
+    ['link[rel="canonical"]', 'canonical'],
+  ];
+
+  try {
+    for (const [path, expectedTitle] of [
+      ['/', 'Patchbay'],
+      ['/tools', 'Tools — Patchbay'],
+      ['/tools/base64', 'Base64 — Patchbay'],
+      ['/styleguide', 'Styleguide — Patchbay'],
+    ]) {
+      await page.goto(`${ORIGIN}${path}`, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(300);
+
+      const head = await page.evaluate(
+        (selectors) => {
+          const counts = {};
+          for (const [selector, name] of selectors) {
+            counts[name] = document.querySelectorAll(selector).length;
+          }
+          const attr = (selector, name) =>
+            document.querySelector(selector)?.getAttribute(name) ?? null;
+          return {
+            counts,
+            title: document.title,
+            ogUrl: attr('meta[property="og:url"]', 'content'),
+            ogImage: attr('meta[property="og:image"]', 'content'),
+            canonical: attr('link[rel="canonical"]', 'href'),
+            leftovers: document.head.querySelectorAll('[data-default]').length,
+          };
+        },
+        SINGLE.map(([selector, name]) => [selector, name]),
+      );
+
+      const duplicated = Object.entries(head.counts).filter(([, n]) => n !== 1);
+      check(
+        label,
+        `${path} has exactly one of every head tag`,
+        duplicated.length === 0,
+        duplicated.map(([name, n]) => `${name} x${String(n)}`).join(', ') ||
+          `${String(Object.keys(head.counts).length)} tags, one each`,
+      );
+
+      check(label, `${path} is titled correctly`, head.title === expectedTitle, head.title);
+
+      check(
+        label,
+        `${path} declares its own absolute canonical and og:url`,
+        head.canonical === `${SITE_URL}${path}` && head.ogUrl === `${SITE_URL}${path}`,
+        `canonical=${head.canonical ?? 'none'} og:url=${head.ogUrl ?? 'none'}`,
+      );
+
+      check(
+        label,
+        `${path} points og:image at an absolute URL`,
+        head.ogImage === `${SITE_URL}/social-preview.png`,
+        head.ogImage ?? 'none',
+      );
+
+      check(
+        label,
+        `${path} retires the static baseline`,
+        head.leftovers === 0,
+        `${String(head.leftovers)} data-default node(s) left`,
+      );
+    }
   } finally {
     await context.close().catch(() => {});
   }
@@ -1347,6 +1495,7 @@ async function runChecks(engine, label) {
     await checkAxe(browser, label);
     await checkConsoleSilence(browser, label);
     await checkDeepLinks(browser, label);
+    await checkHead(browser, label);
   } finally {
     await browser.close();
   }

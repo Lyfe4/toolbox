@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 
-import { pageMeta } from '@/app/head';
+import { pageHead } from '@/app/head';
 
 /**
  * Route declaration only. The component lives in the matching .lazy.tsx
@@ -11,11 +11,11 @@ import { pageMeta } from '@/app/head';
  * of a title is that it is known before the chunk arrives.
  */
 export const Route = createFileRoute('/styleguide')({
-  head: () => ({
-    meta: pageMeta({
+  head: () =>
+    pageHead({
       page: 'Styleguide',
+      path: '/styleguide',
       description:
         'Every design token, component and theme in Patchbay, with contrast ratios measured live in the browser.',
     }),
-  }),
 });

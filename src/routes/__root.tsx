@@ -1,6 +1,8 @@
 import { createRootRoute, HeadContent, Link, Outlet, useRouterState } from '@tanstack/react-router';
+import { useEffect } from 'react';
 
-import { pageMeta, SITE_META } from '@/app/head';
+import { dropStaticHead, SITE_DESCRIPTION, SITE_META, SITE_NAME } from '@/app/head';
+import { NotFound } from '@/app/NotFound';
 import { RouteProgress } from '@/app/RouteProgress';
 import { PortIcon } from '@/components/Icon';
 import { SkipLink } from '@/components/SkipLink';
@@ -8,7 +10,6 @@ import { ToastProvider } from '@/components/Toast';
 import { useThemeSync } from '@/features/theme';
 
 import styles from './__root.module.css';
-import { NotFound } from './NotFound';
 
 const MAIN_ID = 'main-content';
 
@@ -16,6 +17,16 @@ function RootLayout() {
   // Mounted once: keeps <html data-theme> in step with the store and follows
   // the OS setting while the selection is "system".
   useThemeSync();
+
+  /*
+   * Retire the static baseline from index.html now that the router owns the
+   * head. Effects run after the whole tree has committed, so <HeadContent />
+   * has already inserted its replacements - there is never a frame with
+   * neither, and never a document with both. See src/app/head.ts.
+   */
+  useEffect(() => {
+    dropStaticHead();
+  }, []);
 
   return (
     /*
@@ -95,5 +106,13 @@ export const Route = createRootRoute({
   notFoundComponent: RootNotFound,
   // Site-wide defaults. A child route's `head` overrides only the tags it
   // names, so a route that forgets still gets a real title and description.
-  head: () => ({ meta: [...pageMeta(), ...SITE_META] }),
+  /*
+   * Site-wide defaults only. No canonical and no og:url here: HeadContent
+   * concatenates links rather than de-duplicating them, so a canonical on the
+   * root as well as the leaf would give every page two of them. Leaf routes
+   * call pageHead, which supplies both.
+   */
+  head: () => ({
+    meta: [{ title: SITE_NAME }, { name: 'description', content: SITE_DESCRIPTION }, ...SITE_META],
+  }),
 });

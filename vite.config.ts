@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
 import { cspHash } from './vite/plugins/csp-hash.ts';
+import { indexHtml } from './vite/plugins/index-html.ts';
 import { serviceWorker } from './vite/plugins/service-worker.ts';
 
 // Absolute path to `src`, used for the `@/*` alias. Derived from this file's
@@ -29,6 +30,10 @@ export default defineConfig({
       autoCodeSplitting: true,
     }),
     react(),
+    // Strips comments from the shipped HTML and refuses to build if a site
+    // URL failed to substitute. transformIndexHtml, so it runs before the
+    // file is written and therefore before cspHash reads it back.
+    indexHtml(),
     // Emits dist/sw.js with the real asset list. Before cspHash so the
     // ordering of the two closeBundle hooks is stated rather than incidental.
     serviceWorker(),
@@ -70,7 +75,13 @@ export default defineConfig({
      * 15 seconds later.
      */
     testTimeout: 20_000,
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    /*
+     * `vite/` as well as `src/`: the build plugins are real code with real
+     * consequences - the comment stripper runs over the one inline script
+     * whose bytes are hashed into the CSP - and a plugin that is never tested
+     * is a plugin whose failure only shows up in a deployed browser.
+     */
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'vite/**/*.{test,spec}.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

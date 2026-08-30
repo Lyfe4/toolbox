@@ -224,7 +224,7 @@ flowchart LR
     csp --> out["deployable output"]
 ```
 
-Two Vite plugins do work that cannot be done by hand:
+Three Vite plugins do work that cannot be done by hand:
 
 - [`service-worker.ts`](../vite/plugins/service-worker.ts) lists the finished
   build and writes `sw.js` with that list plus a build id derived from it. A
@@ -233,9 +233,25 @@ Two Vite plugins do work that cannot be done by hand:
   bootstrap **from the built HTML** and substitutes it into `_headers`. Hashing
   the source would be hashing something the browser never executes.
 
+- [`index-html.ts`](../vite/plugins/index-html.ts) strips HTML comments from
+  the shipped document — the source explains itself at length and none of that
+  is any use to a browser — and refuses to build if a `%VITE_SITE_URL%`
+  placeholder survived or an og:image, og:url or canonical is not absolute.
+
 The `{{INLINE_SCRIPT_HASHES}}` placeholder is not a valid CSP source, so a
 build that somehow skipped the plugin produces an obviously broken policy
-rather than a quietly permissive one.
+rather than a quietly permissive one. The same instinct runs through
+`index-html.ts`: the failure modes it guards against are all silent ones, and
+the build is the last moment anybody is looking.
+
+### The head has two audiences
+
+The complete Open Graph and Twitter set is static markup in index.html, because
+crawlers and link-preview bots never run the router. The router's per-route
+head — see [`head.ts`](../src/app/head.ts) — is for the tab strip and for
+consumers that do execute JavaScript. The static tags are marked `data-default`
+and removed on mount, because React hoists its own copies without removing
+anything already present.
 
 Deployment is Netlify. `_headers` and `_redirects` live in `public/` rather
 than in `netlify.toml` so that the exact bytes deployed are the ones in the

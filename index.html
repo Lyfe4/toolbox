@@ -3,61 +3,51 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!--
-      The title and description here are the DEFAULTS, for a crawler that does
-      not run scripts and for the moment before React mounts. Once it has, the
-      router owns them: `head` on each route feeds <HeadContent/>, which
-      replaces this title rather than adding a second one (see src/app/head.ts).
-    -->
-    <title>Patchbay</title>
+
+    <title data-default>Patchbay</title>
     <meta
+      data-default
       name="description"
       content="A developer toolbox that runs entirely in your browser. Nothing you paste ever leaves the page."
     />
+    <link data-default rel="canonical" href="%VITE_SITE_URL%/" />
 
-    <!--
-      Icons. The SVG is the one browsers prefer and the only one that adapts to
-      the OS light/dark setting; favicon.ico is there purely so the bare
-      /favicon.ico request that some clients still make gets an icon rather
-      than the SPA fallback's HTML. All of them are generated from the design
-      tokens by scripts/generate-assets.mjs.
-    -->
+    <meta data-default property="og:type" content="website" />
+    <meta data-default property="og:site_name" content="Patchbay" />
+    <meta data-default property="og:locale" content="en" />
+    <meta data-default property="og:url" content="%VITE_SITE_URL%/" />
+    <meta data-default property="og:title" content="Patchbay" />
+    <meta
+      data-default
+      property="og:description"
+      content="A developer toolbox that runs entirely in your browser. Nothing you paste ever leaves the page."
+    />
+    <meta data-default property="og:image" content="%VITE_SITE_URL%/social-preview.png" />
+    <meta data-default property="og:image:width" content="1200" />
+    <meta data-default property="og:image:height" content="630" />
+    <meta
+      data-default
+      property="og:image:alt"
+      content="The Patchbay wordmark over a wired node graph, in the graphite theme."
+    />
+
+    <meta data-default name="twitter:card" content="summary_large_image" />
+    <meta data-default name="twitter:title" content="Patchbay" />
+    <meta
+      data-default
+      name="twitter:description"
+      content="A developer toolbox that runs entirely in your browser. Nothing you paste ever leaves the page."
+    />
+    <meta data-default name="twitter:image" content="%VITE_SITE_URL%/social-preview.png" />
+
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111419" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fbfaf7" />
+
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon.ico" sizes="32x32" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
 
-    <!--
-      Browser UI colour. Two of them, because the app follows the OS setting
-      when nothing is stored, and a dark chrome above a light page looks like a
-      bug. The values are the surface-raised token of each default theme, and
-      index.head.test.ts fails if they drift from it.
-    -->
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111419" />
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fbfaf7" />
-
-    <!--
-      Open Graph and Twitter cards. Static, because the crawlers that read them
-      do not run the router - the per-route versions the router renders are for
-      the tab strip and for anything that does.
-    -->
-    <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Patchbay" />
-    <meta property="og:title" content="Patchbay" />
-    <meta
-      property="og:description"
-      content="A developer toolbox that runs entirely in your browser. Nothing you paste ever leaves the page."
-    />
-    <meta property="og:image" content="/social-preview.png" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta name="twitter:card" content="summary_large_image" />
-
-    <!--
-      The interface is monospace-first, so IBM Plex Mono is on the critical
-      path. Preloaded from a stable, unhashed path (see scripts/sync-fonts.js).
-      `crossorigin` is required on font preloads even for same-origin files.
-    -->
     <link
       rel="preload"
       href="/fonts/ibm-plex-mono-400.woff2"
@@ -66,15 +56,6 @@
       crossorigin
     />
 
-    <!--
-      Theme bootstrap. Runs BEFORE first paint so the page never renders in the
-      wrong theme and then snaps. It is blocking on purpose and must stay tiny.
-
-      This is the one inline script in the app. Rather than weakening CSP with
-      'unsafe-inline', its sha256 hash is computed from the built output and
-      injected into script-src by the csp-hash Vite plugin. Editing this script
-      therefore changes the hash automatically - nothing to keep in sync by hand.
-    -->
     <script>
       (function () {
         var root = document.documentElement;
