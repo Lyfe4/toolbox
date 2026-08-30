@@ -45,6 +45,7 @@ import {
 import { useCanvasStore } from './graphStore';
 import { OverflowMenu, type OverflowItem } from './OverflowMenu';
 import { createDebouncedSaver, loadGraph } from './persistence';
+import { pinchPair, pinchSample, pinchStep, type PinchSample } from './pinch';
 import { PIPELINE_PRESETS } from './presets';
 import { buildShareUrl, decodeParamToGraph } from './share';
 import { CANVAS_DESCRIPTION } from './shortcuts';
@@ -134,6 +135,27 @@ const EMPTY_PORTS: readonly string[] = [];
 const COMPACT_TOOLBAR = '(max-width: 640px)';
 
 const SHARE_NOTE = 'Link holds structure only, never your input';
+
+/**
+ * True for a pointer that touches the screen directly.
+ *
+ * A POSITIVE test, not `pointerType !== 'mouse'`, and the difference is not
+ * cosmetic. An unrecognised or missing pointerType has to fall back to the
+ * mouse behaviour, because that is the conservative one: the touch branch
+ * captures the pointer on the canvas root, and a captured pointer retargets
+ * its own pointerup and click to the capture element.
+ *
+ * Found the hard way. Playwright's Firefox reports an EMPTY pointerType for
+ * synthesized mouse input, so `!== 'mouse'` sent ordinary clicks down the
+ * touch path - the root captured the pointer, the click never reached the
+ * button underneath, and every control in the toolbar silently stopped
+ * working. Real browsers report "mouse" properly, but a rule that turns an
+ * unknown device into a broken UI is the wrong rule regardless of who
+ * reports what.
+ */
+function isDirectPointer(event: PointerEvent): boolean {
+  return event.pointerType === 'touch' || event.pointerType === 'pen';
+}
 
 const NUDGE = GRID;
 const BIG_NUDGE = GRID * 8;
@@ -442,6 +464,49 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     | null
   >(null);
 
+  /*
+   * TOUCH.
+   *
+   * Every active pointer, by pointerId, in client coordinates. A mouse only
+   * ever puts one entry in here; a hand puts up to five, and they do NOT
+   * arrive and leave in tidy pairs - a finger can be lost to a phone call, a
+   * palm can land as a third contact, and the browser can cancel any of them
+   * at any moment. So the map is the source of truth and every gesture is
+   * derived from it rather than assumed.
+   */
+  const pointers = useRef(new Map<number, Point>());
+
+  /** The live two-finger gesture, if there is one. */
+  const pinch = useRef<{ a: number; b: number; sample: PinchSample } | null>(null);
+
+  /** Client-space position of a tracked pointer pair, or null if either is gone. */
+  const pairSample = useCallback((a: number, b: number): PinchSample | null => {
+    const first = pointers.current.get(a);
+    const second = pointers.current.get(b);
+    if (!first || !second) return null;
+    return pinchSample(first, second);
+  }, []);
+
+  /**
+   * Abandons whatever gesture is in flight, leaving the viewport and the graph
+   * in a state the user can carry on from.
+   *
+   * A node move is ENDED rather than discarded - the drag really happened, and
+   * committing it keeps the undo history honest. A wire draft is discarded,
+   * because a half-drawn wire that a second finger interrupted is not a
+   * connection anybody asked for.
+   */
+  const endGestures = useCallback(() => {
+    const current = dragging.current;
+    dragging.current = null;
+    pinch.current = null;
+
+    if (current?.kind === 'node') store.getState().endMove();
+    if (current?.kind === 'wire') setDraft(null);
+
+    useViewportStore.getState().setPanning(false);
+  }, [store]);
+
   const screenToWorld = useCallback((event: { clientX: number; clientY: number }): Point => {
     const rect = rootRef.current?.getBoundingClientRect();
     const point = {
@@ -480,6 +545,28 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     const target = event.target;
     if (!(target instanceof Element)) return;
 
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    /*
+     * A second finger turns whatever was happening into a pinch.
+     *
+     * Deliberately not restricted to empty canvas: someone who starts dragging
+     * a node and then puts a second finger down meant to zoom, and leaving the
+     * node stuck to one finger while the other does nothing is the worse
+     * reading. endGestures commits the move so the drag is not silently lost.
+     */
+    if (pointers.current.size >= 2 && isDirectPointer(event)) {
+      const pair = pinchPair(pointers.current);
+      const sample = pair ? pairSample(pair[0], pair[1]) : null;
+
+      if (pair && sample) {
+        endGestures();
+        pinch.current = { a: pair[0], b: pair[1], sample };
+        rootRef.current?.setPointerCapture(event.pointerId);
+        return;
+      }
+    }
+
     // The refusal marker is transient: it explains one drop, then gets out of
     // the way at the next thing the user does.
     setRefused(null);
@@ -498,6 +585,25 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     if (dragging.current?.kind === 'wire') return;
 
     if (nodeId === null) {
+      /*
+       * One finger on empty canvas pans.
+       *
+       * Only for a pointer that is NOT a mouse. Panning was reachable in three
+       * ways - space+drag, middle-drag and the wheel - and a touchscreen has
+       * none of them: there is no middle button, no practical space bar, and a
+       * touchscreen never emits a wheel event. A pen is in the same position.
+       * A mouse keeps its existing behaviour exactly, because left-drag on
+       * empty canvas currently clears the selection and nothing else, and
+       * changing that is a mouse change nobody asked for.
+       */
+      if (isDirectPointer(event)) {
+        store.getState().clearSelection();
+        dragging.current = { kind: 'pan', last: { x: event.clientX, y: event.clientY } };
+        useViewportStore.getState().setPanning(true);
+        rootRef.current?.setPointerCapture(event.pointerId);
+        return;
+      }
+
       store.getState().clearSelection();
       return;
     }
@@ -515,6 +621,34 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
   };
 
   const onPointerMove = (event: PointerEvent): void => {
+    if (pointers.current.has(event.pointerId)) {
+      pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    }
+
+    const gesture = pinch.current;
+    if (gesture) {
+      const next = pairSample(gesture.a, gesture.b);
+      // One of the two tracked fingers has gone without an up or a cancel.
+      // pointerup will tidy up; there is nothing to measure in the meantime.
+      if (!next) return;
+
+      const step = pinchStep(gesture.sample, next);
+      const rect = rootRef.current?.getBoundingClientRect();
+
+      const viewport = useViewportStore.getState();
+      // Pan first, then zoom about the new midpoint: zoomAt solves for "the
+      // world point under here must not move", so it has to be given the
+      // midpoint's final position, not the one it had before the pan.
+      viewport.panBy(step.pan);
+      viewport.zoomAt(step.factor, {
+        x: step.at.x - (rect?.left ?? 0),
+        y: step.at.y - (rect?.top ?? 0),
+      });
+
+      pinch.current = { ...gesture, sample: next };
+      return;
+    }
+
     const current = dragging.current;
     if (!current) return;
 
@@ -548,6 +682,42 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
   };
 
   const onPointerUp = (event: PointerEvent): void => {
+    pointers.current.delete(event.pointerId);
+
+    const gesture = pinch.current;
+    if (gesture) {
+      // Still two tracked fingers down? Nothing has ended.
+      if (event.pointerId !== gesture.a && event.pointerId !== gesture.b) return;
+
+      pinch.current = null;
+
+      /*
+       * Re-anchor rather than stop.
+       *
+       * Lifting one finger of a pinch normally means "carry on panning with
+       * the other", and starting a fresh pan from the survivor's CURRENT
+       * position means the canvas does not jump. If two or more are still
+       * down - a third finger was resting - promote them to a new pinch
+       * instead.
+       */
+      const pair = pinchPair(pointers.current);
+      const sample = pair ? pairSample(pair[0], pair[1]) : null;
+      if (pair && sample) {
+        pinch.current = { a: pair[0], b: pair[1], sample };
+        return;
+      }
+
+      const survivor = [...pointers.current.values()][0];
+      if (survivor) {
+        dragging.current = { kind: 'pan', last: survivor };
+        useViewportStore.getState().setPanning(true);
+        return;
+      }
+
+      useViewportStore.getState().setPanning(false);
+      return;
+    }
+
     const current = dragging.current;
     dragging.current = null;
     useViewportStore.getState().setPanning(false);
@@ -942,15 +1112,48 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
    * pan frame, which matters when the component re-renders sixty times a
    * second while the viewport moves.
    */
-  const handlers = useRef({ onPointerDown, onPointerMove, onPointerUp, onKeyDown, onKeyUp });
-
-  useEffect(() => {
-    handlers.current = { onPointerDown, onPointerMove, onPointerUp, onKeyDown, onKeyUp };
+  const handlers = useRef({
+    onPointerDown,
+    onPointerMove,
+    onPointerUp,
+    onKeyDown,
+    onKeyUp,
+    endGestures,
   });
 
   useEffect(() => {
+    handlers.current = {
+      onPointerDown,
+      onPointerMove,
+      onPointerUp,
+      onKeyDown,
+      onKeyUp,
+      endGestures,
+    };
+  });
+
+  /*
+   * NOT BOUND WHILE AN OVERLAY IS OPEN, for the same reason the wheel listener
+   * is not.
+   *
+   * The overlays render inside this root, so a touch that lands on a dialog
+   * bubbles here. Left bound, a two-finger gesture over an open palette would
+   * pinch the canvas underneath it - the touch equivalent of the wheel bug -
+   * and even a single tap ran through onPointerDown and cleared the user's
+   * node selection just because they had reached for the palette.
+   *
+   * Detaching rather than guarding keeps the guarantee structural: there is no
+   * listener to reason about, so there is no path by which a gesture can reach
+   * the canvas while a dialog owns the screen.
+   */
+  useEffect(() => {
     const root = rootRef.current;
-    if (!root) return;
+    if (!root || overlayOpen) return;
+
+    // Captured, not read in the cleanup: `pointers` holds one Map for the
+    // component's whole life, so this is the same object either way - but
+    // saying so explicitly is what makes that true rather than assumed.
+    const active = pointers.current;
 
     const pointerDown = (event: PointerEvent): void => {
       handlers.current.onPointerDown(event);
@@ -982,8 +1185,17 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       root.removeEventListener('pointercancel', pointerUp);
       root.removeEventListener('keydown', keyDown);
       root.removeEventListener('keyup', keyUp);
+
+      /*
+       * A gesture in flight when a dialog opens will never get its pointerup,
+       * because the listener that would have received it is gone. Clear the
+       * state here or the next touch resumes a drag from a finger that was
+       * lifted minutes ago.
+       */
+      active.clear();
+      handlers.current.endGestures();
     };
-  }, []);
+  }, [overlayOpen]);
 
   /* ---------------------------------------------------------------------- *
    * Derived rendering data

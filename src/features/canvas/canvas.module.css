@@ -1188,3 +1188,58 @@
   letter-spacing: var(--pb-label-tracking);
   color: var(--pb-ink-secondary);
 }
+
+/* =======================================================================
+ * TOUCH
+ *
+ * `pointer: coarse` is the finger, not the screen size: a 390px window on a
+ * laptop still has a mouse and should keep the dense instrument layout, while
+ * a 1024px tablet has neither a hover nor a pixel-accurate cursor and needs
+ * room. Nothing in here changes what any control DOES - only how much of it
+ * there is to hit.
+ *
+ * 44px is the figure from WCAG 2.5.5 and Apple's HIG. Measured before this
+ * existed, every interactive target on the canvas was 24px tall or less.
+ * ==================================================================== */
+@media (pointer: coarse) {
+  /*
+   * THE PORTS ARE DELIBERATELY LEFT ALONE, and it is worth saying why.
+   *
+   * They are the obvious candidate - wiring is the canvas's core gesture and
+   * the hit area is 24px tall around a 22px glyph. But ports sit on a 32px
+   * PITCH, set in geometry.ts and used by both the DOM and the wire-anchor
+   * maths. Growing the box to 44px was tried and measured: adjacent ports then
+   * overlap by 12px, so a finger aimed at one can land on its neighbour. An
+   * ambiguous target is worse than a small one - a wire connected to the wrong
+   * port is a silent mistake, where a missed tap is only a missed tap.
+   *
+   * Making this genuinely finger-sized means increasing the pitch, which
+   * changes node height and every wire's anchor point - a layout change, not a
+   * touch fix. Dragging a wire with a finger does work today; it is fiddly,
+   * and pinch-zooming in makes it easy, which is a thing touch users can now
+   * actually do.
+   */
+
+  /*
+   * The overflow menu rows and the zoom reset. The toolbar's own controls are
+   * the shared Button, which grows in Button.module.css so every instance of
+   * it in the app benefits rather than only these.
+   */
+  .readoutZoom,
+  .overflowItem {
+    min-block-size: 44px;
+  }
+
+  /*
+   * 16px, and it is not about legibility.
+   *
+   * iOS Safari zooms the whole viewport in when a field with a font smaller
+   * than 16px is focused, and does not zoom back out afterwards - so typing
+   * into a node left the canvas at some arbitrary scale with no way back
+   * except a manual pinch. The node body scales its own type down, so this is
+   * the one place the label size is overridden rather than inherited.
+   */
+  .nodeInput {
+    font-size: 16px;
+  }
+}

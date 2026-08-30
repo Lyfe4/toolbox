@@ -100,3 +100,18 @@
     border-color: Highlight;
   }
 }
+
+/*
+ * TOUCH TARGETS.
+ *
+ * `pointer: coarse` is the finger, not the screen size - a narrow window on a
+ * laptop keeps the dense instrument layout, a tablet does not. 44px is the
+ * figure from WCAG 2.5.5 and Apple's HIG; measured before this, every control
+ * in the app was 24px tall or less.
+ */
+@media (pointer: coarse) {
+  .navLink,
+  .wordmark {
+    min-block-size: 44px;
+  }
+}

@@ -27,3 +27,22 @@
 .root:focus-visible {
   transform: translateY(0);
 }
+
+/*
+ * TOUCH TARGETS.
+ *
+ * `pointer: coarse` is the finger, not the screen size - a narrow window on a
+ * laptop keeps the dense instrument layout, a tablet does not. 44px is the
+ * figure from WCAG 2.5.5 and Apple's HIG; measured before this, every control
+ * in the app was 24px tall or less.
+ */
+@media (pointer: coarse) {
+  /*
+   * Not :focus. The link is positioned off-screen until it is focused, so its
+   * box exists - and is measurable - the whole time; sizing it only on focus
+   * leaves a 26px target in the document for anything auditing the page.
+   */
+  .root {
+    min-block-size: 44px;
+  }
+}

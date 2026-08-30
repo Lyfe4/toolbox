@@ -59,3 +59,27 @@
     color: GrayText;
   }
 }
+
+/*
+ * TOUCH TARGETS.
+ *
+ * `pointer: coarse` is the finger, not the screen size - a narrow window on a
+ * laptop keeps the dense instrument layout, a tablet does not. 44px is the
+ * figure from WCAG 2.5.5 and Apple's HIG; measured before this, every control
+ * in the app was 24px tall or less.
+ */
+@media (pointer: coarse) {
+  .textarea {
+    font-size: 16px;
+  }
+
+  .input {
+    min-block-size: 44px;
+    /*
+     * 16px, and it is not about legibility. iOS Safari zooms the whole
+     * viewport in when a field below 16px is focused, and does not zoom back
+     * out - so one tap in a search box leaves the page at an arbitrary scale.
+     */
+    font-size: 16px;
+  }
+}

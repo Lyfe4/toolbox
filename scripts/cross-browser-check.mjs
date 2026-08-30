@@ -1090,6 +1090,229 @@ async function checkHead(browser, label) {
   }
 }
 
+/**
+ * Touch.
+ *
+ * The canvas could not be panned or pinched with fingers at all: panning was
+ * reachable only by space+drag, middle-drag and the wheel, and pinch was
+ * implemented as ctrl+wheel. A touchscreen has none of those. `touch-action:
+ * none` was already set, so the browser was never the problem - the handlers
+ * had no branch a finger could reach.
+ *
+ * Driven with constructed PointerEvents carrying pointerType 'touch' rather
+ * than Playwright's touchscreen API, because that is what the canvas listens
+ * for and it lets a second and third finger be placed precisely.
+ */
+async function checkTouch(browser, label) {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+
+  /** Dispatches a sequence of touch pointer events on the canvas root. */
+  const touch = (steps) =>
+    page.evaluate((sequence) => {
+      const root = document.querySelector('[role="application"]');
+      if (!root) return;
+      for (const [type, id, x, y] of sequence) {
+        root.dispatchEvent(
+          new PointerEvent(type, {
+            pointerId: id,
+            pointerType: 'touch',
+            isPrimary: id === 1,
+            clientX: x,
+            clientY: y,
+            button: type === 'pointerup' || type === 'pointercancel' ? -1 : 0,
+            buttons: type === 'pointerup' || type === 'pointercancel' ? 0 : 1,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+    }, steps);
+
+  const plane = () =>
+    page.evaluate(
+      () => document.querySelector('[data-testid="canvas-plane"]')?.style.transform ?? '',
+    );
+
+  try {
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await page.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
+
+    check(
+      label,
+      'the canvas root takes the gesture rather than the browser',
+      (await page.evaluate(
+        () => getComputedStyle(document.querySelector('[role="application"]')).touchAction,
+      )) === 'none',
+      '',
+    );
+
+    /* -- One finger pans ------------------------------------------------- */
+    const beforePan = await plane();
+    await touch([
+      ['pointerdown', 1, 200, 400],
+      ['pointermove', 1, 240, 340],
+      ['pointermove', 1, 260, 300],
+      ['pointerup', 1, 260, 300],
+    ]);
+    await page.waitForTimeout(200);
+    const afterPan = await plane();
+    check(
+      label,
+      'one finger drags the canvas',
+      afterPan !== beforePan,
+      `${beforePan} -> ${afterPan}`,
+    );
+
+    /* -- Two fingers pinch ----------------------------------------------- */
+    const zoom = () =>
+      page.evaluate(() => {
+        const t = document.querySelector('[data-testid="canvas-plane"]')?.style.transform ?? '';
+        return Number(/scale\(([\d.]+)\)/.exec(t)?.[1] ?? '1');
+      });
+
+    const beforeZoom = await zoom();
+    await touch([
+      ['pointerdown', 1, 150, 400],
+      ['pointerdown', 2, 250, 400],
+      ['pointermove', 1, 100, 400],
+      ['pointermove', 2, 300, 400],
+      ['pointermove', 1, 50, 400],
+      ['pointermove', 2, 350, 400],
+      ['pointerup', 1, 50, 400],
+      ['pointerup', 2, 350, 400],
+    ]);
+    await page.waitForTimeout(200);
+    const afterZoom = await zoom();
+    check(
+      label,
+      'two fingers pinch to zoom',
+      afterZoom > beforeZoom * 1.5,
+      `${String(beforeZoom)} -> ${String(afterZoom)}`,
+    );
+
+    /* -- A gesture the browser takes away -------------------------------- */
+    await touch([
+      ['pointerdown', 1, 150, 400],
+      ['pointerdown', 2, 250, 400],
+      ['pointermove', 1, 120, 400],
+      ['pointercancel', 1, 120, 400],
+      ['pointercancel', 2, 250, 400],
+    ]);
+    await page.waitForTimeout(150);
+
+    const strandedFrom = await plane();
+    await touch([
+      ['pointerdown', 3, 200, 400],
+      ['pointermove', 3, 240, 400],
+      ['pointerup', 3, 240, 400],
+    ]);
+    await page.waitForTimeout(200);
+    check(
+      label,
+      'the canvas still pans after a cancelled gesture',
+      (await plane()) !== strandedFrom,
+      `${strandedFrom} -> ${await plane()}`,
+    );
+
+    /* -- Nothing moves while a dialog is open ---------------------------- */
+    await page.getByRole('button', { name: 'Add tool' }).click();
+    await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+
+    const duringDialog = await plane();
+    await touch([
+      ['pointerdown', 1, 195, 400],
+      ['pointermove', 1, 260, 300],
+      ['pointerup', 1, 260, 300],
+    ]);
+    await touch([
+      ['pointerdown', 1, 150, 400],
+      ['pointerdown', 2, 250, 400],
+      ['pointermove', 1, 50, 400],
+      ['pointermove', 2, 350, 400],
+      ['pointerup', 1, 50, 400],
+      ['pointerup', 2, 350, 400],
+    ]);
+    await page.waitForTimeout(200);
+    check(
+      label,
+      'touch cannot pan or pinch the canvas while a dialog is open',
+      (await plane()) === duringDialog,
+      `${duringDialog} -> ${await plane()}`,
+    );
+
+    await page.getByTestId('dialog-option-base64').click();
+    await page.waitForTimeout(300);
+
+    /* -- Touch target sizes ---------------------------------------------- */
+    const coarse = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
+
+    if (!coarse) {
+      skip(
+        label,
+        'touch targets reach 44px',
+        "this engine's driver does not report (pointer: coarse) with hasTouch, so the coarse-pointer rules never apply",
+      );
+      return;
+    }
+
+    const targets = await page.evaluate(() => {
+      const selector = 'button, a[href], input, textarea, [role="option"], [role="menuitem"]';
+      const small = [];
+      for (const element of document.querySelectorAll(selector)) {
+        const rect = element.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) continue;
+        if (rect.height >= 44) continue;
+        const name = (element.getAttribute('aria-label') ?? element.textContent ?? element.tagName)
+          .trim()
+          .replace(/\s+/g, ' ')
+          .slice(0, 24);
+        small.push(`${name} ${String(Math.round(rect.height))}px`);
+      }
+      return [...new Set(small)];
+    });
+
+    check(
+      label,
+      'every interactive target is at least 44px tall on a coarse pointer',
+      targets.length === 0,
+      targets.join(', '),
+    );
+
+    /*
+     * Ports are the known exception, asserted rather than ignored: they stay
+     * on their 24px pitch because a 44px box would overlap its neighbour and
+     * connect the wrong port. This pins the current state so the trade-off is
+     * a decision in the repo rather than an oversight - see the comment in
+     * canvas.module.css.
+     */
+    const port = await page.evaluate(() => {
+      const element = document.querySelector('[data-port-id]');
+      // Computed style, not a bounding rect: the canvas may be zoomed, and a
+      // rect would report 24px x whatever the zoom happens to be.
+      return element ? parseFloat(getComputedStyle(element).blockSize) : 0;
+    });
+    check(
+      label,
+      'ports are still on their pitch, not inflated into each other',
+      port > 0 && port <= 32,
+      `${String(port)}px`,
+    );
+
+    const field = await page.evaluate(() => {
+      const element = document.querySelector('[role="group"] textarea');
+      return element ? parseFloat(getComputedStyle(element).fontSize) : 0;
+    });
+    // Below 16px, iOS Safari zooms the viewport on focus and never zooms back.
+    check(label, 'a node field will not make iOS zoom in', field >= 16, `${String(field)}px`);
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 async function runChecks(engine, label) {
   console.log(`\n${label}`);
   const browser = await engine.launch();
@@ -1537,6 +1760,7 @@ async function runChecks(engine, label) {
     await checkConsoleSilence(browser, label);
     await checkDeepLinks(browser, label);
     await checkHead(browser, label);
+    await checkTouch(browser, label);
   } finally {
     await browser.close();
   }
