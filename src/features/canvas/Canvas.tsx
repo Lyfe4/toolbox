@@ -1403,9 +1403,15 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
    * accessible name "Zoom 100%. Reset to 100%." is a worse answer than one in
    * the obvious place, and the readout is visible at every width.
    */
+  /*
+   * Fit is NOT in here. It is the one control that earns its place on a narrow
+   * screen: a node is 224px wide, so a 320-390px viewport shows less than two
+   * of them, and the usual way to lose a graph is to pan away from it. Fit is
+   * how you find it again - burying the recovery action behind another tap was
+   * the wrong way round.
+   */
   const overflowItems: readonly OverflowItem[] = useMemo(
     () => [
-      { id: 'fit', label: 'Fit', onSelect: onFit },
       {
         id: 'undo',
         label: 'Undo',
@@ -1429,7 +1435,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
         },
       },
     ],
-    [onFit, onShare, store],
+    [onShare, store],
   );
 
   return (
@@ -1552,8 +1558,8 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       {/*
         THE TOOLBAR
         ───────────
-        Below `COMPACT_TOOLBAR` everything but "Add tool" moves into an
-        overflow menu. Collapsing rather than shrinking: this bar is
+        Below `COMPACT_TOOLBAR` everything but "Add tool" and "Fit" moves
+        into an overflow menu. Collapsing rather than shrinking: this bar is
         absolutely positioned with no right anchor, so its width was purely
         the sum of its children - at 320px it grew to 475px and put Share and
         Shortcuts off the side of the screen, unreachable by pointer or by
@@ -1571,7 +1577,13 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
         </Button>
 
         {compact ? (
-          <OverflowMenu label="More" items={overflowItems} />
+          <>
+            {/* Promoted out of the overflow menu - see overflowItems above. */}
+            <Button size="sm" variant="ghost" onClick={onFit}>
+              Fit
+            </Button>
+            <OverflowMenu label="More" items={overflowItems} />
+          </>
         ) : (
           <>
             <Button size="sm" variant="ghost" onClick={onFit}>

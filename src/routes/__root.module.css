@@ -24,6 +24,26 @@
   border-block-end: var(--pb-border-width) solid var(--pb-border-hairline);
 }
 
+/*
+ * The header sets the whole page's minimum width.
+ *
+ * It is a flex row in a grid whose items default to `min-inline-size: auto`,
+ * so its min-content width - wordmark, gap, three nav links, padding - is the
+ * narrowest the shell can be. At 320px that came to 324px, and the extra 4px
+ * scrolled the entire document sideways: the header, the route-progress bar
+ * and the canvas were all 4px wider than the window.
+ *
+ * Tightening the gap and the side padding rather than letting anything shrink,
+ * because the alternative - `min-inline-size: 0` on the grid items - does not
+ * remove the overflow, it only hides it by clipping a nav link off the edge.
+ */
+@media (max-width: 400px) {
+  .header {
+    gap: var(--pb-space-md);
+    padding-inline: var(--pb-space-sm);
+  }
+}
+
 .wordmark {
   display: flex;
   align-items: center;

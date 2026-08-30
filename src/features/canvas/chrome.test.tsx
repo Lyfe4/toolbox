@@ -107,14 +107,28 @@ describe('the toolbar at a comfortable width', () => {
 });
 
 describe('the toolbar when there is no room', () => {
-  it('collapses to Add tool and an overflow menu rather than shrinking', () => {
+  it('collapses to Add tool, Fit and an overflow menu rather than shrinking', () => {
     setViewportWidth(true);
     renderCanvas();
 
     expect(screen.getByRole('button', { name: /Add tool/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Fit' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'More' })).toBeInTheDocument();
     // Collapsed, not clipped: the rest are gone from the bar entirely.
     expect(screen.queryByRole('button', { name: 'Shortcuts' })).not.toBeInTheDocument();
+  });
+
+  it('keeps Fit on the bar, because it is how you find a graph you panned off', () => {
+    setViewportWidth(true);
+    renderCanvas();
+
+    // A node is 224px wide, so a 320-390px viewport shows less than two of
+    // them and panning away from the graph is easy. Fit is the recovery
+    // action; behind another tap it was the wrong way round.
+    const bar = screen.getByRole('button', { name: 'Fit' });
+
+    expect(bar).toBeVisible();
+    expect(bar.closest('[role="menu"]')).toBeNull();
   });
 
   it('keeps every collapsed action reachable', async () => {
@@ -129,7 +143,9 @@ describe('the toolbar when there is no room', () => {
       .getAllByRole('menuitem')
       .map((item) => item.textContent);
 
-    expect(labels.some((l) => l.startsWith('Fit'))).toBe(true);
+    // Fit is deliberately absent - it is on the bar, and offering it twice
+    // would give two controls the same accessible name.
+    expect(labels.some((l) => l.startsWith('Fit'))).toBe(false);
     expect(labels.some((l) => l.startsWith('Undo'))).toBe(true);
     expect(labels.some((l) => l.startsWith('Redo'))).toBe(true);
     expect(labels.some((l) => l.startsWith('Share'))).toBe(true);
@@ -181,6 +197,23 @@ describe('the toolbar when there is no room', () => {
   it('runs the same action the inline control would', async () => {
     const user = userEvent.setup();
     setViewportWidth(true);
+    seed([]);
+    renderCanvas();
+
+    act(() => {
+      useCanvasStore.getState().addNode('base64', { x: 200, y: 200 });
+    });
+    expect(useCanvasStore.getState().graph.nodeOrder).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Undo' }));
+
+    expect(useCanvasStore.getState().graph.nodeOrder).toHaveLength(0);
+  });
+
+  it('fits from the bar, where Fit now lives', async () => {
+    const user = userEvent.setup();
+    setViewportWidth(true);
     seed([node('a', 'base64', 200, 200)]);
     renderCanvas();
 
@@ -188,8 +221,7 @@ describe('the toolbar when there is no room', () => {
       useViewportStore.setState({ viewport: { x: 0, y: 0, zoom: 0.4 }, isPanning: false });
     });
 
-    await user.click(screen.getByRole('button', { name: 'More' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Fit' }));
+    await user.click(screen.getByRole('button', { name: 'Fit' }));
 
     // Fit reframes on the content, so the viewport is no longer the one set.
     expect(useViewportStore.getState().viewport.zoom).not.toBe(0.4);

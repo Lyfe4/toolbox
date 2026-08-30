@@ -210,6 +210,13 @@ async function checkChromeWidths(browser, label) {
         });
 
         return {
+          barLabels: controls.map((i) => i.text),
+          // The document, not the bar: the header sets the page's minimum
+          // width, and every toolbar check can pass while the whole page is
+          // 4px too wide and scrolling sideways.
+          scrollsSideways:
+            document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          scrollWidth: document.documentElement.scrollWidth,
           barFits: barBox.right <= window.innerWidth + 0.5 && barBox.left >= -0.5,
           barClipped: controls.filter((i) => i.clipped).map((i) => i.text),
           barOffscreen: controls
@@ -233,6 +240,13 @@ async function checkChromeWidths(browser, label) {
 
       check(
         label,
+        `Fit is on the bar at ${width.toString()}px, not behind the overflow menu`,
+        chrome.barLabels.some((name) => name === 'Fit'),
+        chrome.barLabels.join(', '),
+      );
+
+      check(
+        label,
         `toolbar fits and clips nothing at ${width.toString()}px`,
         chrome.barFits && chrome.barClipped.length === 0 && chrome.barOffscreen.length === 0,
         `${chrome.controls.toString()} controls, clipped [${chrome.barClipped.join(', ')}], offscreen [${chrome.barOffscreen.join(', ')}]`,
@@ -242,6 +256,21 @@ async function checkChromeWidths(browser, label) {
         `nothing in the toolbar overlaps at ${width.toString()}px`,
         chrome.barOverlaps.length === 0 && chrome.noteVisibleInRow === 0,
         chrome.barOverlaps.join(' | ') || 'clear',
+      );
+      /*
+       * The whole document, not just the toolbar.
+       *
+       * The header is a flex row inside a grid whose items default to
+       * `min-inline-size: auto`, so ITS min-content width sets the page's -
+       * at 320px that came to 324px and scrolled the entire document sideways
+       * by 4px. The toolbar checks above all passed while that was true,
+       * which is exactly why this one exists.
+       */
+      check(
+        label,
+        `the page does not scroll sideways at ${width.toString()}px`,
+        !chrome.scrollsSideways,
+        `scrollWidth ${chrome.scrollWidth.toString()} vs ${width.toString()}`,
       );
       check(
         label,
@@ -1247,6 +1276,65 @@ async function checkTouch(browser, label) {
     await page.getByTestId('dialog-option-base64').click();
     await page.waitForTimeout(300);
 
+    /* -- Fit, on the bar rather than behind the overflow menu ------------- */
+
+    /*
+     * The most useful control on a small screen, so it is not behind a tap.
+     * A node is 224px wide and this viewport is 390px, so panning away from
+     * the graph is easy and Fit is how it is found again. Driven with a real
+     * touch tap rather than .click(), because a control promoted for touch
+     * that only responds to a mouse would be worse than leaving it buried.
+     */
+    const fit = page.getByRole('button', { name: 'Fit' });
+    check(label, 'Fit is on the toolbar, not in the overflow menu', (await fit.count()) === 1, '');
+
+    // Pan the graph well out of view first.
+    await touch([
+      ['pointerdown', 1, 60, 700],
+      ['pointermove', 1, 340, 200],
+      ['pointerup', 1, 340, 200],
+    ]);
+    await page.waitForTimeout(200);
+    const lost = await plane();
+
+    const box = await fit.boundingBox();
+    await touch([]);
+    await page.evaluate(
+      (point) => {
+        const button = [...document.querySelectorAll('button')].find(
+          (candidate) => (candidate.textContent ?? '').trim() === 'Fit',
+        );
+        if (!button) return;
+        for (const type of ['pointerdown', 'pointerup', 'click']) {
+          button.dispatchEvent(
+            new PointerEvent(type, {
+              pointerId: 9,
+              pointerType: 'touch',
+              isPrimary: true,
+              clientX: point.x,
+              clientY: point.y,
+              button: type === 'pointerup' ? -1 : 0,
+              buttons: type === 'pointerdown' ? 1 : 0,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        }
+      },
+      {
+        x: Math.round((box?.x ?? 0) + (box?.width ?? 0) / 2),
+        y: Math.round((box?.y ?? 0) + (box?.height ?? 0) / 2),
+      },
+    );
+    await page.waitForTimeout(300);
+
+    check(
+      label,
+      'tapping Fit brings a graph panned off-screen back',
+      (await plane()) !== lost,
+      `${lost} -> ${await plane()}`,
+    );
+
     /* -- Touch target sizes ---------------------------------------------- */
     const coarse = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
 
@@ -1263,6 +1351,11 @@ async function checkTouch(browser, label) {
       const selector = 'button, a[href], input, textarea, [role="option"], [role="menuitem"]';
       const small = [];
       for (const element of document.querySelectorAll(selector)) {
+        // Ports are <button>s, and they are the documented exception: they sit
+        // on a 32px pitch, so a 44px box overlaps its neighbour. Asserted
+        // separately, below, rather than quietly folded in here.
+        if (element.hasAttribute('data-port-id')) continue;
+
         const rect = element.getBoundingClientRect();
         if (rect.width === 0 || rect.height === 0) continue;
         if (rect.height >= 44) continue;
