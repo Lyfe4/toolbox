@@ -294,8 +294,49 @@ async function runChecks(engine, label) {
       `present=${offscreen.main}, convertToBlob=${offscreen.convertToBlob}`,
     );
 
-    /* -- Pointer events: drag a node ------------------------------------ */
+    /* -- The palette's layout, which jsdom cannot see -------------------- */
     await page.getByRole('button', { name: 'Add tool' }).click();
+    await page.locator('[role="option"]').first().waitFor({ timeout: 10_000 });
+
+    const layout = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('[role="option"]')];
+      const heights = new Set(rows.map((row) => Math.round(row.getBoundingClientRect().height)));
+      const names = rows.map((row) => row.children[1]);
+      return {
+        rows: rows.length,
+        heights: [...heights],
+        // A name is truncated when its rendered box is narrower than its
+        // content. Zero of these may be true.
+        truncatedNames: names.filter((name) => name.scrollWidth > name.clientWidth + 1).length,
+        emptyNames: names.filter((name) => name.getBoundingClientRect().width < 1).length,
+        // Summaries are meant to truncate, so at least one should.
+        truncatedSummaries: rows.filter((row) => {
+          const detail = row.children[2];
+          return detail.scrollWidth > detail.clientWidth + 1;
+        }).length,
+      };
+    });
+
+    check(
+      label,
+      'every palette row is the same height',
+      layout.heights.length === 1,
+      `${layout.rows.toString()} rows, heights ${layout.heights.join('/')}`,
+    );
+    check(
+      label,
+      'no tool name is truncated or collapsed',
+      layout.truncatedNames === 0 && layout.emptyNames === 0,
+      `truncated=${layout.truncatedNames.toString()}, collapsed=${layout.emptyNames.toString()}`,
+    );
+    check(
+      label,
+      'long summaries truncate rather than wrap',
+      layout.truncatedSummaries > 0,
+      `${layout.truncatedSummaries.toString()} truncated`,
+    );
+
+    /* -- Pointer events: drag a node ------------------------------------ */
     const search = page.getByRole('combobox', { name: 'Search tools' });
     await search.fill('base64');
     await search.press('Enter');

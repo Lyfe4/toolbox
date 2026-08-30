@@ -420,10 +420,8 @@ describe('connecting without a pointer', () => {
     await waitFor(() => {
       expect(useCanvasStore.getState().graph.edgeOrder).toHaveLength(1);
     });
-    // The claim is about the SETTLED canvas. Running axe while the connect
-    // dialog is still unmounting scans a half-torn-down tree, which made this
-    // fail once in a while under parallel load - a flaky test, not a flaky
-    // canvas, but the assertion should say what it means either way.
+    // The claim is about the SETTLED canvas, so wait for the connect dialog
+    // to be gone before scanning rather than catching it mid-teardown.
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });

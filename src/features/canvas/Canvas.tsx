@@ -7,14 +7,27 @@ import { VisuallyHidden } from '@/components/VisuallyHidden';
 import { idleState } from '@/features/execution/graph';
 import { usePipelineStore } from '@/features/execution/pipelineStore';
 import { getSharedEngine } from '@/features/execution/sharedEngine';
-import { getManifestEntry, TOOL_MANIFEST, type ToolId } from '@/features/registry';
+import {
+  getManifestEntry,
+  TOOL_MANIFEST,
+  type ToolCategory,
+  type ToolId,
+} from '@/features/registry';
 import { cx } from '@/lib/cx';
 
 import styles from './canvas.module.css';
 import { CanvasNodeView } from './CanvasNodeView';
-import { CommandDialog, type DialogOption } from './CommandDialog';
+import { CommandDialog, type DialogGroup, type DialogOption } from './CommandDialog';
 import { checkConnection, connectionCount, validTargetsFor } from './connections';
-import { GRID, MAX_ZOOM, MIN_ZOOM, NODE_WIDTH, spatialOrder, typedInputPorts } from './geometry';
+import {
+  clearOfExistingNodes,
+  GRID,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  NODE_WIDTH,
+  spatialOrder,
+  typedInputPorts,
+} from './geometry';
 import { useCanvasStore } from './graphStore';
 import { createDebouncedSaver, loadGraph } from './persistence';
 import { PIPELINE_PRESETS } from './presets';
@@ -25,6 +38,42 @@ import { toWorld, useViewportStore } from './viewportStore';
 import { Wires } from './Wires';
 
 import type { NodeId, Point, PortRef } from './types';
+
+/**
+ * The order tool categories appear in the palette.
+ *
+ * Written out rather than derived, because the alternative is the order the
+ * manifest happens to be written in - which is how "encoding" ended up as
+ * three separate sections. `satisfies` ties every entry to a real category,
+ * and palette.test.ts asserts this is a permutation of TOOL_CATEGORIES, so
+ * adding a category to the registry and forgetting it here is a test failure
+ * rather than a group that quietly never renders.
+ *
+ * Ordered by how often they are reached for, not alphabetically.
+ */
+export const PALETTE_CATEGORY_ORDER = [
+  'encoding',
+  'text',
+  'data',
+  'colour',
+  'hashing',
+  'time',
+] as const satisfies readonly ToolCategory[];
+
+/** Pipelines lead, then the tool categories. */
+export const PALETTE_GROUPS: readonly DialogGroup[] = [
+  {
+    id: 'pipelines',
+    label: 'Pipelines',
+    note: 'whole prewired graphs',
+    distinct: true,
+  },
+  ...PALETTE_CATEGORY_ORDER.map((category) => ({ id: category, label: category })),
+];
+
+/** The connection flow has one group each; declared for the same reason. */
+const OUTPUT_GROUPS: readonly DialogGroup[] = [{ id: 'outputs', label: 'Outputs' }];
+const TARGET_GROUPS: readonly DialogGroup[] = [{ id: 'targets', label: 'Valid targets' }];
 
 /** Which overlay, if any, is open. */
 type Overlay =
@@ -455,12 +504,32 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
   const addPreset = useCallback(
     (presetId: string) => {
       const rect = rootRef.current?.getBoundingClientRect();
+      const size = { width: rect?.width ?? 800, height: rect?.height ?? 600 };
       const centre = toWorld(
-        { x: (rect?.width ?? 800) / 2, y: (rect?.height ?? 600) / 2 },
+        { x: size.width / 2, y: size.height / 2 },
         useViewportStore.getState().viewport,
       );
-      // Placed left of centre so a two- or three-node chain lands in view.
-      store.getState().applyPreset(presetId, { x: centre.x - NODE_WIDTH, y: centre.y - 80 });
+
+      /*
+       * Placed left of centre so a two- or three-node chain lands in view,
+       * then dropped clear of anything already on the canvas. Landing a
+       * prewired graph on top of existing nodes reads as corruption, and
+       * untangling it by hand is worse than the click was worth.
+       */
+      const origin = clearOfExistingNodes(store.getState().graph, {
+        x: centre.x - NODE_WIDTH,
+        y: centre.y - 80,
+      });
+
+      store.getState().applyPreset(presetId, origin);
+
+      /*
+       * Fit afterwards. A preset is several nodes and their wires, and the
+       * point of loading one is to see the shape - which is no use if half of
+       * it is off-screen. A single tool is not fitted: that would yank the
+       * viewport for one small addition.
+       */
+      useViewportStore.getState().fitToContent(store.getState().graph, size);
     },
     [store],
   );
@@ -791,14 +860,14 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       ...PIPELINE_PRESETS.map((preset) => ({
         id: `preset:${preset.id}`,
         name: preset.name,
-        meta: 'pipeline',
         detail: preset.summary,
-        group: 'Pipelines',
+        group: 'pipelines',
       })),
+      // No category on the row: the group heading above it already says so,
+      // and printing it twice was costing the name the width it needed.
       ...TOOL_MANIFEST.map((entry) => ({
         id: entry.id,
         name: entry.name,
-        meta: entry.category,
         detail: entry.summary,
         group: entry.category,
       })),
@@ -813,9 +882,8 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     return getManifestEntry(node.toolId).outputs.map((port) => ({
       id: port.id,
       name: port.label,
-      meta: 'out',
       detail: port.types.join(' or '),
-      group: 'Outputs',
+      group: 'outputs',
     }));
   }, [overlay, graph]);
 
@@ -824,9 +892,8 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     return validTargetsFor(graph, overlay.from).map((target) => ({
       id: `${target.nodeId}:${target.portId}`,
       name: `${target.nodeLabel} - ${target.portLabel}`,
-      meta: 'in',
       detail: target.types.join(' or '),
-      group: 'Valid targets',
+      group: 'targets',
     }));
   }, [overlay, graph]);
 
@@ -929,9 +996,16 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       {graph.nodeOrder.length === 0 ? (
         <div className={styles.empty}>
           <p className={styles.emptyTitle}>Empty canvas</p>
+          {/*
+            One quiet line, naming both routes in. The keyboard shortcut alone
+            assumed the reader already knew there was a palette; someone
+            looking at an empty grid for the first time needs the visible
+            button pointed at too.
+          */}
           <p>
-            Press <kbd className={styles.kbd}>K</kbd> to add a tool, or{' '}
-            <kbd className={styles.kbd}>?</kbd> for every shortcut.
+            Press <kbd className={styles.kbd}>K</kbd> or choose{' '}
+            <span className={styles.emptyStrong}>Add tool</span> to place a module.{' '}
+            <kbd className={styles.kbd}>?</kbd> lists every shortcut.
           </p>
         </div>
       ) : null}
@@ -1021,7 +1095,8 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
           searchLabel="Search tools"
           placeholder="base64, yaml, convert…"
           options={paletteOptions}
-          emptyMessage="No tool matches that."
+          groups={PALETTE_GROUPS}
+          emptyMessage="No tools are available."
           onClose={closeOverlay}
           onChoose={(id) => {
             closeOverlay();
@@ -1040,6 +1115,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
           searchLabel="Search outputs"
           placeholder="Filter outputs"
           options={outputOptions}
+          groups={OUTPUT_GROUPS}
           emptyMessage="This tool has no outputs."
           onClose={closeOverlay}
           onChoose={(portId) => {
@@ -1054,6 +1130,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
           searchLabel="Search valid targets"
           placeholder="Filter targets"
           options={targetOptions}
+          groups={TARGET_GROUPS}
           emptyMessage="Nothing on the canvas can accept this output yet."
           onClose={closeOverlay}
           onChoose={(id) => {

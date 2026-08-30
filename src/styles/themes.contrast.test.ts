@@ -24,6 +24,10 @@ const TEXT_PAIRS: readonly (readonly [string, string])[] = [
   ['pb-ink-muted', 'pb-surface-raised'],
   ['pb-ink-accent', 'pb-surface-base'],
   ['pb-ink-accent', 'pb-surface-raised'],
+  // The palette's selected row: an accent name and a muted summary on the
+  // raised surface that marks the selection.
+  ['pb-ink-accent', 'pb-surface-overlay'],
+  ['pb-ink-muted', 'pb-surface-overlay'],
   ['pb-ink-on-accent', 'pb-accent'],
   ['pb-ink-inverse', 'pb-ink-primary'],
   ['pb-signal-ok', 'pb-surface-base'],
@@ -53,6 +57,9 @@ const NON_TEXT_PAIRS: readonly (readonly [string, string])[] = [
   ['pb-focus-ring', 'pb-control-surface'],
   ['pb-accent', 'pb-surface-base'],
   ['pb-accent', 'pb-surface-raised'],
+  // The palette's selection bar. It is the structural carrier of "this row is
+  // selected", so it has to be perceivable against the row it sits on.
+  ['pb-accent', 'pb-surface-overlay'],
 ];
 
 describe.each(THEMES)('theme: %s', (theme) => {

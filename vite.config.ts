@@ -52,6 +52,20 @@ export default defineConfig({
     globals: false,
     // Process CSS Modules in tests so `styles.foo` is a real class name.
     css: true,
+    /*
+     * Above vitest's 5s default.
+     *
+     * A handful of tests do real work rather than waiting on a promise: a
+     * 2,200-line Myers diff, an axe scan of a populated canvas, the first
+     * route render that lazily imports its chunk. Each finishes in well under
+     * a second on an idle machine and can pass 5s on a saturated one, which
+     * showed up as tests failing roughly one full run in eight - always a
+     * timeout, never an assertion.
+     *
+     * Raising it does not hide a hang: something genuinely stuck still fails,
+     * 15 seconds later.
+     */
+    testTimeout: 20_000,
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     coverage: {
       provider: 'v8',

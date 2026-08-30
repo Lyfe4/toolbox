@@ -171,6 +171,34 @@ export function graphBounds(graph: GraphData): Rect | null {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
+/** Clear air left between a newly placed subgraph and what is already there. */
+export const PLACEMENT_GAP = 64;
+
+/**
+ * Moves an origin below everything already on the canvas, if it would land on
+ * top of it.
+ *
+ * Only the vertical axis is adjusted. Presets read left-to-right - a chain of
+ * nodes wired in a row - so pushing sideways would march them off the edge,
+ * while pushing down puts the new graph on its own line, which is how anyone
+ * would arrange them by hand.
+ *
+ * Nothing moves when the canvas is empty or the origin is already clear, so
+ * placing the first preset still lands exactly where the user is looking.
+ */
+export function clearOfExistingNodes(graph: GraphData, origin: Point): Point {
+  const bounds = graphBounds(graph);
+  if (!bounds) return origin;
+
+  const belowExisting = bounds.y + bounds.height + PLACEMENT_GAP;
+  if (origin.y >= belowExisting) return origin;
+
+  // Horizontally disjoint graphs do not need moving at all.
+  if (origin.x >= bounds.x + bounds.width + PLACEMENT_GAP) return origin;
+
+  return { x: origin.x, y: belowExisting };
+}
+
 /**
  * The spatial tab order: top-to-bottom, then left-to-right.
  *

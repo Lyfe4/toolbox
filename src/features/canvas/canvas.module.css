@@ -357,6 +357,10 @@
   font-size: var(--pb-value-size);
 }
 
+.emptyStrong {
+  color: var(--pb-ink-secondary);
+}
+
 .emptyTitle {
   font-size: var(--pb-heading-size);
   font-weight: var(--pb-heading-weight);
@@ -419,9 +423,18 @@
   color: var(--pb-ink-primary);
 }
 
+/*
+ * The BODY does not scroll - the list inside it does.
+ *
+ * With the whole body scrolling, walking to the end of the list carried the
+ * search input off the top of the dialog. In a combobox the input is where
+ * focus lives and where the caret is; it has to stay put.
+ */
 .dialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-space-sm);
   padding: var(--pb-space-sm);
-  overflow-y: auto;
   min-block-size: 0;
 }
 
@@ -430,11 +443,36 @@
   padding: 0;
   list-style: none;
   display: grid;
-  gap: var(--pb-space-2xs);
+  gap: var(--pb-space-sm);
+  overflow-y: auto;
+  min-block-size: 0;
+  /* Scrolling the highlight into view must not scroll the page behind it. */
+  overscroll-behavior: contain;
+}
+
+.group {
+  display: grid;
+  gap: var(--pb-space-hairline);
+}
+
+/*
+ * Pipelines are not another tool category - one places a whole prewired graph,
+ * the other places a single module - so the group is set apart rather than
+ * queued up with the rest: its own label treatment, and a rule beneath it that
+ * closes the section off.
+ */
+.groupDistinct {
+  display: grid;
+  gap: var(--pb-space-hairline);
+  padding-block-end: var(--pb-space-sm);
+  border-block-end: var(--pb-border-width) solid var(--pb-border-hairline);
 }
 
 .groupLabel {
-  padding-block: var(--pb-space-xs) var(--pb-space-2xs);
+  display: flex;
+  align-items: baseline;
+  gap: var(--pb-space-xs);
+  padding: var(--pb-space-2xs) var(--pb-space-sm);
   font-family: var(--pb-font-ui);
   font-size: var(--pb-label-size);
   letter-spacing: var(--pb-heading-tracking);
@@ -442,14 +480,32 @@
   color: var(--pb-ink-muted);
 }
 
+.groupDistinct > .groupLabel {
+  color: var(--pb-ink-secondary);
+}
+
+.groupNote {
+  letter-spacing: var(--pb-value-tracking);
+  text-transform: none;
+  color: var(--pb-ink-disabled);
+}
+
+/*
+ * Every row is the same height, whatever the text.
+ *
+ * The name column is `auto` and never truncates; the summary takes the rest
+ * and truncates. Before this they were the other way round, so a long summary
+ * squeezed the name column to nothing - which is why half the rows appeared to
+ * have no name at all.
+ */
 .option {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: 2px auto minmax(0, 1fr);
   align-items: center;
   gap: var(--pb-space-sm);
 
-  padding: var(--pb-space-xs) var(--pb-space-sm);
-  border: var(--pb-border-width) solid transparent;
+  block-size: var(--pb-control-height-md);
+  padding-inline: var(--pb-space-sm);
   border-radius: var(--pb-radius-control);
   cursor: pointer;
   color: var(--pb-ink-secondary);
@@ -460,25 +516,67 @@
   font-size: var(--pb-value-size);
 }
 
+/*
+ * The selected marker. Always present so the row never shifts, and it is what
+ * carries selection STRUCTURALLY - the tint and the accent name are secondary,
+ * so this survives greyscale and forced colours.
+ */
+.optionBar {
+  align-self: stretch;
+  margin-block: var(--pb-space-2xs);
+  border-radius: 1px;
+  background-color: transparent;
+}
+
 .option[aria-selected='true'] {
+  background-color: var(--pb-surface-overlay);
+}
+
+.option[aria-selected='true'] .optionBar {
   background-color: var(--pb-accent);
-  border-color: var(--pb-accent);
-  color: var(--pb-ink-on-accent);
+}
+
+.option[aria-selected='true'] .optionName {
+  color: var(--pb-ink-accent);
 }
 
 .optionName {
   font-weight: var(--pb-label-weight);
   letter-spacing: var(--pb-label-tracking);
   text-transform: var(--pb-label-transform);
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--pb-ink-primary);
+  white-space: nowrap;
 }
 
-.optionMeta {
-  font-size: var(--pb-label-size);
-  letter-spacing: var(--pb-label-tracking);
-  text-transform: var(--pb-label-transform);
-  opacity: 0.75;
+.optionDetail {
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--pb-ink-muted);
+}
+
+.emptyResult {
+  padding: var(--pb-space-md) var(--pb-space-sm);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-muted);
+}
+
+@media (forced-colors: active) {
+  /*
+   * Backgrounds are replaced wholesale in forced-colors mode, so the tint
+   * disappears. The bar and an inset outline are what remain, and they are
+   * enough on their own.
+   */
+  .option[aria-selected='true'] {
+    outline: var(--pb-border-width-strong) solid Highlight;
+    outline-offset: calc(-1 * var(--pb-border-width-strong));
+  }
+
+  .option[aria-selected='true'] .optionBar {
+    background-color: Highlight;
+  }
 }
 
 .shortcutTable {
