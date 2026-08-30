@@ -1,3 +1,5 @@
+import { counted } from '@/lib/plural';
+
 import type { CanvasEdge, CanvasNode, EdgeId, GraphData, NodeId, Point } from './types';
 
 /**
@@ -81,7 +83,7 @@ export function describeCommand(command: Command): string {
         ? 'delete node'
         : `delete ${command.nodes.length.toString()} nodes`;
     case 'move-nodes':
-      return command.ids.length === 1 ? 'move node' : `move ${command.ids.length.toString()} nodes`;
+      return command.ids.length === 1 ? 'move node' : `move ${counted(command.ids.length, 'node')}`;
     case 'add-edge':
       return 'connect';
     case 'add-subgraph':

@@ -73,7 +73,7 @@ export function ShortcutsOverlay({ onClose }: ShortcutsOverlayProps) {
           />
         </div>
 
-        <div className={styles.dialogScroll}>
+        <div className={styles.dialogScroll} data-scroll-region="">
           {SHORTCUT_GROUPS.map((group) => (
             <table className={styles.shortcutTable} key={group}>
               <caption className={styles.groupLabel}>{group}</caption>

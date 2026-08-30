@@ -2,6 +2,7 @@ import { create } from 'zustand';
 
 import type { GraphData, NodeId } from '@/features/canvas/types';
 import type { ToolOutputs, ToolResult } from '@/features/registry/types';
+import { counted } from '@/lib/plural';
 
 import {
   CycleError,
@@ -149,7 +150,7 @@ export const usePipelineStore = create<PipelineStore>()((set, get) => {
 
       if (summary.failed > 0) {
         announce(
-          `Pipeline finished with ${summary.failed.toString()} ${summary.failed === 1 ? 'failure' : 'failures'}. ${parts.join(', ')}.`,
+          `Pipeline finished with ${counted(summary.failed, 'failure')}. ${parts.join(', ')}.`,
         );
       } else if (parts.length > 0) {
         announce(`Pipeline finished. ${parts.join(', ')}.`);

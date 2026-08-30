@@ -41,6 +41,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: ['C'], action: 'Connect from the focused node, without dragging', group: 'Building' },
   { keys: ['Escape'], action: 'Cancel the current dialog, drag or connection', group: 'Building' },
   { keys: ['?'], action: 'Show this list', group: 'Building' },
+  /*
+   * Radix binds F8 to the toast viewport. It is the only way to reach a
+   * notification on demand - the canvas's live region is shared and a message
+   * there can be replaced within moments, so the toast is the durable copy and
+   * has to be summonable rather than merely present.
+   */
+  { keys: ['F8'], action: 'Move focus to the latest notification', group: 'Building' },
 ];
 
 export const SHORTCUT_GROUPS = ['Moving around', 'Editing', 'Building'] as const;

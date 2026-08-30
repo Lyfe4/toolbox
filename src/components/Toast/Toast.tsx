@@ -45,6 +45,24 @@ export interface ToastProviderProps {
 }
 
 /**
+ * How long each tone stays up.
+ *
+ * An error is the durable copy of something the live region may already have
+ * lost - the canvas has one polite region shared with the pipeline, so a
+ * connection refusal can be overwritten a few hundred milliseconds later by
+ * "Pipeline finished". Six seconds is fine for "Copied"; it is not long
+ * enough to read a refusal, decide what to do, and reach the toast. Errors
+ * therefore stay twice as long.
+ *
+ * Nothing here is a substitute for being able to summon it: Radix binds F8 to
+ * move focus to the toast viewport, which is listed in the shortcuts
+ * reference so it is discoverable rather than folklore.
+ */
+const TONE_DURATION: Partial<Record<ToastTone, number>> = {
+  error: 12_000,
+};
+
+/**
  * Announces asynchronous results to screen readers.
  *
  * Radix Toast owns the live region, which is the part that is easy to get
@@ -82,6 +100,7 @@ export function ToastProvider({ children, duration = 6000 }: ToastProviderProps)
             key={toast.id}
             className={cx(styles.toast, styles[toast.tone])}
             type={toast.tone === 'error' ? 'foreground' : 'background'}
+            {...durationFor(toast.tone)}
             onOpenChange={(open) => {
               if (!open) dismiss(toast.id);
             }}
@@ -105,6 +124,19 @@ export function ToastProvider({ children, duration = 6000 }: ToastProviderProps)
       </RadixToast.Provider>
     </ToastContext>
   );
+}
+
+/**
+ * The duration override for a tone, as props to spread.
+ *
+ * Spread rather than passed as `duration={...}` because
+ * `exactOptionalPropertyTypes` refuses an explicit `undefined` for an
+ * optional prop - and omitting it is exactly what "use the provider default"
+ * has to mean.
+ */
+function durationFor(tone: ToastTone): { duration?: number } {
+  const duration = TONE_DURATION[tone];
+  return duration === undefined ? {} : { duration };
 }
 
 /** Typed access to `notify`. Throws if used outside a ToastProvider. */

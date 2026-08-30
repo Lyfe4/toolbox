@@ -219,6 +219,125 @@ function check(browser, name, passed, detail = '') {
   if (!passed) failures.push(`${browser}: ${name}${detail ? ` - ${detail}` : ''}`);
 }
 
+/**
+ * The canvas chrome at each supported width.
+ *
+ * A fresh page per width rather than resizing one: Firefox's Playwright build
+ * gets upset closing a context whose window was resized mid-run, and a fresh
+ * page also guarantees the media query is evaluated at load rather than
+ * mid-render.
+ */
+async function checkChromeWidths(browser, label) {
+  for (const width of [320, 768, 1440, 1920]) {
+    const context = await browser.newContext({ viewport: { width, height: 800 } });
+    const page = await context.newPage();
+
+    try {
+      await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+      await page.locator('[class*="toolbar"]').waitFor({ timeout: 15_000 });
+
+      const chrome = await page.evaluate(() => {
+        const boxesOf = (root) =>
+          [...root.children].map((el) => {
+            const box = el.getBoundingClientRect();
+            return {
+              text: (el.textContent ?? '').trim().slice(0, 24),
+              left: box.left,
+              right: box.right,
+              top: box.top,
+              bottom: box.bottom,
+              clipped: el.scrollWidth > el.clientWidth + 1,
+            };
+          });
+
+        const overlapping = (boxes) => {
+          const hits = [];
+          for (let i = 0; i < boxes.length; i += 1) {
+            for (let j = i + 1; j < boxes.length; j += 1) {
+              const a = boxes[i];
+              const b = boxes[j];
+              if (
+                a.left < b.right - 0.5 &&
+                b.left < a.right - 0.5 &&
+                a.top < b.bottom - 0.5 &&
+                b.top < a.bottom - 0.5
+              ) {
+                hits.push(`${a.text} / ${b.text}`);
+              }
+            }
+          }
+          return hits;
+        };
+
+        const bar = document.querySelector('[class*="toolbar"]');
+        const readout = document.querySelector('[data-testid="canvas-readout"]');
+        const barBox = bar.getBoundingClientRect();
+        const barItems = boxesOf(bar);
+        const readoutItems = boxesOf(readout);
+        const readoutBox = readout.getBoundingClientRect();
+
+        /*
+         * Clipping is measured on the CONTROLS, not on their wrappers. The
+         * share button sits in a positioned wrapper alongside its hidden
+         * privacy note, and the note is wider than the button - so the
+         * wrapper's scrollWidth exceeds its clientWidth while nothing is
+         * actually cut.
+         */
+        const controls = [...bar.querySelectorAll('button')].map((el) => {
+          const box = el.getBoundingClientRect();
+          return {
+            text: (el.textContent ?? '').trim().slice(0, 24),
+            right: box.right,
+            clipped: el.scrollWidth > el.clientWidth + 1,
+          };
+        });
+
+        return {
+          barFits: barBox.right <= window.innerWidth + 0.5 && barBox.left >= -0.5,
+          barClipped: controls.filter((i) => i.clipped).map((i) => i.text),
+          barOffscreen: controls
+            .filter((i) => i.right > window.innerWidth + 0.5)
+            .map((i) => i.text),
+          barOverlaps: overlapping(barItems),
+          controls: controls.length,
+          readoutFits: readoutBox.right <= window.innerWidth + 0.5,
+          readoutOverlaps: overlapping(readoutItems),
+          readoutRows: new Set(readoutItems.map((i) => Math.round(i.top))).size,
+          // The privacy note must never sit among the controls: it is
+          // absolutely positioned below the bar and hidden until wanted.
+          noteVisibleInRow: [...bar.querySelectorAll('[class*="shareNote"]')].filter((noteEl) => {
+            const note = noteEl.getBoundingClientRect();
+            return (
+              getComputedStyle(noteEl).visibility !== 'hidden' && note.top < barBox.bottom - 0.5
+            );
+          }).length,
+        };
+      });
+
+      check(
+        label,
+        `toolbar fits and clips nothing at ${width.toString()}px`,
+        chrome.barFits && chrome.barClipped.length === 0 && chrome.barOffscreen.length === 0,
+        `${chrome.controls.toString()} controls, clipped [${chrome.barClipped.join(', ')}], offscreen [${chrome.barOffscreen.join(', ')}]`,
+      );
+      check(
+        label,
+        `nothing in the toolbar overlaps at ${width.toString()}px`,
+        chrome.barOverlaps.length === 0 && chrome.noteVisibleInRow === 0,
+        chrome.barOverlaps.join(' | ') || 'clear',
+      );
+      check(
+        label,
+        `status readout is one row and fits at ${width.toString()}px`,
+        chrome.readoutFits && chrome.readoutOverlaps.length === 0 && chrome.readoutRows === 1,
+        `${chrome.readoutRows.toString()} row(s), overlaps [${chrome.readoutOverlaps.join(', ')}]`,
+      );
+    } finally {
+      await context.close();
+    }
+  }
+}
+
 async function runChecks(engine, label) {
   console.log(`\n${label}`);
   const browser = await engine.launch();
@@ -366,6 +485,21 @@ async function runChecks(engine, label) {
       `moved ${(after.x - before.x).toFixed(0)}x${(after.y - before.y).toFixed(0)}`,
     );
 
+    /* -- Node guidance must never be cut ---------------------------------- */
+    const guidance = await page.evaluate(() => {
+      const summaries = [...document.querySelectorAll('[class*="nodeSummary"]')];
+      return summaries.map((el) => ({
+        text: (el.textContent ?? '').trim().slice(0, 60),
+        truncated: el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1,
+      }));
+    });
+    check(
+      label,
+      'no node summary or guidance is visually truncated',
+      guidance.length > 0 && guidance.every((entry) => !entry.truncated),
+      `${guidance.length.toString()} checked, ${guidance.filter((e) => e.truncated).length.toString()} cut`,
+    );
+
     /* -- Port layout, which jsdom cannot see ----------------------------- */
     const ports = await page.evaluate(() => {
       const target = document.querySelector('[data-node-id]');
@@ -505,6 +639,74 @@ async function runChecks(engine, label) {
       imported ? `${imported.duration} ms inside the run` : 'no import span',
     );
 
+    /* -- Every overlay scrolls when its content overflows ----------------- */
+    const overlayScroll = await page.evaluate(async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const results = [];
+
+      const openAndMeasure = async (name, open, close) => {
+        open();
+        await wait(250);
+        const region = document.querySelector('[role="dialog"] [data-scroll-region]');
+        if (!region) {
+          results.push({ name, ok: false, why: 'no scroll region' });
+        } else {
+          const overflows = region.scrollHeight > region.clientHeight + 1;
+          region.scrollTop = region.scrollHeight;
+          await wait(60);
+          const scrolled = region.scrollTop > 0;
+          const style = getComputedStyle(region).overflowY;
+          results.push({
+            name,
+            ok: style === 'auto' || style === 'scroll',
+            overflows,
+            scrolled,
+            overflowY: style,
+          });
+        }
+        close();
+        await wait(200);
+      };
+
+      const key = (k) => {
+        const root = document.querySelector('[role="application"]');
+        root.focus();
+        root.dispatchEvent(
+          new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }),
+        );
+      };
+
+      await openAndMeasure(
+        'palette',
+        () => {
+          [...document.querySelectorAll('button')]
+            .find((b) => /Add tool/i.test(b.textContent))
+            ?.click();
+        },
+        () => key('Escape'),
+      );
+
+      await openAndMeasure(
+        'shortcuts',
+        () => {
+          key('?');
+        },
+        () => key('Escape'),
+      );
+
+      return results;
+    });
+
+    for (const overlay of overlayScroll) {
+      check(
+        label,
+        `the ${overlay.name} overlay can scroll`,
+        overlay.ok === true,
+        overlay.why ??
+          `overflow-y ${overlay.overflowY ?? '?'}, overflowing ${String(overlay.overflows)}, scrolled ${String(overlay.scrolled)}`,
+      );
+    }
+
     /* -- Zero network: nothing may leave the page ------------------------ */
     const external = await page.evaluate(
       (origin) =>
@@ -572,6 +774,11 @@ async function runChecks(engine, label) {
     check(label, 'no console errors', consoleErrors.length === 0, consoleErrors.join(' | '));
   } finally {
     await context.close();
+  }
+
+  try {
+    await checkChromeWidths(browser, label);
+  } finally {
     await browser.close();
   }
 }

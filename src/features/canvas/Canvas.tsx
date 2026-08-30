@@ -14,6 +14,8 @@ import {
   type ToolId,
 } from '@/features/registry';
 import { cx } from '@/lib/cx';
+import { counted } from '@/lib/plural';
+import { useMediaQuery } from '@/lib/useMediaQuery';
 
 import styles from './canvas.module.css';
 import { CanvasNodeView, portKey } from './CanvasNodeView';
@@ -30,6 +32,7 @@ import {
 import {
   clearOfExistingNodes,
   GRID,
+  gridStyle,
   MAX_ZOOM,
   MIN_ZOOM,
   NODE_WIDTH,
@@ -39,6 +42,7 @@ import {
   type PortSide,
 } from './geometry';
 import { useCanvasStore } from './graphStore';
+import { OverflowMenu, type OverflowItem } from './OverflowMenu';
 import { createDebouncedSaver, loadGraph } from './persistence';
 import { PIPELINE_PRESETS } from './presets';
 import { buildShareUrl, decodeParamToGraph } from './share';
@@ -118,6 +122,17 @@ function decodeEnd(id: string): PortEnd | null {
 }
 
 const EMPTY_PORTS: readonly string[] = [];
+
+/**
+ * Below this the toolbar collapses to "Add tool" plus an overflow menu.
+ *
+ * Chosen from the measured width of the full row - about 450px of controls,
+ * plus the bar's own inset - so the switch happens with room to spare rather
+ * than at the exact pixel things start to overflow.
+ */
+const COMPACT_TOOLBAR = '(max-width: 640px)';
+
+const SHARE_NOTE = 'Link holds structure only, never your input';
 
 const NUDGE = GRID;
 const BIG_NUDGE = GRID * 8;
@@ -1066,6 +1081,70 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
   /* ---------------------------------------------------------------------- */
 
   const zoomPercent = Math.round(viewport.zoom * 100);
+  const zoomLimit = viewport.zoom <= MIN_ZOOM ? ' min' : viewport.zoom >= MAX_ZOOM ? ' max' : '';
+
+  /*
+   * Names the current value AND what activating it does. "100%" alone told a
+   * screen-reader user the zoom but not that the thing was a button, let
+   * alone what pressing it would change.
+   */
+  const zoomResetLabel = `Zoom ${zoomPercent.toString()}%. Reset to 100%.`;
+
+  const compact = useMediaQuery(COMPACT_TOOLBAR);
+  const shareNoteId = useId();
+
+  const canvasSize = useCallback(() => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    return { width: rect?.width ?? 800, height: rect?.height ?? 600 };
+  }, []);
+
+  const onFit = useCallback(() => {
+    useViewportStore.getState().fitToContent(store.getState().graph, canvasSize());
+  }, [store, canvasSize]);
+
+  const onResetZoom = useCallback(() => {
+    const size = canvasSize();
+    useViewportStore.getState().resetZoom({ x: size.width / 2, y: size.height / 2 });
+  }, [canvasSize]);
+
+  /*
+   * The overflow's items are the same actions the inline row runs, through the
+   * same callbacks - so the narrow layout cannot drift from the wide one.
+   */
+  /*
+   * Zoom reset is NOT here, and not in the toolbar either. It lives on the
+   * readout, beside the value it resets - two buttons with the identical
+   * accessible name "Zoom 100%. Reset to 100%." is a worse answer than one in
+   * the obvious place, and the readout is visible at every width.
+   */
+  const overflowItems: readonly OverflowItem[] = useMemo(
+    () => [
+      { id: 'fit', label: 'Fit', onSelect: onFit },
+      {
+        id: 'undo',
+        label: 'Undo',
+        onSelect: () => {
+          store.getState().undo();
+        },
+      },
+      {
+        id: 'redo',
+        label: 'Redo',
+        onSelect: () => {
+          store.getState().redo();
+        },
+      },
+      { id: 'share', label: 'Share', onSelect: onShare, description: SHARE_NOTE },
+      {
+        id: 'shortcuts',
+        label: 'Shortcuts',
+        onSelect: () => {
+          setOverlay({ kind: 'shortcuts' });
+        },
+      },
+    ],
+    [onFit, onShare, store],
+  );
 
   return (
     <div
@@ -1104,8 +1183,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
         className={styles.grid}
         aria-hidden="true"
         style={{
-          backgroundSize: `${(GRID * viewport.zoom).toString()}px ${(GRID * viewport.zoom).toString()}px, ${(GRID * viewport.zoom).toString()}px ${(GRID * viewport.zoom).toString()}px, ${(GRID * 8 * viewport.zoom).toString()}px ${(GRID * 8 * viewport.zoom).toString()}px, ${(GRID * 8 * viewport.zoom).toString()}px ${(GRID * 8 * viewport.zoom).toString()}px`,
-          backgroundPosition: `${viewport.x.toString()}px ${viewport.y.toString()}px`,
+          ...gridStyle(viewport),
           // Fade the dense grid out when it would turn into a solid wash.
           opacity: viewport.zoom < 0.5 ? 0.4 : 1,
         }}
@@ -1184,6 +1262,17 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
         </div>
       ) : null}
 
+      {/*
+        THE TOOLBAR
+        ───────────
+        Below `COMPACT_TOOLBAR` everything but "Add tool" moves into an
+        overflow menu. Collapsing rather than shrinking: this bar is
+        absolutely positioned with no right anchor, so its width was purely
+        the sum of its children - at 320px it grew to 475px and put Share and
+        Shortcuts off the side of the screen, unreachable by pointer or by
+        Tab. It is now width-constrained as well, so nothing can escape it
+        even if a label changes.
+      */}
       <div className={styles.toolbar}>
         <Button
           size="sm"
@@ -1193,75 +1282,91 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
         >
           <PlusIcon size={12} /> Add tool
         </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            const rect = rootRef.current?.getBoundingClientRect();
-            useViewportStore.getState().fitToContent(graph, {
-              width: rect?.width ?? 800,
-              height: rect?.height ?? 600,
-            });
-          }}
-        >
-          Fit
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            const rect = rootRef.current?.getBoundingClientRect();
-            useViewportStore
-              .getState()
-              .resetZoom({ x: (rect?.width ?? 800) / 2, y: (rect?.height ?? 600) / 2 });
-          }}
-        >
-          100%
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            store.getState().undo();
-          }}
-        >
-          Undo
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            store.getState().redo();
-          }}
-        >
-          Redo
-        </Button>
-        <Button size="sm" variant="ghost" onClick={onShare}>
-          <CopyIcon size={12} /> Share
-        </Button>
-        <span className={styles.shareNote}>Link holds structure only, never your input</span>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            setOverlay({ kind: 'shortcuts' });
-          }}
-        >
-          <SearchIcon size={12} /> Shortcuts
-        </Button>
+
+        {compact ? (
+          <OverflowMenu label="More" items={overflowItems} />
+        ) : (
+          <>
+            <Button size="sm" variant="ghost" onClick={onFit}>
+              Fit
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                store.getState().undo();
+              }}
+            >
+              Undo
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                store.getState().redo();
+              }}
+            >
+              Redo
+            </Button>
+            {/*
+              The privacy note is the SHARE button's own description rather
+              than a sibling in the button row. It used to sit between Share
+              and Shortcuts as a 190px block of wrapped text, crowding both
+              and taking width the controls needed. Now it is announced with
+              the button and revealed under the toolbar on hover or focus, so
+              it can never overlap a control at any width.
+            */}
+            <span className={styles.shareWrap}>
+              <Button size="sm" variant="ghost" aria-describedby={shareNoteId} onClick={onShare}>
+                <CopyIcon size={12} /> Share
+              </Button>
+              <span className={styles.shareNote} id={shareNoteId} role="note">
+                {SHARE_NOTE}
+              </span>
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setOverlay({ kind: 'shortcuts' });
+              }}
+            >
+              <SearchIcon size={12} /> Shortcuts
+            </Button>
+          </>
+        )}
       </div>
 
-      <p className={styles.readout}>
-        <span>
-          <SignalIcon size={10} /> {graph.nodeOrder.length} nodes
+      {/*
+        THE READOUT
+        ───────────
+        Each item is its own inline-flex box. They used to be plain spans, and
+        `reset.css` makes every svg `display: block` - a block child inside an
+        inline span pushes the text after it onto a second line, which is why
+        "5 nodes" drew a row below "1 wires  idle  100%" inside a 32px box and
+        read as overlapping.
+      */}
+      <div className={styles.readout} data-testid="canvas-readout">
+        <span className={styles.readoutItem}>
+          <SignalIcon size={10} />
+          {counted(graph.nodeOrder.length, 'node')}
         </span>
-        <span>{graph.edgeOrder.length} wires</span>
-        <span>{pipelineRunning ? 'running' : 'idle'}</span>
-        <span>
-          {zoomPercent}%{' '}
-          {viewport.zoom <= MIN_ZOOM ? 'min' : viewport.zoom >= MAX_ZOOM ? 'max' : ''}
-        </span>
-      </p>
+        <span className={styles.readoutItem}>{counted(graph.edgeOrder.length, 'wire')}</span>
+        <span className={styles.readoutItem}>{pipelineRunning ? 'running' : 'idle'}</span>
+        {/*
+          A real control, not a label that looks like one. It sat in a
+          bordered, raised box with the rest of the readout and did nothing;
+          now it does what the 0 shortcut does, and says so.
+        */}
+        <button
+          type="button"
+          className={styles.readoutZoom}
+          aria-label={zoomResetLabel}
+          onClick={onResetZoom}
+        >
+          {zoomPercent}%{zoomLimit}
+        </button>
+      </div>
 
       {overlay.kind === 'palette' ? (
         <CommandDialog

@@ -4,6 +4,7 @@ import { CloseIcon } from '@/components/Icon';
 import { IconButton } from '@/components/IconButton';
 import { TextInput } from '@/components/TextInput';
 import { VisuallyHidden } from '@/components/VisuallyHidden';
+import { counted } from '@/lib/plural';
 
 import styles from './canvas.module.css';
 
@@ -333,7 +334,7 @@ export function CommandDialog({
           {/* Announces how many options survived the filter. */}
           <VisuallyHidden as="div">
             <span role="status" aria-live="polite">
-              {flat.length} {flat.length === 1 ? 'result' : 'results'}
+              {counted(flat.length, 'result')}
             </span>
           </VisuallyHidden>
 
@@ -348,6 +349,9 @@ export function CommandDialog({
               id={listId}
               role="listbox"
               aria-label={title}
+              /* The one element in this dialog that scrolls. Marked so the
+                 overlay smoke test can find it without guessing at classes. */
+              data-scroll-region=""
             >
               {sections.map((section) => (
                 <div

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import { getManifestEntry, type ToolId } from '@/features/registry';
+import { counted } from '@/lib/plural';
 
 import { applyCommand, describeCommand, revertCommand, type Command } from './commands';
 import { checkConnection, edgesTouching } from './connections';
@@ -235,7 +236,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
 
       const removed = selection.nodes.length + selection.edges.length;
       set({ selection: NO_SELECTION });
-      announce(`Deleted ${removed.toString()} ${removed === 1 ? 'item' : 'items'}.`);
+      announce(`Deleted ${counted(removed, 'item')}.`);
     },
 
     nudgeNodes: (ids, delta) => {
@@ -373,7 +374,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
         edges,
         edgeIndices: edges.map((edge) => graph.edgeOrder.indexOf(edge.id)),
       });
-      announce(`Removed ${edges.length.toString()} ${edges.length === 1 ? 'wire' : 'wires'}.`);
+      announce(`Removed ${counted(edges.length, 'wire')}.`);
     },
 
     setNodeOptions: (nodeId, options) => {

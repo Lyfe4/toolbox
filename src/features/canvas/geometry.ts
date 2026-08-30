@@ -27,7 +27,18 @@ export const NODE_BORDER = 1;
 export const HEADER_HEIGHT = 24;
 export const PORT_ROW_HEIGHT = 24;
 export const BODY_PADDING = 8;
-export const SUMMARY_HEIGHT = 32;
+/*
+ * Two full lines of summary or guidance, plus its padding.
+ *
+ * Was 32, which is 24px of content against a 13px line box - 1.85 lines. Every
+ * two-line tool summary was already being shaved, and the blocked-node
+ * guidance was cut mid-sentence. 40 is 2 lines (26px) with room, and stays on
+ * the 8px baseline.
+ */
+export const SUMMARY_HEIGHT = 40;
+
+/** Lines the summary box is sized for. Asserted against the real box. */
+export const SUMMARY_LINES = 2;
 export const FOOTER_HEIGHT = 24;
 /**
  * The typed-input editor: a 48px box plus the 4px gap under it.
@@ -69,6 +80,85 @@ export const PORT_HIT_RADIUS = 18;
  * one - is what makes the drag forgiving without making it inaccurate.
  */
 export const PORT_SNAP_RADIUS = 28;
+
+/** Minor grid squares between two major rules. */
+export const GRID_MAJOR_EVERY = 8;
+
+/**
+ * The grid's background-size and -position for a viewport.
+ *
+ * WHY ONE TILE AND NOT TWO
+ *
+ * The grid used to be four background layers: a minor pair tiled at
+ * `GRID * zoom` and a major pair at `GRID * 8 * zoom`. Mathematically those
+ * are phase-locked - one is exactly eight of the other - but they are
+ * rasterised INDEPENDENTLY, and each tile is rounded to device pixels on its
+ * own. At 90% the minor tile is 7.2px and the major is 57.6px; round them
+ * separately and the major rule stops landing on a minor one. That is the
+ * clustering and the dropout: whole runs of minor lines vanish while the
+ * major rules drift out of step.
+ *
+ * Now there is ONE tile per axis, at the major size, with the minor lines
+ * drawn inside it as fractions of that same tile (see canvas.module.css). One
+ * rounding, applied once, and the minor lines are positioned as percentages
+ * of whatever it rounds to - so they cannot drift from the major rule at any
+ * zoom.
+ *
+ * The offset is reduced modulo the tile here rather than left to the browser.
+ * `background-position` wraps on its own, but after panning to a large offset
+ * the value handed over is a big float and the wrap loses precision; taking
+ * the remainder first keeps the number small.
+ */
+export function gridStyle(viewport: { x: number; y: number; zoom: number }): {
+  readonly backgroundSize: string;
+  readonly backgroundPosition: string;
+} {
+  /*
+   * Rounded FIRST, then everything else is measured against the rounded value.
+   *
+   * The browser only ever sees three decimal places, so that is the tile the
+   * offset has to live inside. Wrapping against the unrounded tile can emit an
+   * offset of exactly one whole (rounded) tile - a full period out of range.
+   * Invisible, but the invariant is worth keeping true rather than nearly so.
+   */
+  const tile = round(GRID * GRID_MAJOR_EVERY * viewport.zoom);
+  const size = `${tile.toFixed(3)}px ${tile.toFixed(3)}px`;
+
+  return {
+    backgroundSize: `${size}, ${size}`,
+    backgroundPosition: `${offsetFor(viewport.x, tile)}px ${offsetFor(viewport.y, tile)}px`,
+  };
+}
+
+/** Three decimals is far below a device pixel and keeps the string short. */
+function round(value: number): number {
+  return Number(value.toFixed(3));
+}
+
+/**
+ * The offset actually written into the style: wrapped, rounded, and pulled
+ * back to zero if the rounding pushed it up onto the tile boundary.
+ *
+ * An offset of one whole tile is the same picture as an offset of none, so
+ * this changes nothing visually - it just keeps "the offset is inside the
+ * tile" true of the emitted string and not only of the maths behind it.
+ */
+function offsetFor(value: number, tile: number): string {
+  const wrapped = round(wrapToTile(value, tile));
+  return (wrapped >= tile ? 0 : wrapped).toFixed(3);
+}
+
+/**
+ * A pan offset reduced into [0, tile).
+ *
+ * Anchored to the world origin: the grid is a picture of where nodes snap, so
+ * it has to follow the world rather than the viewport's corner. The double
+ * remainder is what keeps a negative offset positive.
+ */
+export function wrapToTile(offset: number, tile: number): number {
+  if (!Number.isFinite(tile) || tile <= 0) return 0;
+  return ((offset % tile) + tile) % tile;
+}
 
 export const MIN_ZOOM = 0.25;
 export const MAX_ZOOM = 2.5;

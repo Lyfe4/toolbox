@@ -4,6 +4,7 @@ import { PortIcon, SignalIcon, SlidersIcon } from '@/components/Icon';
 import type { NodeRunState, NodeRunStatus } from '@/features/execution/graph';
 import { getManifestEntry, type ToolCategory, type ToolManifestEntry } from '@/features/registry';
 import { cx } from '@/lib/cx';
+import { counted } from '@/lib/plural';
 
 import styles from './canvas.module.css';
 import {
@@ -129,12 +130,23 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   const bodyHeight = portRowCount(entry) * PORT_ROW_HEIGHT + portStackGap(entry) + BODY_PADDING * 2;
 
   /*
-   * "Needs input" is true but not actionable, and it is the first thing a
-   * first-time visitor reads. On a node with nothing wired to it, say what to
-   * DO - and name the direction, because nothing else on the canvas does.
+   * WHICH NODES SHOW GUIDANCE
+   *
+   * The rule is about WHY a node is blocked, not about how many wires happen
+   * to touch it:
+   *
+   *   blocked, and a required port is genuinely empty  -> actionable guidance
+   *   blocked for any other reason (waiting upstream)  -> the terse status
+   *   failed                                           -> the error
+   *   anything else                                    -> the tool summary
+   *
+   * It used to also require `connections === 0`, so two nodes blocked for the
+   * identical reason showed different text as soon as one of them had an
+   * unrelated OUTPUT wire - it got "Needs input" while its twin got the full
+   * sentence. `hintFor` already returns null when nothing is actually
+   * waiting, so the wire count was never the right question.
    */
-  const blockedHint =
-    run.status === 'blocked' && connections === 0 ? hintFor(entry, node, typedInputPorts) : null;
+  const blockedHint = run.status === 'blocked' ? hintFor(entry, node, typedInputPorts) : null;
 
   /*
    * The accessible name carries everything a sighted user reads off the node
@@ -143,7 +155,7 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   const label = [
     entry.name,
     `at ${node.position.x.toString()}, ${node.position.y.toString()}`,
-    `${connections.toString()} ${connections === 1 ? 'connection' : 'connections'}`,
+    counted(connections, 'connection'),
     STATUS_TEXT[run.status],
     run.blockedReason,
     run.status === 'error' ? run.error?.message : null,
@@ -305,9 +317,7 @@ export const CanvasNodeView = memo(function CanvasNodeView({
 
       <div className={styles.nodeFooter}>
         <span>{STATUS_LABEL[run.status]}</span>
-        <span>
-          {connections.toString()} {connections === 1 ? 'wire' : 'wires'}
-        </span>
+        <span>{counted(connections, 'wire')}</span>
       </div>
     </div>
   );
@@ -329,11 +339,18 @@ function hintFor(
   );
   if (!waiting) return null;
 
-  const named = entry.inputs.length > 1 ? ` ${waiting.label}` : '';
-
+  /*
+   * Short enough for two lines at the node's 224px width, and naming the port
+   * so it is actionable on a node with more than one. The long form -
+   * "drag a wire from another node's output into the input on the left" - ran
+   * to three lines and was cut mid-sentence by the summary box.
+   *
+   * Direction is not spelled out here; the shortcuts overlay's ports-and-wires
+   * key covers it once, properly, instead of every node repeating it.
+   */
   return waiting.types.includes('text')
-    ? `Type below, or drag a wire from another node's output into${named || ' the input'} on the left.`
-    : `Drag a wire from another node's output on the right into${named || ' the input'} on the left.`;
+    ? `Type below, or wire an output into ${waiting.label}.`
+    : `Wire an output into ${waiting.label}.`;
 }
 
 /** Sub-millisecond runs read as "<1ms" rather than "0ms". */

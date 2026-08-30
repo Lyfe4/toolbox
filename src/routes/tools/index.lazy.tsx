@@ -7,6 +7,7 @@ import { TextInput } from '@/components/TextInput';
 import { VisuallyHidden } from '@/components/VisuallyHidden';
 import { searchTools } from '@/features/registry';
 import { TOOL_CATEGORIES, type ToolCategory } from '@/features/registry/types';
+import { counted } from '@/lib/plural';
 
 import styles from './tools.module.css';
 
@@ -69,7 +70,7 @@ export function ToolsIndexPage() {
           reader rather than silently rewriting the list underneath them.
         */}
         <p className={styles.count} role="status" aria-live="polite">
-          {results.length} {results.length === 1 ? 'tool' : 'tools'}
+          {counted(results.length, 'tool')}
         </p>
       </div>
 
