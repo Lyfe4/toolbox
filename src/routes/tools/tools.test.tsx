@@ -25,7 +25,7 @@ describe('/tools index', () => {
     });
     expect(screen.getByRole('link', { name: /Base64/ })).toBeInTheDocument();
     // The count sits in a live region so the change is announced, not just drawn.
-    expect(screen.getByRole('status')).toHaveTextContent('1 tool');
+    expect(screen.getByTestId('tool-count')).toHaveTextContent('1 tool');
   });
 
   it('matches on a keyword that is not visible on the card', async () => {
@@ -34,7 +34,7 @@ describe('/tools index', () => {
 
     await user.type(screen.getByLabelText('Search'), 'btoa');
     await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent('1 tool');
+      expect(screen.getByTestId('tool-count')).toHaveTextContent('1 tool');
     });
   });
 

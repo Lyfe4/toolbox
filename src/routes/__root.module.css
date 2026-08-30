@@ -1,6 +1,13 @@
+/*
+ * Header, the route transition bar, then the view.
+ *
+ * Named explicitly rather than left to implicit rows: `main` holds the canvas,
+ * which needs a definite height, and an implicit auto row collapses it to
+ * nothing. Adding a child to this shell means adding a row here.
+ */
 .shell {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   min-block-size: 100dvh;
   background-color: var(--pb-surface-base);
 }

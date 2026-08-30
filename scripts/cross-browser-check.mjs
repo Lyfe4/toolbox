@@ -338,6 +338,204 @@ async function checkChromeWidths(browser, label) {
   }
 }
 
+/**
+ * Scroll containment, which is a LAYOUT fact and so cannot be asserted in
+ * jsdom.
+ *
+ * The overlays render inside the canvas root, and the canvas binds a
+ * non-passive wheel listener there. Before the fix, a wheel over an open
+ * dialog panned the canvas and had its default cancelled, so the dialog
+ * itself never scrolled. Both halves are measured here with a real trusted
+ * wheel: the dialog must move, and the plane's transform must not.
+ */
+async function checkDialogScroll(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 700 } });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await page.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
+
+    const planeTransform = () =>
+      page.evaluate(
+        () => document.querySelector('[data-testid="canvas-plane"]')?.style.transform ?? '',
+      );
+
+    // The shortcuts reference: the longest overlay, so it definitely overflows.
+    await page
+      .locator('[role="application"]')
+      .first()
+      .click({ position: { x: 640, y: 400 } });
+    await page.keyboard.press('?');
+    const dialog = page.locator('[role="dialog"]').first();
+    await dialog.waitFor({ timeout: 5_000 });
+
+    const before = await planeTransform();
+
+    const box = await dialog.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.wheel(0, 400);
+    await page.waitForTimeout(250);
+
+    const after = await planeTransform();
+    check(
+      label,
+      'the canvas does not pan while a dialog is open',
+      after === before,
+      `${before} -> ${after}`,
+    );
+
+    // Which element actually took the scroll depends on where the overflow
+    // lives, so ask the subtree rather than guessing at the scroll container.
+    const scrolled = await page.evaluate(() => {
+      const root = document.querySelector('[role="dialog"]');
+      if (!root) return -1;
+      const all = [root, ...root.querySelectorAll('*')];
+      return Math.max(...all.map((element) => element.scrollTop));
+    });
+    check(label, 'the dialog itself scrolls instead', scrolled > 0, `scrollTop=${scrolled}`);
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(150);
+
+    await page.mouse.move(640, 400);
+    await page.mouse.wheel(0, 240);
+    await page.waitForTimeout(250);
+
+    // The listener is unbound while an overlay is open, so the real risk is
+    // that it never comes back.
+    const restored = await planeTransform();
+    check(
+      label,
+      'the canvas pans again once the dialog closes',
+      restored !== before,
+      `${before} -> ${restored}`,
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * Route transition feedback, which needs real timing and so also cannot be
+ * asserted in jsdom - there a route's dynamic import takes over a second to
+ * transform, making every navigation "slow".
+ *
+ * A slow navigation is manufactured by delaying the route's chunk; a fast one
+ * by priming it first. The bar must appear for the first and never the second.
+ */
+async function checkRouteFeedback(browser, label) {
+  const pendingIn = (page) =>
+    page.evaluate(
+      () =>
+        document.querySelector('[data-testid="route-progress"]')?.hasAttribute('data-pending') ??
+        false,
+    );
+
+  const slow = await browser.newContext({ viewport: { width: 1280, height: 700 } });
+  const slowPage = await slow.newPage();
+
+  try {
+    await slowPage.route('**/assets/*.js', async (route) => {
+      if (route.request().url().includes('styleguide')) {
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+      }
+      await route.continue();
+    });
+    await slowPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await slowPage.evaluate(() => {
+      document.querySelector('a[href="/styleguide"]')?.click();
+    });
+    await slowPage.waitForTimeout(350);
+
+    check(label, 'a slow navigation shows the pending bar', await pendingIn(slowPage), '');
+
+    await slowPage.waitForSelector('h1', { timeout: 20_000 });
+    await slowPage.waitForTimeout(700);
+
+    check(label, 'the bar clears once the route arrives', !(await pendingIn(slowPage)), '');
+
+    const announced = await slowPage.evaluate(
+      () => document.querySelector('[data-testid="route-announcer"]')?.textContent ?? '',
+    );
+    check(
+      label,
+      'arrival is announced to the live region',
+      announced.includes('loaded'),
+      announced,
+    );
+  } finally {
+    await slow.close().catch(() => {});
+  }
+
+  const fast = await browser.newContext({ viewport: { width: 1280, height: 700 } });
+  const fastPage = await fast.newPage();
+
+  try {
+    await fastPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    // Prime the chunk, so the navigation under test is a warm one.
+    await fastPage.evaluate(() => {
+      document.querySelector('a[href="/tools"]')?.click();
+    });
+    await fastPage.waitForTimeout(800);
+    await fastPage.evaluate(() => {
+      document.querySelector('a[href="/"]')?.click();
+    });
+    await fastPage.waitForTimeout(800);
+
+    /*
+     * A MutationObserver rather than a poll: the bar would only be up for a
+     * few frames, and a poll could step straight over it and call the flicker
+     * fixed when it is not.
+     */
+    const flashed = await fastPage.evaluate(async () => {
+      const track = document.querySelector('[data-testid="route-progress"]');
+      if (!track) return true;
+      let seen = false;
+      const observer = new MutationObserver(() => {
+        if (track.hasAttribute('data-pending')) seen = true;
+      });
+      observer.observe(track, { attributes: true });
+      document.querySelector('a[href="/tools"]')?.click();
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      observer.disconnect();
+      return seen;
+    });
+
+    check(label, 'a fast navigation shows nothing at all', !flashed, '');
+  } finally {
+    await fast.close().catch(() => {});
+  }
+
+  for (const intent of ['hover', 'focus']) {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 700 } });
+    const page = await context.newPage();
+    const asked = [];
+    page.on('request', (request) => {
+      const url = request.url();
+      if (url.includes('/assets/') && url.endsWith('.js')) asked.push(url);
+    });
+
+    try {
+      await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+      asked.length = 0;
+
+      if (intent === 'hover') await page.hover('a[href="/styleguide"]');
+      else await page.focus('a[href="/styleguide"]');
+      await page.waitForTimeout(700);
+
+      check(
+        label,
+        `preloads the route on ${intent}`,
+        asked.some((url) => url.includes('styleguide')),
+        asked.map((url) => url.split('/').pop()).join(', ') || 'nothing requested',
+      );
+    } finally {
+      await context.close().catch(() => {});
+    }
+  }
+}
+
 async function runChecks(engine, label) {
   console.log(`\n${label}`);
   const browser = await engine.launch();
@@ -778,6 +976,8 @@ async function runChecks(engine, label) {
 
   try {
     await checkChromeWidths(browser, label);
+    await checkDialogScroll(browser, label);
+    await checkRouteFeedback(browser, label);
   } finally {
     await browser.close();
   }

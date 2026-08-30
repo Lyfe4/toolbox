@@ -328,9 +328,28 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     [],
   );
 
+  /*
+   * WHEEL, AND WHY IT IS NOT BOUND WHILE A DIALOG IS OPEN
+   *
+   * The overlays are rendered inside this root, so a wheel over one of them
+   * BUBBLES here. The handler is non-passive - zooming has to preventDefault
+   * or the page scrolls instead - so it was doing two wrong things at once:
+   * feeding the delta into the canvas pan/zoom, and cancelling the dialog's
+   * own native scrolling. Scrolling the shortcuts reference panned the canvas
+   * 400px and moved the dialog not at all.
+   *
+   * Not bound at all while an overlay is open, rather than bound and guarded.
+   * A listener that exists only to decline the event is still a listener that
+   * has to be reasoned about, and detaching it means the wheel reaches the
+   * dialog untouched - native scrolling, native momentum, native everything.
+   * `overscroll-behavior: contain` on the scroll regions stops it chaining
+   * outward from there.
+   */
+  const overlayOpen = overlay.kind !== 'none';
+
   useEffect(() => {
     const root = rootRef.current;
-    if (!root) return;
+    if (!root || overlayOpen) return;
 
     const onWheel = (event: WheelEvent): void => {
       event.preventDefault();
@@ -357,8 +376,16 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     root.addEventListener('wheel', onWheel, { passive: false });
     return () => {
       root.removeEventListener('wheel', onWheel);
+      /*
+       * Drop anything accumulated but not yet applied. Without this a wheel
+       * delta that arrived in the same frame a dialog opened would land on the
+       * canvas afterwards, which looks like the canvas moving by itself.
+       */
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+      frame.current = null;
+      pending.current = { pan: { x: 0, y: 0 }, zoom: null };
     };
-  }, [schedule]);
+  }, [schedule, overlayOpen]);
 
   /* ---------------------------------------------------------------------- *
    * Pointer interactions
@@ -1191,6 +1218,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
 
       <div
         className={styles.plane}
+        data-testid="canvas-plane"
         style={{
           transform: `translate(${viewport.x.toString()}px, ${viewport.y.toString()}px) scale(${viewport.zoom.toString()})`,
         }}

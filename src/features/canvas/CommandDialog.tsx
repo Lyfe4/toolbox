@@ -215,6 +215,23 @@ export function CommandDialog({
           event.preventDefault();
           setActive(Math.max(0, flat.length - 1));
           return;
+        /*
+         * A page is however many rows are actually on screen, read from the
+         * list rather than assumed - the dialog is 70vh, so "a page" is a
+         * different number of rows on a laptop and on a monitor.
+         *
+         * Focus stays in the input, so the browser's own PageUp/PageDown
+         * scrolling never applies here; without these the keys did nothing at
+         * all, which is the same defect as a control that looks pressable.
+         */
+        case 'PageDown':
+          event.preventDefault();
+          setActive((current) => Math.min(current + pageSize(listRef.current), flat.length - 1));
+          return;
+        case 'PageUp':
+          event.preventDefault();
+          setActive((current) => Math.max(current - pageSize(listRef.current), 0));
+          return;
         case 'Enter':
           event.preventDefault();
           commit();
@@ -403,6 +420,19 @@ export function CommandDialog({
       </div>
     </div>
   );
+}
+
+/**
+ * How many option rows fit in the visible list.
+ *
+ * Measured, with a sane fallback for the frame before layout exists. One row
+ * is kept as overlap so a page turn leaves something recognisable on screen,
+ * which is how every other paged list behaves.
+ */
+function pageSize(list: HTMLElement | null): number {
+  const row = list?.querySelector<HTMLElement>('[role="option"]')?.offsetHeight ?? 0;
+  if (!list || row <= 0) return 8;
+  return Math.max(1, Math.floor(list.clientHeight / row) - 1);
 }
 
 /**

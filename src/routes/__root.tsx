@@ -1,5 +1,6 @@
 import { createRootRoute, Link, Outlet } from '@tanstack/react-router';
 
+import { RouteProgress } from '@/app/RouteProgress';
 import { PortIcon } from '@/components/Icon';
 import { SkipLink } from '@/components/SkipLink';
 import { ToastProvider } from '@/components/Toast';
@@ -48,6 +49,13 @@ function RootLayout() {
             </Link>
           </nav>
         </header>
+
+        {/*
+          Directly under the header, so the feedback for "the page is
+          changing" sits at the boundary between the thing that stayed and the
+          thing that is being replaced.
+        */}
+        <RouteProgress />
 
         {/*
             tabIndex={-1} makes this focusable by script only, so the skip link

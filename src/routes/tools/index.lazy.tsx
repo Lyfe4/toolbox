@@ -69,7 +69,7 @@ export function ToolsIndexPage() {
           A live region, so filtering announces its result count to a screen
           reader rather than silently rewriting the list underneath them.
         */}
-        <p className={styles.count} role="status" aria-live="polite">
+        <p className={styles.count} role="status" aria-live="polite" data-testid="tool-count">
           {counted(results.length, 'tool')}
         </p>
       </div>
