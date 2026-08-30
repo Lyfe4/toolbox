@@ -104,15 +104,30 @@ function RootNotFound() {
 export const Route = createRootRoute({
   component: RootLayout,
   notFoundComponent: RootNotFound,
-  // Site-wide defaults. A child route's `head` overrides only the tags it
-  // names, so a route that forgets still gets a real title and description.
   /*
-   * Site-wide defaults only. No canonical and no og:url here: HeadContent
-   * concatenates links rather than de-duplicating them, so a canonical on the
-   * root as well as the leaf would give every page two of them. Leaf routes
-   * call pageHead, which supplies both.
+   * Site-wide defaults. A leaf route's `head` overrides only the tags it
+   * names - HeadContent de-duplicates meta by name/property with the deepest
+   * match winning - so a route that forgot still gets a real title, and the
+   * 404, which matches no leaf at all, gets the whole set.
+   *
+   * og:title and og:description are here rather than only in pageHead for
+   * exactly that reason: without them the not-found page had ZERO of each
+   * once dropStaticHead had retired the static baseline.
+   *
+   * No canonical and no og:url, though. Links are concatenated rather than
+   * de-duplicated, so declaring a canonical here as well as in the leaf would
+   * give every page two of them - and a 404 should not claim a canonical URL
+   * anyway.
    */
   head: () => ({
-    meta: [{ title: SITE_NAME }, { name: 'description', content: SITE_DESCRIPTION }, ...SITE_META],
+    meta: [
+      { title: SITE_NAME },
+      { name: 'description', content: SITE_DESCRIPTION },
+      { property: 'og:title', content: SITE_NAME },
+      { property: 'og:description', content: SITE_DESCRIPTION },
+      { name: 'twitter:title', content: SITE_NAME },
+      { name: 'twitter:description', content: SITE_DESCRIPTION },
+      ...SITE_META,
+    ],
   }),
 });

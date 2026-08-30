@@ -1044,6 +1044,47 @@ async function checkHead(browser, label) {
         `${String(head.leftovers)} data-default node(s) left`,
       );
     }
+    /*
+     * The 404, which matches no leaf route at all. It gets the root's head and
+     * nothing else - and before og:title and og:description were added there,
+     * it had ZERO of each once dropStaticHead had retired the static baseline.
+     * No canonical, deliberately: a page that does not exist should not claim
+     * a canonical URL.
+     */
+    await page.goto(`${ORIGIN}/nothing-here`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(300);
+
+    const notFound = await page.evaluate(() => {
+      const n = (selector) => document.querySelectorAll(selector).length;
+      return {
+        title: document.title,
+        ogTitle: n('meta[property="og:title"]'),
+        ogDescription: n('meta[property="og:description"]'),
+        description: n('meta[name="description"]'),
+        ogImage: n('meta[property="og:image"]'),
+        canonical: n('link[rel="canonical"]'),
+        leftovers: document.head.querySelectorAll('[data-default]').length,
+      };
+    });
+
+    check(
+      label,
+      'the 404 falls back to the site-wide head',
+      notFound.title === 'Patchbay' &&
+        notFound.ogTitle === 1 &&
+        notFound.ogDescription === 1 &&
+        notFound.description === 1 &&
+        notFound.ogImage === 1 &&
+        notFound.leftovers === 0,
+      JSON.stringify(notFound),
+    );
+
+    check(
+      label,
+      'the 404 claims no canonical URL',
+      notFound.canonical === 0,
+      `${String(notFound.canonical)} canonical link(s)`,
+    );
   } finally {
     await context.close().catch(() => {});
   }
