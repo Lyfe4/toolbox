@@ -276,6 +276,14 @@ describe('round-tripping', () => {
          *   A BACKTICK makes a code span, and a space at the edge of one is
          *   dropped on the way back. Below, by name.
          *
+         *   A DOLLAR became a construct character when math parsing was added:
+         *   `$$` opens a block of it, and two of them in a noise string turn
+         *   the rest of the document into mathematics. Below, by name.
+         *
+         *   AN AT SIGN can be linkified into an email address, and the
+         *   serialiser's own escaping is what creates the address. Same
+         *   upstream cause as the backslash below; same case.
+         *
          *   A LITERAL BACKSLASH next to inline markup hits an escaping defect
          *   in the Markdown serialiser. This one is a real bug rather than a
          *   normalisation, and it is upstream; see the case below.
@@ -287,7 +295,7 @@ describe('round-tripping', () => {
           .string({ minLength: 1, maxLength: 24 })
           .map((noise) =>
             noise
-              .replace(/[<>`\\]/g, '')
+              .replace(/[<>`$@\\]/g, '')
               .replace(/\s+/g, ' ')
               .replace(/^0(?=[.)])/, '1'),
           )
@@ -354,6 +362,35 @@ describe('round-tripping', () => {
     expect(html(md(second))).toBe(second);
   });
 
+  it('normalises block math to a math fence, once', () => {
+    /*
+     * `$$ ... $$` and a ```math fence are the same document, and the fence is
+     * the spelling GitHub renders - so the first round trip settles on it and
+     * every one after that changes nothing. The same class as raw HTML
+     * normalising to its Markdown spelling, and the reason `$` is excluded
+     * from the noise above.
+     */
+    const first = html('$$' + LF + 'x^2' + LF + '$$' + LF);
+    const second = html(md(first));
+
+    expect(md(first)).toContain('```math');
+    expect(html(md(second))).toBe(second);
+  });
+
+  it('lets an unclosed $$ run to the end, exactly as an unclosed fence does', () => {
+    /*
+     * `$$ oops` opens a math block whose info string is "oops", and with no
+     * closing `$$` it consumes the rest of the document - which is precisely
+     * what ```` ```oops ```` does. Surprising the first time, but it is
+     * Markdown's own rule for an unterminated fence rather than something
+     * this tool invented, so it is recorded rather than worked around.
+     */
+    const out = html('$$ oops' + LF + LF + 'swallowed' + LF);
+
+    expect(out).toContain('language-math');
+    expect(out).toContain('swallowed');
+  });
+
   it('KNOWN DEFECT: drops a space at the edge of a code span', () => {
     /*
      * `<code> ab</code>` serialises as `` `ab` ``, losing the space.
@@ -368,6 +405,31 @@ describe('round-tripping', () => {
 
     // Interior spaces are safe; it is only the edges.
     expect(md('<p><code>a b</code></p>')).toBe('`a b`' + LF);
+  });
+
+  it('KNOWN DEFECT: can escape text into an email address', () => {
+    /*
+     * The same root cause as the backslash below, with a different symptom.
+     *
+     * Serialising `|7<em>P</em>@Oj.EK` writes the `7` and the `P` as character
+     * references so the `_` can open and close emphasis - correct in
+     * isolation - and the result, `|&#x37;_&#x50;_@Oj.EK`, contains the
+     * sequence `_@Oj.EK`. GFM's autolink literals then read that as an email
+     * address, so a round trip turns a fragment of prose into a mailto link.
+     *
+     * mdast-util-to-markdown's `safe()` again, and again no configuration
+     * reaches it: the escaping is correct for the construct it is protecting
+     * and simply does not know a linkifier will look at the result.
+     */
+    const first = html('|7*P*@Oj.EK' + LF);
+
+    // Nothing here is a link: the emphasis separates the `P` from the `@`.
+    expect(first).not.toContain('mailto:');
+    expect(first).toContain('<em>P</em>');
+
+    // After one round trip it is one, and the escaping is why.
+    expect(md(first)).toContain('&#x37;');
+    expect(html(md(first))).toContain('mailto:');
   });
 
   it('KNOWN DEFECT: mangles a backslash that sits next to inline markup', () => {

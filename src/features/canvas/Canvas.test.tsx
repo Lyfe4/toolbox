@@ -492,8 +492,28 @@ describe('viewport controls', () => {
     renderCanvas();
     await addTool(user, 'base');
 
+    /*
+     * WAIT FOR THE RUN TO SETTLE FIRST, and the reason is a real race rather
+     * than a slow machine.
+     *
+     * Adding a node starts a pipeline run, and both the run and the fit
+     * announce into the SAME live region. Pressing `f` immediately meant the
+     * run's "Pipeline finished" arrived afterwards and overwrote "Fitted every
+     * node", so the assertion failed against a perfectly correct application -
+     * intermittently, and only under a load that made the run slower than the
+     * keystroke.
+     */
+    await waitFor(() => {
+      expect(announcer()).toHaveTextContent('Pipeline finished');
+    });
+
     await user.click(screen.getByRole('application'));
     await user.keyboard('f');
-    expect(announcer()).toHaveTextContent('Fitted every node');
+
+    // Still a wait: the fit updates the store and the live region is written
+    // on the next render, not on the keystroke.
+    await waitFor(() => {
+      expect(announcer()).toHaveTextContent('Fitted every node');
+    });
   });
 });

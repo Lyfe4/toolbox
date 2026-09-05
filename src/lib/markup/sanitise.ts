@@ -21,10 +21,12 @@ import type { Options as SanitiseSchema } from 'rehype-sanitize';
  * That is what closes the mutation-XSS family by construction rather than by
  * pattern-matching: there is no second parse to disagree with the first.
  *
- * EVERYTHING BELOW IS A NARROWING of `defaultSchema` - GitHub's own schema,
- * the one that renders every README. Nothing here adds a tag, an attribute or
- * a protocol, and that is a rule rather than a coincidence: an allow-list is
- * only worth having if changes to it are subtractions.
+ * ALMOST EVERYTHING BELOW IS A NARROWING of `defaultSchema` - GitHub's own
+ * schema, the one that renders every README. The rule was once "changes to an
+ * allow-list are subtractions", and it is a good rule, but it was being used
+ * to avoid an analysis rather than to conclude one. `ALSO_ALLOWED` below is
+ * the analysis, done element by element; everything else here still only
+ * takes things away.
  */
 
 /**
@@ -75,6 +77,53 @@ const NEVER: readonly string[] = [
  */
 
 /**
+ * EIGHT ELEMENTS ADDED BACK, each analysed rather than waved through.
+ *
+ * These are content-bearing: dropping them does not remove decoration, it
+ * removes meaning. `<abbr title="HyperText Markup Language">HTML</abbr>` loses
+ * the expansion entirely; a `<figure>` loses the association between a picture
+ * and its caption; `<mark>` loses the fact that somebody highlighted this
+ * exact phrase. And because the sanitiser is the outer boundary, the
+ * `unsupported: 'keep'` option could never preserve them either - they were
+ * gone before it was consulted.
+ *
+ * THE ATTRIBUTE ANALYSIS, which is the part that was missing before. Not one
+ * of these needs an attribute added: `title`, `dateTime` and `align` are
+ * already in the schema's wildcard list, and that list contains no event
+ * handler and no fetchable URL. So this is a change to the TAG list only, and
+ * the attribute surface is exactly what it was.
+ *
+ * Element by element:
+ *
+ *   abbr        `title` carries the expansion. A string shown as a tooltip;
+ *               it is not a URL and cannot be navigated to.
+ *   figure      No attributes of its own. A grouping box.
+ *   figcaption  No attributes of its own. Its caption.
+ *   caption     A table's caption. Must stay a child of <table>, which the
+ *               HTML parser enforces before this schema is consulted.
+ *   mark        No attributes. Highlight.
+ *   cite        The ELEMENT (a work's title), not the `cite` ATTRIBUTE on
+ *               blockquote and q - that one is a URL and is already governed
+ *               by the protocol list below.
+ *   time        `dateTime` is a machine-readable timestamp string with a
+ *               grammar of its own. Not a URL, not executable.
+ *   small       No attributes. De-emphasis.
+ *
+ * None opens a browsing context, none loads a subresource, none has content
+ * that is script or style. They are inert.
+ */
+const ALSO_ALLOWED: readonly string[] = [
+  'abbr',
+  'figure',
+  'figcaption',
+  'caption',
+  'mark',
+  'cite',
+  'time',
+  'small',
+];
+
+/**
  * URL schemes permitted in href/src, narrowed from the default.
  *
  * Dropped: `irc`, `ircs`, `xmpp`, which the default allows and no converted
@@ -88,6 +137,27 @@ const NEVER: readonly string[] = [
  * contact link into plain text on every conversion.
  */
 const PROTOCOLS: readonly string[] = ['http', 'https', 'mailto', 'tel'];
+
+/**
+ * `data:` WAS CONSIDERED FOR `src`, AND REFUSED.
+ *
+ * The argument for it is real: HTML copied from a rendered page carries its
+ * images as data URLs, and every one of them arrives here as nothing. And an
+ * SVG loaded through `<img src>` is in secure static mode, where script does
+ * not run - so `data:image/svg+xml,<svg onload=alert(1)>` is inert in the one
+ * element that could still have a `src` once script, iframe, object, embed,
+ * video and audio are banned.
+ *
+ * It is refused anyway, on the ground that this tool's output is HTML somebody
+ * PASTES SOMEWHERE ELSE. "Inert in an `<img>`" is a fact about one element in
+ * one context; the payload would be sitting in the user's document, one
+ * transformation away from a context where it is not inert. The allow-list is
+ * worth more than the images are.
+ *
+ * What was fixed instead is the symptom that prompted this: an image whose
+ * source is rejected no longer renders as a broken icon. See
+ * `replaceDeadImages` in pipelines.ts - it becomes its alt text, which is what
+ * the alt text is for.
 
 /**
  * Elements removed WITH their children rather than unwrapped.
@@ -115,7 +185,10 @@ const STRIP: readonly string[] = [
 export const SANITISE_SCHEMA: SanitiseSchema = {
   ...defaultSchema,
 
-  tagNames: (defaultSchema.tagNames ?? []).filter((tag) => !NEVER.includes(tag)),
+  tagNames: [
+    ...(defaultSchema.tagNames ?? []).filter((tag) => !NEVER.includes(tag)),
+    ...ALSO_ALLOWED,
+  ],
 
   /*
    * The attribute allow-list is the default's, untouched.
@@ -162,8 +235,28 @@ export const SANITISE_SCHEMA: SanitiseSchema = {
    */
   clobber: [],
 
-  /* Comments can carry conditional-comment payloads in older engines. */
-  allowComments: false,
+  /*
+   * COMMENTS ARE KEPT, which reverses an earlier default.
+   *
+   * They were dropped on the grounds that a comment can carry a
+   * conditional-comment payload. That risk is real but historical - it needs
+   * IE 9 or older to execute - and a comment is inert in every engine this
+   * project supports. Against that, `<!-- prettier-ignore -->`,
+   * `<!-- more -->` and `<!-- TOC -->` are load-bearing in real documents, and
+   * silently deleting something the author wrote is the failure this tool
+   * exists to avoid.
+   *
+   * There is no mutation-XSS angle here of the kind that usually makes
+   * comments interesting: this sanitiser works on an ALREADY-PARSED tree, so
+   * there is no second parse for a comment to confuse, and the foreign-content
+   * contexts where comments can break out - `<svg>` and `<math>` - are refused
+   * outright by NEVER above.
+   *
+   * The exceptions are removed by `dropMachineComments` in pipelines.ts:
+   * conditional comments and Word's fragment markers, which are somebody
+   * else's plumbing rather than anybody's content.
+   */
+  allowComments: true,
 
   /* A doctype is not content and has no business inside a fragment. */
   allowDoctypes: false,

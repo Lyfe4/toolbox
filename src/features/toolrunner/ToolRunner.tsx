@@ -19,6 +19,7 @@ import { FileDrop, type LoadedFile } from './FileDrop';
 import { copyRichText } from './HtmlView';
 import { OptionsPanel } from './OptionsPanel';
 import { ErrorReport, OutputView } from './OutputPanel';
+import { richTextDocument, richTextPlain } from './richText';
 import styles from './runner.module.css';
 
 /** Builds the value for a port from whatever the user supplied. */
@@ -313,22 +314,24 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
                          * the user pastes somewhere else and finds the old
                          * contents, with no idea when it went wrong.
                          */
-                        void copyRichText(html, html).then((result) => {
-                          if (result.ok) {
+                        void copyRichText(richTextDocument(html), richTextPlain(html)).then(
+                          (result) => {
+                            if (result.ok) {
+                              notify({
+                                title: 'Copied as rich text',
+                                description:
+                                  'Styled for Word and Google Docs, with readable text as the fallback.',
+                                tone: 'ok',
+                              });
+                              return;
+                            }
                             notify({
-                              title: 'Copied as rich text',
-                              description:
-                                'Formatted for a document editor, and as markup for anything else.',
-                              tone: 'ok',
+                              title: 'Could not copy as rich text',
+                              description: result.reason,
+                              tone: 'error',
                             });
-                            return;
-                          }
-                          notify({
-                            title: 'Could not copy as rich text',
-                            description: result.reason,
-                            tone: 'error',
-                          });
-                        });
+                          },
+                        );
                       }}
                       onDownload={(blob, filename) => {
                         const url = URL.createObjectURL(blob);

@@ -107,13 +107,26 @@ describe('HTML → plain text', () => {
     expect(out).not.toContain('-');
   });
 
-  it('renders a table as tab-separated rows, or drops it', () => {
+  it('renders a table as aligned columns, or drops it', () => {
     const table =
-      '<table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>';
+      '<table><thead><tr><th>a</th><th>long header</th></tr></thead>' +
+      '<tbody><tr><td>1</td><td>2</td></tr></tbody></table>';
 
-    // Tabs, because that is what survives a paste into a spreadsheet.
-    expect(htmlToText(table, TO_TEXT)).toContain('a\tb');
-    expect(htmlToText(table, TO_TEXT)).toContain('1\t2');
+    /*
+     * ALIGNED COLUMNS, NOT TABS - which reverses the earlier choice.
+     *
+     * Tabs were picked so that a table would survive a paste into a
+     * spreadsheet. But this app has a structured-data tool that emits real
+     * CSV, and plain text is for reading: a table whose columns no longer
+     * line up is much harder to read than one that has merely lost its
+     * borders. A rule under the header says where the data starts.
+     */
+    const out = htmlToText(table, TO_TEXT);
+
+    expect(out).toContain('a  long header');
+    expect(out).toContain('-  -----------');
+    expect(out).toContain('1  2');
+    expect(out).not.toContain('\t');
     expect(htmlToText(table, { ...TO_TEXT, tables: 'drop' })).toBe('');
   });
 

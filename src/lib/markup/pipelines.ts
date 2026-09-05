@@ -16,7 +16,7 @@ import { unified } from 'unified';
 
 import { SANITISE_SCHEMA } from './sanitise';
 
-import type { Element as HastElement, Nodes as HastNodes } from 'hast';
+import type { Element as HastElement, ElementContent, Nodes as HastNodes, RootContent } from 'hast';
 import type { Handle, Options as ToMdastOptions, State } from 'hast-util-to-mdast';
 import type { Root as MdastRoot, RootContent as MdastContent } from 'mdast';
 import type { VFile } from 'vfile';
@@ -159,6 +159,43 @@ function normaliseSchemes() {
 }
 
 /**
+ * Removes the comments that are machinery rather than content.
+ *
+ * Comments are kept now (see sanitise.ts), and that is right for
+ * `<!-- prettier-ignore -->`. It is not right for what a Word paste carries:
+ *
+ *   <!--[if gte mso 9]><xml><w:WordDocument>...</w:WordDocument></xml><![endif]-->
+ *   <!--StartFragment--> ... <!--EndFragment-->
+ *
+ * The first is a conditional comment holding an XML blob; the second is the
+ * clipboard's own boundary marker. Neither was written by the person pasting,
+ * and carrying either into their Markdown would be worse output than dropping
+ * comments altogether was.
+ */
+const MACHINE_COMMENT =
+  /^\s*(\[if\b|<!\[endif\]|Start(Fragment|Selection)|End(Fragment|Selection))/i;
+
+function dropMachineComments() {
+  return (tree: HastNodes): void => {
+    const walk = (node: HastNodes): void => {
+      if (node.type === 'root') {
+        for (const child of node.children) walk(child);
+        node.children = node.children.filter(
+          (child) => child.type !== 'comment' || !MACHINE_COMMENT.test(child.value),
+        );
+      } else if (node.type === 'element') {
+        for (const child of node.children) walk(child);
+        node.children = node.children.filter(
+          (child) => child.type !== 'comment' || !MACHINE_COMMENT.test(child.value),
+        );
+      }
+    };
+
+    walk(tree);
+  };
+}
+
+/**
  * Removes an element but keeps its children, wherever it appears.
  *
  * Two plugins need exactly this, so it is written once. The two branches are
@@ -198,6 +235,47 @@ function unwrapWhere(tree: HastNodes, matches: (node: HastElement) => boolean): 
 function unwrapDeadLinks() {
   return (tree: HastNodes): void => {
     unwrapWhere(tree, (node) => node.tagName === 'a' && node.properties.href === undefined);
+  };
+}
+
+/**
+ * Replaces an image whose source the sanitiser rejected with its alt text.
+ *
+ * The same argument as a dead link, and the same fix. An `<img>` with no `src`
+ * renders as a broken-image icon next to the alt text - a picture of a
+ * failure, where the alt text alone says the same thing without pretending
+ * something went wrong at load time. An image with no alt either has nothing
+ * to say and goes.
+ */
+function replaceDeadImages() {
+  /** What one child becomes: itself, its alt text, or nothing. */
+  const swap = (child: ElementContent): ElementContent[] => {
+    if (child.type !== 'element' || child.tagName !== 'img') return [child];
+    if (child.properties.src !== undefined) return [child];
+
+    const alt = child.properties.alt;
+    return typeof alt === 'string' && alt !== '' ? [{ type: 'text', value: alt }] : [];
+  };
+
+  return (tree: HastNodes): void => {
+    /*
+     * The two branches are spelled out rather than made generic for the same
+     * reason as `unwrapWhere` above: a root may contain a doctype and an
+     * element may not, so narrowing first is what keeps this cast-free.
+     */
+    const walk = (node: HastNodes): void => {
+      if (node.type === 'root') {
+        for (const child of node.children) walk(child);
+        node.children = node.children.flatMap((child): RootContent[] =>
+          child.type === 'doctype' ? [child] : swap(child),
+        );
+      } else if (node.type === 'element') {
+        for (const child of node.children) walk(child);
+        node.children = node.children.flatMap(swap);
+      }
+    };
+
+    walk(tree);
   };
 }
 
@@ -324,6 +402,8 @@ export function markdownToHtml(markdown: string, options: MarkdownToHtmlOptions)
     // After sanitising: an href the allow-list rejected is gone by now, and a
     // link with nowhere to go is worse than the words on their own.
     .use(unwrapDeadLinks)
+    .use(replaceDeadImages)
+    .use(dropMachineComments)
     .use(namespaceIds)
     .use(tidyWhitespace)
     .use(rehypeStringify)
@@ -464,6 +544,16 @@ const NO_MARKDOWN_EQUIVALENT: readonly string[] = [
   'dl',
   'dt',
   'dd',
+  // Added to the sanitiser's allow-list after a per-element analysis; see
+  // ALSO_ALLOWED in sanitise.ts. `keep` can now actually keep them, which it
+  // could not while they were being unwrapped before it was consulted.
+  'abbr',
+  'figure',
+  'figcaption',
+  'mark',
+  'cite',
+  'time',
+  'small',
 ];
 
 /**
@@ -474,7 +564,21 @@ const NO_MARKDOWN_EQUIVALENT: readonly string[] = [
  * others apart cannot bite. Keeping them whole also keeps them on one line,
  * which is what inline HTML in Markdown should look like.
  */
-const KEEP_WHOLE = new Set(['span', 'kbd', 'samp', 'var', 'sub', 'sup', 'ins', 'q']);
+const KEEP_WHOLE = new Set([
+  'span',
+  'kbd',
+  'samp',
+  'var',
+  'sub',
+  'sup',
+  'ins',
+  'q',
+  'abbr',
+  'mark',
+  'cite',
+  'time',
+  'small',
+]);
 
 /** Re-serialises just an element's start tag, attributes included. */
 function openingTag(node: HastElement): string {
@@ -616,6 +720,8 @@ export function htmlToMarkdown(html: string, options: HtmlToMarkdownOptions): st
       .use(normaliseSchemes)
       .use(rehypeSanitize, SANITISE_SCHEMA)
       .use(unwrapDeadLinks)
+      .use(replaceDeadImages)
+      .use(dropMachineComments)
       /*
        * What happens to markup Markdown cannot express - a <div>, a <span>,
        * an <abbr>. 'keep' writes the element back as inline HTML, which is
@@ -674,10 +780,64 @@ export function htmlToText(html: string, options: HtmlToTextOptions): string {
     .use(rehypeSanitize, SANITISE_SCHEMA)
     .runSync(unified().use(rehypeParse, { fragment: true }).parse(html)) as HastNodes;
 
-  return renderText(tree, options)
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  recordListParents(tree);
+
+  return (
+    renderText(tree, options)
+      .split('\n')
+      // No trailing whitespace on any line: it is invisible, it survives a
+      // paste, and it is what makes a diff of two conversions unreadable.
+      .map((line) => line.replace(/[^\S\n]+$/, ''))
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  );
 }
+
+/**
+ * PLAIN TEXT: STRUCTURE SURVIVES, SYNTAX DOES NOT.
+ *
+ * That is the whole policy, and every decision below follows from it. The
+ * option is called "strip formatting", and formatting is what goes: emphasis
+ * markers, link syntax, fences, escaping, table pipes. What stays is anything
+ * a reader needs in order to still understand the shape of the document.
+ *
+ * The previous version dropped both, and the result was unreadable on a real
+ * document: headings became indistinguishable from paragraphs, an ordered list
+ * came out as bullets, nested lists flattened to one level, task list
+ * checkboxes vanished along with their state, blockquotes lost their
+ * attribution, and code blocks sat flush against the prose around them.
+ * Measured on a long generated answer, which is the input this tool exists for.
+ *
+ * The decisions, each with its reason:
+ *
+ *   HEADINGS keep a `#` prefix. The alternative is losing the hierarchy of a
+ *   long document entirely. `#` is the marker every developer reads without
+ *   thinking, and unlike setext underlining it works past two levels.
+ *
+ *   ORDERED LISTS get their real numbers, honouring `start`. Rendering
+ *   `1. 2. 3.` as three bullets was simply a bug: the marker option is about
+ *   the bullet character and was being applied to numbers as well.
+ *
+ *   NESTED LISTS indent two spaces per level. Depth is structure.
+ *
+ *   TASK LISTS keep `[x]` and `[ ]`. The state is the information; an item
+ *   with its checkbox removed says the opposite of what it meant half the
+ *   time.
+ *
+ *   CODE BLOCKS are indented four spaces rather than fenced. Indentation is
+ *   layout and a fence is syntax, and four spaces is what a plain-text reader
+ *   has meant by "this is code" since long before Markdown.
+ *
+ *   BLOCKQUOTES keep `> `. Without it a quotation silently becomes the
+ *   author's own words.
+ *
+ *   TABLES become aligned columns, not tab-separated fields. The earlier
+ *   choice optimised for pasting into a spreadsheet - but this app has a
+ *   structured-data tool that produces real CSV, and plain text is for
+ *   reading. A table whose columns no longer line up is much harder to read
+ *   than one that has merely lost its borders.
+ */
 
 /** Block elements that should end the current line. */
 const BLOCK = new Set([
@@ -689,22 +849,112 @@ const BLOCK = new Set([
   'footer',
   'main',
   'aside',
-  'blockquote',
-  'pre',
-  'h1',
-  'h2',
-  'h3',
-  'h4',
-  'h5',
-  'h6',
-  'ul',
-  'ol',
-  'li',
-  'table',
-  'tr',
-  'hr',
-  'br',
+  'figure',
+  'figcaption',
+  'dl',
+  'dt',
+  'details',
+  'summary',
 ]);
+
+const HEADING = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+
+/**
+ * Which list an item belongs to.
+ *
+ * hast nodes carry no parent pointer, so it is recorded on the way down. A
+ * WeakMap rather than a field on the node, because the tree belongs to the
+ * sanitiser and decorating other people's nodes is how trees acquire mystery
+ * properties.
+ */
+const ITEM_PARENT = new WeakMap<HastElement, HastElement>();
+
+function recordListParents(tree: HastNodes): void {
+  const walk = (node: HastNodes): void => {
+    if (node.type !== 'root' && node.type !== 'element') return;
+
+    for (const child of node.children) {
+      if (
+        node.type === 'element' &&
+        (node.tagName === 'ul' || node.tagName === 'ol') &&
+        child.type === 'element' &&
+        child.tagName === 'li'
+      ) {
+        ITEM_PARENT.set(child, node);
+      }
+      walk(child);
+    }
+  };
+
+  walk(tree);
+}
+
+/** `1. ` for an ordered list, honouring `start`; the chosen bullet otherwise. */
+function listMarker(item: HastElement, options: HtmlToTextOptions): string {
+  const parent = ITEM_PARENT.get(item);
+
+  if (parent?.tagName === 'ol') {
+    const raw = Number.parseInt(String(parent.properties.start), 10);
+    const start = Number.isNaN(raw) ? 1 : raw;
+    const index = parent.children.filter((child) => child.type === 'element').indexOf(item);
+    return `${String(start + Math.max(index, 0))}. `;
+  }
+
+  return options.listMarker === 'none' ? '' : `${options.listMarker} `;
+}
+
+/** `[x] `, `[ ] `, or nothing, from the checkbox a GFM task item carries. */
+function checkboxState(item: HastElement): string {
+  const box = item.children.find((child) => child.type === 'element' && child.tagName === 'input');
+  if (box?.type !== 'element') return '';
+  return box.properties.checked === true ? '[x] ' : '[ ] ';
+}
+
+/** Renders one table as aligned columns, with a rule under the header. */
+function renderTable(node: HastElement, options: HtmlToTextOptions): string {
+  const rows: string[][] = [];
+  let headerRows = 0;
+
+  const collect = (current: HastNodes, inHead: boolean): void => {
+    if (current.type !== 'element' && current.type !== 'root') return;
+
+    if (current.type === 'element' && current.tagName === 'tr') {
+      rows.push(
+        current.children
+          .filter((cell) => cell.type === 'element')
+          .map((cell) => renderText(cell, options, 0, false).replace(/\s+/g, ' ').trim()),
+      );
+      if (inHead) headerRows += 1;
+      return;
+    }
+
+    const head = inHead || (current.type === 'element' && current.tagName === 'thead');
+    for (const child of current.children) collect(child, head);
+  };
+
+  collect(node, false);
+  if (rows.length === 0) return '';
+
+  const columns = Math.max(...rows.map((row) => row.length));
+  const widths = Array.from({ length: columns }, (_, index) =>
+    Math.max(...rows.map((row) => (row[index] ?? '').length)),
+  );
+
+  const line = (row: readonly string[]): string =>
+    row
+      .map((cell, index) => cell.padEnd(widths[index] ?? 0))
+      .join('  ')
+      .trimEnd();
+
+  const out = rows.map(line);
+  if (headerRows > 0) {
+    // A rule under the header, sized to the columns, so a reader can see where
+    // the data starts without counting.
+    out.splice(headerRows, 0, widths.map((width) => '-'.repeat(width)).join('  '));
+  }
+
+  return `\n${out.join('\n')}\n`;
+}
 
 /**
  * Walks the sanitised tree into plain text.
@@ -714,48 +964,126 @@ const BLOCK = new Set([
  * are decisions about presentation that a generic text extractor has no
  * opinion about.
  */
-function renderText(node: HastNodes, options: HtmlToTextOptions, depth = 0): string {
-  if (node.type === 'text') return node.value;
+function renderText(
+  node: HastNodes,
+  options: HtmlToTextOptions,
+  depth = 0,
+  verbatim = false,
+): string {
+  if (node.type === 'text') {
+    /*
+     * A whitespace-only text node containing a newline is the line break the
+     * serialiser put BETWEEN two elements, not content. Emitting it put a
+     * blank line between every pair of list items and every table row - which
+     * is what made a checklist twice as long as it should be. Inside `pre` the
+     * same node is a line of the program, so the flag is threaded down.
+     */
+    if (!verbatim && node.value.trim() === '' && node.value.includes('\n')) return '';
+    return node.value;
+  }
   if (node.type === 'comment') return '';
 
   if (node.type === 'root') {
-    return node.children.map((child) => renderText(child, options, depth)).join('');
+    return node.children.map((child) => renderText(child, options, depth, verbatim)).join('');
   }
 
   if (node.type !== 'element') return '';
 
   const tag = node.tagName;
-  const inner = node.children.map((child) => renderText(child, options, depth + 1)).join('');
+  const indent = '  '.repeat(depth);
 
   if (tag === 'br') return '\n';
   if (tag === 'hr') return '\n---\n';
+  // The checkbox is written by its list item, which is what knows the state.
+  if (tag === 'input') return '';
 
-  if (tag === 'a' && options.keepLinkUrls) {
-    const href = node.properties.href;
-    // Only when the URL says something the text does not already.
-    if (typeof href === 'string' && href !== '' && href !== inner) return `${inner} (${href})`;
-    return inner;
-  }
-
-  if (tag === 'li') {
-    const marker = options.listMarker === 'none' ? '' : `${options.listMarker} `;
-    return `${marker}${inner.trim()}\n`;
+  if (tag === 'img') {
+    const alt = node.properties.alt;
+    return typeof alt === 'string' ? alt : '';
   }
 
   if (tag === 'table') {
-    return options.tables === 'drop' ? '' : `\n${inner}\n`;
+    return options.tables === 'drop' ? '' : renderTable(node, options);
   }
 
-  if (tag === 'tr') {
-    // Cells separated by a tab: it survives a paste into a spreadsheet, which
-    // is the one thing anybody wants from a table as plain text.
-    return `${node.children
-      .map((child) => renderText(child, options, depth + 1).trim())
-      .filter((cell) => cell !== '')
-      .join('\t')}\n`;
+  /*
+   * DEPTH IS LIST DEPTH, not tree depth. It used to increment on every
+   * element, so a top-level list item sat two spaces in merely because it
+   * was a grandchild of the root. Only a list item deepens it, which is the
+   * only nesting plain text has a way to show.
+   */
+  const inner = node.children
+    .map((child) => renderText(child, options, depth, verbatim || tag === 'pre'))
+    .join('');
+
+  if (HEADING.has(tag)) {
+    return `\n${'#'.repeat(Number(tag.slice(1)))} ${inner.trim()}\n`;
   }
 
-  if (BLOCK.has(tag)) return `\n${inner.trim()}\n`;
+  if (tag === 'a' && options.keepLinkUrls) {
+    const href = node.properties.href;
+    const text = inner.trim();
+    /*
+     * Only when the URL says something the text does not. `mailto:` is checked
+     * as well: an email autolink renders its address as the text, so without
+     * this every one came out as "ops@x.org (mailto:ops@x.org)".
+     */
+    if (typeof href === 'string' && href !== '' && href !== text && href !== `mailto:${text}`) {
+      return `${inner} (${href})`;
+    }
+    return inner;
+  }
+
+  if (tag === 'pre') {
+    // Four spaces on top of whatever indentation the surrounding list gives
+    // it, with the code's own indentation preserved inside that.
+    const body = inner.replace(/\n$/, '');
+    return `\n${body
+      .split('\n')
+      .map((line) => `${indent}    ${line}`)
+      .join('\n')}\n`;
+  }
+
+  if (tag === 'blockquote') {
+    return `\n${inner
+      .trim()
+      .split('\n')
+      .map((line) => `${indent}> ${line}`.trimEnd())
+      .join('\n')}\n`;
+  }
+
+  if (tag === 'li') {
+    /*
+     * The item's own contents are one level deeper, which is what indents a
+     * nested list under its parent. Blank lines WITHIN one item are
+     * collapsed: remark marks a whole list loose as soon as a single item
+     * is spread, so an ordinary checklist with one nested item arrived with
+     * every line double-spaced.
+     */
+    const body = node.children
+      .map((child) => renderText(child, options, depth + 1, verbatim))
+      .join('')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+      .split('\n');
+
+    const head = `${indent}${listMarker(node, options)}${checkboxState(node)}${body[0] ?? ''}`;
+    const rendered = [head, ...body.slice(1)].join('\n');
+
+    /*
+     * A one-line item stays tight against its neighbours; an item carrying a
+     * code block or a nested list gets a blank line after it. Uniform spacing
+     * either crushes the long items together or doubles the length of a plain
+     * checklist, and the length of the item is what decides which.
+     */
+    return body.length > 1 ? `${rendered}\n\n` : `${rendered}\n`;
+  }
+
+  if (tag === 'ul' || tag === 'ol') {
+    return depth === 0 ? `\n${inner.trimEnd()}\n` : `\n${inner.trimEnd()}`;
+  }
+
+  if (BLOCK.has(tag)) return `\n${indent}${inner.trim()}\n`;
 
   return inner;
 }

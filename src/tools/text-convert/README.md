@@ -272,6 +272,123 @@ Cost: **+5.7 kB raw, +1.4 kB gzipped**, in the lazily-loaded pipeline chunk.
 KaTeX is a dependency of `micromark-extension-math` but only of its HTML
 compiler, which nothing here imports — verified absent from the built output.
 
+## The preview, and why it had no styling
+
+Tables in the preview rendered without borders or padding, and columns
+collapsed to their content. **The markup was never the problem.** Measured
+against the real Content-Security-Policy, inside a real `sandbox=""` frame:
+
+| Route                              | Result      |
+| ---------------------------------- | ----------- |
+| inline `<style>` block, unhashed   | blocked     |
+| `style=""` attribute               | blocked     |
+| `<link>` to this origin            | blocked     |
+| inline `<style>` block, **hashed** | **renders** |
+| the same block, one byte changed   | blocked     |
+
+The first three are `style-src 'self'` doing its job. No `'unsafe-inline'`
+means no style element and no style attribute — and a sandboxed frame has an
+**opaque origin**, so `'self'` matches nothing and even our own stylesheet
+cannot be fetched into it. There was no route by which any styling could reach
+the preview.
+
+The fix is a hash, and it is not a weakening: `script-src` already carries the
+hash of the theme bootstrap for exactly this reason, and a hash permits one
+byte sequence rather than a category. The fifth row is the proof — change a
+byte and the browser refuses it.
+
+`vite/plugins/csp-hash.ts` computes the sha256 of
+[`preview.css`](../../features/toolrunner/preview.css) at build time and writes
+it into `style-src`; `previewDocument.ts` imports the same file as a string.
+Both normalise line endings first, so a CRLF checkout cannot produce a hash the
+browser will not match. `pnpm check:browsers` asserts in both engines that the
+stylesheet actually applies — not that it is present, but that a table cell's
+computed border really is 1px.
+
+The preview is styled to look like a **document**, close to how GitHub renders
+Markdown, rather than like the instrument panel around it. It is always light,
+in every theme: the line above it says "this is what Copy as rich text pastes",
+and what it pastes into is light.
+
+## Rich text: what actually goes on the clipboard
+
+Both flavours were wrong.
+
+**The HTML flavour was unstyled** — the tool's sanitised output verbatim. A
+bare `<table>` has no borders in Word, which is the single commonest way a
+rich-text paste disappoints.
+
+A stylesheet would not fix it. Google Docs discards `<style>` blocks outright
+and Outlook's Word engine ignores most of what it does not recognise; the one
+thing all three honour is an inline `style` attribute. So **the clipboard
+document carries its styling inline** — the opposite choice from the preview,
+which must use a stylesheet because a `style` attribute is what its CSP
+refuses. It is a complete `<!DOCTYPE html>` document with a declared charset,
+because Word and Outlook read the payload as a document and will otherwise
+guess the encoding.
+
+Tables additionally carry `border="1" cellspacing="0" cellpadding="6"`.
+Outlook's engine ignores border declarations in a pasted document often enough
+that the attribute is what keeps the grid visible there, and `border-collapse`
+stops the two doubling up anywhere else. Column alignment is written as a
+declaration as well as an attribute, because Word honours `align=""` and
+Google Docs does not.
+
+**The plain flavour was the HTML source.** `copyRichText(html, html)` — so
+every application that asked for `text/plain`, which is most of them, received
+a wall of angle brackets. It is now a readable text rendering with heading
+markers, real list numbers and checkbox state.
+
+### Checking it against Word yourself
+
+Everything assertable is asserted, but no test can paste into Word. Convert
+[`clipboard-check.md`](clipboard-check.md) with **Target format: HTML**,
+press **Copy as rich text**, and paste into each of Word, Google Docs and
+Outlook. What to look at:
+
+1. **The table has visible borders**, header shading, and the third column is
+   right-aligned. This is the one that used to fail everywhere.
+2. **The code block has a grey background** and a monospace font, and its
+   indentation is intact.
+3. **Nested list items stay nested**, and the ordered list starts at 3.
+4. **Checkboxes survive** as checkboxes or as `[x]`/`[ ]`, not as blank space.
+5. **The link is a link**, and the image's alt text is present.
+6. **The em dash and the emoji are not mojibake** — that is the charset
+   declaration doing its job.
+7. Paste into a **plain-text** field as well (Notepad, a terminal): you should
+   get readable text with `#` headings, not HTML source.
+
+## Plain text: structure survives, syntax does not
+
+That is the whole policy for both `→ Plain text` directions, and every
+decision follows from it. Formatting goes — emphasis markers, link syntax,
+fences, escaping, table pipes. Anything a reader needs in order to still
+understand the shape of the document stays.
+
+| Construct        | Becomes                                   | Why                                                                                              |
+| ---------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Headings         | `## Heading`                              | Losing the hierarchy of a long document is worse than keeping one marker. Works past two levels. |
+| Ordered lists    | `1.` `2.` `3.`, honouring `start`         | Rendering them as bullets was simply a bug.                                                      |
+| Nested lists     | two spaces per level                      | Depth is structure.                                                                              |
+| Task lists       | `[x]` / `[ ]`                             | The state is the information. Dropping it says the opposite half the time.                       |
+| Code blocks      | indented four spaces                      | Indentation is layout; a fence is syntax.                                                        |
+| Blockquotes      | `> `                                      | Without it a quotation silently becomes the author's own words.                                  |
+| Tables           | aligned columns, ruled header             | See below.                                                                                       |
+| Links            | `text (url)`, when the URL adds something | Suppressed when the URL equals the text, or is `mailto:` plus the text.                          |
+| Images           | their alt text                            | The alt text is what an image says when it cannot be shown.                                      |
+| Horizontal rules | `---`                                     |                                                                                                  |
+
+**Tables became aligned columns, reversing an earlier choice.** They used to be
+tab-separated, chosen so a table would survive a paste into a spreadsheet — but
+this app has a structured-data tool that emits real CSV, and plain text is for
+reading. A table whose columns no longer line up is much harder to read than
+one that has merely lost its borders. A rule under the header shows where the
+data starts.
+
+Whitespace is normalised throughout: no trailing spaces on any line, never more
+than one blank line, and a list item spanning several lines gets a blank line
+after it while a one-line item stays tight against its neighbours.
+
 ## Known limitations
 
 Every one of these is asserted in
@@ -298,22 +415,14 @@ isolation — but leaves the backslash bare. In `mdast-util-to-markdown`'s
 
 ### Deliberate, and the reason
 
-**The sanitiser is the outer boundary, and `Keep as inline HTML` cannot reach
-past it.** `<abbr>`, `<figure>`, `<figcaption>`, `<caption>`, `<mark>`,
-`<cite>`, `<time>` and `<small>` are not in the schema, so they are unwrapped
-to their text before the `unsupported` option is consulted. The text survives;
-the element and its attributes do not, which for `<abbr title="...">` means
-losing the whole point of it.
-
-They are kept out because the schema is GitHub's own and the rule here is that
-changes to an allow-list are subtractions — a rule worth more than these
-elements are. Adding any of them would need its attributes analysed
-individually, not just the tag name.
-
-**HTML comments are dropped.** A comment is the one construct that is never
-displayed and never read, which makes it both harmless to lose and the natural
-place to hide something. `<!-- prettier-ignore -->` and `<!-- more -->` are
-real losses; the trade is recorded rather than assumed.
+**A `data:` image source is refused, so the picture does not survive.**
+Considered and refused rather than overlooked. An SVG loaded through
+`<img src>` is in secure static mode and cannot run script, so the payload
+would be inert here — but this tool's output is HTML somebody pastes somewhere
+else, and "inert in an `<img>`" is a fact about one element in one context.
+The allow-list is worth more than the images. What was fixed instead is the
+symptom: a rejected image now degrades to its alt text rather than to a broken
+icon.
 
 **Raw HTML is repaired, not passed through.** cmark copies unbalanced markup
 to its output verbatim; this tool parses it, so `<a href="x">` with no closing

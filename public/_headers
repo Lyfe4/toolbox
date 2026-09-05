@@ -26,8 +26,13 @@
   #                           injected <script> or onclick= cannot execute.
   #                           'wasm-unsafe-eval' permits WebAssembly compilation
   #                           (and only that) for the WASM-backed tools to come.
-  # style-src 'self'          Stylesheets come from our own bundle. No inline
-  #                           <style> blocks and no style="" attributes.
+  # style-src 'self'          Stylesheets come from our own bundle, plus the
+  #                           exact hash of the preview frame's stylesheet.
+  #                           Still no 'unsafe-inline', so a style="" attribute
+  #                           and any OTHER <style> block are both refused - the
+  #                           hash permits one byte sequence, not a category.
+  #                           The preview needs it because a sandboxed frame has
+  #                           an opaque origin, where 'self' matches nothing.
   #                           NOTE: no style-src-attr exception is needed. React
   #                           applies the `style` prop through the CSSOM
   #                           (element.style.setProperty), which CSP does not
@@ -61,7 +66,7 @@
   #                           It is harmless in production (https) and the
   #                           cross-browser harness drops it for http, but it
   #                           is worth knowing before debugging it twice.
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {{INLINE_SCRIPT_HASHES}}; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; worker-src 'self'; child-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; manifest-src 'self'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {{INLINE_SCRIPT_HASHES}}; style-src 'self' {{INLINE_STYLE_HASHES}}; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; worker-src 'self'; child-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; manifest-src 'self'; upgrade-insecure-requests
 
   # --- Cross-origin isolation ---------------------------------------------------
   # Together these two put the page in a "cross-origin isolated" state, which is

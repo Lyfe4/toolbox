@@ -1,0 +1,435 @@
+/*
+ * THE PREVIEW DOCUMENT'S STYLESHEET.
+ *
+ * Loaded as a raw string and injected into the sandboxed frame's srcdoc, and
+ * hashed at build time into `style-src`. Two consequences worth knowing before
+ * editing this file:
+ *
+ *   EVERY BYTE MATTERS. The CSP pins the sha256 of exactly these bytes, so a
+ *   change here without a rebuild means the browser refuses the stylesheet and
+ *   the preview renders unstyled. That is a visible failure rather than a
+ *   silent one, and `pnpm check:browsers` asserts the preview is styled.
+ *
+ *   IT CANNOT REFERENCE ANYTHING. The frame has an opaque origin, so no font,
+ *   image or stylesheet can be fetched into it, and the app's custom
+ *   properties do not cross the document boundary. Everything here is literal
+ *   and self-contained.
+ *
+ * IT LOOKS LIKE A DOCUMENT, NOT LIKE THE APP. The instrument-panel styling
+ * around it belongs to Patchbay; this is the user's content, and the preview's
+ * job is to show what it will look like somewhere else. It is deliberately
+ * close to how GitHub renders Markdown, because that is the rendering people
+ * are comparing it against.
+ *
+ * IT IS ALWAYS LIGHT, in every theme. The line above the frame says "this is
+ * what Copy as rich text pastes", and what it pastes into - a document, an
+ * email, a wiki - is light. A preview that followed the app's dark theme would
+ * be showing something the paste will never look like.
+ */
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  padding: 16px 20px;
+  background-color: #ffffff;
+  color: #1f2328;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  word-wrap: break-word;
+}
+
+body > *:first-child {
+  margin-top: 0;
+}
+
+body > *:last-child {
+  margin-bottom: 0;
+}
+
+/* --- Headings ------------------------------------------------------------ */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 24px 0 16px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+/* The rule under h1 and h2 is what makes the hierarchy readable at a glance
+   in a document with no other chrome. */
+h1 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid #d1d9e0;
+  font-size: 1.9em;
+}
+
+h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid #d1d9e0;
+  font-size: 1.45em;
+}
+
+h3 {
+  font-size: 1.2em;
+}
+
+h4 {
+  font-size: 1em;
+}
+
+h5 {
+  font-size: 0.9em;
+}
+
+h6 {
+  font-size: 0.85em;
+  color: #59636e;
+}
+
+/* --- Prose --------------------------------------------------------------- */
+
+p,
+blockquote,
+ul,
+ol,
+dl,
+table,
+pre,
+details {
+  margin: 0 0 16px;
+}
+
+a {
+  color: #0969da;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+strong {
+  font-weight: 600;
+}
+
+del {
+  color: #59636e;
+}
+
+hr {
+  height: 0.25em;
+  margin: 24px 0;
+  padding: 0;
+  border: 0;
+  background-color: #d1d9e0;
+}
+
+img {
+  max-width: 100%;
+  box-sizing: content-box;
+  background-color: #ffffff;
+}
+
+/* --- Blockquotes --------------------------------------------------------- */
+
+blockquote {
+  padding: 0 1em;
+  border-left: 0.25em solid #d1d9e0;
+  color: #59636e;
+}
+
+blockquote > :first-child {
+  margin-top: 0;
+}
+
+blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+/* --- Lists --------------------------------------------------------------- */
+
+ul,
+ol {
+  padding-left: 2em;
+}
+
+/* A nested list is part of its parent item, so it gets no gap above and a
+   small one below - the run-on spacing that made deep nesting unreadable. */
+li > ul,
+li > ol {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+li + li {
+  margin-top: 0.25em;
+}
+
+/* Task lists. The checkbox sits in the margin rather than in the text flow,
+   which is what keeps a multi-line item's second line aligned with its
+   first. */
+ul.contains-task-list {
+  list-style: none;
+  padding-left: 1.4em;
+}
+
+li.task-list-item {
+  position: relative;
+}
+
+li.task-list-item > input[type='checkbox'] {
+  position: absolute;
+  left: -1.4em;
+  top: 0.3em;
+  margin: 0;
+}
+
+/* --- Definition lists ---------------------------------------------------- */
+
+dt {
+  margin-top: 16px;
+  font-weight: 600;
+  font-style: italic;
+}
+
+dd {
+  margin: 0 0 16px 24px;
+}
+
+/* --- Code ---------------------------------------------------------------- */
+
+code,
+kbd,
+samp,
+var {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.87em;
+}
+
+/* Inline code only: the padding and background would double up inside a
+   pre, where the block already provides both. */
+:not(pre) > code {
+  padding: 0.2em 0.4em;
+  border-radius: 6px;
+  background-color: #eff1f3;
+  white-space: break-spaces;
+}
+
+pre {
+  padding: 16px;
+  overflow: auto;
+  border-radius: 6px;
+  background-color: #f6f8fa;
+  font-size: 0.87em;
+  line-height: 1.45;
+}
+
+pre code {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  white-space: pre;
+}
+
+kbd {
+  display: inline-block;
+  padding: 3px 5px;
+  border: 1px solid #d1d9e0;
+  border-bottom-color: #b7bfc8;
+  border-radius: 6px;
+  box-shadow: inset 0 -1px 0 #b7bfc8;
+  background-color: #f6f8fa;
+  line-height: 10px;
+  vertical-align: middle;
+}
+
+var {
+  font-style: italic;
+}
+
+/* --- Small semantics ----------------------------------------------------- */
+
+sub,
+sup {
+  font-size: 0.75em;
+  line-height: 0;
+  position: relative;
+}
+
+sup {
+  top: -0.5em;
+}
+
+sub {
+  bottom: -0.25em;
+}
+
+abbr[title] {
+  text-decoration: underline dotted;
+  cursor: help;
+}
+
+mark {
+  padding: 0.1em 0.2em;
+  background-color: #fff8c5;
+  color: inherit;
+}
+
+ins {
+  text-decoration: underline;
+}
+
+q {
+  quotes: '\201C' '\201D' '\2018' '\2019';
+}
+
+small {
+  font-size: 0.85em;
+  color: #59636e;
+}
+
+figure {
+  margin: 0 0 16px;
+}
+
+figcaption {
+  margin-top: 6px;
+  font-size: 0.87em;
+  color: #59636e;
+}
+
+/* --- Tables -------------------------------------------------------------- */
+
+/*
+ * `border-collapse` and an explicit border on every cell, because a bare
+ * <table> in a browser's default stylesheet has neither - which is what made
+ * the preview's tables look broken rather than merely plain.
+ *
+ * `display: block` with `width: max-content` lets a wide table scroll inside
+ * the frame instead of forcing the whole document wide.
+ */
+table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+  border-spacing: 0;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 6px 13px;
+  border: 1px solid #d1d9e0;
+}
+
+th {
+  background-color: #f6f8fa;
+  font-weight: 600;
+}
+
+/* Zebra striping, which is what makes a wide row readable across. */
+tbody tr:nth-child(2n) {
+  background-color: #f6f8fa;
+}
+
+caption {
+  margin-bottom: 6px;
+  font-size: 0.87em;
+  color: #59636e;
+  text-align: left;
+}
+
+/* GFM writes column alignment onto every cell as an attribute, so the
+   stylesheet has to honour it or every table is left-aligned. */
+th[align='center'],
+td[align='center'] {
+  text-align: center;
+}
+
+th[align='right'],
+td[align='right'] {
+  text-align: right;
+}
+
+th[align='left'],
+td[align='left'] {
+  text-align: left;
+}
+
+/* --- Details ------------------------------------------------------------- */
+
+details {
+  padding: 12px 16px;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+}
+
+summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+details[open] > summary {
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #d1d9e0;
+}
+
+/* --- Footnotes ----------------------------------------------------------- */
+
+.footnotes {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid #d1d9e0;
+  font-size: 0.87em;
+  color: #59636e;
+}
+
+/* remark gives the footnotes heading this class expecting a host stylesheet
+   to hide it. Nothing here would, so it would render as a stray "Footnotes"
+   heading twice the size of the notes under it. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- Forced colours ------------------------------------------------------ */
+
+@media (forced-colors: active) {
+  h1,
+  h2,
+  hr,
+  th,
+  td,
+  details,
+  blockquote {
+    border-color: CanvasText;
+  }
+
+  pre,
+  :not(pre) > code,
+  th,
+  tbody tr:nth-child(2n),
+  kbd,
+  mark {
+    background-color: Canvas;
+    color: CanvasText;
+  }
+}

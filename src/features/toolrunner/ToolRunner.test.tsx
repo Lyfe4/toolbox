@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { ToastProvider } from '@/components/Toast';
 import { createExecutionEngine, ExecutionEngineProvider } from '@/features/execution';
@@ -43,38 +43,72 @@ function renderRunner(entry: ToolManifestEntry) {
  * the tool module before it can run anything. Under a full parallel suite that
  * import can take longer than Testing Library's 1s default, which showed up as
  * an intermittent failure rather than a real one.
+ *
+ * Raised from 5s: the suite has grown, and 5s started to be reachable on a
+ * loaded machine. A generous ceiling costs nothing when the wait succeeds -
+ * `waitFor` returns as soon as the condition holds - and the only thing a
+ * tight one buys is a flaky test.
+ *
+ * SLOW_TEST has to exceed it, or the test is killed before the wait can
+ * report anything useful - which is how "the import was slow" presented as
+ * "Test timed out in 20000ms" with no clue which assertion was waiting.
  */
-const IMPORT_TIMEOUT = { timeout: 5000 };
+/**
+ * The tool modules are loaded ONCE, before any test is timed.
+ *
+ * They arrive through a dynamic import, and the first one in a worker pays for
+ * transforming the module and everything it pulls in - structured-data brings
+ * zod and yaml with it. Under a full parallel suite that cold import was
+ * taking upwards of twenty seconds on a loaded machine, and because it
+ * happened INSIDE a `waitFor` the test failed for looking slow rather than for
+ * being wrong.
+ *
+ * Warming them here moves that cost outside the assertions, where it belongs.
+ */
+beforeAll(async () => {
+  await Promise.all([loadTool('base64'), loadTool('structured-data')]);
+}, 120_000);
+
+const IMPORT_TIMEOUT = { timeout: 20_000 };
+const SLOW_TEST = 60_000;
 
 const base64 = getManifestEntry('base64');
 const structured = getManifestEntry('structured-data');
 
 describe('ToolRunner', () => {
-  it('runs a tool and shows its output', async () => {
-    const user = userEvent.setup();
-    renderRunner(base64);
+  it(
+    'runs a tool and shows its output',
+    async () => {
+      const user = userEvent.setup();
+      renderRunner(base64);
 
-    await user.type(screen.getByRole('textbox', { name: 'Base64 input' }), 'foobar');
-    await user.click(screen.getByRole('button', { name: 'Run' }));
+      await user.type(screen.getByRole('textbox', { name: 'Base64 input' }), 'foobar');
+      await user.click(screen.getByRole('button', { name: 'Run' }));
 
-    await waitFor(() => {
-      expect(screen.getByRole('textbox', { name: 'Base64 Output' })).toHaveValue('Zm9vYmFy');
-    }, IMPORT_TIMEOUT);
-  });
+      await waitFor(() => {
+        expect(screen.getByRole('textbox', { name: 'Base64 Output' })).toHaveValue('Zm9vYmFy');
+      }, IMPORT_TIMEOUT);
+    },
+    SLOW_TEST,
+  );
 
-  it('announces completion through the live region', async () => {
-    const user = userEvent.setup();
-    renderRunner(base64);
+  it(
+    'announces completion through the live region',
+    async () => {
+      const user = userEvent.setup();
+      renderRunner(base64);
 
-    await user.type(screen.getByRole('textbox', { name: 'Base64 input' }), 'hi');
-    await user.click(screen.getByRole('button', { name: 'Run' }));
+      await user.type(screen.getByRole('textbox', { name: 'Base64 input' }), 'hi');
+      await user.click(screen.getByRole('button', { name: 'Run' }));
 
-    // The toast viewport is the live region built earlier; results are
-    // announced there rather than being visual-only.
-    await waitFor(() => {
-      expect(screen.getByText('Base64 finished')).toBeInTheDocument();
-    }, IMPORT_TIMEOUT);
-  });
+      // The toast viewport is the live region built earlier; results are
+      // announced there rather than being visual-only.
+      await waitFor(() => {
+        expect(screen.getByText('Base64 finished')).toBeInTheDocument();
+      }, IMPORT_TIMEOUT);
+    },
+    SLOW_TEST,
+  );
 
   it('renders a parse error with its position', async () => {
     const user = userEvent.setup();
@@ -99,22 +133,30 @@ describe('ToolRunner', () => {
     expect(screen.getByText(/Code: parse-error/)).toBeInTheDocument();
   });
 
-  it('shows both outputs for a tool that declares two ports', async () => {
-    const user = userEvent.setup();
-    renderRunner(structured);
+  it(
+    'shows both outputs for a tool that declares two ports',
+    async () => {
+      const user = userEvent.setup();
+      renderRunner(structured);
 
-    await user.type(screen.getByRole('textbox', { name: 'Structured data input' }), '{{"a": 1}');
-    await user.click(screen.getByRole('button', { name: 'Run' }));
+      await user.type(screen.getByRole('textbox', { name: 'Structured data input' }), '{{"a": 1}');
+      await user.click(screen.getByRole('button', { name: 'Run' }));
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole('textbox', { name: 'Structured data Converted' }),
-      ).toBeInTheDocument();
-    }, IMPORT_TIMEOUT);
-    expect(
-      screen.getByRole('textbox', { name: 'Structured data Parsed data' }),
-    ).toBeInTheDocument();
-  });
+      // BOTH assertions inside the wait. The second one used to sit outside it,
+      // so a run where the two outputs landed on different ticks failed on the
+      // one that had not arrived yet - which is a race in the test rather than
+      // anything the runner did wrong.
+      await waitFor(() => {
+        expect(
+          screen.getByRole('textbox', { name: 'Structured data Converted' }),
+        ).toBeInTheDocument();
+        expect(
+          screen.getByRole('textbox', { name: 'Structured data Parsed data' }),
+        ).toBeInTheDocument();
+      }, IMPORT_TIMEOUT);
+    },
+    SLOW_TEST,
+  );
 
   it('has no axe violations once a result is on screen', async () => {
     const user = userEvent.setup();

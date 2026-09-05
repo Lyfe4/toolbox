@@ -10,7 +10,24 @@ import type { Plugin } from 'vite';
  * this plugin produces an obviously broken policy rather than a quietly
  * permissive one.
  */
-const PLACEHOLDER = '{{INLINE_SCRIPT_HASHES}}';
+const SCRIPT_PLACEHOLDER = '{{INLINE_SCRIPT_HASHES}}';
+
+/**
+ * The same, for `style-src`.
+ *
+ * The preview frame needs a stylesheet and cannot fetch one: it is sandboxed
+ * to an opaque origin, so `'self'` matches nothing inside it. A hash lets
+ * exactly one stylesheet through and nothing else - measured, including that
+ * a single changed byte is refused. See src/features/toolrunner/
+ * previewDocument.ts.
+ */
+const STYLE_PLACEHOLDER = '{{INLINE_STYLE_HASHES}}';
+
+/** The one stylesheet that hash covers. */
+const PREVIEW_STYLESHEET = 'src/features/toolrunner/preview.css';
+
+const sha256 = (body: string): string =>
+  `'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`;
 
 /** Extracts the bodies of every inline <script> (i.e. those without a src). */
 function inlineScriptBodies(html: string): string[] {
@@ -65,18 +82,40 @@ export function cspHash(): Plugin {
       const html = readFileSync(htmlPath, 'utf8');
       const headers = readFileSync(headersPath, 'utf8');
 
-      if (!headers.includes(PLACEHOLDER)) {
-        throw new Error(`csp-hash: ${PLACEHOLDER} is missing from public/_headers`);
+      for (const placeholder of [SCRIPT_PLACEHOLDER, STYLE_PLACEHOLDER]) {
+        if (!headers.includes(placeholder)) {
+          throw new Error(`csp-hash: ${placeholder} is missing from public/_headers`);
+        }
       }
 
-      const hashes = inlineScriptBodies(html).map(
-        (body) => `'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`,
-      );
+      const scriptHashes = inlineScriptBodies(html).map(sha256);
 
-      // replaceAll, not replace: the placeholder is also named in the file's
-      // own comment block, and both occurrences must be substituted.
-      writeFileSync(headersPath, headers.replaceAll(PLACEHOLDER, hashes.join(' ')), 'utf8');
-      this.info(`csp-hash: injected ${hashes.length.toString()} inline script hash(es)`);
+      /*
+       * The stylesheet is hashed FROM SOURCE, not from the build output,
+       * because it never becomes a file: it is imported as a string and
+       * written into the frame's srcdoc at runtime. Line endings are
+       * normalised here and in previewDocument.ts, so a CRLF checkout cannot
+       * produce a hash the browser will not match.
+       */
+      const stylesheetPath = join(root, PREVIEW_STYLESHEET);
+      if (!existsSync(stylesheetPath)) {
+        throw new Error(`csp-hash: ${PREVIEW_STYLESHEET} is missing`);
+      }
+      const canonical = readFileSync(stylesheetPath, 'utf8').replace(/\r\n/g, '\n');
+      const styleHashes = [sha256(canonical)];
+
+      // replaceAll, not replace: the placeholders are also named in the file's
+      // own comment block, and every occurrence must be substituted.
+      writeFileSync(
+        headersPath,
+        headers
+          .replaceAll(SCRIPT_PLACEHOLDER, scriptHashes.join(' '))
+          .replaceAll(STYLE_PLACEHOLDER, styleHashes.join(' ')),
+        'utf8',
+      );
+      this.info(
+        `csp-hash: injected ${scriptHashes.length.toString()} script and ${styleHashes.length.toString()} style hash(es)`,
+      );
     },
   };
 }

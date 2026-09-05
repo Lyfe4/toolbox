@@ -178,7 +178,7 @@ run on every `pnpm test`; neither reaches the network.
 
 | Suite                                                    | Cases | Passing         |
 | -------------------------------------------------------- | ----- | --------------- |
-| [CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/) | 652   | **612 (93.9%)** |
+| [CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/) | 652   | **624 (95.7%)** |
 | GFM extensions                                           | 24    | **21 (87.5%)**  |
 
 Comparison is by parsed DOM rather than by bytes — on a byte comparison the

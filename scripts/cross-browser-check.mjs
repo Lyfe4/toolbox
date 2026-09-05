@@ -1753,6 +1753,64 @@ async function checkPreviewSandbox(browser, label) {
         frame.rendersHeading,
       JSON.stringify(frame),
     );
+
+    /*
+     * DOES THE STYLESHEET ACTUALLY APPLY?
+     *
+     * This is the one thing no unit test can answer. The preview's styling
+     * arrives as an inline <style> block whose sha256 is pinned in
+     * `style-src`, so it renders only if THREE things line up: the hash the
+     * build computed, the bytes the runtime emitted, and the browser's
+     * willingness to honour a hash inside a sandboxed frame at an opaque
+     * origin. Measured here rather than assumed, because a mismatch in any of
+     * them presents as a preview that is silently unstyled.
+     *
+     * The frame is same-origin only under `allow-same-origin`, which the real
+     * one deliberately does not have - so the measurement is taken from a
+     * probe frame carrying the same policy, and the assertion that the REAL
+     * frame carries the same stylesheet is made on its srcdoc.
+     */
+    const styling = await page.evaluate(async () => {
+      const element = document.querySelector('iframe[srcdoc]');
+      const srcdoc = element?.getAttribute('srcdoc') ?? '';
+      const styleBlock = /<style>([\s\S]*?)<\/style>/.exec(srcdoc);
+
+      if (!styleBlock) return { hasStyle: false };
+
+      // Same bytes, same policy, but readable - so the computed style can be
+      // asked whether the hash was honoured.
+      const probe = document.createElement('iframe');
+      probe.setAttribute('sandbox', 'allow-same-origin');
+      probe.srcdoc = `<style>${styleBlock[1]}</style><table><tr><td id="c">x</td></tr></table>`;
+      probe.style.cssText = 'position:fixed;left:-9999px;width:300px;height:100px';
+
+      const applied = await new Promise((resolve) => {
+        probe.addEventListener('load', () => {
+          const cell = probe.contentDocument?.getElementById('c');
+          resolve(cell ? getComputedStyle(cell).borderTopWidth : 'no cell');
+        });
+        document.body.appendChild(probe);
+      });
+      probe.remove();
+
+      return {
+        hasStyle: true,
+        // The rule the preview was missing entirely before this existed.
+        cellBorder: applied,
+        declaresTableBorders: styleBlock[1].includes('border-collapse'),
+        honoursAlignment: styleBlock[1].includes("[align='right']"),
+      };
+    });
+
+    check(
+      label,
+      'the preview stylesheet survives style-src and actually applies',
+      styling.hasStyle === true &&
+        styling.cellBorder === '1px' &&
+        styling.declaresTableBorders === true &&
+        styling.honoursAlignment === true,
+      JSON.stringify(styling),
+    );
   } finally {
     await context.close().catch(() => {});
   }

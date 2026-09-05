@@ -10,7 +10,7 @@ import gfmSpec from './spec/gfm.json';
  *
  * The CommonMark specification ships its examples as data, and so does GFM.
  * Running them is the difference between "the converter seems good" and "the
- * converter passes 612 of 652, and here is the list of the other 40 with a
+ * converter passes 624 of 652, and here is the list of the other 28 with a
  * reason against each".
  *
  * The fixtures are CHECKED IN rather than fetched:
@@ -42,48 +42,25 @@ interface SpecCase {
 }
 
 /* ========================================================================== *
- * CommonMark: the 40 examples that do not match, and why
+ * CommonMark: the 28 examples that do not match, and why
  * ========================================================================== */
 
 /**
  * THE SANITISER REMOVED SOMETHING THE SPEC PASSES THROUGH.
  *
- * The largest group, and the least interesting: cmark copies raw HTML to the
- * output verbatim, and this tool refuses to. An unknown element (`<foo>`,
- * `<bar>`), a `<script>`, a `class` or `id` the allow-list does not permit -
- * all of it goes, by design and on purpose, because the output of this tool is
- * meant to be safe to paste somewhere that renders it.
+ * All but three of the remaining failures, and the least interesting of them:
+ * cmark copies raw HTML to the output verbatim, and this tool refuses to. An
+ * unknown element (`<foo>`, `<bar>`), a `<script>`, a `class` or `id` the
+ * allow-list does not permit - all of it goes, by design and on purpose,
+ * because the output of this tool is meant to be safe to paste somewhere that
+ * renders it.
  *
  * These are not defects to be fixed. They are the product, measured.
  */
 const SANITISED = [
   150, 152, 153, 154, 163, 164, 169, 170, 171, 172, 173, 176, 178, 201, 491, 524, 536, 613, 614,
-  615, 616, 617, 627, 628, 629,
+  615, 616, 617,
 ];
-
-/**
- * HTML COMMENTS ARE DROPPED.
- *
- * `allowComments: false` in the schema. A comment is invisible either way, so
- * losing one is not visible damage - but it IS content the author wrote, and
- * `<!-- prettier-ignore -->` and `<!-- more -->` are load-bearing in real
- * documents.
- *
- * Kept as-is because a comment is the one construct whose content is never
- * displayed and never audited: it is where a conditional-comment payload for
- * an old engine would go, and where anything else nobody reads would go too.
- * Recorded here so the trade is visible rather than assumed.
- */
-const COMMENTS_DROPPED = [177, 179, 183, 308, 309, 625, 626];
-
-/**
- * PROCESSING INSTRUCTIONS AND CDATA ARE DROPPED.
- *
- * `<?php ... ?>` and `<![CDATA[ ... ]]>` are HTML block types 3 and 5 in the
- * spec, and neither has any meaning in a document this tool produces. The
- * sanitiser has no node type for them, so they do not survive the tree.
- */
-const PI_AND_CDATA = [180, 182];
 
 /**
  * URL SCHEMES THIS TOOL DOES NOT ALLOW.
@@ -93,8 +70,8 @@ const PI_AND_CDATA = [180, 182];
  * http, https, mailto and tel and nothing else.
  *
  * They no longer render as a dead `<a>` with no destination - the link is
- * unwrapped and its text kept - which is a better answer than either the spec's
- * or the previous one, but it is still not the spec's answer.
+ * unwrapped and its text kept - which is a better answer than either the
+ * spec's or the previous one, but it is still not the spec's answer.
  */
 const SCHEME_NOT_ALLOWED = [596, 598, 599, 601];
 
@@ -104,28 +81,35 @@ const SCHEME_NOT_ALLOWED = [596, 598, 599, 601];
  * `<MAILTO:FOO@BAR.BAZ>` produces `href="mailto:FOO@BAR.BAZ"` where the spec
  * expects `MAILTO:` preserved. Schemes are case-insensitive - RFC 3986 - so
  * both are the same URL, and lowercasing is what lets the allow-list match at
- * all. Before this, the example did not merely differ: it lost its href.
+ * all. Before it, the example did not merely differ: it lost its href.
  */
 const SCHEME_LOWERCASED = [597];
 
 /**
  * A RELATIVE URL CONTAINING A COLON IS REJECTED.
  *
- * `[link](foo\)\:)` has the destination `foo):`, which is a relative reference:
- * `)` cannot appear in a scheme, so there is no scheme here. hast-util-sanitize
- * looks for the first `:` and treats everything before it as the protocol,
- * decides `foo)` is not allowed, and drops the href.
+ * `[link](foo\)\:)` has the destination `foo):`, which is a relative
+ * reference: `)` cannot appear in a scheme, so there is no scheme here.
+ * hast-util-sanitize looks for the first `:` and treats everything before it
+ * as the protocol, decides `foo)` is not allowed, and drops the href.
  *
  * Upstream, obscure, and with no clean fix from outside: correcting it would
- * mean re-implementing the protocol check rather than configuring it. Recorded
- * rather than worked around.
+ * mean re-implementing the protocol check rather than configuring it.
  */
 const RELATIVE_URL_WITH_COLON = [500];
 
+/*
+ * TWELVE EXAMPLES LEFT THIS LIST when HTML comments stopped being dropped.
+ *
+ * Seven were comments outright. The other five were a surprise worth
+ * recording: `<?php ... ?>` and `<![CDATA[ ... ]]>` are HTML block types 3
+ * and 5 in the spec, and an HTML parser represents both as COMMENT nodes - so
+ * the schema that dropped comments was dropping those too, and allowing them
+ * back fixed all five without a line of code aimed at either.
+ */
+
 const COMMONMARK_KNOWN_FAILURES = [
   ...SANITISED,
-  ...COMMENTS_DROPPED,
-  ...PI_AND_CDATA,
   ...SCHEME_NOT_ALLOWED,
   ...SCHEME_LOWERCASED,
   ...RELATIVE_URL_WITH_COLON,
@@ -202,11 +186,11 @@ describe('CommonMark 0.31.2', () => {
     expect(failures).toEqual(COMMONMARK_KNOWN_FAILURES);
   });
 
-  it('passes 612 of 652', () => {
+  it('passes 624 of 652', () => {
     // Stated as a number as well as a list, because the number is the thing
     // anyone actually wants to know.
     const passed = commonmarkSpec.length - failures.length;
-    expect(`${String(passed)}/${String(commonmarkSpec.length)}`).toBe('612/652');
+    expect(`${String(passed)}/${String(commonmarkSpec.length)}`).toBe('624/652');
   });
 
   it('has no failures outside raw HTML, links and autolinks', () => {
@@ -228,7 +212,6 @@ describe('CommonMark 0.31.2', () => {
       'HTML blocks',
       'Link reference definitions',
       'Links',
-      'Lists',
       'Raw HTML',
     ]);
   });

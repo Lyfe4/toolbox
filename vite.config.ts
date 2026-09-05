@@ -139,7 +139,9 @@ export default defineConfig({
      * Raising it does not hide a hang: something genuinely stuck still fails,
      * 15 seconds later.
      */
-    testTimeout: 20_000,
+    // Above `asyncUtilTimeout` in vitest.setup.ts, or a slow wait is killed
+    // before it can report which assertion was still failing.
+    testTimeout: 60_000,
     /*
      * `vite/` as well as `src/`: the build plugins are real code with real
      * consequences - the comment stripper runs over the one inline script

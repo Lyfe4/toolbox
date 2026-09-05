@@ -2,8 +2,24 @@
 // to Vitest's `expect`, including their TypeScript types.
 import '@testing-library/jest-dom/vitest';
 
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach, beforeAll } from 'vitest';
+
+/*
+ * HOW LONG AN ASYNC QUERY WAITS, raised from Testing Library's one second.
+ *
+ * Almost every wait in this suite is really waiting on a DYNAMIC IMPORT: the
+ * tool runner and the canvas load a tool's module on demand, and the first
+ * import in a worker pays to transform that module and everything under it -
+ * structured-data brings zod and yaml with it. Running sixty-odd files at once
+ * on a busy machine, that cold import was regularly crossing a second, and it
+ * presented as a different test failing on each run rather than as anything
+ * reproducible.
+ *
+ * `waitFor` returns the moment its condition holds, so a generous ceiling
+ * costs nothing when things are quick. A tight one buys only flakiness.
+ */
+configure({ asyncUtilTimeout: 15_000 });
 
 // Testing Library only auto-cleans when Vitest globals are enabled, and they
 // are not, so unmount between tests explicitly.

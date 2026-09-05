@@ -95,7 +95,7 @@ describe('the preview iframe', () => {
 
     // No request, nothing to revoke, and nothing that connect-src has to
     // make an exception for.
-    expect(frame?.getAttribute('srcdoc')).toBe(HTML);
+    expect(frame?.getAttribute('srcdoc')).toContain(HTML);
     expect(frame?.getAttribute('src')).toBeNull();
   });
 
@@ -107,7 +107,26 @@ describe('the preview iframe', () => {
 
     await user.click(screen.getByRole('button', { name: 'Preview' }));
 
-    expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toBe('<p>safe</p>');
+    expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('<p>safe</p>');
+  });
+
+  it('carries a stylesheet, because nothing else can reach the frame', async () => {
+    const user = userEvent.setup();
+    const { container } = renderView();
+
+    await user.click(screen.getByRole('button', { name: 'Preview' }));
+    const srcdoc = container.querySelector('iframe')?.getAttribute('srcdoc') ?? '';
+
+    /*
+     * Measured against the real policy: an unhashed <style>, a style attribute
+     * and a <link> to this origin are ALL refused inside a sandboxed frame -
+     * the last because an opaque origin is not `'self'`. A hashed inline style
+     * block is the only route in, which is why it is inlined here rather than
+     * linked. `pnpm check:browsers` asserts the result actually renders styled.
+     */
+    expect(srcdoc.startsWith('<meta charset="utf-8"><style>')).toBe(true);
+    expect(srcdoc).toContain('border-collapse: collapse');
+    expect(srcdoc).not.toContain('<link');
   });
 
   it('has a name a screen reader can announce', async () => {

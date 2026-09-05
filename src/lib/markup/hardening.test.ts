@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { PREVIEW_STYLESHEET, previewDocument } from '@/features/toolrunner/previewDocument';
+import { richTextDocument, richTextPlain } from '@/features/toolrunner/richText';
+
 import { htmlToMarkdown, htmlToText, markdownToHtml } from './pipelines';
 
 /**
@@ -26,6 +29,7 @@ import { htmlToMarkdown, htmlToText, markdownToHtml } from './pipelines';
  *   6. Markdown as a language model writes it
  *   7. HTML as the world actually supplies it
  *   8. Known limitations, asserted so that fixing one is noticed
+ *   9. The preview document and the clipboard payload
  */
 
 const HTML = { headingIds: false, linkify: true } as const;
@@ -558,6 +562,169 @@ describe('html from real sources', () => {
 });
 
 /* ========================================================================== *
+ * 9. THE PREVIEW AND THE CLIPBOARD
+ * ========================================================================== */
+
+describe('the preview document', () => {
+  /*
+   * THE PREVIEW HAD NO STYLING AT ALL, and the cause was not the markup.
+   *
+   * Measured against the real policy in a real `sandbox=""` frame: an inline
+   * <style>, a style="" attribute and a <link> to this origin are all refused
+   * - the last because a sandboxed frame has an OPAQUE ORIGIN, where 'self'
+   * matches nothing. So tables had no borders because no stylesheet could
+   * reach the frame by any route, not because a rule was missing.
+   *
+   * A hashed <style> block is the way through, and `check:browsers` asserts
+   * the frame actually renders styled in both engines.
+   */
+  it('carries its stylesheet inline, since nothing can be fetched into the frame', () => {
+    const out = previewDocument('<p>x</p>');
+
+    expect(out.startsWith('<meta charset="utf-8"><style>')).toBe(true);
+    expect(out).toContain('<p>x</p>');
+    expect(out).not.toContain('<link');
+  });
+
+  it('styles every element the sanitiser allows', () => {
+    // A rule for each, so an element added to the allow-list without a rule
+    // shows up here rather than as something that renders unstyled.
+    for (const selector of [
+      'table',
+      'th',
+      'td',
+      'caption',
+      'blockquote',
+      'pre',
+      'kbd',
+      'sub',
+      'sup',
+      'abbr[title]',
+      'mark',
+      'ins',
+      'small',
+      'figure',
+      'figcaption',
+      'dt',
+      'dd',
+      'details',
+      'summary',
+      'hr',
+      'img',
+      'h1',
+      'h6',
+    ]) {
+      expect(PREVIEW_STYLESHEET).toContain(selector);
+    }
+  });
+
+  it('honours the alignment attribute GFM writes onto cells', () => {
+    // Without these the preview shows every column left-aligned, whatever the
+    // table said.
+    expect(PREVIEW_STYLESHEET).toContain("td[align='right']");
+    expect(PREVIEW_STYLESHEET).toContain("td[align='center']");
+  });
+
+  it('hides the footnote label remark expects a host stylesheet to hide', () => {
+    // remark marks it `sr-only` and leaves the hiding to whoever renders it.
+    // Nothing here would, so it rendered as a stray "Footnotes" heading.
+    expect(PREVIEW_STYLESHEET).toContain('.sr-only');
+  });
+});
+
+describe('the rich-text clipboard payload', () => {
+  const TABLE =
+    '<table><thead><tr><th align="right">n</th></tr></thead>' +
+    '<tbody><tr><td align="right">1</td></tr></tbody></table>';
+
+  /*
+   * A STYLESHEET WOULD NOT DO. Google Docs discards <style> blocks outright
+   * and Outlook's Word engine ignores most of what it does not recognise; the
+   * one thing all three honour is an inline style attribute. So the clipboard
+   * document is the opposite choice from the preview, which uses a stylesheet
+   * because a style attribute is what its CSP refuses.
+   */
+  it('inlines the styling rather than linking a stylesheet', () => {
+    const out = richTextDocument(TABLE);
+
+    expect(out).toContain('border-collapse:collapse');
+    expect(out).toContain('border:1px solid');
+    expect(out).not.toContain('<style');
+    expect(out).not.toContain('<link');
+  });
+
+  it('is a complete document with a declared charset', () => {
+    // Word and Outlook read the payload as a document and will guess an
+    // encoding if none is declared, which is how an em dash becomes mojibake.
+    const out = richTextDocument('<p>a — b</p>');
+
+    expect(out.startsWith('<!DOCTYPE html><html><head><meta charset="utf-8">')).toBe(true);
+    expect(out.endsWith('</body></html>')).toBe(true);
+    expect(out).toContain('—');
+  });
+
+  it('carries the legacy table attributes Outlook still needs', () => {
+    // Outlook's engine ignores border declarations in a pasted document often
+    // enough that the attribute is what keeps the grid visible there.
+    expect(richTextDocument(TABLE)).toContain('border="1"');
+  });
+
+  it('keeps column alignment as a declaration, not only an attribute', () => {
+    // Word honours align=""; Google Docs does not. Both get a declaration.
+    expect(richTextDocument(TABLE)).toContain('text-align:right');
+  });
+
+  it('escapes text and attribute values', () => {
+    const out = richTextDocument('<p title="a&quot;b">1 &#x3C; 2 &#x26; 3</p>');
+
+    expect(out).toContain('1 &lt; 2 &amp; 3');
+    expect(out).toContain('title="a&quot;b"');
+  });
+
+  it('writes void elements without a closing tag', () => {
+    expect(richTextDocument('<p>a<br>b</p>')).toContain('<br');
+    expect(richTextDocument('<p>a<br>b</p>')).not.toContain('</br>');
+  });
+
+  it('leaves code untouched inside pre', () => {
+    const out = richTextDocument('<pre><code>a\n  b\n</code></pre>');
+
+    expect(out).toContain('a\n  b');
+    expect(out).toContain('white-space:pre-wrap');
+  });
+
+  /*
+   * THE PLAIN FLAVOUR USED TO BE THE HTML SOURCE. `copyRichText(html, html)`,
+   * so every application that asked for text/plain - which is most of them -
+   * got a wall of angle brackets.
+   */
+  it('gives readable text as the plain-text flavour, not markup', () => {
+    const out = richTextPlain('<h2>Title</h2><p>Body <strong>text</strong>.</p>');
+
+    expect(out).not.toContain('<');
+    expect(out).toContain('## Title');
+    expect(out).toContain('Body text.');
+  });
+
+  it('keeps list numbering, nesting and checkbox state in the plain flavour', () => {
+    const out = richTextPlain(
+      '<ol start="3"><li>a<ul><li>b</li></ul></li></ol>' +
+        '<ul class="contains-task-list"><li class="task-list-item">' +
+        '<input type="checkbox" checked disabled> done</li></ul>',
+    );
+
+    expect(out).toContain('3. a');
+    expect(out).toContain('  - b');
+    expect(out).toContain('[x] done');
+  });
+
+  it('does not repeat a mailto URL that is already the link text', () => {
+    expect(richTextPlain('<p><a href="mailto:a@b.c">a@b.c</a></p>')).toBe('a@b.c');
+    expect(richTextPlain('<p><a href="https://x.dev">docs</a></p>')).toBe('docs (https://x.dev)');
+  });
+});
+
+/* ========================================================================== *
  * 8. KNOWN LIMITATIONS
  * ========================================================================== */
 
@@ -600,24 +767,22 @@ describe('known limitations', () => {
     expect(markdownToHtml('See https://foo.bar for files.' + LF, HTML)).toContain('<a');
   });
 
-  it.each(['abbr', 'figure', 'figcaption', 'mark', 'cite', 'caption', 'time', 'small'])(
-    'KNOWN: drops <%s>, which the allow-list does not include',
-    (tag) => {
-      // Kept out deliberately: the schema is GitHub's own, and the rule for
-      // this project is that changes to an allow-list are subtractions. The
-      // consequence is that `unsupported: 'keep'` cannot preserve these -
-      // they are gone before the option is consulted.
-      const out = markdownToHtml(`<p><${tag}>inner</${tag}></p>` + LF, HTML);
+  it('KNOWN: refuses a data: image source, so the picture does not survive', () => {
+    /*
+     * Considered and refused rather than overlooked. An SVG loaded through
+     * `<img src>` is in secure static mode and cannot run script, so the
+     * payload would be inert HERE - but this tool's output is HTML somebody
+     * pastes somewhere else, and "inert in an <img>" is a fact about one
+     * element in one context. The allow-list is worth more than the images.
+     *
+     * The symptom that prompted looking at it was fixed instead: the image
+     * degrades to its alt text rather than to a broken icon.
+     */
+    const out = markdownToHtml('![a dot](data:image/gif;base64,R0lGOD)' + LF, HTML);
 
-      expect(out).toContain('inner');
-      expect(out).not.toContain(`<${tag}`);
-    },
-  );
-
-  it('KNOWN: drops HTML comments', () => {
-    expect(
-      markdownToHtml('a' + LF + LF + '<!-- note -->' + LF + LF + 'b' + LF, HTML),
-    ).not.toContain('note');
+    expect(out).not.toContain('data:');
+    expect(out).toContain('a dot');
+    expect(out).not.toContain('<img');
   });
 
   it('KNOWN: needs a second pass to settle a document containing raw HTML', () => {

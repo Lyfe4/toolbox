@@ -5,6 +5,7 @@ import { CopyIcon } from '@/components/Icon';
 import { TextArea } from '@/components/TextArea';
 
 import styles from './html.module.css';
+import { previewDocument } from './previewDocument';
 
 /**
  * Writes HTML to the clipboard as BOTH `text/html` and `text/plain`.
@@ -152,9 +153,10 @@ export function HtmlView({
            *
            * What goes in is the SANITISED html the tool produced, never the
            * raw input. The tool sanitises on the way out; this renders that
-           * output and nothing else.
+           * output and nothing else - plus a stylesheet, which needs a CSP
+           * hash to survive `style-src` and is explained in previewDocument.ts.
            */
-          srcDoc={html}
+          srcDoc={previewDocument(html)}
           /*
            * A rendered document needs a name a screen reader can announce, or
            * it is an unlabelled frame the user must enter to identify.
