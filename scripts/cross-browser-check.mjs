@@ -1117,6 +1117,83 @@ async function checkDeepLinks(browser, label) {
 }
 
 /**
+ * Structured data through a real worker, with a hostile column name.
+ *
+ * Two things here are structurally invisible to the unit suite, and both are
+ * about the boundary rather than the parser:
+ *
+ *   1. The parsed document crosses `postMessage`, so it is re-created by the
+ *      engine's own STRUCTURED CLONE. A CSV column called `__proto__` is stored
+ *      as a real own property with `Object.defineProperty` - and whether an own
+ *      `__proto__` survives a clone, or is turned back into a prototype
+ *      assignment on the way out, is a question about the engine. jsdom answers
+ *      it with its own implementation, which is not the one that ships.
+ *   2. Nothing may pollute `Object.prototype` on the main thread as a result.
+ *
+ * The value is the same shape the property tests use, run through the whole
+ * product: tool page, worker, clone, render.
+ */
+async function checkStructuredData(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${ORIGIN}/tools/structured-data`, { waitUntil: 'networkidle' });
+
+    await page.getByLabel('Structured data input').fill('__proto__,note\npolluted,ok');
+    await page.getByRole('button', { name: 'Run' }).click();
+
+    const converted = page.getByLabel('Structured data Converted');
+    await converted.waitFor({ timeout: 30_000 });
+    await expectValue(converted, '__proto__');
+
+    const text = await converted.inputValue();
+    check(
+      label,
+      'a __proto__ column survives the worker boundary as data',
+      text.includes('"__proto__": "polluted"'),
+      text.replace(/\s+/g, ' ').slice(0, 80),
+    );
+
+    const clean = await page.evaluate(() => {
+      const probe = {};
+      return {
+        untouched: Object.getPrototypeOf(probe) === Object.prototype,
+        noStrayKey: !('note' in probe) && !('polluted' in probe),
+      };
+    });
+    check(
+      label,
+      'nothing reached Object.prototype on the way through',
+      clean.untouched && clean.noStrayKey,
+      JSON.stringify(clean),
+    );
+
+    // And the parsed structure on the second port agrees with the rendered one,
+    // which is the half a canvas node would wire onward.
+    const parsedPort = page.getByLabel('Structured data Parsed data');
+    const parsedText = await parsedPort.inputValue();
+    check(
+      label,
+      'both output ports describe the same document',
+      parsedText.includes('__proto__'),
+      parsedText.replace(/\s+/g, ' ').slice(0, 80),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/** Waits for a readonly textarea to hold something, then for it to match. */
+async function expectValue(locator, needle) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const value = await locator.inputValue().catch(() => '');
+    if (value.includes(needle)) return;
+    await locator.page().waitForTimeout(250);
+  }
+}
+
+/**
  * The head, in a real browser, after the router has taken it over.
  *
  * The failure this exists to catch: React hoists the tags `head.ts` produces
@@ -2476,6 +2553,7 @@ async function runChecks(engine, label) {
     await checkAxe(browser, label);
     await checkConsoleSilence(browser, label);
     await checkDeepLinks(browser, label);
+    await checkStructuredData(browser, label);
     await checkHead(browser, label);
     await checkTouch(browser, label);
     await checkTruncation(browser, label);

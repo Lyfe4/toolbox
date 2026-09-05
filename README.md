@@ -34,8 +34,10 @@ are written down: why [JWT](src/tools/jwt-decode/README.md) refuses
 `alg: none`, how [Regex](src/tools/regex-tester/README.md) survives a
 catastrophically backtracking pattern, what stops
 [Image](src/tools/image-convert/README.md) being killed by a decompression
-bomb, and why [Text convert](src/tools/text-convert/README.md) round-trips are
-checked for _meaning_ rather than byte equality.
+bomb, why [Text convert](src/tools/text-convert/README.md) round-trips are
+checked for _meaning_ rather than byte equality, and why
+[Structured data](src/tools/structured-data/README.md) refuses to guess that a
+CSV cell holding `01234` is a number.
 
 **Rich text** is the one thing not deducible from the options: it is not a
 target format. Set Text convert's target to **HTML**, run, and press **Copy as
@@ -175,7 +177,7 @@ about.
 
 ## Testing
 
-1,634 tests across 72 files. The count is not the interesting part; what the
+1,688 tests across 72 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Conformance, measured against the specifications
@@ -234,6 +236,35 @@ anchor pointed at a name that no longer existed. Both were caught by a
 quiet unresolved-tag warnings — which also suppressed genuine syntax errors, so
 malformed YAML returned a half-parsed document instead of reporting the fault.
 `logLevel: 'error'` quiets the noise and still throws on real errors.
+
+### The bugs that produced an answer rather than an error
+
+[Structured data](src/tools/structured-data/README.md) is the tool where being
+wrong is quiet: every other tool here fails visibly, and a converter fails by
+handing back a document that looks exactly like the one you asked for. A pass
+looking specifically for that shape found five, none of which any test was
+failing on:
+
+- **A semicolon-separated export came back as one long string.** Detection only
+  ever tried tabs and commas, so what Excel writes across most of Europe matched
+  neither, fell through to YAML, and parsed as a single plain scalar.
+- **`Hello, world` was confidently reported as an empty table.** One line
+  satisfies "every line agrees on its field count", and a one-line CSV is a
+  header with no rows — so a non-empty document produced `[]`.
+- **A file ending `name\n""` lost its last record.** An empty _quoted_ field is
+  neither a non-empty field nor a completed one, so the pending row was never
+  flushed. From the outside it looked like a file with no rows.
+- **A YAML mapping with both `true:` and `"true":` lost one of them.** They are
+  two keys to YAML and one key to JavaScript. The parser's uniqueness check
+  compares scalar values, so it saw two, and the object it built had one.
+- **Deeply nested input threw `RangeError` out of `run`.** Through the `json`
+  input port, which is the one route that never meets a parser, so it met no
+  guard either — and a tool throwing across the execution boundary is the thing
+  the whole result type exists to prevent.
+
+Each is now a named regression test, and the tool's README carries the coercion
+policy, the detection rules and what it does with data that cannot survive the
+conversion — including the one silent loss that is not fixable here.
 
 ### Two findings that were only ever going to be found by looking
 
