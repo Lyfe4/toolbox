@@ -391,20 +391,19 @@ describe('round-tripping', () => {
     expect(out).toContain('swallowed');
   });
 
-  it('KNOWN DEFECT: drops a space at the edge of a code span', () => {
+  it('keeps whitespace at the edge of a code span', () => {
     /*
-     * `<code> ab</code>` serialises as `` `ab` ``, losing the space.
-     *
-     * CommonMark strips one space from each end of a code span when both ends
-     * have one, so the space IS expressible - as `` `  ab ` `` - and the
-     * serialiser simply does not pad for it. Upstream, and the same judgement
-     * as the backslash case: recorded rather than papered over, because
-     * whitespace inside a code span is content.
+     * This used to be recorded as an upstream defect: `<code> ab</code>` came
+     * back as `` `ab` ``. The cause was right - `rehype-minify-whitespace`
+     * runs before any handler - and the conclusion that nothing could be done
+     * was wrong, because it runs on a CLONE and the original is still there.
      */
-    expect(md('<p><code> ab</code></p>')).toBe('`ab`' + LF);
-
-    // Interior spaces are safe; it is only the edges.
+    expect(md('<p><code> ab</code></p>')).toBe('` ab`' + LF);
     expect(md('<p><code>a b</code></p>')).toBe('`a b`' + LF);
+
+    // Both ends: CommonMark strips one space from each when both have one, so
+    // the serialiser has to pad, and the round trip is what proves it did.
+    expect(html(md('<p><code> ab </code></p>'))).toBe('<p><code> ab </code></p>');
   });
 
   it('KNOWN DEFECT: can escape text into an email address', () => {

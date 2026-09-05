@@ -175,7 +175,7 @@ about.
 
 ## Testing
 
-1,614 tests across 72 files. The count is not the interesting part; what the
+1,634 tests across 72 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Conformance, measured against the specifications

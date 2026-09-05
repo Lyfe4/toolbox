@@ -1931,6 +1931,67 @@ async function checkPreviewSandbox(browser, label) {
       };
     });
 
+    /*
+     * THE BUG REPORT, DRIVEN END TO END IN A REAL ENGINE.
+     *
+     * "Blank lines are dropped inside fenced code blocks" was reported against
+     * Markdown to HTML, and the pipeline turned out to be right - so the only
+     * places left for the loss to have been were the output textarea and the
+     * rendered preview, neither of which a unit test can see. jsdom has no
+     * layout engine, so it cannot say how many lines a <pre> actually draws.
+     *
+     * This types the reported document into the real tool, reads the real
+     * output, and counts the line boxes the real preview lays out. Three lines
+     * for two statements is the blank line between them.
+     */
+    const input = page.getByRole('textbox', { name: /Input/i }).first();
+    await input.fill('```ts\nconst a = 1;\n\nconst b = 2;\n```\n');
+    await page.getByRole('button', { name: /^Run/ }).first().click();
+    await page.getByRole('button', { name: 'Source' }).first().click();
+    await page.waitForTimeout(400);
+
+    const codeFidelity = await page.evaluate(async () => {
+      const source = [...document.querySelectorAll('textarea')]
+        .map((area) => area.value)
+        .find((value) => value.includes('<pre>'));
+
+      if (source === undefined) return { found: false };
+
+      // The same document the preview frame is given, in a frame that can be
+      // read, so the laid-out result can be measured rather than assumed.
+      const style = /<style>([\s\S]*?)<\/style>/.exec(
+        document.querySelector('iframe[srcdoc]')?.getAttribute('srcdoc') ?? '',
+      );
+      const probe = document.createElement('iframe');
+      probe.setAttribute('sandbox', 'allow-same-origin');
+      probe.srcdoc = `<style>${style ? style[1] : ''}</style>${source}`;
+      probe.style.cssText = 'position:fixed;left:-9999px;width:600px;height:400px';
+
+      const lines = await new Promise((resolve) => {
+        probe.addEventListener('load', () => {
+          const code = probe.contentDocument?.querySelector('pre code');
+          resolve(code ? code.getClientRects().length : -1);
+        });
+        document.body.appendChild(probe);
+      });
+      probe.remove();
+
+      return {
+        found: true,
+        keepsBlankLine: source.includes('const a = 1;\n\nconst b = 2;'),
+        renderedLines: lines,
+      };
+    });
+
+    check(
+      label,
+      'a blank line inside a fenced code block survives to the output and the preview',
+      codeFidelity.found === true &&
+        codeFidelity.keepsBlankLine === true &&
+        codeFidelity.renderedLines === 3,
+      JSON.stringify(codeFidelity),
+    );
+
     check(
       label,
       'the preview stylesheet survives style-src and actually applies',

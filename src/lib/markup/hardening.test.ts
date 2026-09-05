@@ -30,6 +30,7 @@ import { htmlToMarkdown, htmlToText, markdownToHtml } from './pipelines';
  *   7. HTML as the world actually supplies it
  *   8. Known limitations, asserted so that fixing one is noticed
  *   9. The preview document and the clipboard payload
+ *  10. Whitespace inside code, which is content and must survive byte for byte
  */
 
 const HTML = { headingIds: false, linkify: true } as const;
@@ -737,16 +738,20 @@ describe('known limitations', () => {
    * an upstream release fixes one, this suite says so - loudly, with the file
    * and line to go and delete.
    */
-  it('KNOWN: drops a space at the edge of a code span', () => {
-    /*
-     * hast-util-to-mdast runs `rehype-minify-whitespace` over the tree before
-     * any handler sees it, so the leading space is gone before there is
-     * anything to preserve it with. Not the serialiser, which was the previous
-     * guess: the serialiser pads correctly when given the right value.
-     */
-    expect(htmlToMarkdown('<p><code> ab</code></p>', MD)).toBe('`ab`' + LF);
-    // Interior spaces are safe; it is only the edges.
+  /*
+   * WAS a known limitation. It is fixed, and this is what it now does.
+   *
+   * The diagnosis above was right and the conclusion was wrong: because
+   * `hast-util-to-mdast` minifies a CLONE, the original text is still there to
+   * be read - and the clone keeps `position`, which is a reliable identity for
+   * a parsed node. The pipeline records code text off the real tree and hands
+   * it back to a handler. See `recordVerbatimText` in pipelines.ts.
+   */
+  it('keeps a space at the edge of a code span', () => {
+    expect(htmlToMarkdown('<p><code> ab</code></p>', MD)).toBe('` ab`' + LF);
     expect(htmlToMarkdown('<p><code>a b</code></p>', MD)).toBe('`a b`' + LF);
+    // And it reads back as what it was, which is the point of keeping it.
+    expect(markdownToHtml('` ab`' + LF, HTML)).toBe('<p><code> ab</code></p>');
   });
 
   it('KNOWN: mangles a backslash immediately before inline markup', () => {
@@ -798,5 +803,415 @@ describe('known limitations', () => {
     const three = roundTrip(two);
 
     expect(two).toBe(three);
+  });
+});
+
+/* ========================================================================== *
+ * 10. WHITESPACE INSIDE CODE
+ * ========================================================================== */
+
+/**
+ * A REPORT OF "BLANK LINES ARE DROPPED IN FENCED CODE BLOCKS", RUN DOWN.
+ *
+ * The reported case - a bare fence, Markdown to HTML - turned out not to
+ * reproduce, in fifteen spellings of the same document. What DID reproduce
+ * was three other things, each real:
+ *
+ *   1. Two blank lines in a row became one in the PLAIN TEXT output, because
+ *      `htmlToText` finished with `.replace(/\n{3,}/g, '\n\n')` over the whole
+ *      string. The same mistake `tidyWhitespace` was written to avoid, made
+ *      again fifty lines further down.
+ *   2. A document that OPENED with a code block lost the indent on its first
+ *      line only, because the same post-processing ended with `.trim()`.
+ *   3. A trailing blank line inside a fence was lost on the way back to
+ *      Markdown, and a run of spaces inside a code span was collapsed.
+ *      Both upstream, both fixed from outside - see `recordVerbatimText`.
+ *
+ * And one that reproduces exactly as reported but is CommonMark, not a bug:
+ * a blank line ends a raw HTML block, so a `<pre>` written inside a one-line
+ * `<details>` is cut in half. Pinned at the bottom of this section with the
+ * spec example that mandates it.
+ *
+ * The matrix below is every combination the report asked for: consecutive,
+ * leading and trailing blank lines, in fenced and indented blocks, in all
+ * four directions.
+ */
+describe('blank lines in code', () => {
+  /** The exact document from the bug report, verbatim. */
+  const REPORTED = FENCE + 'ts' + LF + 'const a = 1;' + LF + LF + 'const b = 2;' + LF + FENCE + LF;
+
+  it('the reported document keeps its blank line in every direction', () => {
+    const html = markdownToHtml(REPORTED, HTML);
+
+    // Markdown -> HTML. This direction was never broken; asserted so that a
+    // future change cannot break it quietly.
+    expect(html).toBe(
+      '<pre><code class="language-ts">const a = 1;' +
+        LF +
+        LF +
+        'const b = 2;' +
+        LF +
+        '</code></pre>',
+    );
+
+    // HTML -> Markdown, and back again unchanged.
+    expect(htmlToMarkdown(html, MD)).toBe(REPORTED);
+    expect(markdownToHtml(htmlToMarkdown(html, MD), HTML)).toBe(html);
+
+    // Markdown -> text. Four spaces on EVERY line including the first, which
+    // is what `.trim()` used to take away.
+    expect(htmlToText(html, TEXT)).toBe('    const a = 1;' + LF + LF + '    const b = 2;');
+  });
+
+  it('keeps two blank lines in a row as two', () => {
+    /*
+     * THE ONE THE STRING-LEVEL REGEX ATE. Three newlines in a row are two
+     * blank lines of a program; between blocks they are padding. The tidy-up
+     * cannot tell, so code is held out of it entirely.
+     */
+    const source = FENCE + LF + 'a' + LF + LF + LF + 'b' + LF + FENCE + LF;
+    const html = markdownToHtml(source, HTML);
+
+    expect(html).toContain('a' + LF + LF + LF + 'b');
+    expect(htmlToMarkdown(html, MD)).toBe(source);
+    expect(htmlToText(html, TEXT)).toBe('    a' + LF + LF + LF + '    b');
+  });
+
+  it('keeps a blank FIRST line', () => {
+    const source = FENCE + LF + LF + 'a' + LF + FENCE + LF;
+    const html = markdownToHtml(source, HTML);
+
+    expect(html).toBe('<pre><code>' + LF + 'a' + LF + '</code></pre>');
+    expect(htmlToMarkdown(html, MD)).toBe(source);
+    // The document therefore begins with a blank line, because that blank line
+    // is the first line of the program rather than padding around it.
+    expect(htmlToText(html, TEXT)).toBe(LF + '    a');
+  });
+
+  it('keeps a blank LAST line', () => {
+    /*
+     * Lost until this pass. `hast-util-to-mdast`'s code handler ran
+     * `trimTrailingLines`, which strips EVERY trailing newline where mdast
+     * wants exactly one removed - the one mdast-to-hast adds when rendering a
+     * fence. So the fence came back one line shorter each time.
+     */
+    const source = FENCE + LF + 'a' + LF + LF + FENCE + LF;
+    const html = markdownToHtml(source, HTML);
+
+    expect(html).toBe('<pre><code>a' + LF + LF + '</code></pre>');
+    expect(htmlToMarkdown(html, MD)).toBe(source);
+    expect(markdownToHtml(htmlToMarkdown(html, MD), HTML)).toBe(html);
+  });
+
+  it('keeps blank lines in an INDENTED code block', () => {
+    // Four-space indentation is the other way to write a code block, and it
+    // reaches the same hast; asserted separately because it reaches it by a
+    // different route through the parser.
+    const source = '    a' + LF + LF + '    b' + LF;
+    const html = markdownToHtml(source, HTML);
+
+    expect(html).toBe('<pre><code>a' + LF + LF + 'b' + LF + '</code></pre>');
+    // It comes back FENCED, deliberately: an indented block cannot carry a
+    // language hint, so the serialiser is set to fences always.
+    expect(htmlToMarkdown(html, MD)).toBe(FENCE + LF + 'a' + LF + LF + 'b' + LF + FENCE + LF);
+    expect(htmlToText(html, TEXT)).toBe('    a' + LF + LF + '    b');
+  });
+
+  it('keeps blank lines in a <pre> that arrived as HTML', () => {
+    const source = '<pre><code>a' + LF + LF + 'b</code></pre>';
+
+    expect(htmlToMarkdown(source, MD)).toBe(FENCE + LF + 'a' + LF + LF + 'b' + LF + FENCE + LF);
+    expect(htmlToText(source, TEXT)).toBe('    a' + LF + LF + '    b');
+    // A <pre> with no <code> inside it is the same block to a reader.
+    expect(htmlToText('<pre>a' + LF + LF + 'b</pre>', TEXT)).toBe('    a' + LF + LF + '    b');
+  });
+
+  it('indents the first line of a document that opens with code', () => {
+    /*
+     * The second bug this report turned up, and the subtler one: only line
+     * ONE was wrong, because `.trim()` acts on the ends of the document and
+     * the code block happened to be at one. Mixed indentation like that is
+     * worse than none - it looks like the code, not the converter, is broken.
+     */
+    const html = markdownToHtml(FENCE + LF + 'a' + LF + FENCE + LF + LF + 'After.' + LF, HTML);
+
+    expect(htmlToText(html, TEXT)).toBe('    a' + LF + LF + 'After.');
+  });
+
+  it('keeps trailing spaces that are part of the program', () => {
+    // Invisible, and still content: a Markdown sample demonstrating a hard
+    // line break is two trailing spaces and nothing else.
+    const html = '<pre><code>a  ' + LF + 'b</code></pre>';
+
+    expect(htmlToText(html, TEXT)).toBe('    a  ' + LF + '    b');
+    // Outside code they still go, which is what the per-line strip is for.
+    expect(htmlToText('<p>a  </p>', TEXT)).toBe('a');
+  });
+
+  it('does not print its own marker when code sits inside a table cell', () => {
+    /*
+     * Found while writing the fix. A cell is collapsed to a single line
+     * whatever is in it, so holding its code out of that would be pointless -
+     * but the marker has to be substituted back before the collapse, or a
+     * control character is printed in the middle of the table.
+     */
+    const out = htmlToText(
+      '<table><tr><td><pre><code>a' + LF + 'b</code></pre></td></tr></table>',
+      TEXT,
+    );
+
+    expect(out).not.toContain(String.fromCharCode(0));
+    expect(out).toContain('a b');
+  });
+
+  it('leaves a dollar-sign replacement pattern in code alone', () => {
+    /*
+     * `$&` means "the whole match" to `String.replace` when the replacement is
+     * a string. Code blocks are substituted back with a replacer FUNCTION for
+     * this reason, and `$&` in a shell snippet or a regex sample is exactly
+     * what arrives on this tool's input.
+     */
+    const out = htmlToText('<pre><code>echo "$&" $1 $`</code></pre>', TEXT);
+
+    expect(out).toBe('    echo "$&" $1 $`');
+  });
+
+  it('cannot be confused by a NUL in the input, because there cannot be one', () => {
+    /*
+     * The marker is U+0000, which is safe by construction rather than by hope:
+     * the HTML tokenizer disposes of every NUL in character data, so no tree
+     * this code sees can contain one. Asserted here so that a future change of
+     * parser cannot quietly remove the guarantee.
+     */
+    const NUL = String.fromCharCode(0);
+    const out = htmlToText('<p>a' + NUL + 'b</p><pre><code>c' + NUL + 'd</code></pre>', TEXT);
+
+    expect(out).not.toContain(NUL);
+    expect(out).toBe('ab' + LF + LF + '    cd');
+  });
+
+  it('keeps interior whitespace in a code span', () => {
+    /*
+     * `rehype-minify-whitespace` runs inside `hast-util-to-mdast` and treats
+     * `<pre>` as sensitive but a bare inline `<code>` as ordinary prose, so
+     * two spaces became one. Fixed by recording the text off the real tree
+     * before the clone is minified.
+     */
+    expect(htmlToMarkdown('<p><code>a  b</code></p>', MD)).toBe('`a  b`' + LF);
+    expect(markdownToHtml('`a  b`' + LF, HTML)).toBe('<p><code>a  b</code></p>');
+
+    // A LINE ENDING still becomes one space, and that is not a loss: a code
+    // span cannot contain a line break, so CommonMark has no spelling for it.
+    expect(htmlToMarkdown('<p><code>a' + LF + 'b</code></p>', MD)).toBe('`a b`' + LF);
+  });
+
+  it('is CommonMark, not a bug, when a blank line cuts a raw HTML block in two', () => {
+    /*
+     * THE ONE CASE THAT REPRODUCES THE ORIGINAL REPORT, and it is the spec.
+     *
+     * A raw HTML block opened by a tag OTHER than pre/script/style/textarea
+     * ends at the first blank line - CommonMark's HTML block condition 6. So
+     * a `<pre>` written inside a single-line `<details>` is cut in half and
+     * the second half re-parsed as a paragraph. CommonMark example 148
+     * mandates exactly this, cmark-gfm does it, GitHub does it, and the
+     * conformance suite already asserts we match.
+     *
+     * Recorded rather than worked around: diverging would mean failing the
+     * spec on purpose. The document-level fix is a blank line after the
+     * `</summary>`, which is the case asserted directly below.
+     */
+    const oneLine =
+      '<details><summary>s</summary><pre><code>a' + LF + LF + 'b</code></pre></details>' + LF;
+    const cut = markdownToHtml(oneLine, HTML);
+
+    expect(cut).toContain('<p>');
+    expect(cut).not.toContain('a' + LF + LF + 'b');
+
+    // With the blank line where CommonMark wants it, everything survives.
+    const spaced =
+      '<details>' +
+      LF +
+      '<summary>s</summary>' +
+      LF +
+      LF +
+      FENCE +
+      'ts' +
+      LF +
+      'a' +
+      LF +
+      LF +
+      'b' +
+      LF +
+      FENCE +
+      LF +
+      LF +
+      '</details>' +
+      LF;
+
+    expect(markdownToHtml(spaced, HTML)).toContain('a' + LF + LF + 'b');
+  });
+});
+
+/* ========================================================================== *
+ * 11. PINNED BEHAVIOUR
+ * ========================================================================== */
+
+/**
+ * Verified by hand and pinned here, so that a future change to the converter
+ * has to break a named test rather than a document nobody reruns.
+ */
+describe('pinned behaviour', () => {
+  it('does what the unsupported option says for <details>, whichever it is', () => {
+    /*
+     * REPORTED AS A BUG: "<details> and <summary> are dropped entirely".
+     * They are, and it is the setting rather than a defect - but the setting
+     * is worth pinning, because the loss is real and silent.
+     *
+     * `<details>` is the one element in the unsupported list where dropping
+     * the tag drops MEANING rather than decoration: a collapsed section stops
+     * being collapsed, and a README's twelve-item troubleshooting list stops
+     * being folded away. The words all survive; the fold does not.
+     *
+     * The default stays `text` anyway, and the reason is in the git history:
+     * `keep` writes a container element back as inline HTML, so a document
+     * wrapped in a single `<div>` - which is every Word and Google Docs paste
+     * - converted to itself. A default that is wrong for pasted HTML is worse
+     * than one that is lossy for `<details>`, and `keep` is one control away.
+     */
+    const source = '<details><summary>Show</summary><p>Body.</p></details>';
+
+    // keep: lossless, and re-readable, because a block element is written as
+    // opening tag, real Markdown, closing tag rather than as one raw string.
+    const kept = htmlToMarkdown(source, MD);
+    expect(kept).toContain('<details>');
+    expect(kept).toContain('<summary>');
+    expect(markdownToHtml(kept, HTML)).toContain('<details>');
+
+    // text: the words, without the fold.
+    const text = htmlToMarkdown(source, MD_TEXT);
+    expect(text).not.toContain('<details>');
+    expect(text).toContain('Show');
+    expect(text).toContain('Body.');
+
+    // drop: the element and everything in it.
+    expect(htmlToMarkdown(source, { ...MD, unsupported: 'drop' }).trim()).toBe('');
+  });
+
+  it('keeps a fence indented inside an ordered list item inside that item', () => {
+    const source =
+      '1. First step' +
+      LF +
+      LF +
+      '   ' +
+      FENCE +
+      'ts' +
+      LF +
+      '   const a = 1;' +
+      LF +
+      LF +
+      '   const b = 2;' +
+      LF +
+      '   ' +
+      FENCE +
+      LF +
+      '2. Second step' +
+      LF;
+    const html = markdownToHtml(source, HTML);
+
+    // Inside the <li>, not hoisted out of the list.
+    expect(html.indexOf('<pre>')).toBeGreaterThan(html.indexOf('<ol>'));
+    expect(html.indexOf('<pre>')).toBeLessThan(html.indexOf('</ol>'));
+    expect(html).toContain('const a = 1;' + LF + LF + 'const b = 2;');
+
+    /*
+     * It comes back as the same document apart from ONE added blank line,
+     * between the two items. That is not a defect: an item containing more
+     * than one block makes the whole list LOOSE, and a loose list is written
+     * with its items separated. Round-tripping it again changes nothing.
+     */
+    const back = htmlToMarkdown(html, MD);
+    expect(back).toContain('   ' + FENCE + 'ts');
+    expect(back).toContain('   const a = 1;' + LF + LF + '   const b = 2;');
+    expect(back).toContain('2. Second step');
+    expect(htmlToMarkdown(markdownToHtml(back, HTML), MD)).toBe(back);
+  });
+
+  it('keeps table column alignment on the way back to Markdown', () => {
+    const source =
+      '<table><thead><tr><th align="left">L</th><th align="center">C</th>' +
+      '<th align="right">R</th></tr></thead>' +
+      '<tbody><tr><td>1</td><td>2</td><td>3</td></tr></tbody></table>';
+    const out = htmlToMarkdown(source, MD);
+
+    /*
+     * `:-`, `:-:` and `-:` - the MINIMAL spelling, not `:---`/`---:`. The
+     * serialiser pads the delimiter row to the width of its column, and these
+     * columns are one character wide. Both spellings are the same GFM
+     * alignment; the second assertion shows the padding by widening a header
+     * rather than leaving the reader to wonder which form is fixed.
+     */
+    expect(out).toContain('| :- | :-: | -: |');
+
+    const wide = htmlToMarkdown(
+      '<table><thead><tr><th align="right">Duration</th></tr></thead>' +
+        '<tbody><tr><td>1</td></tr></tbody></table>',
+      MD,
+    );
+    expect(wide).toContain('-------:');
+  });
+
+  it('keeps task list checkbox state on the way back to Markdown', () => {
+    const source =
+      '<ul><li><input type="checkbox" checked disabled> done</li>' +
+      '<li><input type="checkbox" disabled> not done</li></ul>';
+    const out = htmlToMarkdown(source, MD);
+
+    expect(out).toContain('[x] done');
+    expect(out).toContain('[ ] not done');
+  });
+
+  it('turns <kbd> into inline code, which is the nearest Markdown has', () => {
+    /*
+     * And it is hast-util-to-mdast's own default that does it: `kbd`, `samp`
+     * and `var` all map to `inlineCode`, which is the right answer - all three
+     * are rendered monospace, and a code span is the only monospace Markdown
+     * has.
+     *
+     * It only applies under `text`. Under `keep`, `<kbd>` is one of the
+     * elements with no Markdown equivalent and is written back verbatim, which
+     * is lossless and therefore better. Both are asserted, because which one
+     * you get depends on an option and that is worth pinning.
+     */
+    expect(htmlToMarkdown('<p>Press <kbd>Ctrl</kbd></p>', MD_TEXT)).toBe('Press `Ctrl`' + LF);
+    expect(htmlToMarkdown('<p>Press <kbd>Ctrl</kbd></p>', MD)).toBe('Press <kbd>Ctrl</kbd>' + LF);
+  });
+
+  it('renders plain text as a document rather than a stream of words', () => {
+    const html = markdownToHtml(
+      '# Title' +
+        LF +
+        LF +
+        'See [the spec](https://example.org/spec).' +
+        LF +
+        LF +
+        '| Name | Cost |' +
+        LF +
+        '| :--- | ---: |' +
+        LF +
+        '| a    |    1 |' +
+        LF,
+      HTML,
+    );
+    const out = htmlToText(html, TEXT);
+
+    // Headings keep a marker, so hierarchy survives.
+    expect(out).toContain('# Title');
+    // A link keeps its destination, in brackets after the words.
+    expect(out).toContain('the spec (https://example.org/spec)');
+    // A table becomes aligned columns under a ruled header.
+    expect(out).toContain('Name');
+    expect(out).toMatch(/-{3,}/);
+    const rows = out.split(LF).filter((line) => line.includes('|') || /\s{2}/.test(line));
+    expect(rows.length).toBeGreaterThan(0);
   });
 });

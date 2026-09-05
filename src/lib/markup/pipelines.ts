@@ -705,12 +705,118 @@ function unsupportedHandlers(
 }
 
 /**
+ * CODE CONTENT, RESTORED AFTER hast-util-to-mdast HAS MINIFIED IT.
+ *
+ * `toMdast` clones the tree and runs `rehype-minify-whitespace` over the clone
+ * before any handler is consulted. That is right for prose and wrong for code,
+ * and it is wrong in a way no option reaches: whitespace sensitivity is a
+ * `switch` on tag name inside `hast-util-minify-whitespace`, `<pre>` is in it
+ * and a bare inline `<code>` is not. So `<code>a  b</code>` arrives at the
+ * `inlineCode` handler already collapsed to `a b`, with the original gone.
+ *
+ * Measured, and both directions of the loss:
+ *
+ *   `<code>a  b</code>`            ->  `a b`     (a space of the program lost)
+ *   `<pre><code>a\n\n</code></pre>`->  `a`       (a blank line of it lost)
+ *
+ * The second is the `code` handler's own `trimTrailingLines`, which strips
+ * EVERY trailing newline where mdast wants exactly one removed - the one that
+ * mdast-to-hast adds when it renders a fence.
+ *
+ * The fix for both is to record the text off the real tree on the way past,
+ * and hand it back to a handler that would otherwise have to trust the clone.
+ * The clone keeps `position`, and a parsed node's source offsets are a
+ * reliable identity - the same mechanism `stripAutolinkLiterals` uses above.
+ * A node with no position (nothing here makes one) falls through to the
+ * default, so the worst case is today's behaviour rather than a crash.
+ */
+type VerbatimText = Map<string, string>;
+
+function positionKey(node: HastElement): string | null {
+  const { start, end } = node.position ?? {};
+  if (start?.offset === undefined || end?.offset === undefined) return null;
+  return `${start.offset.toString()}:${end.offset.toString()}`;
+}
+
+/** Every descendant text node, concatenated: the element's content as parsed. */
+function rawText(node: HastNodes): string {
+  if (node.type === 'text') return node.value;
+  if (node.type !== 'root' && node.type !== 'element') return '';
+  return node.children.map((child) => rawText(child)).join('');
+}
+
+/** Records the exact text of every code element, before anything minifies it. */
+function recordVerbatimText(into: VerbatimText) {
+  // A plugin, so an extra level of function: unified calls this to GET the
+  // transformer, and calls the transformer with the tree.
+  return () =>
+    (tree: HastNodes): void => {
+      const walk = (node: HastNodes): void => {
+        if (node.type !== 'root' && node.type !== 'element') return;
+
+        if (node.type === 'element' && (node.tagName === 'code' || node.tagName === 'pre')) {
+          const key = positionKey(node);
+          if (key !== null) into.set(key, rawText(node));
+        }
+
+        for (const child of node.children) walk(child);
+      };
+
+      walk(tree);
+    };
+}
+
+/**
+ * `<pre>` -> a fenced code block, with its trailing blank lines intact.
+ *
+ * Built on the default handler rather than replacing it, so the language class
+ * is still read by the code that owns that job - the same shape as
+ * `orderedList` below. Only the value is corrected, and only by removing the
+ * ONE trailing newline that mdast-to-hast adds: `<pre><code>a\n</code></pre>`
+ * is the fence containing `a`, and `<pre><code>a\n\n</code></pre>` is the
+ * fence containing `a` and a blank line after it.
+ */
+function codeBlock(recorded: VerbatimText): Handle {
+  return (state, node) => {
+    // Typed as returning a `Code` node, so there is nothing to narrow here
+    // and a defensive check would be a check the compiler has already made.
+    const result = defaultHandlers.pre(state, node);
+    const exact = recorded.get(positionKey(node) ?? '');
+
+    if (exact !== undefined) result.value = exact.replace(/\n$/, '');
+    return result;
+  };
+}
+
+/**
+ * `<code>` -> a code span, with its interior spacing intact.
+ *
+ * Line endings still become single spaces, because that is CommonMark's own
+ * rule for a code span and not something lost on the way: a code span cannot
+ * contain a line break, so there is no spelling of `a\nb` for the serialiser
+ * to write. Spaces and tabs are content and are kept exactly.
+ */
+function inlineCode(recorded: VerbatimText): Handle {
+  return (state, node) => {
+    const result = defaultHandlers.code(state, node);
+    const exact = recorded.get(positionKey(node) ?? '');
+
+    if (exact !== undefined) result.value = exact.replace(/\r?\n/g, ' ');
+    return result;
+  };
+}
+
+/**
  * HTML → Markdown.
  *
  * `fragment: true` because the input is a snippet, not a document: without it
  * the parser helpfully invents html/head/body around whatever it is given.
  */
 export function htmlToMarkdown(html: string, options: HtmlToMarkdownOptions): string {
+  // Filled in by the plugin below and read by the two code handlers. Local to
+  // the call, so two conversions running at once cannot see each other's text.
+  const verbatim: VerbatimText = new Map();
+
   return String(
     unified()
       .use(rehypeParse, { fragment: true })
@@ -728,8 +834,16 @@ export function htmlToMarkdown(html: string, options: HtmlToMarkdownOptions): st
        * valid Markdown and lossless; 'text' keeps the words and discards the
        * wrapper; 'drop' removes it and its content.
        */
+      // Last thing before the conversion, so what it records is the tree the
+      // conversion is about to be handed.
+      .use(recordVerbatimText(verbatim))
       .use(rehypeRemark, {
-        handlers: { ...unsupportedHandlers(options.unsupported), ol: orderedList },
+        handlers: {
+          ...unsupportedHandlers(options.unsupported),
+          ol: orderedList,
+          pre: codeBlock(verbatim),
+          code: inlineCode(verbatim),
+        },
       })
       .use(remarkGfm)
       .use(remarkStringify, {
@@ -767,6 +881,19 @@ export function htmlToMarkdown(html: string, options: HtmlToMarkdownOptions): st
 }
 
 /**
+ * THE CHARACTER THAT CANNOT BE IN THE TEXT.
+ *
+ * Code blocks are rendered once, lifted out, and put back after the
+ * line-level tidy-up in `htmlToText` has run. That needs a marker which
+ * cannot collide with the user's content, and U+0000 is one by construction
+ * rather than by hope: the HTML tokenizer disposes of every NUL in character
+ * data before a tree exists, so nothing reaching this function can contain
+ * one. Every path here parses HTML first, the Markdown one included.
+ * Asserted by name in the regression suite.
+ */
+const VERBATIM_MARK = '\u0000';
+
+/**
  * HTML → plain text.
  *
  * Sanitised first even though the output carries no markup at all. Two
@@ -782,16 +909,76 @@ export function htmlToText(html: string, options: HtmlToTextOptions): string {
 
   recordListParents(tree);
 
-  return (
-    renderText(tree, options)
-      .split('\n')
-      // No trailing whitespace on any line: it is invisible, it survives a
-      // paste, and it is what makes a diff of two conversions unreadable.
-      .map((line) => line.replace(/[^\S\n]+$/, ''))
-      .join('\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim()
-  );
+  /*
+   * CODE IS HELD OUT OF THE TIDY-UP, and this is the second time that lesson
+   * has had to be learnt in this file.
+   *
+   * `tidyWhitespace` says it walks the tree rather than running a regex over
+   * the finished string, "because a regex could not tell the newlines between
+   * two table rows from the ones inside a fenced code block". The three
+   * string operations below WERE that regex, and they did exactly that
+   * damage:
+   *
+   *   - collapsing three or more newlines flattened two blank lines inside a
+   *     code block into one;
+   *   - stripping trailing whitespace per line removed trailing spaces that
+   *     are part of the program;
+   *   - `trim()` ate the four-space indent of the FIRST line of a document
+   *     that opens with a code block, leaving line one flush against the
+   *     margin and every line after it indented.
+   *
+   * All three are still wanted BETWEEN blocks - that is what stops a heading
+   * and a list running together, and what keeps a converted document free of
+   * invisible trailing spaces. So each code block is rendered once, replaced
+   * by a marker, and substituted back afterwards. The marker is a single
+   * token on a line of its own, so nothing the tidy-up does can reach inside
+   * it.
+   */
+  const blocks: string[] = [];
+  const rendered = renderText(tree, options, 0, false, blocks);
+
+  const tidied = rendered
+    .split('\n')
+    // No trailing whitespace on any line: it is invisible, it survives a
+    // paste, and it is what makes a diff of two conversions unreadable.
+    .map((line) => line.replace(/[^\S\n]+$/, ''))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    /*
+     * BLANK LINES AT THE EDGES GO; INDENTATION ON THE FIRST LINE STAYS.
+     *
+     * This was `trim()`, and the difference is not cosmetic - it is what makes
+     * converting to text IDEMPOTENT. Plain text is valid HTML input, so
+     * running the conversion twice has to produce what running it once did.
+     * A document that opens with a code block starts with four spaces, and
+     * `trim()` removed them on the second pass. The property test caught it
+     * with `<pre><code>code();</code></pre><h1>Title</h1>` the moment the
+     * first pass started indenting that line correctly.
+     *
+     * Stripping whole blank lines is what was wanted all along. Every line has
+     * already had its trailing whitespace removed above, so a line that was
+     * only spaces is empty by the time these two run.
+     */
+    .replace(/^\n+/, '')
+    .replace(/\n+$/, '');
+
+  return substituteBlocks(tidied, blocks);
+}
+
+/**
+ * Puts the lifted code blocks back where their markers are.
+ *
+ * A REPLACER FUNCTION, not a replacement string. A string replacement
+ * interprets `$&`, `$1` and friends, and `$&` in a shell snippet or a regex
+ * sample is exactly the sort of thing that arrives inside a code block on this
+ * tool's input.
+ */
+function substituteBlocks(text: string, blocks: readonly string[]): string {
+  let out = text;
+  for (const [index, block] of blocks.entries()) {
+    out = out.replace(`${VERBATIM_MARK}${index.toString()}${VERBATIM_MARK}`, () => block);
+  }
+  return out;
 }
 
 /**
@@ -922,7 +1109,18 @@ function renderTable(node: HastElement, options: HtmlToTextOptions): string {
       rows.push(
         current.children
           .filter((cell) => cell.type === 'element')
-          .map((cell) => renderText(cell, options, 0, false).replace(/\s+/g, ' ').trim()),
+          .map((cell) => {
+            /*
+             * A cell gets its OWN block list, substituted straight away.
+             * A table cell is collapsed to one line whatever is in it, so
+             * holding its code out of that would be pointless - but leaving a
+             * marker in the text would print a stray control character in the
+             * middle of the table, which is how this was found.
+             */
+            const cellBlocks: string[] = [];
+            const text = renderText(cell, options, 0, false, cellBlocks);
+            return substituteBlocks(text, cellBlocks).replace(/\s+/g, ' ').trim();
+          }),
       );
       if (inHead) headerRows += 1;
       return;
@@ -967,8 +1165,10 @@ function renderTable(node: HastElement, options: HtmlToTextOptions): string {
 function renderText(
   node: HastNodes,
   options: HtmlToTextOptions,
-  depth = 0,
-  verbatim = false,
+  depth: number,
+  verbatim: boolean,
+  /** Rendered code blocks, lifted out of the text. See `htmlToText`. */
+  blocks: string[],
 ): string {
   if (node.type === 'text') {
     /*
@@ -984,7 +1184,9 @@ function renderText(
   if (node.type === 'comment') return '';
 
   if (node.type === 'root') {
-    return node.children.map((child) => renderText(child, options, depth, verbatim)).join('');
+    return node.children
+      .map((child) => renderText(child, options, depth, verbatim, blocks))
+      .join('');
   }
 
   if (node.type !== 'element') return '';
@@ -1013,7 +1215,7 @@ function renderText(
    * only nesting plain text has a way to show.
    */
   const inner = node.children
-    .map((child) => renderText(child, options, depth, verbatim || tag === 'pre'))
+    .map((child) => renderText(child, options, depth, verbatim || tag === 'pre', blocks))
     .join('');
 
   if (HEADING.has(tag)) {
@@ -1038,10 +1240,19 @@ function renderText(
     // Four spaces on top of whatever indentation the surrounding list gives
     // it, with the code's own indentation preserved inside that.
     const body = inner.replace(/\n$/, '');
-    return `\n${body
+    const block = body
       .split('\n')
-      .map((line) => `${indent}    ${line}`)
-      .join('\n')}\n`;
+      /*
+       * A BLANK LINE STAYS BLANK rather than becoming four spaces of
+       * whitespace nobody can see. It used to be indented like any other, and
+       * the strip that removed it again is one of the operations this block is
+       * now held out of - so it has to arrive clean instead.
+       */
+      .map((line) => (line === '' ? '' : `${indent}    ${line}`))
+      .join('\n');
+
+    blocks.push(block);
+    return `\n${VERBATIM_MARK}${(blocks.length - 1).toString()}${VERBATIM_MARK}\n`;
   }
 
   if (tag === 'blockquote') {
@@ -1061,7 +1272,7 @@ function renderText(
      * every line double-spaced.
      */
     const body = node.children
-      .map((child) => renderText(child, options, depth + 1, verbatim))
+      .map((child) => renderText(child, options, depth + 1, verbatim, blocks))
       .join('')
       .replace(/\n{3,}/g, '\n\n')
       .trim()

@@ -389,6 +389,137 @@ Whitespace is normalised throughout: no trailing spaces on any line, never more
 than one blank line, and a list item spanning several lines gets a blank line
 after it while a one-line item stays tight against its neighbours.
 
+## Whitespace inside code
+
+A blank line in a code block is a line of the program. So is a trailing space,
+and so is the second space in `` `a  b` ``. This section exists because a bug
+report said blank lines were being dropped in fenced blocks, and running it
+down found three different losses — none of them the one reported.
+
+### What was reported did not reproduce
+
+Markdown → HTML keeps the blank line, in every spelling of the document there
+is: backtick and tilde fences, with and without a language, indented four
+spaces instead, inside a list, inside a blockquote, with CRLF line endings,
+with spaces or a tab on the blank line, and with no trailing newline. Fifteen
+variants, all measured, all correct. That direction was never broken and is now
+pinned so it cannot break quietly.
+
+### What did
+
+**Two blank lines in a row became one, in the plain-text output.**
+`htmlToText` finished by running `.replace(/\n{3,}/g, '\n\n')` over the whole
+string. Between blocks that is exactly right — it is what stops a heading and a
+list drifting apart. Inside a program it destroys a line. `tidyWhitespace`,
+fifty lines further up the same file, carries a comment explaining that it
+walks the tree rather than running a regex over the finished string "because a
+regex could not tell the newlines between two table rows from the ones inside a
+fenced code block". The same mistake, made again below it.
+
+**A document that opened with a code block lost the indent on its first line
+only.** The same post-processing ended with `.trim()`, which acts on the ends of
+the document — and a leading code block is at one. Line one came out flush
+against the margin with every line after it indented four spaces, which looks
+like the code is broken rather than the converter.
+
+Both are fixed by rendering each code block once, replacing it with a marker,
+running the tidy-up, and substituting the blocks back. The marker is U+0000,
+which is safe by construction rather than by hope: the HTML tokenizer disposes
+of every NUL in character data, so no tree this code sees can contain one.
+Every path parses HTML first, the Markdown one included. The substitution uses
+a replacer **function**, not a replacement string, because `$&` in a shell
+snippet is exactly what turns up inside a code block here.
+
+**A trailing blank line inside a fence was lost on the way back to Markdown**,
+and **a run of spaces inside a code span was collapsed**. Both upstream, and
+both fixed from outside the dependency:
+
+- `hast-util-to-mdast`'s code handler runs `trimTrailingLines`, which strips
+  every trailing newline where mdast wants exactly one removed — the one that
+  mdast-to-hast adds when it renders a fence. So the block came back one line
+  shorter each time.
+- It also runs `rehype-minify-whitespace` before any handler is consulted, and
+  whitespace sensitivity there is a `switch` on tag name: `<pre>` is in it, a
+  bare inline `<code>` is not. `<code>a  b</code>` arrived at the handler
+  already collapsed.
+
+Neither has an option. Both are reachable anyway, because `toMdast` minifies a
+**clone** — the original tree is still there, and the clone keeps `position`,
+which is a reliable identity for a parsed node. The pipeline records code text
+off the real tree on the way past and hands it back to a handler that would
+otherwise have to trust the clone. Same mechanism `stripAutolinkLiterals` uses.
+A node with no position falls through to the default, so the worst case is the
+old behaviour rather than a crash.
+
+A line ending inside a code span still becomes a single space. That is not a
+loss: a code span cannot contain a line break, so CommonMark has no spelling
+for one.
+
+### And one that reproduces, and is CommonMark
+
+A `<pre>` written inside a **single-line `<details>`** really is cut in half at
+the blank line:
+
+```html
+<details>
+  <summary>s</summary>
+  <pre><code>a
+
+b</code></pre>
+</details>
+```
+
+A raw HTML block opened by a tag other than `pre`, `script`, `style` or
+`textarea` ends at the first blank line — CommonMark's HTML block condition 6.
+[Example 148](https://spec.commonmark.org/0.31.2/#example-148) mandates exactly
+this shape of damage, cmark-gfm does it, GitHub does it, and the conformance
+suite already asserts this tool matches. Diverging would mean failing the spec
+on purpose.
+
+The document-level fix is the one every README uses: a blank line after the
+`</summary>`, and the fence on its own lines.
+
+````markdown
+<details>
+<summary>s</summary>
+
+```ts
+a;
+
+b;
+```
+````
+
+</details>
+```
+
+That form survives intact, and is asserted next to the broken one.
+
+## `<details>` and the unsupported option
+
+Converting `<details><summary>…</summary>…</details>` to Markdown with the
+default settings returns the summary text and the body and drops both tags.
+That is the `Markup Markdown cannot express` option doing what it says, not a
+defect — but the loss is real and worth naming, because `<details>` is the one
+element in that list where dropping the tag drops **meaning**. A collapsed
+section stops being collapsed.
+
+| Setting                 | `<details>`                             |
+| ----------------------- | --------------------------------------- |
+| Keep as inline HTML     | survives exactly, and reads back        |
+| Keep the text (default) | the words survive, the fold does not    |
+| Drop it entirely        | the element and its content are removed |
+
+**The default stays `text`,** and the reason is in the git history rather than
+in taste: `keep` writes a container element back as inline HTML, so a document
+wrapped in a single `<div>` — which is every Word and Google Docs paste —
+converted to itself. A default that is wrong for pasted HTML is worse than one
+that is lossy for `<details>`, and `keep` is one control away.
+
+`keep` is genuinely lossless here, not merely verbose: a block element is
+written as its opening tag, its children as **real Markdown**, and its closing
+tag, so a fenced code block inside `<details>` stays a fenced code block.
+
 ## Known limitations
 
 Every one of these is asserted in
@@ -397,12 +528,6 @@ behaviour, so an upstream fix shows up as a failing test with the file and
 line to go and delete.
 
 ### Upstream, with no clean fix from outside
-
-**A space at the edge of a code span is dropped.** `<code> ab</code>` becomes
-`` `ab` ``. `hast-util-to-mdast` runs `rehype-minify-whitespace` over the tree
-before any handler sees it, so the space is gone before there is anything to
-preserve it with. (The previous guess blamed the serialiser; the serialiser
-pads correctly when given the right value.) Interior spaces are safe.
 
 **A backslash immediately before inline markup is mangled.** `a\x<em>b</em>`
 serialises as `a\&#x78;_b_`; read back, `\&` is an escaped ampersand, so the
