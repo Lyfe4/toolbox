@@ -21,7 +21,13 @@ import {
   useToast,
 } from '@/components';
 import { ThemeSwitcher, useTheme } from '@/features/theme';
-import { contrastRatioHex } from '@/lib/color';
+import {
+  draftReader,
+  measureContrast,
+  summariseContrast,
+  type Measurement,
+} from '@/features/theme/contrast';
+import { ThemeEditor } from '@/features/theme/editor';
 import { cx } from '@/lib/cx';
 
 import styles from './styleguide.module.css';
@@ -273,14 +279,22 @@ const TYPE_SCALE = [
 const RADIUS_SCALE = ['--pb-radius-control', '--pb-radius-panel'];
 const MOTION_SCALE = ['--pb-motion-fast', '--pb-motion-base', '--pb-motion-slow'];
 
-/** Pairs shown in the live contrast readout, with their WCAG AA threshold. */
-const CONTRAST_CHECKS: readonly (readonly [string, string, string, number])[] = [
-  ['Body text', '--pb-ink-primary', '--pb-surface-base', 4.5],
-  ['Muted text', '--pb-ink-muted', '--pb-surface-base', 4.5],
-  ['On accent', '--pb-ink-on-accent', '--pb-accent', 4.5],
-  ['Hairline', '--pb-border-hairline', '--pb-surface-base', 3],
-  ['Control edge', '--pb-control-border', '--pb-control-surface', 3],
-  ['Focus ring', '--pb-focus-ring', '--pb-surface-base', 3],
+/**
+ * The handful of pairs the sidebar shows at a glance.
+ *
+ * A SUBSET of the canonical list in features/theme/contrast.ts, chosen by
+ * label rather than restated as tokens - so this readout can never measure a
+ * pair the theme contrast test does not, or measure it differently. The full
+ * 33 are in the theme editor below.
+ */
+const HEADLINE_PAIRS: readonly string[] = [
+  'Body text',
+  'Secondary text',
+  'Muted text',
+  'Text on accent',
+  'Panel edge',
+  'Control edge on its own fill',
+  'Focus ring',
 ];
 
 const ALL_TOKENS: readonly string[] = [
@@ -330,19 +344,6 @@ function useComputedTokens(): Readonly<Record<string, string>> {
   }, []);
 
   return values;
-}
-
-/** Contrast ratio, or null when a value has not been read yet. */
-function safeContrast(
-  foreground: string | undefined,
-  background: string | undefined,
-): number | null {
-  if (foreground === undefined || background === undefined) return null;
-  try {
-    return contrastRatioHex(foreground, background);
-  } catch {
-    return null;
-  }
 }
 
 function Section({
@@ -442,8 +443,26 @@ const ENCODINGS = [
 ];
 
 export function StyleguidePage() {
-  const { activePreset } = useTheme();
+  const { activePreset, activeCustom } = useTheme();
   const tokens = useComputedTokens();
+
+  /*
+   * Measured from the STYLESHEET rather than from `getComputedStyle`, unlike
+   * the swatch values above. Both are correct in a browser; only one is
+   * correct everywhere. A browser substitutes `var()` when it computes a
+   * custom property, so the swatches read real colours - but the same call
+   * under jsdom returns the literal string `var(--raw-paper-600)`, which is
+   * not a colour and cannot be measured. Resolving the stylesheet gives one
+   * answer in both, and it is the same answer themes.contrast.test.ts and the
+   * theme editor use.
+   */
+  const measurements = measureContrast(
+    draftReader(activePreset.name, activeCustom?.overrides ?? {}),
+  );
+  const summary = summariseContrast(measurements);
+  const headline: readonly Measurement[] = HEADLINE_PAIRS.map((label) =>
+    measurements.find((measurement) => measurement.pair.label === label),
+  ).filter((measurement): measurement is Measurement => measurement !== undefined);
 
   const [text, setText] = useState('SGVsbG8sIHBhdGNoYmF5');
   const [encoding, setEncoding] = useState('base64');
@@ -470,7 +489,7 @@ export function StyleguidePage() {
 
           <Section
             title="Themes"
-            note="Four presets. Switching one swaps only the semantic colour layer; every component keeps describing intent and picks up the change for free."
+            note="Four presets, plus anything you build in the editor below. Switching one swaps only the semantic colour layer; every component keeps describing intent and picks up the change for free."
           >
             <div className={styles.specimens}>
               <Specimen label="Active">
@@ -481,25 +500,44 @@ export function StyleguidePage() {
               </Specimen>
               <Specimen label="Contrast">
                 <div className={styles.specimenStack}>
-                  {CONTRAST_CHECKS.map(([label, fg, bg, threshold]) => {
-                    const ratio = safeContrast(tokens[fg], tokens[bg]);
-                    const passes = ratio !== null && ratio >= threshold;
-                    return (
-                      <span className={styles.readoutRow} key={label}>
-                        <span>{label}</span>
-                        <span
-                          className={cx(styles.readoutValue, passes ? styles.pass : styles.fail)}
-                        >
-                          {ratio === null ? '-' : `${ratio.toFixed(2)}:1`}
-                          {' / '}
-                          {threshold.toFixed(1)}
-                        </span>
+                  {headline.map((measurement) => (
+                    <span className={styles.readoutRow} key={measurement.pair.label}>
+                      <span>{measurement.pair.label}</span>
+                      <span
+                        className={cx(
+                          styles.readoutValue,
+                          measurement.passes ? styles.pass : styles.fail,
+                        )}
+                      >
+                        {measurement.ratio === null ? '-' : `${measurement.ratio.toFixed(2)}:1`}
+                        {' / '}
+                        {measurement.threshold.toFixed(1)}
                       </span>
-                    );
-                  })}
+                    </span>
+                  ))}
+                  <span className={styles.readoutRow}>
+                    <span>All pairs</span>
+                    <span
+                      className={cx(
+                        styles.readoutValue,
+                        summary.failing === 0 ? styles.pass : styles.fail,
+                      )}
+                    >
+                      {summary.failing === 0
+                        ? `${summary.total.toString()} pass`
+                        : `${summary.failing.toString()} of ${summary.total.toString()} fail`}
+                    </span>
+                  </span>
                 </div>
               </Specimen>
             </div>
+          </Section>
+
+          <Section
+            title="Theme editor"
+            note="Build your own from the same semantic tokens the presets use. Changes apply to this whole page as you make them - scroll down and the components below are already wearing them. Contrast is measured continuously against the same pairs the preset test asserts."
+          >
+            <ThemeEditor />
           </Section>
 
           <Section
@@ -816,7 +854,7 @@ export function StyleguidePage() {
 
         <aside className={styles.sidebar} aria-label="Theme controls">
           <Panel title="Theme">
-            <ThemeSwitcher legend="Preset" />
+            <ThemeSwitcher legend="Active theme" />
           </Panel>
         </aside>
       </div>

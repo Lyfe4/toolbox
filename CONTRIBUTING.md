@@ -145,6 +145,18 @@ Adding a token means adding it to layer 2 with a name that describes its role,
 and to every theme in layer 3. If you cannot name the role without describing
 the colour, it probably belongs in an existing token.
 
+**And to `THEMED_TOKENS` and `TOKEN_GROUPS`**, if it is a colour. Those are what
+the theme editor on `/styleguide` offers a user, and a token missing from either
+is one nobody can reach. Both are asserted rather than trusted:
+`themes.tokens.test.ts` checks the list against the real CSS, and
+`customThemes.test.ts` checks that every entry in the list has been grouped and
+explained.
+
+A colour token that a user could sensibly be expected to get wrong should also
+appear in `CONTRAST_PAIRS` in `features/theme/contrast.ts` — the one list that
+both `themes.contrast.test.ts` and the live editor readout iterate. See
+[docs/theming.md](docs/theming.md).
+
 ## Accessibility
 
 Not a review checklist item — a gate. axe runs against every component and

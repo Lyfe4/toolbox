@@ -1,10 +1,27 @@
 /**
- * Reads the token CSS files as text and resolves them into plain objects, so
- * tests can assert things about the design system's actual values.
+ * Reads the token CSS files as text and resolves them into plain objects.
  *
  * The files are pulled in with Vite's `?raw` suffix, which hands us the file
- * contents as a string. That keeps this working inside the jsdom test
- * environment without needing Node's filesystem APIs.
+ * contents as a string.
+ *
+ * WHY THIS IS NOT A TEST HELPER ANY MORE
+ *
+ * It began as one, asserting things about the design system's actual values.
+ * The theme editor needs the same answer at runtime - "what does `vellum`
+ * resolve `--pb-ink-muted` to?" - in order to show a token's inherited value
+ * and to measure contrast against tokens the user has not overridden.
+ *
+ * `getComputedStyle` cannot supply it. A browser substitutes `var()` at
+ * computed-value time, so it would work there; jsdom cascades custom
+ * properties but does NOT substitute, and hands back the literal string
+ * `var(--raw-paper-600)`. Measured, not assumed. Reading the stylesheet text
+ * gives one answer in both environments, and it is the same answer the
+ * contrast test has always asserted against - which is what lets the editor's
+ * live readout and themes.contrast.test.ts share a single implementation
+ * rather than two that could drift.
+ *
+ * It costs the ~22 kB of raw CSS in whatever chunk imports it. Only the
+ * lazily-loaded /styleguide route does.
  */
 import primitivesCss from '@/styles/primitives.css?raw';
 import semanticCss from '@/styles/semantic.css?raw';
@@ -170,4 +187,20 @@ export function themeOverrideTokens(): ReadonlyMap<string, readonly string[]> {
   }
 
   return result;
+}
+
+/**
+ * `resolveTheme` re-parses three stylesheets on every call, which is fine once
+ * in a test and wasteful in a component that re-renders on every keystroke.
+ * The CSS is a build-time constant, so the answer can never go stale.
+ */
+const themeCache = new Map<string, TokenMap>();
+
+export function cachedTheme(theme: string): TokenMap {
+  const hit = themeCache.get(theme);
+  if (hit !== undefined) return hit;
+
+  const resolved = resolveTheme(theme);
+  themeCache.set(theme, resolved);
+  return resolved;
 }

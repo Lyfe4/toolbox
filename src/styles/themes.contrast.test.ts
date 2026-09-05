@@ -1,94 +1,57 @@
 import { describe, expect, it } from 'vitest';
 
-import { contrastRatioHex } from '@/lib/color';
-import { resolveTheme, semanticTokenNames } from '@/lib/testing/cssTokens';
+import {
+  CONTRAST_PAIRS,
+  measureContrast,
+  presetReader,
+  type ContrastPair,
+} from '@/features/theme/contrast';
+import { THEME_NAMES } from '@/features/theme/types';
+import { resolveTheme, semanticTokenNames } from '@/lib/cssTokens';
 
 /**
- * Every preset. `as const` freezes this into a tuple of literal strings rather
- * than a general `string[]`, so a typo here is a compile error.
+ * WCAG AA, ASSERTED AGAINST THE REAL STYLESHEET.
+ *
+ * The pair list and the arithmetic both come from features/theme/contrast.ts,
+ * which is also what the theme editor uses to measure a theme somebody is
+ * building. That sharing is the point: a preset loaded into the editor as a
+ * custom theme has to produce exactly the numbers this file asserts, and it
+ * can only be guaranteed to if there is one implementation rather than two
+ * that agree today.
+ *
+ * `presetReader` resolves the tokens by parsing primitives.css, semantic.css
+ * and themes.css, which is what the browser does with the cascade - see
+ * lib/cssTokens.ts for why that is read rather than computed.
  */
-const THEMES = ['graphite', 'vellum', 'phosphor', 'blueprint'] as const;
+describe.each(THEME_NAMES)('theme: %s', (theme) => {
+  const measurements = measureContrast(presetReader(theme));
 
-/** WCAG 2.2 AA thresholds. */
-const AA_TEXT = 4.5;
-const AA_NON_TEXT = 3;
+  const cases: readonly (readonly [string, ContrastPair])[] = CONTRAST_PAIRS.map((pair) => [
+    `${pair.label} (--pb-${pair.foreground} on --pb-${pair.background})`,
+    pair,
+  ]);
 
-/** Foreground/background token pairs that must clear the body-text ratio. */
-const TEXT_PAIRS: readonly (readonly [string, string])[] = [
-  ['pb-ink-primary', 'pb-surface-base'],
-  ['pb-ink-primary', 'pb-surface-raised'],
-  ['pb-ink-primary', 'pb-surface-overlay'],
-  ['pb-ink-secondary', 'pb-surface-base'],
-  ['pb-ink-secondary', 'pb-surface-raised'],
-  ['pb-ink-muted', 'pb-surface-base'],
-  ['pb-ink-muted', 'pb-surface-raised'],
-  ['pb-ink-accent', 'pb-surface-base'],
-  ['pb-ink-accent', 'pb-surface-raised'],
-  // The palette's selected row: an accent name and a muted summary on the
-  // raised surface that marks the selection.
-  ['pb-ink-accent', 'pb-surface-overlay'],
-  ['pb-ink-muted', 'pb-surface-overlay'],
-  ['pb-ink-on-accent', 'pb-accent'],
-  ['pb-ink-inverse', 'pb-ink-primary'],
-  ['pb-signal-ok', 'pb-surface-base'],
-  ['pb-signal-warn', 'pb-surface-base'],
-  ['pb-signal-error', 'pb-surface-base'],
-  ['pb-signal-ok', 'pb-surface-raised'],
-  ['pb-signal-warn', 'pb-surface-raised'],
-  ['pb-signal-error', 'pb-surface-raised'],
-  ['pb-selection-ink', 'pb-selection-surface'],
-  ['pb-ink-primary', 'pb-control-surface'],
-];
+  it.each(cases)('%s meets AA', (_name, pair) => {
+    const measurement = measurements.find((one) => one.pair === pair);
+    expect(measurement, 'pair was not measured').toBeDefined();
+    if (measurement === undefined) return;
 
-/**
- * Boundaries and indicators. WCAG 1.4.11 asks 3:1 of anything a user must
- * perceive to operate a control. `--pb-border-subtle` is intentionally absent:
- * it draws decorative rules inside a panel and carries no meaning.
- */
-const NON_TEXT_PAIRS: readonly (readonly [string, string])[] = [
-  ['pb-border-hairline', 'pb-surface-base'],
-  ['pb-border-hairline', 'pb-surface-raised'],
-  ['pb-border-strong', 'pb-surface-base'],
-  ['pb-control-border', 'pb-surface-base'],
-  ['pb-control-border', 'pb-surface-raised'],
-  ['pb-control-border', 'pb-control-surface'],
-  ['pb-focus-ring', 'pb-surface-base'],
-  ['pb-focus-ring', 'pb-surface-raised'],
-  ['pb-focus-ring', 'pb-control-surface'],
-  ['pb-accent', 'pb-surface-base'],
-  ['pb-accent', 'pb-surface-raised'],
-  // The palette's selection bar. It is the structural carrier of "this row is
-  // selected", so it has to be perceivable against the row it sits on.
-  ['pb-accent', 'pb-surface-overlay'],
-];
+    expect(measurement.foregroundValue, `--pb-${pair.foreground} is not defined`).not.toBeNull();
+    expect(measurement.backgroundValue, `--pb-${pair.background} is not defined`).not.toBeNull();
 
-describe.each(THEMES)('theme: %s', (theme) => {
-  const tokens = resolveTheme(theme);
-
-  it.each(TEXT_PAIRS)('%s on %s meets AA for body text', (fg, bg) => {
-    const fgHex = tokens[fg];
-    const bgHex = tokens[bg];
-    expect(fgHex, `--${fg} is not defined`).toBeDefined();
-    expect(bgHex, `--${bg} is not defined`).toBeDefined();
-
-    const ratio = contrastRatioHex(fgHex ?? '', bgHex ?? '');
     expect(
-      ratio,
-      `${theme}: --${fg} (${fgHex ?? '?'}) on --${bg} (${bgHex ?? '?'}) is ${ratio.toFixed(2)}:1, needs ${AA_TEXT.toString()}:1`,
-    ).toBeGreaterThanOrEqual(AA_TEXT);
-  });
+      measurement.ratio,
+      `${theme}: --pb-${pair.foreground} (${measurement.foregroundValue ?? '?'}) on --pb-${pair.background} (${measurement.backgroundValue ?? '?'}) could not be measured: ${measurement.problem ?? 'unknown'}`,
+    ).not.toBeNull();
 
-  it.each(NON_TEXT_PAIRS)('%s on %s meets AA for UI boundaries', (fg, bg) => {
-    const fgHex = tokens[fg];
-    const bgHex = tokens[bg];
-    const ratio = contrastRatioHex(fgHex ?? '', bgHex ?? '');
     expect(
-      ratio,
-      `${theme}: --${fg} (${fgHex ?? '?'}) on --${bg} (${bgHex ?? '?'}) is ${ratio.toFixed(2)}:1, needs ${AA_NON_TEXT.toString()}:1`,
-    ).toBeGreaterThanOrEqual(AA_NON_TEXT);
+      measurement.ratio ?? 0,
+      `${theme}: --pb-${pair.foreground} (${measurement.foregroundValue ?? '?'}) on --pb-${pair.background} (${measurement.backgroundValue ?? '?'}) is ${(measurement.ratio ?? 0).toFixed(2)}:1, needs ${measurement.threshold.toFixed(1)}:1`,
+    ).toBeGreaterThanOrEqual(measurement.threshold);
   });
 
   it('defines every themed semantic token', () => {
+    const tokens = resolveTheme(theme);
     const missing = semanticTokenNames().filter((name) => tokens[name] === undefined);
     expect(missing).toEqual([]);
   });

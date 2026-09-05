@@ -363,6 +363,135 @@ async function checkDialogScroll(browser, label) {
 }
 
 /**
+ * THE HALF OF THE THEME EDITOR jsdom CANNOT SEE.
+ *
+ * The unit suite proves the editor writes `--pb-accent` onto <html> and that
+ * the primary button's stylesheet reads `var(--pb-accent)`. It cannot prove
+ * the two meet, because jsdom has no layout engine: it cascades custom
+ * properties but does not SUBSTITUTE `var()`, so asking a button for its
+ * computed background there returns the literal string rather than a colour.
+ *
+ * This asks a real engine. Change one token in the editor and the button that
+ * was orange has to be green - which is the whole claim the feature makes.
+ */
+async function checkThemeEditor(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${ORIGIN}/styleguide`, { waitUntil: 'networkidle' });
+
+    const primary = page.getByRole('button', { name: 'Default' }).first();
+    await primary.waitFor({ timeout: 15_000 });
+    const backgroundOf = (locator) =>
+      locator.evaluate((element) => getComputedStyle(element).backgroundColor);
+
+    const before = await backgroundOf(primary);
+
+    await page.getByRole('button', { name: 'Create theme' }).click();
+    await page.getByRole('tab', { name: 'Accent' }).click();
+    await page.getByRole('textbox', { name: 'accent', exact: true }).fill('oklch(0.72 0.19 145)');
+    await page.waitForTimeout(300);
+
+    const after = await backgroundOf(primary);
+    check(
+      label,
+      'a token edited in the editor repaints a real component',
+      before !== after && after === 'rgb(67, 194, 81)',
+      `${before} -> ${after}`,
+    );
+
+    // The value that reached the stylesheet is the CANONICAL one, not the
+    // oklch() that was typed. That is the security boundary doing its job:
+    // only a hex literal is ever written into a custom property.
+    const applied = await page.evaluate(() =>
+      document.documentElement.style.getPropertyValue('--pb-accent'),
+    );
+    check(
+      label,
+      'only a canonical hex literal reaches the stylesheet',
+      /^#[0-9a-f]{6}$/.test(applied),
+      applied || 'absent',
+    );
+
+    /*
+     * A value that is a legal custom property but not a colour. `url(...)`
+     * used as a background is a NETWORK REQUEST out of an application that
+     * makes none, so the editor must refuse it outright rather than store it.
+     */
+    await page
+      .getByRole('textbox', { name: 'accent', exact: true })
+      .fill('url(https://example.com/pixel.png)');
+    await page.waitForTimeout(200);
+
+    const afterHostile = await page.evaluate(() =>
+      document.documentElement.style.getPropertyValue('--pb-accent'),
+    );
+    check(
+      label,
+      'a url() is refused rather than written into a custom property',
+      afterHostile === applied,
+      afterHostile || 'absent',
+    );
+
+    // And the failure is reported to the user, not swallowed.
+    check(
+      label,
+      'the rejected colour is announced as an error',
+      await page.getByRole('alert').filter({ hasText: 'Not a colour' }).first().isVisible(),
+    );
+
+    /*
+     * Live contrast, measured in the engine that is doing the painting. The
+     * editor resolves tokens from the stylesheet text rather than from
+     * getComputedStyle - see lib/cssTokens.ts - so this is the check that the
+     * two agree about what the page actually looks like.
+     */
+    await page.getByRole('tab', { name: 'Ink' }).click();
+    await page.getByRole('textbox', { name: 'ink-primary', exact: true }).fill('#0c0d12');
+    await page.waitForTimeout(300);
+
+    const summary = await page
+      .getByText(/pairs? fail WCAG AA/)
+      .first()
+      .textContent();
+    check(
+      label,
+      'the contrast readout reports a theme the user has just broken',
+      /\d+ of 33 pairs fail WCAG AA/.test(summary ?? ''),
+      summary ?? 'absent',
+    );
+
+    const measured = await page.evaluate(() => {
+      const style = getComputedStyle(document.documentElement);
+      return {
+        ink: style.getPropertyValue('--pb-ink-primary').trim(),
+        surface: style.getPropertyValue('--pb-surface-base').trim(),
+      };
+    });
+    check(
+      label,
+      'the page really is wearing the colours the readout measured',
+      measured.ink === '#0c0d12',
+      JSON.stringify(measured),
+    );
+
+    // Live preview off puts the page back without discarding the work.
+    await page.getByRole('switch', { name: 'Live preview' }).click();
+    await page.waitForTimeout(200);
+    const restored = await backgroundOf(primary);
+    check(
+      label,
+      'turning live preview off restores the selected theme',
+      restored === before,
+      `${before} -> ${restored}`,
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
  * Route transition feedback, which needs real timing and so also cannot be
  * asserted in jsdom - there a route's dynamic import takes over a second to
  * transform, making every navigation "slow".
@@ -2290,6 +2419,7 @@ async function runChecks(engine, label) {
     await checkTouch(browser, label);
     await checkTruncation(browser, label);
     await checkPreviewSandbox(browser, label);
+    await checkThemeEditor(browser, label);
   } finally {
     await browser.close();
   }

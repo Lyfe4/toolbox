@@ -165,9 +165,17 @@ route in two real engines — with `color-contrast` enabled, which jsdom cannot
 do — in `pnpm check:browsers`. All four themes are held to WCAG AA by a test
 that resolves the real CSS and measures each pair.
 
+A theme somebody builds themselves cannot be held to that by a test, because it
+does not exist when the test runs — so the theme editor measures the same 33
+pairs live, with the same code the test uses, and says which pair is failing
+against which. Saving a failing theme is allowed; it is the user's choice. The
+state is carried by a signal colour, a rule and the words "5 of 33 pairs fail
+WCAG AA", so it does not depend on being able to see the colour it is warning
+about.
+
 ## Testing
 
-1,327 tests across 61 files. The count is not the interesting part; what the
+1,614 tests across 72 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Conformance, measured against the specifications
@@ -374,6 +382,21 @@ rather than by convention. Four themes, each held to WCAG AA by a test that
 resolves the real CSS. The rule and its rationale are in
 [CONTRIBUTING.md](CONTRIBUTING.md#the-token-layering-rule); run the app and
 visit `/styleguide` to see every token with contrast ratios measured live.
+
+**Build your own theme there too.** The editor on `/styleguide` overrides the
+same semantic tokens the presets use — nothing else is themable, by
+construction — with a native colour picker and a text field that accepts hex,
+`rgb()`, `hsl()` and `oklch()` through the colour tool's own parser. Changes
+apply to the whole page as you make them, so you are editing against the real
+component gallery rather than a swatch. Themes are saved locally, exported and
+imported as JSON, and never leave the machine.
+
+Values are stored as hex and only hex, which is a security boundary rather than
+a style rule: a custom property will happily hold `url(...)`, and a token used
+in a `background` would then make a network request out of an application whose
+whole premise is that it makes none. [docs/theming.md](docs/theming.md) has the
+rest, including why the editor is deliberately painted by the theme it is
+editing and why themes are not shareable by URL.
 
 ## Setup
 

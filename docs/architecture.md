@@ -194,13 +194,24 @@ README and [the connect flow](#) below.
 
 ## State
 
-Three Zustand stores, split by what invalidates them:
+Four Zustand stores, split by what invalidates them:
 
-| Store           | Holds                                 | Persisted           |
-| --------------- | ------------------------------------- | ------------------- |
-| `graphStore`    | nodes, edges, selection, undo history | `patchbay:graph:v2` |
-| `viewportStore` | pan and zoom                          | no                  |
-| `pipelineStore` | per-node run status and results       | no                  |
+| Store           | Holds                                 | Persisted                                 |
+| --------------- | ------------------------------------- | ----------------------------------------- |
+| `graphStore`    | nodes, edges, selection, undo history | `patchbay:graph:v2`                       |
+| `viewportStore` | pan and zoom                          | no                                        |
+| `pipelineStore` | per-node run status and results       | no                                        |
+| `themeStore`    | selection, authored themes, draft     | `patchbay:theme:v1`, `patchbay:themes:v1` |
+
+`themeStore` is the one that reads storage at MODULE LOAD rather than in an
+effect: the first paint has to already be wearing the right theme, and an
+effect running afterwards would show one frame of the wrong one. That is also
+why its reader is hand-written rather than Zod — it is in the initial payload.
+See [theming.md](theming.md).
+
+Its `draftTheme` is the theme currently being edited. It outranks the selection
+on screen and is never persisted, because it is what the page is showing rather
+than what the user has chosen.
 
 Execution status lives in `pipelineStore`, not on the node. It is _derived from
 a run_, not part of the document — which is what the v1 → v2 migration was

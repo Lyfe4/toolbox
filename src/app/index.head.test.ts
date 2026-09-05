@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveTheme } from '@/lib/testing/cssTokens';
+import { resolveTheme } from '@/lib/cssTokens';
 
 import { SITE_DESCRIPTION, SITE_NAME, SOCIAL_IMAGE_ALT } from './head';
 import indexHtml from '../../index.html?raw';

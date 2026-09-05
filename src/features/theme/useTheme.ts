@@ -1,20 +1,27 @@
 import { useEffect } from 'react';
 
 import { THEME_PRESETS, THEME_PRESET_LIST } from './presets';
-import { resolveSelection, syncDocumentTheme, useThemeStore } from './store';
+import { resolveActive, resolveSelection, syncDocumentTheme, useThemeStore } from './store';
 
 import type { CustomTheme, ThemePreset, ThemeSelection } from './types';
 
 export interface UseThemeResult {
   /** What the user picked, including the `system` option. */
   readonly selection: ThemeSelection;
-  /** The preset actually in force right now. */
+  /** The preset actually in force right now, draft included. */
   readonly activePreset: ThemePreset;
   /** The custom theme in force, or null when a plain preset is selected. */
   readonly activeCustom: CustomTheme | null;
   readonly presets: readonly ThemePreset[];
   readonly customThemes: readonly CustomTheme[];
+  /** Non-null while a theme is being edited. Overrides the selection on screen. */
+  readonly draftTheme: CustomTheme | null;
+  /** Stored themes that could not be read back. Zero in the ordinary case. */
+  readonly skippedThemes: number;
   readonly setSelection: (selection: ThemeSelection) => void;
+  readonly setDraftTheme: (theme: CustomTheme | null) => void;
+  readonly saveCustomTheme: (theme: CustomTheme) => void;
+  readonly deleteCustomTheme: (id: string) => void;
 }
 
 /** Typed read/write access to the current theme. */
@@ -22,9 +29,23 @@ export function useTheme(): UseThemeResult {
   const selection = useThemeStore((state) => state.selection);
   const customThemes = useThemeStore((state) => state.customThemes);
   const systemAppearance = useThemeStore((state) => state.systemAppearance);
+  const draftTheme = useThemeStore((state) => state.draftTheme);
+  const skippedThemes = useThemeStore((state) => state.skippedThemes);
   const setSelection = useThemeStore((state) => state.setSelection);
+  const setDraftTheme = useThemeStore((state) => state.setDraftTheme);
+  const saveCustomTheme = useThemeStore((state) => state.upsertCustomTheme);
+  const deleteCustomTheme = useThemeStore((state) => state.removeCustomTheme);
 
-  const resolved = resolveSelection(selection, customThemes, systemAppearance);
+  /*
+   * Reconstructed from the fields above rather than read with
+   * `useThemeStore(resolveActive)`: a selector returning a fresh object every
+   * call makes zustand re-render on every store write, whatever changed. The
+   * individual selectors above each return a primitive or a stable reference.
+   */
+  const resolved =
+    draftTheme !== null
+      ? { theme: draftTheme.base, custom: draftTheme }
+      : resolveSelection(selection, customThemes, systemAppearance);
 
   return {
     selection,
@@ -32,7 +53,12 @@ export function useTheme(): UseThemeResult {
     activeCustom: resolved.custom,
     presets: THEME_PRESET_LIST,
     customThemes,
+    draftTheme,
+    skippedThemes,
     setSelection,
+    setDraftTheme,
+    saveCustomTheme,
+    deleteCustomTheme,
   };
 }
 
@@ -59,3 +85,6 @@ export function useThemeSync(): void {
     };
   }, []);
 }
+
+/** Re-exported so consumers that only need the resolver do not reach into the store. */
+export { resolveActive };

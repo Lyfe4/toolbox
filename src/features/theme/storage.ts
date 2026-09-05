@@ -1,16 +1,19 @@
+import { readCustomTheme } from './customThemes';
 import {
+  isThemeName,
   type CustomTheme,
   type PersistedThemeState,
   type ThemeSelection,
-  type ThemedToken,
-  THEMED_TOKENS,
-  isThemeName,
 } from './types';
 
 /**
  * Namespaced so Patchbay can never collide with anything else on the origin,
  * and versioned so a future format change is a rename rather than a migration
  * of corrupt data.
+ *
+ * This key holds ONE thing: which theme is selected. The library of authored
+ * themes lives under its own key - see customThemes.ts for why the two are
+ * separate.
  */
 export const THEME_STORAGE_KEY = 'patchbay:theme:v1';
 
@@ -39,32 +42,7 @@ function parseSelection(value: unknown): ThemeSelection | null {
   }
 }
 
-function parseOverrides(value: unknown): Partial<Record<ThemedToken, string>> {
-  if (!isRecord(value)) return {};
-
-  const overrides: Partial<Record<ThemedToken, string>> = {};
-  for (const token of THEMED_TOKENS) {
-    const candidate = value[token];
-    if (typeof candidate === 'string') overrides[token] = candidate;
-  }
-  return overrides;
-}
-
-function parseCustomTheme(value: unknown): CustomTheme | null {
-  if (!isRecord(value)) return null;
-  if (typeof value.id !== 'string' || typeof value.label !== 'string') return null;
-  if (!isThemeName(value.base)) return null;
-
-  return {
-    id: value.id,
-    label: value.label,
-    base: value.base,
-    overrides: parseOverrides(value.overrides),
-  };
-}
-
-/** Reads and validates persisted theme state. Returns null if absent or unusable. */
-export function readThemeState(): PersistedThemeState | null {
+function readRaw(): unknown {
   let raw: string | null;
   try {
     raw = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -74,31 +52,50 @@ export function readThemeState(): PersistedThemeState | null {
   }
   if (raw === null) return null;
 
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    return JSON.parse(raw);
   } catch {
     return null;
   }
+}
 
+/** Reads and validates the persisted selection. Returns null if absent or unusable. */
+export function readThemeState(): PersistedThemeState | null {
+  const parsed = readRaw();
   if (!isRecord(parsed)) return null;
+
   const selection = parseSelection(parsed.selection);
   if (selection === null) return null;
 
-  const customThemes = Array.isArray(parsed.customThemes)
-    ? parsed.customThemes
-        .map(parseCustomTheme)
-        .filter((theme): theme is CustomTheme => theme !== null)
-    : [];
-
-  return { version: 1, selection, customThemes };
+  return { version: 1, selection };
 }
 
-/** Persists theme state. Silently does nothing if storage is unavailable. */
+/** Persists the selection. Silently does nothing if storage is unavailable. */
 export function writeThemeState(state: PersistedThemeState): void {
   try {
     window.localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(state));
   } catch {
     // Not being able to remember the theme is not worth breaking the app over.
   }
+}
+
+/**
+ * Themes left in the OLD shape, where the library shared this key with the
+ * selection.
+ *
+ * Nothing ever wrote one, because the editor that would have produced them is
+ * what this feature adds - the type and the storage layer went in first, and
+ * sat unused. So this is a migration for a format that in practice has no
+ * users, kept because "in practice" is doing real work in that sentence: a
+ * hand-edited localStorage, or a branch someone was carrying, would otherwise
+ * lose data silently. It costs one read at startup and can be deleted once
+ * this version has been out long enough that nobody is arriving from before it.
+ */
+export function readLegacyCustomThemes(): readonly CustomTheme[] {
+  const parsed = readRaw();
+  if (!isRecord(parsed) || !Array.isArray(parsed.customThemes)) return [];
+
+  return parsed.customThemes
+    .map(readCustomTheme)
+    .filter((theme): theme is CustomTheme => theme !== null);
 }
