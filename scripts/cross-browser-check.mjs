@@ -1184,6 +1184,107 @@ async function checkStructuredData(browser, label) {
   }
 }
 
+/**
+ * The diff view in a real engine, where its non-colour signals actually exist.
+ *
+ * Everything here is structurally invisible to the unit suite, and every item
+ * is a claim the tool makes about how it renders:
+ *
+ *   1. `<ins>` and `<del>` are used BECAUSE they are underlined and struck
+ *      through by default, which is the intra-line signal that is not colour.
+ *      Most CSS resets remove that decoration; ours must not. jsdom has no
+ *      computed `text-decoration-line` at all, so nothing could check it.
+ *   2. A row's text is `unicode-bidi: isolate` so a right-to-left override
+ *      cannot reorder the sign column and the gutters around it. That is a
+ *      layout property, and jsdom has no layout.
+ *   3. A single very long line must scroll inside the row list rather than
+ *      widening the page.
+ *   4. A dropped FILE keeps its carriage returns, where a textarea does not -
+ *      so this is the only place the line-ending path can be exercised
+ *      end-to-end, through a real worker.
+ */
+async function checkDiff(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${ORIGIN}/tools/diff`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Diff' }).waitFor({ timeout: 15_000 });
+
+    await page.getByLabel('Diff Original input').fill('keep me\nthe quick brown fox\nkeep me too');
+    await page.getByLabel('Diff Changed input').fill('keep me\nthe quick red fox\nkeep me too');
+    await page.getByRole('button', { name: 'Run' }).click();
+
+    await page.locator('del').first().waitFor({ timeout: 30_000 });
+
+    const decoration = await page.evaluate(() => {
+      const read = (selector) => {
+        const node = document.querySelector(selector);
+        return node ? getComputedStyle(node).textDecorationLine : null;
+      };
+      return { del: read('del'), ins: read('ins') };
+    });
+    check(
+      label,
+      'ins and del keep a decoration, so the word signal is not colour alone',
+      decoration.del?.includes('line-through') === true &&
+        decoration.ins?.includes('underline') === true,
+      JSON.stringify(decoration),
+    );
+
+    const isolated = await page.evaluate(() => {
+      const row = document.querySelector('ol li');
+      const text = row?.lastElementChild;
+      return text ? getComputedStyle(text).unicodeBidi : null;
+    });
+    check(
+      label,
+      'a diff row isolates its own bidi, so an override cannot move the gutters',
+      isolated === 'isolate',
+      String(isolated),
+    );
+
+    /* -- One very long line must not widen the page ---------------------- */
+    const long = `x${'abcdefghij'.repeat(400)}`;
+    await page.getByLabel('Diff Original input').fill(long);
+    await page.getByLabel('Diff Changed input').fill(`y${'abcdefghij'.repeat(400)}`);
+    await page.getByRole('button', { name: 'Run' }).click();
+    await page.waitForTimeout(500);
+
+    const overflow = await page.evaluate(() => ({
+      document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    }));
+    check(
+      label,
+      'a 4,000-character line does not make the page scroll sideways',
+      overflow.document <= 1,
+      `${String(overflow.document)}px`,
+    );
+
+    /* -- A dropped file keeps its CRLF, which a textarea would have eaten - */
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Diff' }).waitFor({ timeout: 15_000 });
+    await page.getByLabel('Diff Changed input').fill('alpha\nbeta\ngamma\n');
+    await page.locator('input[type="file"]').setInputFiles({
+      name: 'original.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('alpha\r\nbeta\r\ngamma\r\n', 'utf8'),
+    });
+    await page.getByRole('button', { name: 'Run' }).click();
+
+    const note = page.getByText(/uses CRLF, the changed text uses LF/);
+    await note.waitFor({ timeout: 30_000 }).catch(() => {});
+    check(
+      label,
+      'a CRLF file against an LF one is one note, not every line rewritten',
+      (await note.count()) === 1,
+      `${String(await page.locator('ol li').count())} diff rows rendered, ${String(await note.count())} note(s)`,
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 /** Waits for a readonly textarea to hold something, then for it to match. */
 async function expectValue(locator, needle) {
   for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -2554,6 +2655,7 @@ async function runChecks(engine, label) {
     await checkConsoleSilence(browser, label);
     await checkDeepLinks(browser, label);
     await checkStructuredData(browser, label);
+    await checkDiff(browser, label);
     await checkHead(browser, label);
     await checkTouch(browser, label);
     await checkTruncation(browser, label);

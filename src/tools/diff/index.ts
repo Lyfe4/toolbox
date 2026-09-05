@@ -100,7 +100,9 @@ export const diffTool = defineTool({
     const changed = asText(inputs.changed);
 
     const report = computeDiff(original, changed, {
-      ignoreWhitespace: options.ignoreWhitespace,
+      // The option key still says "ignore"; its value now says how much. See
+      // the note in options.ts for why the key was not renamed.
+      whitespace: options.ignoreWhitespace,
       ignoreCase: options.ignoreCase,
       refineWords: options.refineWords,
       context: options.context,

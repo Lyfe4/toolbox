@@ -19,6 +19,19 @@
   color: var(--pb-ink-muted);
 }
 
+/*
+ * What the comparison looked past. Not styled as a warning: none of these are
+ * errors, they are facts the rows have no room to state.
+ */
+.notes {
+  margin: 0;
+  padding-inline-start: var(--pb-space-md);
+  display: grid;
+  gap: var(--pb-space-2xs);
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-secondary);
+}
+
 .rows {
   margin: 0;
   padding: 0;
@@ -31,6 +44,12 @@
   font-family: var(--pb-font-ui);
   font-size: var(--pb-value-size);
   font-variant-ligatures: none;
+}
+
+.nested {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .row {
@@ -55,6 +74,18 @@
 
 .text {
   min-inline-size: 0;
+  /*
+   * BIDI CONTAINMENT. A line holding U+202E reorders the text that follows it,
+   * and without an isolate that reordering runs on past the end of the cell -
+   * a crafted line can rearrange the sign column and the line numbers of the
+   * rows around it, which in a diff means the reader cannot trust the gutter.
+   *
+   * `isolate` rather than `isolate-override`: overriding would force every
+   * line left-to-right and render genuine Hebrew and Arabic backwards. Within
+   * a row the controls still apply, which is why the view also SAYS that they
+   * are present rather than relying on the CSS alone.
+   */
+  unicode-bidi: isolate;
 }
 
 .add {
@@ -78,12 +109,58 @@
 }
 
 /*
+ * An unchanged row whose two sides are not the same string - the "ignore case"
+ * and "ignore whitespace" case. Its `~` sign is the signal; the tint only
+ * seconds it, and is deliberately fainter than a real change so it does not
+ * compete with one.
+ */
+.ignored {
+  background-color: color-mix(in srgb, var(--pb-ink-accent) 8%, transparent);
+  color: var(--pb-ink-primary);
+}
+
+.ignored .sign {
+  color: var(--pb-ink-accent);
+}
+
+/*
  * ins/del keep their native decoration deliberately. Removing it - which most
  * resets do - would leave colour as the only intra-line signal.
  */
 .word {
   background-color: color-mix(in srgb, var(--pb-ink-accent) 22%, transparent);
   text-decoration-thickness: 2px;
+}
+
+/* Said in words, because the difference it describes cannot be shown. */
+.flag {
+  color: var(--pb-ink-muted);
+  font-style: italic;
+}
+
+.foldItem {
+  border-block: var(--pb-border-width) solid var(--pb-border-hairline);
+}
+
+.fold {
+  inline-size: 100%;
+  padding: var(--pb-space-2xs) var(--pb-space-xs);
+  border: 0;
+  background: none;
+  color: var(--pb-ink-muted);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.fold:hover {
+  color: var(--pb-ink-primary);
+  background-color: var(--pb-surface-raised);
+}
+
+.fold:focus-visible {
+  outline: var(--pb-focus-width) solid var(--pb-focus-ring);
+  outline-offset: calc(-1 * var(--pb-focus-width));
 }
 
 .empty {
@@ -113,7 +190,8 @@
   /* The tinted backgrounds are dropped by forced colors; the border restores
      an outline for changed rows, and the signs never depended on colour. */
   .add,
-  .remove {
+  .remove,
+  .ignored {
     border-inline-start: var(--pb-border-width-strong) solid CanvasText;
   }
 }

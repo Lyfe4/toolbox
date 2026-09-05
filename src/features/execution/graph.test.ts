@@ -17,7 +17,7 @@ import type { ExecuteOptions } from './engine';
  * Fixtures
  * -------------------------------------------------------------------------- */
 
-type ToolName = 'base64' | 'structured-data' | 'hash';
+type ToolName = 'base64' | 'structured-data' | 'hash' | 'diff';
 
 function node(
   id: string,
@@ -26,6 +26,11 @@ function node(
   options: Record<string, unknown> = {},
 ): CanvasNode {
   return { id, toolId, position: { x: 0, y: 0 }, options, inputs: { input } };
+}
+
+/** A diff node, which is the one tool with two required input ports. */
+function diffNode(id: string, inputs: Record<string, string> = {}): CanvasNode {
+  return { id, toolId: 'diff', position: { x: 0, y: 0 }, options: {}, inputs };
 }
 
 function graphOf(
@@ -147,6 +152,61 @@ describe('blocked nodes', () => {
 
     expect(summary.states.a?.status).toBe('ok');
     expect(summary.ran).toBe(1);
+  });
+
+  /*
+   * Diff is the only tool with two required inputs, so it is the only place
+   * the multi-input path is exercised in anger - and the state that matters is
+   * the half-wired one, which is where somebody spends most of their time
+   * while building a comparison.
+   */
+  it('names the port that is still missing when a tool needs two inputs', async () => {
+    const { execute } = recordingExecutor();
+    const graph = graphOf(
+      [node('a', 'base64', 'seed'), diffNode('d')],
+      [['a', 'd', 'output', 'original']],
+    );
+
+    const summary = await runPipeline(graph, { execute });
+
+    // "Needs input" would be no help at all: one of the two IS satisfied.
+    expect(summary.states.d?.status).toBe('blocked');
+    expect(summary.states.d?.blockedReason).toBe('Needs Changed');
+  });
+
+  it('runs a two-input tool once one port is wired and the other is typed', async () => {
+    const { execute, calls } = recordingExecutor();
+    const graph = graphOf(
+      [node('a', 'base64', 'seed'), diffNode('d', { changed: 'typed' })],
+      [['a', 'd', 'output', 'original']],
+    );
+
+    const summary = await runPipeline(graph, { execute });
+
+    expect(summary.states.d?.status).toBe('ok');
+    const run = calls.find((call) => call.toolId === 'diff');
+    expect(run?.inputs.original).toEqual({ type: 'text', text: 'out' });
+    expect(run?.inputs.changed).toEqual({ type: 'text', text: 'typed' });
+  });
+
+  it('reports a two-input tool as upstream-failed when either feed failed', async () => {
+    const { execute } = recordingExecutor((options) =>
+      options.toolId === 'hash'
+        ? fail('internal', 'nope')
+        : ok({ output: { type: 'text', text: 'out' } }),
+    );
+    const graph = graphOf(
+      [node('a', 'base64', 'seed'), node('b', 'hash', 'seed'), diffNode('d')],
+      [
+        ['a', 'd', 'output', 'original'],
+        ['b', 'd', 'output', 'changed'],
+      ],
+    );
+
+    const summary = await runPipeline(graph, { execute });
+
+    expect(summary.states.d?.status).toBe('upstream-failed');
+    expect(summary.states.d?.failedUpstream).toBe('b');
   });
 
   it('blocks a downstream node while its source is blocked', async () => {
