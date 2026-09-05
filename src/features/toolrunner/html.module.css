@@ -81,3 +81,46 @@
     border-color: CanvasText;
   }
 }
+
+/*
+ * The two copy buttons, drawn as one control with two answers.
+ *
+ * A hairline between them rather than a gap: they are alternatives to each
+ * other, and a gap would make them peers of Download, which is what the row
+ * used to say and what made the rich copy invisible.
+ */
+.copyGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-hairline);
+  padding: var(--pb-space-hairline);
+  border: var(--pb-border-width) solid var(--pb-border-subtle);
+  border-radius: var(--pb-radius-control);
+}
+
+/* The one most people are looking for, said in the border rather than in a
+   second primary button competing with Run. */
+.richCopy {
+  border-color: var(--pb-border-accent);
+  color: var(--pb-ink-primary);
+}
+
+.note,
+.previewNote {
+  margin: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  line-height: 1.4;
+  color: var(--pb-ink-muted);
+}
+
+.note strong {
+  font-weight: var(--pb-label-weight);
+  color: var(--pb-ink-secondary);
+}
+
+@media (forced-colors: active) {
+  .richCopy {
+    border-color: Highlight;
+  }
+}

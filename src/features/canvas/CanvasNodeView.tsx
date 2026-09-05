@@ -17,7 +17,8 @@ import {
   PORT_ROW_HEIGHT,
   type PortSide,
 } from './geometry';
-import { describeTypes, PortGlyph, PORT_GLYPH_SIZE } from './PortGlyph';
+import { PortButton } from './PortButton';
+import { PORT_GLYPH_SIZE } from './PortGlyph';
 
 import type { CanvasNode, PortRef } from './types';
 
@@ -197,9 +198,12 @@ export const CanvasNodeView = memo(function CanvasNodeView({
       </div>
 
       <p className={styles.nodeSummary}>
-        {run.status === 'error' && run.error
-          ? run.error.message
-          : (blockedHint ?? run.blockedReason ?? entry.summary)}
+        {/* The inner span is what gets clamped to two lines; see the CSS. */}
+        <span className={styles.nodeSummaryText}>
+          {run.status === 'error' && run.error
+            ? run.error.message
+            : (blockedHint ?? run.blockedReason ?? entry.summary)}
+        </span>
       </p>
 
       {/*
@@ -228,10 +232,13 @@ export const CanvasNodeView = memo(function CanvasNodeView({
           const receded = linking && !valid && !held;
 
           return (
-            <button
+            <PortButton
               key={key}
-              type="button"
-              tabIndex={-1}
+              label={port.label}
+              portId={port.id}
+              types={port.types}
+              side={side}
+              connected={connectedPorts.has(key)}
               className={cx(
                 styles.port,
                 side === 'input' ? styles.portInput : styles.portOutput,
@@ -245,35 +252,14 @@ export const CanvasNodeView = memo(function CanvasNodeView({
                 top: portTopStyle(entry, side, index),
                 [side === 'input' ? 'insetInlineStart' : 'insetInlineEnd']: PORT_INSET,
               }}
-              data-port-id={port.id}
-              data-port-side={side}
-              data-port-state={
+              state={
                 held ? 'held' : armed ? 'armed' : refused ? 'refused' : valid ? 'valid' : 'idle'
-              }
-              aria-label={
-                side === 'input'
-                  ? `Input ${port.label}, accepts ${describeTypes(port.types)}`
-                  : `Output ${port.label}, carries ${describeTypes(port.types)}`
               }
               onPointerDown={(event) => {
                 event.stopPropagation();
                 onPortPointerDown({ nodeId: node.id, portId: port.id }, side);
               }}
-            >
-              {/*
-                A real element rather than a border or an outline, so the state
-                rings hold their space and nothing reflows when one appears.
-                It is also what carries held/armed/valid SHAPE-wise, which is
-                what keeps these states legible without colour.
-              */}
-              <span className={styles.portHalo} aria-hidden="true" />
-              <PortGlyph
-                types={port.types}
-                connected={connectedPorts.has(key)}
-                className={styles.portConnector}
-              />
-              <span className={styles.portLabel}>{port.label}</span>
-            </button>
+            />
           );
         }),
       )}

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -127,11 +127,58 @@ describe('copying', () => {
     const user = userEvent.setup();
     const { onCopy, onCopyRich } = renderView();
 
-    await user.click(screen.getByRole('button', { name: 'Copy' }));
+    await user.click(screen.getByRole('button', { name: 'Copy HTML' }));
     expect(onCopy).toHaveBeenCalledWith(HTML);
 
     await user.click(screen.getByRole('button', { name: /Copy as rich text/ }));
     expect(onCopyRich).toHaveBeenCalledWith(HTML);
+  });
+
+  /*
+   * RICH TEXT IS THE FEATURE PEOPLE CAME FOR, and it used to be one of four
+   * identical ghost buttons in a row with nothing to say so. These assert the
+   * three things that fixed it, because each is easy to undo by accident.
+   */
+  it('names the plain copy for what lands on the clipboard', () => {
+    renderView();
+
+    // "Copy" beside "Copy as rich text" says nothing about the difference.
+    expect(screen.getByRole('button', { name: 'Copy HTML' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Copy' })).not.toBeInTheDocument();
+  });
+
+  it('groups the two copies as alternatives to each other', () => {
+    renderView();
+
+    const group = screen.getByRole('group', { name: 'Copy Markdown Rendered HTML' });
+
+    expect(within(group).getByRole('button', { name: 'Copy HTML' })).toBeInTheDocument();
+    expect(within(group).getByRole('button', { name: /Copy as rich text/ })).toBeInTheDocument();
+    // Download is a different kind of thing and stays outside.
+    expect(within(group).queryByRole('button', { name: 'Download' })).not.toBeInTheDocument();
+  });
+
+  it('describes what rich text actually does, on the button itself', () => {
+    renderView();
+
+    // On the button rather than merely nearby, so it is read by a screen
+    // reader on arrival instead of only if the user walks past the paragraph.
+    expect(screen.getByRole('button', { name: /Copy as rich text/ })).toHaveAccessibleDescription(
+      /keeps the formatting when you paste into Word, Google Docs or an email/,
+    );
+  });
+
+  it('says in the preview that this is what rich text pastes', async () => {
+    const user = userEvent.setup();
+    renderView();
+
+    // Not while the source is showing: there it would be a claim about a view
+    // you are not looking at.
+    expect(screen.queryByText(/This is what Copy as rich text pastes/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Preview' }));
+
+    expect(screen.getByText(/This is what Copy as rich text pastes/)).toBeInTheDocument();
   });
 
   it('writes both text/html and text/plain in one item', async () => {

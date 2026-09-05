@@ -264,8 +264,39 @@
   padding: var(--pb-space-xs);
   font-family: var(--pb-font-ui);
   font-size: var(--pb-label-size);
-  line-height: 1.3;
+  line-height: 13px;
   color: var(--pb-ink-muted);
+  overflow: hidden;
+}
+
+/*
+ * TWO LINES, ENDING IN AN ELLIPSIS.
+ *
+ * Every tool summary is longer than two lines at this width, so this is the
+ * common case rather than an edge, and it used to be cut mid-stroke: the box
+ * reserves 40px, two lines need 26px, and the leftover was just enough for the
+ * tops of a third line's glyphs to show underneath them.
+ *
+ * WHY AN INNER ELEMENT, which is the whole trick. `-webkit-line-clamp` only
+ * removes the extra lines when it is free to size the box; on a box with an
+ * explicit height it lays every line out as usual, writes the ellipsis at line
+ * two, and leaves the rest to `overflow` - which clips at the PADDING box, so
+ * no amount of padding hides them. Measured in Chrome, and it is why the
+ * obvious one-liner on `.nodeSummary` did not work.
+ *
+ * So the outer element keeps the 40px the node geometry reserves, and this
+ * inner one is auto-height and does the clamping. Its 26px sits inside that
+ * 40px with the same room the box always had.
+ *
+ * The -webkit- prefixed form rather than the plain `line-clamp` property: the
+ * unprefixed one needs Chrome 130, Safari 18.2 and Firefox 132, and this
+ * project supports back to Safari 15. The prefixed form works everywhere,
+ * Firefox included, despite the name.
+ */
+.nodeSummaryText {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
 }
 

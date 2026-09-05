@@ -1408,6 +1408,234 @@ async function checkTouch(browser, label) {
 }
 
 /**
+ * TRUNCATION, which is the one thing the unit tests genuinely cannot know.
+ *
+ * `scrollWidth > clientWidth` is a layout fact, and jsdom has no layout: every
+ * box there is zero, so every label "fits" and no tooltip is ever attached.
+ * The unit tests stub the two widths to reach the branch; this measures the
+ * real thing, in real engines, at the real font.
+ *
+ * Three claims, and each fails in a different direction:
+ *
+ *   Some port labels really are cut off. If this stops being true the feature
+ *   is dead code and the stubs are testing a fiction.
+ *
+ *   A cut-off label has a tooltip, and one that fits does not. The second half
+ *   is the one worth defending: a tooltip on every port is noise, and noise is
+ *   what teaches people to ignore tooltips.
+ *
+ *   The node summary shows exactly two lines and ends in an ellipsis. That one
+ *   depends on `-webkit-line-clamp` behaving the same way in three engines,
+ *   which is not something to take on trust.
+ */
+async function checkTruncation(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+
+    // Text convert has both kinds: "Input" fits, "Detected source" does not.
+    for (const tool of ['Text convert', 'Colour']) {
+      await page.getByRole('button', { name: 'Add tool' }).click();
+      await page.locator('[role="option"]').first().waitFor({ timeout: 10_000 });
+      await page
+        .getByRole('option', { name: new RegExp(tool, 'i') })
+        .first()
+        .click();
+      await page.waitForTimeout(300);
+    }
+
+    // Fonts change glyph advances, and this measurement is entirely about
+    // glyph advances.
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(400);
+
+    const labels = await page.evaluate(() =>
+      [...document.querySelectorAll('[data-port-id]')].map((button) => {
+        const text = button.querySelector('[class*="portLabel"]');
+        return {
+          label: text ? (text.textContent ?? '') : '',
+          cut: text ? text.scrollWidth - text.clientWidth > 1 : false,
+          // Radix stamps its trigger; nothing else on the page does.
+          tooltip: button.hasAttribute('data-state'),
+          name: button.getAttribute('aria-label') ?? '',
+        };
+      }),
+    );
+
+    const cut = labels.filter((entry) => entry.cut);
+    const fits = labels.filter((entry) => !entry.cut);
+
+    check(
+      label,
+      'some port labels really are cut off at this width',
+      cut.length > 0,
+      cut.map((entry) => entry.label).join(', '),
+    );
+
+    check(
+      label,
+      'every cut-off label has a tooltip',
+      cut.length > 0 && cut.every((entry) => entry.tooltip),
+      cut
+        .filter((entry) => !entry.tooltip)
+        .map((entry) => entry.label)
+        .join(', ') || 'all',
+    );
+
+    check(
+      label,
+      'no label that fits has one',
+      fits.length > 0 && fits.every((entry) => !entry.tooltip),
+      fits
+        .filter((entry) => entry.tooltip)
+        .map((entry) => entry.label)
+        .join(', ') || 'none',
+    );
+
+    // Whatever the box does, the name is the name.
+    check(
+      label,
+      'the accessible name carries the full label either way',
+      labels.every((entry) => entry.label !== '' && entry.name.includes(entry.label)),
+      `${String(labels.length)} port(s)`,
+    );
+
+    // Focus, not hover: the tooltip must not be a pointer-only affordance.
+    const focused = await page.evaluate(async () => {
+      const button = [...document.querySelectorAll('[data-port-id]')].find((element) =>
+        element.hasAttribute('data-state'),
+      );
+      if (!button) return { opened: false, described: false };
+      button.focus();
+      await new Promise((resolve) => {
+        setTimeout(resolve, 250);
+      });
+      return {
+        opened: document.querySelectorAll('[role="tooltip"]').length > 0,
+        described: button.hasAttribute('aria-describedby'),
+      };
+    });
+    check(
+      label,
+      'focus opens the tooltip, and announces it',
+      focused.opened && focused.described,
+      JSON.stringify(focused),
+    );
+
+    /*
+     * TOUCH: the port's primary gesture must win.
+     *
+     * There is no hover on a touch screen, and Radix deliberately does not
+     * open a tooltip on tap - which is the behaviour we want here rather than
+     * a limitation to work around. A port exists to have a wire dragged out of
+     * it, and a card appearing under the finger that starts the drag would be
+     * in the way of the one thing the control is for.
+     *
+     * So this asserts both halves: nothing pops up, and the wire still starts.
+     * The full label stays reachable on touch through the connect dialog,
+     * which lists every port by name.
+     */
+    const touchContext = await browser.newContext({
+      viewport: { width: 900, height: 800 },
+      hasTouch: true,
+    });
+    const touchPage = await touchContext.newPage();
+
+    try {
+      await touchPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+      await touchPage.getByRole('button', { name: 'Add tool' }).click();
+      await touchPage.locator('[role="option"]').first().waitFor({ timeout: 10_000 });
+      await touchPage
+        .getByRole('option', { name: /Text convert/i })
+        .first()
+        .click();
+      await touchPage.waitForTimeout(400);
+
+      const dragged = await touchPage.evaluate(async () => {
+        const button = [...document.querySelectorAll('[data-port-id]')].find((element) =>
+          element.hasAttribute('data-state'),
+        );
+        if (!button) return { found: false };
+
+        const box = button.querySelector('svg').getBoundingClientRect();
+        const at = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        const root = document.querySelector('[role="application"]');
+
+        const send = (target, type, x, y) => {
+          target.dispatchEvent(
+            new PointerEvent(type, {
+              pointerId: 1,
+              pointerType: 'touch',
+              isPrimary: true,
+              clientX: x,
+              clientY: y,
+              button: type === 'pointerup' ? -1 : 0,
+              buttons: type === 'pointerup' ? 0 : 1,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        };
+
+        send(button, 'pointerdown', at.x, at.y);
+        send(root, 'pointermove', at.x + 90, at.y + 70);
+        await new Promise((resolve) => {
+          setTimeout(resolve, 250);
+        });
+
+        const result = {
+          found: true,
+          held: button.getAttribute('data-port-state') === 'held',
+          drafting: document.querySelector('svg path[class*="wireDraft"]') !== null,
+          tooltips: document.querySelectorAll('[role="tooltip"]').length,
+        };
+
+        send(root, 'pointerup', at.x + 90, at.y + 70);
+        return result;
+      });
+
+      check(
+        label,
+        'tapping a truncated port still starts a wire, and pops nothing up',
+        dragged.found === true && dragged.held && dragged.drafting && dragged.tooltips === 0,
+        JSON.stringify(dragged),
+      );
+    } finally {
+      await touchContext.close().catch(() => {});
+    }
+
+    /*
+     * The summary clamp. Two lines and an ellipsis, measured rather than
+     * trusted: `-webkit-line-clamp` only truncates when it is free to size the
+     * box, which is why the clamped element is an inner span inside the
+     * fixed-height summary rather than the summary itself.
+     */
+    const summary = await page.evaluate(() => {
+      const inner = document.querySelector('[class*="nodeSummaryText"]');
+      if (!inner) return null;
+      const line = parseFloat(getComputedStyle(inner).lineHeight);
+      const outer = inner.parentElement;
+      return {
+        lines: Math.round(inner.getBoundingClientRect().height / line),
+        // The inner box must not spill past the space the geometry reserves.
+        fits: inner.getBoundingClientRect().height <= outer.getBoundingClientRect().height + 0.5,
+        clamped: inner.scrollHeight - inner.clientHeight > 1,
+      };
+    });
+    check(
+      label,
+      'a node summary is clamped to two lines inside its reserved box',
+      summary !== null && summary.lines === 2 && summary.fits,
+      JSON.stringify(summary),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
  * The Markdown preview's sandboxed iframe.
  *
  * TWO INDEPENDENT LAYERS, and the second one was verified rather than assumed
@@ -1678,18 +1906,42 @@ async function runChecks(engine, label) {
     );
 
     /* -- Node guidance must never be cut ---------------------------------- */
+    /*
+     * GUIDANCE, NOT SUMMARIES, and the distinction is now load-bearing. A tool
+     * summary is longer than the box and is deliberately clamped to two lines
+     * with an ellipsis. The guidance a BLOCKED node shows is the opposite: it
+     * is the instruction for getting unblocked, it was written to fit, and
+     * losing its last words is the bug this check exists for.
+     *
+     * Measured by cloning without the clamp, because overflow no longer
+     * reports it: a clamped element drops the extra lines rather than
+     * scrolling them, so `scrollHeight > clientHeight` is false whether or not
+     * anything was cut. The clone says how tall the text WANTS to be; two
+     * lines is what it gets.
+     */
     const guidance = await page.evaluate(() => {
-      const summaries = [...document.querySelectorAll('[class*="nodeSummary"]')];
-      return summaries.map((el) => ({
-        text: (el.textContent ?? '').trim().slice(0, 60),
-        truncated: el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1,
-      }));
+      const boxes = [...document.querySelectorAll('[class*="nodeSummaryText"]')];
+      return boxes.map((el) => {
+        const line = parseFloat(getComputedStyle(el).lineHeight);
+        const clone = el.cloneNode(true);
+        clone.style.webkitLineClamp = 'none';
+        clone.style.position = 'absolute';
+        clone.style.visibility = 'hidden';
+        clone.style.inlineSize = `${String(el.clientWidth)}px`;
+        el.parentElement.appendChild(clone);
+        const wanted = Math.round(clone.getBoundingClientRect().height / line);
+        clone.remove();
+        return { text: (el.textContent ?? '').trim().slice(0, 60), wanted };
+      });
     });
     check(
       label,
-      'no node summary or guidance is visually truncated',
-      guidance.length > 0 && guidance.every((entry) => !entry.truncated),
-      `${guidance.length.toString()} checked, ${guidance.filter((e) => e.truncated).length.toString()} cut`,
+      'no node guidance needs more than the two lines it gets',
+      guidance.length > 0 && guidance.every((entry) => entry.wanted <= 2),
+      `${guidance.length.toString()} checked, ${guidance
+        .filter((entry) => entry.wanted > 2)
+        .map((entry) => entry.text)
+        .join(' | ')}`,
     );
 
     /* -- Port layout, which jsdom cannot see ----------------------------- */
@@ -1978,6 +2230,7 @@ async function runChecks(engine, label) {
     await checkDeepLinks(browser, label);
     await checkHead(browser, label);
     await checkTouch(browser, label);
+    await checkTruncation(browser, label);
     await checkPreviewSandbox(browser, label);
   } finally {
     await browser.close();

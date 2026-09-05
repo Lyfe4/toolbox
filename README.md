@@ -17,25 +17,32 @@ re-run, without anything you paste ever leaving the page.
 
 ## The tools
 
-| Tool                | Does                                                               |
-| ------------------- | ------------------------------------------------------------------ |
-| **Base64**          | Encode text or files, decode back to bytes.                        |
-| **Structured data** | JSON, YAML, CSV and TSV, with auto-detection.                      |
-| **Hash**            | MD5 and the SHA family, over text or files.                        |
-| **JWT**             | Decode a token, and verify it when you supply the key.             |
-| **Diff**            | Compare two texts, with word-level highlighting.                   |
-| **Regex**           | Test a pattern, with groups and replacement.                       |
-| **Colour**          | Convert hex, `rgb()`, `hsl()` and `oklch()`, with contrast checks. |
-| **Image**           | Convert and resize between PNG, JPEG and WebP.                     |
-| **Text convert**    | Markdown, HTML and plain text, with a sandboxed preview.           |
+| Tool                | Does                                                                        |
+| ------------------- | --------------------------------------------------------------------------- |
+| **Base64**          | Encode text or files, decode back to bytes.                                 |
+| **Structured data** | JSON, YAML, CSV and TSV, with auto-detection.                               |
+| **Hash**            | MD5 and the SHA family, over text or files.                                 |
+| **JWT**             | Decode a token, and verify it when you supply the key.                      |
+| **Diff**            | Compare two texts, with word-level highlighting.                            |
+| **Regex**           | Test a pattern, with groups and replacement.                                |
+| **Colour**          | Convert hex, `rgb()`, `hsl()` and `oklch()`, with contrast checks.          |
+| **Image**           | Convert and resize between PNG, JPEG and WebP.                              |
+| **Text convert**    | Markdown, HTML and plain text, with a sandboxed preview and rich-text copy. |
 
 Each has its own README next to the code, which is where the interesting parts
 are written down: why [JWT](src/tools/jwt-decode/README.md) refuses
 `alg: none`, how [Regex](src/tools/regex-tester/README.md) survives a
 catastrophically backtracking pattern, what stops
 [Image](src/tools/image-convert/README.md) being killed by a decompression
-bomb, and why [Markdown](src/tools/markdown/README.md) round-trips are checked
-for _meaning_ rather than byte equality.
+bomb, and why [Text convert](src/tools/text-convert/README.md) round-trips are
+checked for _meaning_ rather than byte equality.
+
+**Rich text** is the one thing not deducible from the options: it is not a
+target format. Set Text convert's target to **HTML**, run, and press **Copy as
+rich text** on the Rendered HTML output — it pastes into Word, Google Docs or
+an email with the formatting intact, where **Copy HTML** beside it gives you
+the markup. `Plain text (strip formatting)` is the opposite: it removes the
+formatting rather than carrying it.
 
 `/` is the node canvas; `/tools` is the same set as a plain list. Neither is a
 fallback for the other.

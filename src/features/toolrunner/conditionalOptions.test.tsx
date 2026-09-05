@@ -139,6 +139,42 @@ describe('panel stability', () => {
   });
 });
 
+describe('saying what the formats mean', () => {
+  /*
+   * RICH TEXT IS UNDISCOVERABLE FROM A FORMAT LIST, and worse, the list used
+   * to imply the opposite of the truth: "Plain text" read as a peer of the
+   * other two, as though it were how you got something to paste into a
+   * document, when it is the one that throws the formatting away.
+   */
+  it('names the plain text target for what it does to the formatting', () => {
+    renderPanel({ target: 'text' });
+
+    expect(screen.getByText('Plain text (strip formatting)')).toBeInTheDocument();
+  });
+
+  it('says where rich text actually comes from, since it is not a format', () => {
+    renderPanel({ target: 'html' });
+
+    expect(
+      screen.getByText(/Rich text is not a target: it is what the rendered HTML output copies as/),
+    ).toBeInTheDocument();
+  });
+
+  it('does not let the description change the panel shape', () => {
+    // The target's description is always shown, so it cannot be one more
+    // thing that appears and disappears as the target changes.
+    const first = renderPanel({ target: 'html' });
+    const before = shapeOf(first.container);
+    first.unmount();
+
+    for (const target of ['markdown', 'text']) {
+      const panel = renderPanel({ target });
+      expect(shapeOf(panel.container).slice(0, 2)).toEqual(before.slice(0, 2));
+      panel.unmount();
+    }
+  });
+});
+
 describe('accessibility', () => {
   it.each(['html', 'markdown', 'text'])('has no axe violations targeting %s', async (target) => {
     const { container } = renderPanel({ target });

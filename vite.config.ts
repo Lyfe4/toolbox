@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 import { tanstackRouter } from '@tanstack/router-plugin/vite';
@@ -6,7 +7,6 @@ import { defineConfig } from 'vitest/config';
 
 import { cspHash } from './vite/plugins/csp-hash.ts';
 import { indexHtml } from './vite/plugins/index-html.ts';
-import { pureEntityDecoder } from './vite/plugins/pure-entity-decoder.ts';
 import { serviceWorker } from './vite/plugins/service-worker.ts';
 
 // Absolute path to `src`, used for the `@/*` alias. Derived from this file's
@@ -31,9 +31,6 @@ export default defineConfig({
       autoCodeSplitting: true,
     }),
     react(),
-    // Keeps a DOM-based entity decoder out of the worker. Must be early:
-    // it rewrites a module id before anything else resolves it.
-    pureEntityDecoder(),
     // Strips comments from the shipped HTML and refuses to build if a site
     // URL failed to substitute. transformIndexHtml, so it runs before the
     // file is written and therefore before cspHash reads it back.
@@ -47,7 +44,50 @@ export default defineConfig({
 
   resolve: {
     // Mirror of the `paths` entry in tsconfig.app.json.
-    alias: { '@': srcPath },
+    alias: {
+      '@': srcPath,
+
+      /*
+       * FORCES `decode-named-character-reference` TO ITS LOOKUP-TABLE BUILD.
+       *
+       * That package - a transitive dependency of micromark, and so of every
+       * Markdown parse - ships two implementations. One is a table of named
+       * character references. The other decodes them by doing
+       * `document.createElement('i')` and setting `innerHTML`, which is
+       * smaller in a page and impossible in a Web Worker.
+       *
+       * Its exports map keys the two by condition. Resolving for the browser
+       * picks the DOM one, and the Markdown tools then died in the worker
+       * with "document is not defined" the first time anything containing an
+       * entity was converted. jsdom supplies a `document`, so every unit test
+       * passed; only `pnpm check:browsers`, driving a real worker in a real
+       * engine, caught it.
+       *
+       * WHY AN ALIAS rather than `resolve.conditions`. Adding 'worker' to the
+       * global condition list means restating Vite's defaults, and getting
+       * them subtly wrong breaks everything: an early attempt wrote
+       * 'development|production' as a literal, which matches nothing, so
+       * React and Zustand resolved to the wrong builds and the app failed to
+       * mount. Redirecting one module id cannot have that blast radius.
+       *
+       * WHY RESOLVED HERE rather than written down: pnpm puts the real file
+       * behind a content-hashed directory, so a literal path would be a
+       * hostage to the lockfile. Node's resolver knows nothing of 'worker' or
+       * 'browser', so it falls through the exports map to 'default', which is
+       * the table build.
+       *
+       * WHY AN ALIAS RATHER THAN A PLUGIN. This was a `resolveId` hook, and
+       * the dependency optimiser does not run those - it pre-bundles with its
+       * own resolution and picked the DOM build regardless. So the tool
+       * passed every test and every build and failed only in `pnpm dev`,
+       * which is the worst place for a bug to live: nobody running the gates
+       * sees it and everybody developing the tool does. An alias is one
+       * mechanism that reaches the optimiser, the app and the worker alike.
+       */
+      'decode-named-character-reference': createRequire(import.meta.url).resolve(
+        'decode-named-character-reference',
+      ),
+    },
   },
 
   /*
@@ -69,17 +109,6 @@ export default defineConfig({
    */
   worker: {
     format: 'es',
-    /*
-     * The worker is a SEPARATE Rollup build and does not inherit `plugins`
-     * above, so the entity-decoder fix has to be registered again here. It is a
-     * function because Vite calls it per worker build.
-     *
-     * Found by measurement: with the plugin only in the main list, the main
-     * bundle used the table implementation and the worker bundle still
-     * carried the DOM one - two `pipelines-*.js` chunks, one of them still
-     * crashing.
-     */
-    plugins: () => [pureEntityDecoder()],
   },
 
   build: {

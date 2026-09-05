@@ -172,6 +172,35 @@ form always parses back to the link it came from. It costs the prettier
 spelling of a plain URL — a spelling this document already promises not to
 preserve — and buys an invariant that holds.
 
+## Getting rich text out
+
+Rich text is what most people come here for, and it is **not one of the target
+formats** — which is the one thing about this tool that is not deducible from
+the options panel. `Plain text (strip formatting)` is the opposite of it: it
+throws every bit of formatting away.
+
+To paste formatted text into Word, Google Docs, an email or anywhere else that
+understands it:
+
+1. Set **Target format** to **HTML**.
+2. Run.
+3. On the **Rendered HTML** output, press **Copy as rich text**.
+
+Then paste. The headings, bold, links, lists and tables arrive intact.
+
+The button beside it, **Copy HTML**, gives you the markup as text — the thing
+you want if you are pasting into an editor rather than a document. The two are
+grouped because they are two answers to the same question, and the note under
+them says which is which.
+
+Behind that, one clipboard write carries both `text/html` and `text/plain`
+flavours in a single `ClipboardItem`, so the receiving application takes
+whichever it understands. `navigator.clipboard.writeText` can only carry one,
+which is why the plain button still exists rather than being replaced.
+
+Switching the output to **Preview** shows the rendered document, which is
+exactly what rich text pastes.
+
 ## Libraries, sanitisation and the preview
 
 Unchanged by the merge, and written up where they live:

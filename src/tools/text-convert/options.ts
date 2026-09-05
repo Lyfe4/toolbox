@@ -90,11 +90,22 @@ export const textConvertOptionFields: readonly OptionField<TextConvertOptions>[]
   {
     key: 'target',
     label: 'Target format',
+    /*
+     * The description exists because the list used to read as though plain
+     * text COMPETED with rich text - as though picking it were how you got
+     * something to paste into a document. It is the opposite: it is the one
+     * that throws the formatting away. Rich text is not a format at all here,
+     * it is an action on the HTML output, so the list has to say where it
+     * lives rather than leaving people to find it.
+     */
+    description: 'Rich text is not a target: it is what the rendered HTML output copies as.',
     control: 'select',
     choices: [
       { value: 'html', label: 'HTML' },
       { value: 'markdown', label: 'Markdown' },
-      { value: 'text', label: 'Plain text' },
+      // Named for what it DOES. "Plain text" alone reads like a peer of the
+      // other two rather than like the destructive one.
+      { value: 'text', label: 'Plain text (strip formatting)' },
     ],
   },
 

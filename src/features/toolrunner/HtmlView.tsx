@@ -91,6 +91,7 @@ export function HtmlView({
 }: HtmlViewProps) {
   const [preview, setPreview] = useState(false);
   const statusId = useId();
+  const noteId = useId();
 
   return (
     <div className={styles.stack}>
@@ -172,25 +173,56 @@ export function HtmlView({
         />
       )}
 
+      {/*
+        One line, only while the preview is up: this is the moment the rich
+        copy becomes obvious, because the formatted thing is on screen and the
+        connection to the button below is one sentence away. It says nothing
+        when the source is showing, where it would just be a claim about a
+        control you are not looking at.
+      */}
+      {preview ? (
+        <p className={styles.previewNote}>This is what Copy as rich text pastes.</p>
+      ) : null}
+
       <div className={styles.row}>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            onCopy(html);
-          }}
-        >
-          Copy
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            onCopyRich(html);
-          }}
-        >
-          <CopyIcon size={12} /> Copy as rich text
-        </Button>
+        {/*
+          THE TWO COPIES ARE A PAIR, and drawn as one.
+          
+          They used to be two identical ghost buttons in a row of four, beside
+          Download, with nothing to say that one of them was the whole point of
+          the tool. Grouping them says they are two answers to one question;
+          the accent on the rich one says which answer most people want; and
+          the note below says what the difference actually is, because no
+          amount of styling can explain a clipboard flavour.
+        */}
+        <div className={styles.copyGroup} role="group" aria-label={`Copy ${label}`}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              onCopy(html);
+            }}
+          >
+            {/* Named for what lands on the clipboard, not just "Copy". */}
+            Copy HTML
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className={styles.richCopy}
+            /*
+             * The note is the button's description rather than nearby text, so
+             * a screen reader reads the difference on the button itself rather
+             * than only if the user happens to walk past the paragraph.
+             */
+            aria-describedby={noteId}
+            onClick={() => {
+              onCopyRich(html);
+            }}
+          >
+            <CopyIcon size={12} /> Copy as rich text
+          </Button>
+        </div>
         <Button
           size="sm"
           variant="ghost"
@@ -205,6 +237,11 @@ export function HtmlView({
         </Button>
         <span className={styles.hint}>{html.length} characters</span>
       </div>
+
+      <p className={styles.note} id={noteId}>
+        <strong>Copy as rich text</strong> keeps the formatting when you paste into Word, Google
+        Docs or an email. <strong>Copy HTML</strong> gives you the markup.
+      </p>
     </div>
   );
 }
