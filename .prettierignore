@@ -3,3 +3,8 @@ coverage
 node_modules
 pnpm-lock.yaml
 src/routeTree.gen.ts
+
+# Vendored specification fixtures. Reformatting them would be a 90 kB diff on
+# data nobody edits by hand, and their shape is the upstream file's business
+# rather than this repository's.
+src/lib/markup/spec

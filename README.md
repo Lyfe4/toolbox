@@ -170,6 +170,29 @@ that resolves the real CSS and measures each pair.
 1,327 tests across 61 files. The count is not the interesting part; what the
 tests caught is.
 
+### Conformance, measured against the specifications
+
+The Markdown converter is held to the official suites rather than to an
+impression of correctness. Both are checked into `src/lib/markup/spec/` and
+run on every `pnpm test`; neither reaches the network.
+
+| Suite                                                    | Cases | Passing         |
+| -------------------------------------------------------- | ----- | --------------- |
+| [CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/) | 652   | **612 (93.9%)** |
+| GFM extensions                                           | 24    | **21 (87.5%)**  |
+
+Comparison is by parsed DOM rather than by bytes — on a byte comparison the
+same converter scores 475/652, and almost all of that gap is spelling (`<hr />`
+against `<hr>`, `&#x26;` against `&amp;`, an inserted `<tbody>`) rather than
+meaning.
+
+The expected-failure list is **exact**, not a threshold: an example that starts
+passing fails the suite too, so the list cannot quietly drift away from the
+truth. Every remaining failure is about raw HTML or a URL — none is about
+emphasis, lists, tables, code or headings — and that shape is itself asserted.
+[The full breakdown, with a cause against each example](src/tools/text-convert/README.md#measured-conformance),
+is in the tool's README, along with its known limitations.
+
 ### What property-based testing actually found
 
 `fast-check` generates the inputs nobody thinks to write down. Three real bugs,

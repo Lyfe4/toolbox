@@ -1,4 +1,5 @@
 import { toHtml } from 'hast-util-to-html';
+import { defaultHandlers } from 'hast-util-to-mdast';
 import { toText } from 'hast-util-to-text';
 import rehypeParse from 'rehype-parse';
 import rehypeRaw from 'rehype-raw';
@@ -7,6 +8,7 @@ import rehypeSanitize from 'rehype-sanitize';
 import rehypeSlug from 'rehype-slug';
 import rehypeStringify from 'rehype-stringify';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import remarkParse from 'remark-parse';
 import remarkRehype from 'remark-rehype';
 import remarkStringify from 'remark-stringify';
@@ -15,7 +17,7 @@ import { unified } from 'unified';
 import { SANITISE_SCHEMA } from './sanitise';
 
 import type { Element as HastElement, Nodes as HastNodes } from 'hast';
-import type { Options as ToMdastOptions } from 'hast-util-to-mdast';
+import type { Handle, Options as ToMdastOptions, State } from 'hast-util-to-mdast';
 import type { Root as MdastRoot, RootContent as MdastContent } from 'mdast';
 import type { VFile } from 'vfile';
 
@@ -70,6 +72,132 @@ function tidyWhitespace() {
     };
 
     walk(tree);
+  };
+}
+
+/**
+ * GFM's "disallowed raw HTML" filter, and it fixes real content loss.
+ *
+ * These nine tags are the ones the GFM spec escapes rather than passes
+ * through, and the reason is not squeamishness - it is that the HTML parser
+ * treats them as RCDATA or RAWTEXT, so an unclosed one EATS THE REST OF THE
+ * DOCUMENT as its own text content.
+ *
+ * Measured, before this existed:
+ *
+ *   `a <title> b <em>c</em> d`  ->  `<p>a  b &#x3C;em>c d</p>`
+ *   `a <style> b`               ->  `<p>a </p>`
+ *
+ * The first mangled the emphasis into visible text; the second silently
+ * deleted " b". Neither is a security problem - the sanitiser removes these
+ * elements either way - but both destroy the user's document, which is the
+ * failure this tool exists to avoid.
+ *
+ * Escaping the opening `<` is what the spec prescribes and what cmark-gfm
+ * does, and it turns the loss into something the reader can see: the tag
+ * appears as text, exactly where they wrote it.
+ *
+ * APPLIED TO THE INPUT, not to serialiser output. It rewrites raw HTML in the
+ * mdast before `rehypeRaw` re-parses it, because by the time the parser has
+ * run the damage has already happened.
+ */
+const TAGFILTER =
+  /<(\/?)(title|textarea|style|xmp|iframe|noembed|noframes|script|plaintext)(?=[\t\n\f\r />])/gi;
+
+function tagfilter() {
+  return (tree: MdastRoot): void => {
+    const walk = (node: MdastRoot | MdastContent): void => {
+      if (node.type === 'html') {
+        node.value = node.value.replace(TAGFILTER, '&lt;$1$2');
+        return;
+      }
+      if ('children' in node) {
+        for (const child of node.children) walk(child);
+      }
+    };
+
+    walk(tree);
+  };
+}
+
+/**
+ * Lowercases a URL's scheme, before the allow-list is consulted.
+ *
+ * URL schemes are case-insensitive - RFC 3986 says so and every browser agrees
+ * - but the sanitiser's protocol list is compared literally. So
+ * `<MAILTO:FOO@BAR.BAZ>`, which CommonMark requires to be a link, lost its
+ * href and rendered as a dead `<a>` with no destination.
+ *
+ * Normalising the scheme rather than widening the list keeps the allow-list
+ * exactly as narrow as it was: `JAVASCRIPT:alert(1)` becomes `javascript:...`
+ * and is then rejected by name rather than by accident of spelling, which is a
+ * better reason for it to be rejected.
+ *
+ * Only the scheme is touched. The rest of a URL is case-sensitive and is left
+ * alone.
+ */
+const URL_PROPERTIES = ['href', 'src', 'cite', 'longDesc'] as const;
+const SCHEME = /^([a-z][a-z0-9+.-]*):/i;
+
+function normaliseSchemes() {
+  return (tree: HastNodes): void => {
+    const walk = (node: HastNodes): void => {
+      if (node.type === 'element') {
+        for (const property of URL_PROPERTIES) {
+          const value = node.properties[property];
+          if (typeof value !== 'string') continue;
+          node.properties[property] = value.replace(SCHEME, (match) => match.toLowerCase());
+        }
+      }
+      if (node.type === 'root' || node.type === 'element') {
+        for (const child of node.children) walk(child);
+      }
+    };
+
+    walk(tree);
+  };
+}
+
+/**
+ * Removes an element but keeps its children, wherever it appears.
+ *
+ * Two plugins need exactly this, so it is written once. The two branches are
+ * spelled out rather than made generic because a root may contain a doctype
+ * and an element may not, and TypeScript is right to insist on the
+ * difference - narrowing the node first is what keeps this cast-free.
+ */
+function unwrapWhere(tree: HastNodes, matches: (node: HastElement) => boolean): void {
+  const walk = (node: HastNodes): void => {
+    if (node.type === 'root') {
+      for (const child of node.children) walk(child);
+      node.children = node.children.flatMap((child) =>
+        child.type === 'element' && matches(child) ? child.children : [child],
+      );
+    } else if (node.type === 'element') {
+      for (const child of node.children) walk(child);
+      node.children = node.children.flatMap((child) =>
+        child.type === 'element' && matches(child) ? child.children : [child],
+      );
+    }
+  };
+
+  walk(tree);
+}
+
+/**
+ * Unwraps links the sanitiser stripped the destination from.
+ *
+ * When an href fails the protocol allow-list, hast-util-sanitize removes the
+ * attribute and leaves the element - so `[docs](irc://x)` became `<a>docs</a>`:
+ * something that still looks like a link, is announced as a link, and goes
+ * nowhere. Converted back to Markdown it became `[docs]()`, an empty
+ * destination that is worse than no link at all.
+ *
+ * The text was never the problem, so the text is what survives.
+ */
+function unwrapDeadLinks() {
+  return (tree: HastNodes): void => {
+    unwrapWhere(tree, (node) => node.tagName === 'a' && node.properties.href === undefined);
   };
 }
 
@@ -164,14 +292,38 @@ export function markdownToHtml(markdown: string, options: MarkdownToHtmlOptions)
   const html = unified()
     .use(remarkParse)
     .use(remarkGfm)
+    /*
+     * MATH IS PRESERVED, NOT RENDERED, and `$...$` is deliberately off.
+     *
+     * Without this, `$$ ... $$` is ordinary paragraph text, and Markdown's
+     * backslash escapes eat the LaTeX: `\\,` becomes a comma and `\\\\` - the
+     * line break in every matrix - becomes a single backslash. Parsing it as
+     * math keeps the source exactly, and it comes back as a ```math fence,
+     * which is what GitHub renders.
+     *
+     * `singleDollarTextMath: false` because single dollars are ambiguous with
+     * money, and money is far commoner in a document than inline maths.
+     * Measured: with it on, "It costs $5 and $10 today." became
+     * `It costs <code class="language-math">5 and </code>10 today.` Block
+     * math has no such ambiguity - a line of `$$` is not something prose
+     * contains by accident.
+     */
+    .use(remarkMath, { singleDollarTextMath: false })
+    .use(tagfilter)
     .use(options.linkify ? [] : [stripAutolinkLiterals])
     .use(remarkRehype, { allowDangerousHtml: true, clobberPrefix: '' })
     .use(rehypeRaw)
+    // Schemes are case-insensitive; the allow-list below is not. Normalising
+    // first is what stops `<MAILTO:...>` losing its destination.
+    .use(normaliseSchemes)
     // Slugs BEFORE sanitising, so the ids it generates face the same
     // allow-list as any other attribute rather than being trusted for being
     // ours.
     .use(options.headingIds ? [rehypeSlug] : [])
     .use(rehypeSanitize, SANITISE_SCHEMA)
+    // After sanitising: an href the allow-list rejected is gone by now, and a
+    // link with nowhere to go is worse than the words on their own.
+    .use(unwrapDeadLinks)
     .use(namespaceIds)
     .use(tidyWhitespace)
     .use(rehypeStringify)
@@ -209,25 +361,66 @@ export const ID_NAMESPACE = 'user-content-';
  */
 function namespaceIds() {
   return (tree: HastNodes): void => {
-    const walk = (node: HastNodes): void => {
+    /*
+     * TWO PASSES, because the second one needs to know the answer to the
+     * first. Pass one namespaces every identifier the document DEFINES; pass
+     * two moves the references that point at them.
+     *
+     * The naive single pass rewrote every fragment href it saw, whether or not
+     * anything in the document answered to that name - so `[jump](#setup)`
+     * became `#user-content-setup` and pointed at nothing, turning a working
+     * anchor into a dead one. A reference is only ours to rewrite if we are
+     * the reason the target moved.
+     */
+    const defined = new Set<string>();
+
+    const collect = (node: HastNodes): void => {
       if (node.type === 'element') {
-        // Indexed as plain strings: hast types `ariaDescribedBy` as
-        // `string | string[]`, and a literal-union key makes TypeScript
-        // demand the intersection of every member's type.
         for (const property of IDENTIFIER_PROPERTIES as readonly string[]) {
           const value = node.properties[property];
-          if (typeof value === 'string' && value !== '' && !value.startsWith(ID_NAMESPACE)) {
-            node.properties[property] = `${ID_NAMESPACE}${value}`;
+          if (property !== 'id' && property !== 'name') continue;
+          if (typeof value === 'string' && value !== '') {
+            defined.add(value.startsWith(ID_NAMESPACE) ? value.slice(ID_NAMESPACE.length) : value);
+          }
+        }
+      }
+      if (node.type === 'root' || node.type === 'element') {
+        for (const child of node.children) collect(child);
+      }
+    };
+
+    /** Prefixes one identifier, if it is not prefixed already. */
+    const prefix = (value: string): string =>
+      value.startsWith(ID_NAMESPACE) ? value : `${ID_NAMESPACE}${value}`;
+
+    const walk = (node: HastNodes): void => {
+      if (node.type === 'element') {
+        for (const property of IDENTIFIER_PROPERTIES as readonly string[]) {
+          const value = node.properties[property];
+
+          if (typeof value === 'string' && value !== '') {
+            node.properties[property] = prefix(value);
+          } else if (Array.isArray(value)) {
+            /*
+             * ARIA reference lists are space-separated token lists, and hast
+             * parses them into an array - which the string branch above
+             * silently skipped. The result was a footnote whose
+             * `aria-describedby="footnote-label"` pointed at an id that had
+             * been renamed to `user-content-footnote-label`: a dangling
+             * reference in the one place a screen reader needs a working one.
+             */
+            node.properties[property] = value.map((token) =>
+              typeof token === 'string' ? prefix(token) : token,
+            );
           }
         }
 
         const href = node.properties.href;
-        if (
-          typeof href === 'string' &&
-          href.startsWith('#') &&
-          !href.startsWith(`#${ID_NAMESPACE}`)
-        ) {
-          node.properties.href = `#${ID_NAMESPACE}${href.slice(1)}`;
+        if (typeof href === 'string' && href.startsWith('#')) {
+          const target = href.slice(1);
+          if (target !== '' && !target.startsWith(ID_NAMESPACE) && defined.has(target)) {
+            node.properties.href = `#${ID_NAMESPACE}${target}`;
+          }
         }
       }
 
@@ -236,6 +429,7 @@ function namespaceIds() {
       }
     };
 
+    collect(tree);
     walk(tree);
   };
 }
@@ -272,6 +466,89 @@ const NO_MARKDOWN_EQUIVALENT: readonly string[] = [
   'dd',
 ];
 
+/**
+ * Of the elements Markdown cannot express, the ones that are INLINE.
+ *
+ * These are kept whole, because their content is phrasing: there is no blank
+ * line to be had inside a `<kbd>`, so the raw-HTML-block rule that forces the
+ * others apart cannot bite. Keeping them whole also keeps them on one line,
+ * which is what inline HTML in Markdown should look like.
+ */
+const KEEP_WHOLE = new Set(['span', 'kbd', 'samp', 'var', 'sub', 'sup', 'ins', 'q']);
+
+/** Re-serialises just an element's start tag, attributes included. */
+function openingTag(node: HastElement): string {
+  const empty: HastElement = { ...node, children: [] };
+  return toHtml(empty).replace(new RegExp(`</${node.tagName}>$`), '');
+}
+
+/**
+ * `<ol start="0">`, which upstream renumbers to 1.
+ *
+ * hast-util-to-mdast@10.1.2, lib/handlers/list.js:
+ *
+ *   start = node.properties && node.properties.start
+ *     ? Number.parseInt(String(node.properties.start), 10)
+ *     : 1
+ *
+ * A truthiness test on a number, so the one value that is falsy - zero - is
+ * the one value it drops. Every other start survives, which is what made this
+ * look like a rounding quirk rather than a bug for so long.
+ *
+ * The default handler is called and its answer corrected, rather than the
+ * whole thing reimplemented: `state.toSpecificContent` and `listItemsSpread`
+ * are internal, and duplicating them to fix one line would be trading a small
+ * upstream bug for a large local one. Delete this when upstream reads the
+ * property rather than testing it.
+ */
+const orderedList: Handle = (state, node) => {
+  const result = defaultHandlers.ol(state, node);
+
+  // No guard around the parse: hast may hand back the parsed number or the
+  // raw string, and a missing attribute stringifies to something parseInt
+  // rejects - so NaN is the only "absent" case there is.
+  const parsed = Number.parseInt(String(node.properties.start), 10);
+  if (!Number.isNaN(parsed)) result.start = parsed;
+
+  return result;
+};
+
+/**
+ * Undoes Google Docs' habit of wrapping a whole paste in a bold that is not.
+ *
+ * A copy out of Google Docs arrives inside
+ * `<b style="font-weight:normal" id="docs-internal-guid-...">`, which is a
+ * `<b>` that explicitly asks not to be bold. Converted naively, EVERY WORD of
+ * a pasted document comes out `**bold**` - which is not a subtle failure, and
+ * Google Docs is one of the two places people paste from.
+ *
+ * This has to run before the sanitiser, because the evidence is the `style`
+ * attribute and the sanitiser is about to remove it. Both signals are checked:
+ * the declared weight, and the Docs-specific id.
+ */
+/*
+ * ANCHORED TO THE START OF A DECLARATION, which matters more than it looks.
+ * The first version matched anywhere, so `mso-bidi-font-weight: normal` -
+ * a Word-specific property that says nothing about the visual weight, and
+ * which Word puts on text that IS bold - unwrapped a genuine bold. Caught by
+ * the Word paste case in hardening.test.ts.
+ */
+const NOT_BOLD = /(^|;)\s*font-weight\s*:\s*(normal|[1-4]00)\b/i;
+
+function unwrapFakeBold() {
+  return (tree: HastNodes): void => {
+    unwrapWhere(tree, (node) => {
+      if (node.tagName !== 'b' && node.tagName !== 'strong') return false;
+      const style = node.properties.style;
+      const id = node.properties.id;
+      return (
+        (typeof style === 'string' && NOT_BOLD.test(style)) ||
+        (typeof id === 'string' && id.startsWith('docs-internal-guid'))
+      );
+    });
+  };
+}
+
 /** Handlers implementing the `unsupported` option. */
 function unsupportedHandlers(
   mode: HtmlToMarkdownOptions['unsupported'],
@@ -283,14 +560,37 @@ function unsupportedHandlers(
   if (mode === 'keep') {
     /*
      * An `html` mdast node holds raw markup that the serialiser writes out
-     * verbatim. Markdown permits inline HTML, so this is lossless - the
-     * element comes back exactly as it went in, attributes and all, having
-     * already passed the sanitiser on the way through.
+     * verbatim, and Markdown permits inline HTML - so for an INLINE element
+     * this is lossless: it comes back exactly as it went in, attributes and
+     * all, having already passed the sanitiser on the way through.
+     *
+     * FOR A BLOCK ELEMENT IT IS NOT, and the reason is a rule of CommonMark
+     * rather than anything about this code. A raw HTML block ends at the first
+     * BLANK LINE. So serialising a whole `<details>` subtree as one string
+     * produced Markdown that could not be read back: a real README with a
+     * fenced code block inside `<details>` came back with the block cut in
+     * half, the second half re-parsed as paragraphs, and its indentation
+     * gone. Found by round-tripping remark's own readme.
+     *
+     * So a block element is written as three things - its opening tag, its
+     * children converted to REAL MARKDOWN, and its closing tag - which is both
+     * what survives a re-parse and what the document probably looked like
+     * before anyone converted it. A fenced block inside `<details>` stays a
+     * fenced block.
      */
     return Object.fromEntries(
       NO_MARKDOWN_EQUIVALENT.map((tag) => [
         tag,
-        (_state, node: HastElement) => ({ type: 'html', value: toHtml(node) }),
+        KEEP_WHOLE.has(tag)
+          ? (((_state: State, node: HastElement) => ({
+              type: 'html' as const,
+              value: toHtml(node),
+            })) satisfies Handle)
+          : (((state: State, node: HastElement) => [
+              { type: 'html' as const, value: openingTag(node) },
+              ...state.all(node),
+              { type: 'html' as const, value: `</${node.tagName}>` },
+            ]) satisfies Handle),
       ]),
     );
   }
@@ -310,14 +610,21 @@ export function htmlToMarkdown(html: string, options: HtmlToMarkdownOptions): st
   return String(
     unified()
       .use(rehypeParse, { fragment: true })
+      // Before the sanitiser, because it is the `style` attribute that gives
+      // the game away and the sanitiser is about to remove it.
+      .use(unwrapFakeBold)
+      .use(normaliseSchemes)
       .use(rehypeSanitize, SANITISE_SCHEMA)
+      .use(unwrapDeadLinks)
       /*
        * What happens to markup Markdown cannot express - a <div>, a <span>,
        * an <abbr>. 'keep' writes the element back as inline HTML, which is
        * valid Markdown and lossless; 'text' keeps the words and discards the
        * wrapper; 'drop' removes it and its content.
        */
-      .use(rehypeRemark, { handlers: unsupportedHandlers(options.unsupported) })
+      .use(rehypeRemark, {
+        handlers: { ...unsupportedHandlers(options.unsupported), ol: orderedList },
+      })
       .use(remarkGfm)
       .use(remarkStringify, {
         bullet: options.bullet,

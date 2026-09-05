@@ -395,13 +395,16 @@ describe('round-tripping', () => {
     expect(md('<p>a' + BACKSLASH + 'x b</p>')).toBe('a' + BACKSLASH + 'x b' + LF);
   });
 
-  it('renumbers a list that starts at zero, and only at zero', () => {
-    // Upstream: `start` survives the round trip for every value except 0,
-    // where it is treated as absent. Worth knowing about rather than worth
-    // patching a dependency over - a list numbered from zero is rare, and it
-    // stays a list.
+  it('keeps a list that starts at zero, which it used not to', () => {
+    /*
+     * WAS a known upstream defect, now fixed. hast-util-to-mdast tests
+     * `properties.start` for truthiness, so zero - the one falsy number - was
+     * the one value it dropped, and `<ol start="0">` renumbered to 1. The
+     * default handler is now called and its answer corrected; see
+     * `orderedList` in pipelines.ts.
+     */
     expect(md('<ol start="3"><li>a</li></ol>')).toBe('3. a' + LF);
-    expect(md('<ol start="0"><li>a</li></ol>')).toBe('1. a' + LF);
+    expect(md('<ol start="0"><li>a</li></ol>')).toBe('0. a' + LF);
   });
 
   it('is semantically stable: md → html → md → html gives identical HTML', () => {

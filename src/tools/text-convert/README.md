@@ -146,19 +146,15 @@ Two are the converter being **right**, and settle after one round trip:
   comes back as `<del>`, because `~~` is the nearest Markdown and `~~` means
   `<del>`. Once, then never again.
 
-Three are **defects**, all upstream of anything here, all narrow, all recorded
-rather than papered over:
+Two more are **upstream defects** — a backslash before inline markup, and a
+space at the edge of a code span. Both are written up under
+[Known limitations](#known-limitations) with their causes located exactly.
 
-- **A list starting at zero renumbers to one.** `start` survives for every
-  other value.
-- **A backslash immediately before inline markup is mangled.** The serialiser
-  writes `a\&#x78;_b_`, and `\&` reads back as an escaped ampersand, so the
-  character reference arrives as four visible characters instead of an `x`.
-- **A space at the edge of a code span is dropped.** `<code> ab</code>`
-  becomes `` `ab` ``, though CommonMark can express it as `` `  ab ` ``.
-
-Working around any of the three would mean regex-editing the serialiser's
-output, which is how one narrow bug becomes an unbounded number of them.
+A third used to be here: **a list starting at zero renumbered to one.** That
+one now has a fix. `hast-util-to-mdast@10.1.2` tests `properties.start` for
+truthiness, so zero — the one falsy number — was the one value it dropped; the
+default handler is now called and its answer corrected. Delete `orderedList`
+in `pipelines.ts` when upstream reads the property rather than testing it.
 
 ### One thing was fixed rather than documented
 
@@ -200,6 +196,138 @@ which is why the plain button still exists rather than being replaced.
 
 Switching the output to **Preview** shows the rendered document, which is
 exactly what rich text pastes.
+
+## Measured conformance
+
+The numbers, so that "it handles Markdown well" is a claim with evidence
+behind it. Both suites are checked into
+[`src/lib/markup/spec/`](../../lib/markup/spec/) and run on every `pnpm test`;
+neither reaches the network.
+
+| Suite                                                                    | Cases | Passing         |
+| ------------------------------------------------------------------------ | ----- | --------------- |
+| [CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/)                 | 652   | **612 (93.9%)** |
+| GFM extensions (tables, task lists, strikethrough, autolinks, tagfilter) | 24    | **21 (87.5%)**  |
+
+**Comparison is by DOM, not by bytes**, and that choice is worth understanding
+before reading the numbers. On a byte comparison the same converter scores
+475/652 — and almost every one of those 177 "failures" is spelling: `<hr />`
+against `<hr>`, `&quot;` against `"`, `&#x26;` against `&amp;`, a `<tbody>`
+the HTML parser inserts. None is a difference a browser can see. Parsing both
+sides and comparing the trees asks the question that matters, and it is not a
+weakening — a dropped attribute, a removed element, or raw HTML where escaped
+text was expected all still fail. The one normalisation on top is that
+whitespace-only text containing a newline is treated as formatting, outside
+`pre` and `code`. See [`conformance.ts`](../../lib/markup/conformance.ts).
+
+### The 40 CommonMark examples that do not pass
+
+Every one is about raw HTML or about a URL. **None is about emphasis, lists,
+tables, code, headings or any other Markdown construct** — which is asserted
+directly, so a failure appearing in another section is a parser problem rather
+than a policy one.
+
+| Cause                                                                 | Count | Examples                                                                        |
+| --------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------- |
+| The sanitiser removed an element or attribute the spec passes through | 25    | 150, 152–154, 163, 164, 169–173, 176, 178, 201, 491, 524, 536, 613–617, 627–629 |
+| HTML comments are dropped                                             | 7     | 177, 179, 183, 308, 309, 625, 626                                               |
+| URL scheme not in the allow-list                                      | 4     | 596, 598, 599, 601                                                              |
+| Processing instructions and CDATA are dropped                         | 2     | 180, 182                                                                        |
+| The scheme's case is normalised (`MAILTO:` → `mailto:`)               | 1     | 597                                                                             |
+| A relative URL containing a colon is rejected upstream                | 1     | 500                                                                             |
+
+The first four groups are the product rather than defects: cmark copies raw
+HTML to the output verbatim and this tool refuses to, because its output is
+meant to be safe to paste somewhere that renders it.
+
+### The 3 GFM examples that do not pass
+
+- **279, 280 — task lists.** remark-gfm adds `class="task-list-item"` and
+  `class="contains-task-list"`, which the spec text does not have and
+  github.com does. Ours is closer to what GitHub actually serves.
+- **628 — `ftp://` is not linkified.**
+  `micromark-extension-gfm-autolink-literal@2.1.0` handles `http` and `https`
+  only (`dev/lib/syntax.js:363`). Left alone: a second linkifier beside the
+  first, duplicating its trailing-punctuation rules, is a poor trade for a
+  scheme Chrome and Firefox both dropped in 2021.
+
+## Mathematics
+
+`$$ ... $$` is parsed as mathematics and preserved exactly, then written back
+as a ` ```math ` fence — the spelling GitHub renders.
+
+This matters because without it, Markdown's own backslash escapes eat LaTeX:
+`\,` collapses to a comma and `\\`, the row separator in every
+matrix, collapses to a single backslash. Language models emit display maths
+constantly, so this was the commonest silent corruption in generated content.
+
+**Single-dollar `$...$` is deliberately off.** With it on, "It costs $5 and
+$10 today." became `It costs <code class="language-math">5 and </code>10
+today.` — ordinary prose turned into mathematics. Money is far commoner in a
+document than inline LaTeX, and a converter that corrupts prose to support the
+minority case has the trade backwards. Inline `$x^2$` therefore survives as
+literal text, which is what it was before.
+
+Cost: **+5.7 kB raw, +1.4 kB gzipped**, in the lazily-loaded pipeline chunk.
+KaTeX is a dependency of `micromark-extension-math` but only of its HTML
+compiler, which nothing here imports — verified absent from the built output.
+
+## Known limitations
+
+Every one of these is asserted in
+[`hardening.test.ts`](hardening.test.ts) against its **current, wrong**
+behaviour, so an upstream fix shows up as a failing test with the file and
+line to go and delete.
+
+### Upstream, with no clean fix from outside
+
+**A space at the edge of a code span is dropped.** `<code> ab</code>` becomes
+`` `ab` ``. `hast-util-to-mdast` runs `rehype-minify-whitespace` over the tree
+before any handler sees it, so the space is gone before there is anything to
+preserve it with. (The previous guess blamed the serialiser; the serialiser
+pads correctly when given the right value.) Interior spaces are safe.
+
+**A backslash immediately before inline markup is mangled.** `a\x<em>b</em>`
+serialises as `a\&#x78;_b_`; read back, `\&` is an escaped ampersand, so the
+character reference arrives as four visible characters instead of an `x`. The
+serialiser encodes the `x` so the following `_` can open emphasis — correct in
+isolation — but leaves the backslash bare. In `mdast-util-to-markdown`'s
+`safe()`, which no configuration reaches. A backslash on its own is fine.
+
+**`ftp://` is not linkified.** See the GFM section above.
+
+### Deliberate, and the reason
+
+**The sanitiser is the outer boundary, and `Keep as inline HTML` cannot reach
+past it.** `<abbr>`, `<figure>`, `<figcaption>`, `<caption>`, `<mark>`,
+`<cite>`, `<time>` and `<small>` are not in the schema, so they are unwrapped
+to their text before the `unsupported` option is consulted. The text survives;
+the element and its attributes do not, which for `<abbr title="...">` means
+losing the whole point of it.
+
+They are kept out because the schema is GitHub's own and the rule here is that
+changes to an allow-list are subtractions — a rule worth more than these
+elements are. Adding any of them would need its attributes analysed
+individually, not just the tag name.
+
+**HTML comments are dropped.** A comment is the one construct that is never
+displayed and never read, which makes it both harmless to lose and the natural
+place to hide something. `<!-- prettier-ignore -->` and `<!-- more -->` are
+real losses; the trade is recorded rather than assumed.
+
+**Raw HTML is repaired, not passed through.** cmark copies unbalanced markup
+to its output verbatim; this tool parses it, so `<a href="x">` with no closing
+tag comes out closed. Ours is well-formed and theirs is not, which is the
+right way round for output meant to be pasted somewhere.
+
+**Emoji shortcodes are not expanded.** `:rocket:` stays `:rocket:`. Shortcode
+expansion is a GitHub feature outside the GFM specification, and half-doing it
+would be worse than not doing it.
+
+**A document containing raw HTML needs two round trips to settle**, not one:
+the first converts the raw HTML into Markdown, and the result is stable from
+there. Measured across nine READMEs from well-known repositories — all nine
+settle, none cycles.
 
 ## Libraries, sanitisation and the preview
 
