@@ -112,6 +112,212 @@ function makePng(size = 8) {
   ]);
 }
 
+/**
+ * A genuine RGBA PNG of any size, from a pixel function.
+ *
+ * `makePng` above is the 8x8 gradient the original smoke check uses; this is
+ * the same encoder generalised, because the visual checks below need images
+ * with specific, known content: an alpha channel, a hard edge, a stripe
+ * pattern fine enough to alias.
+ */
+function makeRgbaPng(width, height, pixel) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+
+  const raw = Buffer.alloc(height * (width * 4 + 1));
+  let offset = 0;
+  for (let y = 0; y < height; y += 1) {
+    raw[offset] = 0;
+    offset += 1;
+    for (let x = 0; x < width; x += 1) {
+      const [r, g, b, a] = pixel(x, y);
+      raw[offset] = r;
+      raw[offset + 1] = g;
+      raw[offset + 2] = b;
+      raw[offset + 3] = a;
+      offset += 4;
+    }
+  }
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+/**
+ * Sixteen flat 4x4 blocks of known colour.
+ *
+ * Flat blocks rather than a gradient, because JPEG is a frequency codec: it
+ * reproduces a flat area almost exactly and mangles a hard edge, so sampling
+ * block centres measures the CODEC rather than measuring ringing.
+ */
+const SWATCH_COLOURS = [
+  [0, 0, 0],
+  [255, 255, 255],
+  [230, 30, 30],
+  [30, 190, 60],
+  [40, 70, 220],
+  [240, 200, 20],
+  [120, 120, 120],
+  [200, 90, 160],
+  [10, 140, 150],
+  [250, 130, 40],
+  [60, 60, 60],
+  [190, 190, 190],
+  [90, 20, 130],
+  [20, 90, 30],
+  [220, 220, 160],
+  [35, 35, 90],
+];
+
+function makeSwatchPng() {
+  return makeRgbaPng(16, 16, (x, y) => {
+    const index = Math.floor(y / 4) * 4 + Math.floor(x / 4);
+    const [r, g, b] = SWATCH_COLOURS[index];
+    return [r, g, b, 255];
+  });
+}
+
+/** Left half opaque red, right half fully transparent. */
+function makeTransparentPng() {
+  return makeRgbaPng(8, 8, (x) => (x < 4 ? [230, 30, 30, 255] : [0, 0, 0, 0]));
+}
+
+/**
+ * One-pixel vertical stripes.
+ *
+ * The classic downscale probe: averaged correctly, an 8x reduction of this is
+ * uniform mid-grey. Point-sampled, it is stripes, moire, or solid black -
+ * which is a plausible-looking image and a wrong one.
+ */
+function makeStripesPng() {
+  return makeRgbaPng(512, 64, (x) => (x % 2 === 0 ? [0, 0, 0, 255] : [255, 255, 255, 255]));
+}
+
+/**
+ * A decompression bomb: 1-bit greyscale, so 20000x20000 costs 48 kB on disk
+ * and 1.6 GB decoded. Measured here: both engines decode it SUCCESSFULLY in
+ * about two seconds, which is why the tool's size guard reads the header
+ * rather than the decoded bitmap.
+ */
+function makeBombPng(size) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 1;
+  ihdr[9] = 0;
+  const rowBytes = Math.ceil(size / 8) + 1;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(Buffer.alloc(rowBytes * size), { level: 9 })),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+/** A two-frame animated GIF: frame one red, frame two blue. */
+function makeAnimatedGif(size = 8) {
+  const parts = [Buffer.from('GIF89a', 'ascii')];
+  const screen = Buffer.alloc(7);
+  screen.writeUInt16LE(size, 0);
+  screen.writeUInt16LE(size, 2);
+  screen[4] = 0x80; // global colour table, two entries
+  parts.push(screen, Buffer.from([230, 30, 30, 40, 70, 220]));
+  parts.push(Buffer.from([0x21, 0xff, 0x0b]), Buffer.from('NETSCAPE2.0', 'ascii'));
+  parts.push(Buffer.from([0x03, 0x01, 0x00, 0x00, 0x00]));
+
+  for (const index of [0, 1]) {
+    parts.push(Buffer.from([0x21, 0xf9, 0x04, 0x00, 0x32, 0x00, 0x00, 0x00]));
+    const descriptor = Buffer.alloc(10);
+    descriptor[0] = 0x2c;
+    descriptor.writeUInt16LE(size, 5);
+    descriptor.writeUInt16LE(size, 7);
+    parts.push(descriptor);
+
+    // LZW with a minimum code size of 2: clear, one index per pixel, end.
+    const codes = [4, ...Array.from({ length: size * size }, () => index), 5];
+    let bits = 0;
+    let accumulator = 0;
+    const packed = [];
+    for (const code of codes) {
+      accumulator |= code << bits;
+      bits += 3;
+      while (bits >= 8) {
+        packed.push(accumulator & 0xff);
+        accumulator >>= 8;
+        bits -= 8;
+      }
+    }
+    if (bits > 0) packed.push(accumulator & 0xff);
+
+    parts.push(Buffer.from([0x02]));
+    for (let at = 0; at < packed.length; at += 255) {
+      const slice = packed.slice(at, at + 255);
+      parts.push(Buffer.from([slice.length]), Buffer.from(slice));
+    }
+    parts.push(Buffer.from([0x00]));
+  }
+
+  parts.push(Buffer.from([0x3b]));
+  return Buffer.concat(parts);
+}
+
+/**
+ * Splices an EXIF APP1 - orientation, a GPS pointer and a comment - into a
+ * JPEG that a real encoder produced.
+ *
+ * There is no JPEG encoder in this file and writing one would be absurd, so
+ * the pixels come from a canvas in the page and the metadata is added here.
+ * The result is a file shaped exactly like a photograph off a phone: upright
+ * pixels, a flag saying to rotate them, and coordinates nobody asked for.
+ */
+function withExif(jpegBytes, orientation) {
+  const tiff = [];
+  const u16 = (value) => {
+    const buffer = Buffer.alloc(2);
+    buffer.writeUInt16BE(value);
+    return buffer;
+  };
+  const u32 = (value) => {
+    const buffer = Buffer.alloc(4);
+    buffer.writeUInt32BE(value);
+    return buffer;
+  };
+
+  tiff.push(Buffer.from('MM', 'ascii'), u16(42), u32(8), u16(2));
+  tiff.push(u16(0x0112), u16(3), u32(1), u16(orientation), u16(0));
+  // A GPS IFD pointer. Tag 0x8825 is what makes a holiday snap a location log.
+  tiff.push(u16(0x8825), u16(4), u32(1), u32(8 + 2 + 24 + 4));
+  tiff.push(u32(0), u16(0), u32(0));
+
+  const payload = Buffer.concat([Buffer.from('Exif\0\0', 'binary'), Buffer.concat(tiff)]);
+  const app1 = Buffer.alloc(4);
+  app1[0] = 0xff;
+  app1[1] = 0xe1;
+  app1.writeUInt16BE(payload.length + 2, 2);
+
+  const comment = Buffer.from('patchbay-secret-comment', 'ascii');
+  const com = Buffer.alloc(4);
+  com[0] = 0xff;
+  com[1] = 0xfe;
+  com.writeUInt16BE(comment.length + 2, 2);
+
+  return Buffer.concat([
+    jpegBytes.subarray(0, 2),
+    app1,
+    payload,
+    com,
+    comment,
+    jpegBytes.subarray(2),
+  ]);
+}
+
 /* ========================================================================== *
  * The checks
  * ========================================================================== */
@@ -2824,9 +3030,486 @@ async function runChecks(engine, label) {
     await checkTouch(browser, label);
     await checkTruncation(browser, label);
     await checkPreviewSandbox(browser, label);
+    await checkImageConvert(browser, label);
     await checkThemeEditor(browser, label);
   } finally {
     await browser.close();
+  }
+}
+
+/**
+ * IMAGE CONVERSION, CHECKED ON THE PIXELS RATHER THAN ON THE BYTE COUNT.
+ *
+ * This is the tool where a passing test proves the least. Dimensions and a
+ * non-zero length are easy to assert and are satisfied by an image that is
+ * upside down, grey, black where it should be white, or one frame of twelve.
+ * Every failure this tool has ever had is of that shape: output that is
+ * plausible and wrong, which is the kind nobody reports.
+ *
+ * So each conversion here goes through the whole product - file input, real
+ * worker or real main-thread fallback, real encoder - and then the OUTPUT IS
+ * DECODED AGAIN IN THE PAGE and its pixels are compared with the colours that
+ * went in. jsdom cannot do any of this: it has no decoder, no canvas and no
+ * encoder, so the unit suite can only assert the drawing calls, never their
+ * result.
+ *
+ * The two engines also split the work for free. Firefox has OffscreenCanvas
+ * and takes the worker path; Playwright's WebKit has none and is downgraded to
+ * the main thread. Running the identical pixel assertions in both is what
+ * turns "the fallback produces an identical result" from a claim in the README
+ * into something asserted.
+ */
+async function checkImageConvert(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+
+  // The output port hands its bytes to `URL.createObjectURL` on Download, and
+  // that is the only place the finished file is reachable from outside the
+  // app. Wrapping it is less invasive than driving a real download and works
+  // the same way in both engines.
+  await context.addInitScript(() => {
+    const original = URL.createObjectURL.bind(URL);
+    window.__lastBlob = null;
+    URL.createObjectURL = (blob) => {
+      window.__lastBlob = blob;
+      return original(blob);
+    };
+  });
+
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${ORIGIN}/tools/image-convert`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Image' }).waitFor({ timeout: 15_000 });
+
+    /* -- Driving the tool ------------------------------------------------- */
+
+    /*
+     * Every option is set on every run, and the page is reloaded before each
+     * one. Both halves were learned the hard way: options persist for the life
+     * of the page, so a `maxEdge` left over from the resize check silently
+     * shrank the images in the quality check - and the previous run's report
+     * is still on screen, so "wait for a report" returned the last one and two
+     * checks passed against the wrong conversion entirely.
+     */
+    const setOptions = async ({ format = 'WebP', quality = 0.85, maxEdge = 0 }) => {
+      // Quality before format: the field is hidden while the target is PNG,
+      // because a PNG encoder ignores it. A hidden field keeps its value, so
+      // setting it first still reaches the tool - and this ordering is itself
+      // the check that the value survives being hidden.
+      await page.getByLabel('Quality').fill(String(quality));
+      await page.getByLabel('Longest edge (pixels)').fill(String(maxEdge));
+      await page.getByLabel('Convert to').click();
+      await page.getByRole('option', { name: format, exact: true }).click();
+    };
+
+    /**
+     * Uploads a file, runs, and returns the report plus the encoded output.
+     *
+     * `outcome` is 'ok' or 'error'; an expected failure returns the rendered
+     * message instead of waiting forever for a result that is not coming.
+     */
+    const run = async (file, options = {}, outcome = 'ok') => {
+      await page.goto(`${ORIGIN}/tools/image-convert`, { waitUntil: 'networkidle' });
+      await page.getByRole('heading', { level: 1, name: 'Image' }).waitFor({ timeout: 15_000 });
+      await page.evaluate(() => {
+        window.__lastBlob = null;
+      });
+      await page.locator('input[type="file"]').setInputFiles(file);
+      await setOptions(options);
+
+      const started = Date.now();
+      await page.getByRole('button', { name: 'Run' }).click();
+
+      if (outcome === 'error') {
+        const report = page.locator('p', { hasText: 'Code:' }).first();
+        await report.waitFor({ timeout: 30_000 });
+        return {
+          elapsed: Date.now() - started,
+          code: (await report.textContent()) ?? '',
+          message:
+            (await page.locator('p', { hasText: 'larger than' }).first().textContent()) ?? '',
+        };
+      }
+
+      await page.waitForFunction(
+        () =>
+          [...document.querySelectorAll('textarea[readonly]')].some((box) =>
+            box.value.includes('changePercent'),
+          ),
+        undefined,
+        { timeout: 30_000 },
+      );
+
+      const report = await page.evaluate(() => {
+        const box = [...document.querySelectorAll('textarea[readonly]')].find((candidate) =>
+          candidate.value.includes('changePercent'),
+        );
+        return box ? JSON.parse(box.value) : null;
+      });
+
+      await page.getByRole('button', { name: 'Download' }).first().click();
+      const encoded = await page.evaluate(async () => {
+        const blob = window.__lastBlob;
+        if (!blob) return null;
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        let binary = '';
+        for (const byte of bytes) binary += String.fromCharCode(byte);
+        return btoa(binary);
+      });
+
+      return { elapsed: Date.now() - started, report, encoded };
+    };
+
+    /** Decodes an encoded output back to pixels, in the page. */
+    const pixelsOf = (encoded, points) =>
+      page.evaluate(
+        async ([data, wanted]) => {
+          const bytes = Uint8Array.from(atob(data), (character) => character.charCodeAt(0));
+          const bitmap = await createImageBitmap(new Blob([bytes]));
+          const canvas = document.createElement('canvas');
+          canvas.width = bitmap.width;
+          canvas.height = bitmap.height;
+          const context2d = canvas.getContext('2d');
+          context2d.drawImage(bitmap, 0, 0);
+          const data2d = context2d.getImageData(0, 0, bitmap.width, bitmap.height).data;
+          const at = wanted.map(([x, y]) => {
+            const index = (y * bitmap.width + x) * 4;
+            return [data2d[index], data2d[index + 1], data2d[index + 2], data2d[index + 3]];
+          });
+          // Whole-image extremes, for the aliasing check.
+          let min = 255;
+          let max = 0;
+          for (let index = 0; index < data2d.length; index += 4) {
+            min = Math.min(min, data2d[index]);
+            max = Math.max(max, data2d[index]);
+          }
+          return { width: bitmap.width, height: bitmap.height, at, min, max };
+        },
+        [encoded, points],
+      );
+
+    const asBytes = (encoded) => Buffer.from(encoded, 'base64');
+    const distance = (got, want) =>
+      Math.max(Math.abs(got[0] - want[0]), Math.abs(got[1] - want[1]), Math.abs(got[2] - want[2]));
+
+    /* -- 1. A lossless round trip must be pixel-exact --------------------- */
+
+    const swatch = { name: 'swatch.png', mimeType: 'image/png', buffer: makeSwatchPng() };
+    const centres = SWATCH_COLOURS.map((_, index) => [
+      (index % 4) * 4 + 1,
+      Math.floor(index / 4) * 4 + 1,
+    ]);
+
+    const toPng = await run(swatch, { format: 'PNG (lossless)' });
+    const pngPixels = await pixelsOf(toPng.encoded, centres);
+    const pngWorst = Math.max(
+      ...pngPixels.at.map((got, index) => distance(got, SWATCH_COLOURS[index])),
+    );
+    check(
+      label,
+      'a PNG round trip reproduces every colour exactly',
+      pngWorst === 0 && pngPixels.width === 16,
+      `worst channel error ${String(pngWorst)}, ${String(pngPixels.width)}x${String(pngPixels.height)}`,
+    );
+
+    /* -- 2. And a lossy one must be close ---------------------------------- */
+
+    const toWebp = await run(swatch, { format: 'WebP', quality: 1 });
+    const webpPixels = await pixelsOf(toWebp.encoded, centres);
+    const webpWorst = Math.max(
+      ...webpPixels.at.map((got, index) => distance(got, SWATCH_COLOURS[index])),
+    );
+    check(
+      label,
+      'a WebP conversion keeps every colour within a few levels',
+      webpWorst <= 8,
+      `worst channel error ${String(webpWorst)}`,
+    );
+
+    const toJpeg = await run(swatch, { format: 'JPEG', quality: 0.95 });
+    const jpegPixels = await pixelsOf(toJpeg.encoded, centres);
+    const jpegWorst = Math.max(
+      ...jpegPixels.at.map((got, index) => distance(got, SWATCH_COLOURS[index])),
+    );
+    check(
+      label,
+      'a JPEG conversion keeps every colour within a visible threshold',
+      jpegWorst <= 16,
+      `worst channel error ${String(jpegWorst)}`,
+    );
+
+    /* -- 3. Transparency, which is the classic silent ruin ---------------- */
+
+    const transparent = {
+      name: 'logo.png',
+      mimeType: 'image/png',
+      buffer: makeTransparentPng(),
+    };
+
+    const flattened = await run(transparent, { format: 'JPEG', quality: 0.95 });
+    const flatPixels = await pixelsOf(flattened.encoded, [
+      [1, 1],
+      [6, 1],
+    ]);
+    const wasTransparent = flatPixels.at[1];
+    check(
+      label,
+      'transparency converted to JPEG becomes white, not black',
+      wasTransparent[0] >= 245 && wasTransparent[1] >= 245 && wasTransparent[2] >= 245,
+      `the transparent half came back rgb(${wasTransparent.slice(0, 3).join(', ')})`,
+    );
+    check(
+      label,
+      'the opaque half of the same image is unharmed',
+      distance(flatPixels.at[0], [230, 30, 30]) <= 16,
+      `rgb(${flatPixels.at[0].slice(0, 3).join(', ')})`,
+    );
+    check(
+      label,
+      'and the tool says it flattened the transparency',
+      (flattened.report?.summary ?? '').includes('Transparency') &&
+        (flattened.report?.notes ?? []).some((note) => note.level === 'warn'),
+      flattened.report?.summary ?? 'no summary',
+    );
+
+    const kept = await run(transparent, { format: 'WebP', quality: 1 });
+    const keptPixels = await pixelsOf(kept.encoded, [[6, 1]]);
+    check(
+      label,
+      'transparency converted to WebP survives',
+      keptPixels.at[0][3] === 0,
+      `alpha ${String(keptPixels.at[0][3])}`,
+    );
+
+    /* -- 4. EXIF orientation, and the metadata that goes with it ---------- */
+
+    /*
+     * A photograph off a phone: upright pixels, a flag saying rotate 90
+     * clockwise, GPS coordinates and a comment. The source is 4 wide and 2
+     * tall with a red left half; displayed correctly it is 2 wide and 4 tall
+     * with a red TOP half. An implementation that drops the flag and keeps the
+     * pixels hands back a sideways photograph - and one that keeps the flag
+     * while re-encoding through a canvas rotates it twice.
+     */
+    const baseJpeg = await page.evaluate(async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 4;
+      canvas.height = 2;
+      const context2d = canvas.getContext('2d');
+      context2d.fillStyle = 'rgb(230, 30, 30)';
+      context2d.fillRect(0, 0, 2, 2);
+      context2d.fillStyle = 'rgb(40, 70, 220)';
+      context2d.fillRect(2, 0, 2, 2);
+      const blob = await new Promise((resolve) => {
+        canvas.toBlob(resolve, 'image/jpeg', 1);
+      });
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      let binary = '';
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return btoa(binary);
+    });
+
+    const rotated = {
+      name: 'holiday.jpg',
+      mimeType: 'image/jpeg',
+      buffer: withExif(Buffer.from(baseJpeg, 'base64'), 6),
+    };
+
+    const upright = await run(rotated, { format: 'PNG (lossless)' });
+    const uprightPixels = await pixelsOf(upright.encoded, [
+      [0, 0],
+      [0, 3],
+    ]);
+    check(
+      label,
+      'a sideways photograph is written upright, with its axes swapped',
+      uprightPixels.width === 2 && uprightPixels.height === 4,
+      `${String(uprightPixels.width)}x${String(uprightPixels.height)}`,
+    );
+    check(
+      label,
+      'and the rotation is applied in the right direction',
+      distance(uprightPixels.at[0], [230, 30, 30]) <= 24 &&
+        distance(uprightPixels.at[1], [40, 70, 220]) <= 24,
+      `top rgb(${uprightPixels.at[0].slice(0, 3).join(', ')}), bottom rgb(${uprightPixels.at[1].slice(0, 3).join(', ')})`,
+    );
+    check(
+      label,
+      'the reported dimensions agree with the file that was produced',
+      upright.report?.to?.width === uprightPixels.width &&
+        upright.report.to.height === uprightPixels.height,
+      `report ${String(upright.report?.to?.width)}x${String(upright.report?.to?.height)}`,
+    );
+
+    /*
+     * THE PRIVACY ONE. Nothing in the output may carry the EXIF block, the GPS
+     * pointer or the comment that went in. This is asserted on the actual
+     * bytes rather than on a promise in a README: someone about to share a
+     * photograph is entitled to more than a sentence.
+     */
+    const uprightBytes = asBytes(upright.encoded);
+    const latin = uprightBytes.toString('latin1');
+    check(
+      label,
+      'no EXIF, GPS or comment survives into the output',
+      !latin.includes('Exif') && !latin.includes('patchbay-secret-comment'),
+      `${String(uprightBytes.length)} bytes out`,
+    );
+    check(
+      label,
+      'and the tool named what it removed',
+      (upright.report?.from?.metadata ?? []).includes('GPS location') &&
+        (upright.report?.to?.metadata ?? []).length === 0,
+      JSON.stringify(upright.report?.from?.metadata ?? null),
+    );
+
+    /* -- 5. Animation, flattened but not silently -------------------------- */
+
+    const animated = { name: 'loop.gif', mimeType: 'image/gif', buffer: makeAnimatedGif() };
+    const still = await run(animated, { format: 'PNG (lossless)' });
+    const stillPixels = await pixelsOf(still.encoded, [[1, 1]]);
+    check(
+      label,
+      'an animated GIF converts to its first frame',
+      distance(stillPixels.at[0], [230, 30, 30]) <= 8,
+      `rgb(${stillPixels.at[0].slice(0, 3).join(', ')})`,
+    );
+    check(
+      label,
+      'and the user is told the other frames were discarded',
+      (still.report?.summary ?? '').includes('first frame') && still.report?.from?.frames === 2,
+      still.report?.summary ?? 'no summary',
+    );
+
+    /* -- 6. A large downscale must average, not sample -------------------- */
+
+    /*
+     * 512 columns of alternating black and white, reduced to 64. Averaged, the
+     * result is uniform mid-grey. Point-sampled, it is stripes or a solid
+     * block - an image that looks fine in a thumbnail and is wrong. Measured
+     * on both engines this passes at imageSmoothingQuality 'low' too; the
+     * assertion exists so that a future change which breaks it is noticed.
+     */
+    const stripes = { name: 'stripes.png', mimeType: 'image/png', buffer: makeStripesPng() };
+    const shrunk = await run(stripes, { format: 'PNG (lossless)', maxEdge: 64 });
+    const shrunkPixels = await pixelsOf(shrunk.encoded, [[32, 4]]);
+    check(
+      label,
+      'an 8x downscale averages the detail away instead of aliasing it',
+      shrunkPixels.width === 64 && shrunkPixels.min >= 110 && shrunkPixels.max <= 145,
+      `${String(shrunkPixels.width)}px wide, luma range ${String(shrunkPixels.min)}-${String(shrunkPixels.max)}`,
+    );
+
+    /* -- 7. A bomb, refused before it can be decoded ---------------------- */
+
+    /*
+     * 48 kB of PNG that decodes to 20000x20000, which is 1.6 GB of RGBA.
+     * Measured in this harness: `createImageBitmap` completes SUCCESSFULLY on
+     * it in about 2000 ms in both engines - so a guard reading `bitmap.width`
+     * has already paid for the attack it is preventing. The tool reads the
+     * IHDR instead, and the elapsed time is the only observable proof of that:
+     * the threshold below is a third of the measured decode, and a run that
+     * decoded first cannot come in under it.
+     */
+    const bomb = { name: 'bomb.png', mimeType: 'image/png', buffer: makeBombPng(20_000) };
+    const refused = await run(bomb, { format: 'WebP' }, 'error');
+    check(
+      label,
+      'a decompression bomb is refused',
+      refused.code.includes('limit-exceeded'),
+      refused.code.trim(),
+    );
+    check(
+      label,
+      'and refused from its header, before the decoder is given a chance',
+      refused.elapsed < 700,
+      `${String(refused.elapsed)} ms, against ~2000 ms for the decode alone`,
+    );
+
+    /* -- 8. Two real files, which synthetic fixtures cannot stand in for -- */
+
+    /*
+     * A 1200x630 screenshot and a 512x512 logo, both real, both RGBA, both
+     * written by a real encoder across several IDAT chunks. Two things here
+     * are not testable with a fixture built for the occasion.
+     *
+     * The header parser now DECIDES WHETHER A FILE IS OPENED AT ALL, so a
+     * parser that misreads a real file refuses a real photograph. A file built
+     * by the same code that parses it cannot catch that; these were written by
+     * a browser and by Playwright.
+     *
+     * And both declare an alpha channel that neither uses, which is what every
+     * screenshot saved as RGBA looks like. Warning that their transparency was
+     * flattened would be false, and false warnings are how a true one gets
+     * ignored.
+     */
+    const realFiles = [
+      ['social-preview.png', 1200, 630],
+      ['icon-512.png', 512, 512],
+    ];
+
+    for (const [name, width, height] of realFiles) {
+      const real = {
+        name,
+        mimeType: 'image/png',
+        buffer: await readFile(join(ROOT, 'public', name)),
+      };
+      const converted = await run(real, { format: 'JPEG', quality: 0.8 });
+      check(
+        label,
+        `the header parser reads ${name} the way its encoder wrote it`,
+        converted.report?.from?.width === width && converted.report.from.height === height,
+        `${String(converted.report?.from?.width)}x${String(converted.report?.from?.height)}, expected ${String(width)}x${String(height)}`,
+      );
+      check(
+        label,
+        `an opaque RGBA ${name} is not warned about for transparency it never had`,
+        converted.report?.from?.hasAlpha === false &&
+          !(converted.report.summary ?? '').includes('Transparency'),
+        converted.report?.summary ?? 'no summary',
+      );
+    }
+
+    // And a real one through the resizer, at a ratio a thumbnail would use.
+    const logo = {
+      name: 'icon-512.png',
+      mimeType: 'image/png',
+      buffer: await readFile(join(ROOT, 'public', 'icon-512.png')),
+    };
+    const thumbnail = await run(logo, { format: 'WebP', quality: 0.8, maxEdge: 96 });
+    const thumbnailPixels = await pixelsOf(thumbnail.encoded, [[48, 48]]);
+    check(
+      label,
+      'a real logo resized to a thumbnail comes out the size it was asked for',
+      thumbnailPixels.width === 96 &&
+        thumbnailPixels.height === 96 &&
+        thumbnail.report.to.width === 96,
+      `${String(thumbnailPixels.width)}x${String(thumbnailPixels.height)}`,
+    );
+
+    /* -- 8. Quality means something, and means nothing for PNG ------------ */
+
+    const photo = { name: 'photo.png', mimeType: 'image/png', buffer: makeStripesPng() };
+    const low = await run(photo, { format: 'JPEG', quality: 0.3, maxEdge: 0 });
+    const high = await run(photo, { format: 'JPEG', quality: 0.95, maxEdge: 0 });
+    check(
+      label,
+      'a lower JPEG quality produces a smaller file',
+      low.report.to.bytes < high.report.to.bytes,
+      `${String(low.report.to.bytes)} B at 0.3 against ${String(high.report.to.bytes)} B at 0.95`,
+    );
+
+    const pngLow = await run(photo, { format: 'PNG (lossless)', quality: 0.3, maxEdge: 0 });
+    const pngHigh = await run(photo, { format: 'PNG (lossless)', quality: 0.95, maxEdge: 0 });
+    check(
+      label,
+      'PNG ignores quality, and says so rather than pretending',
+      pngLow.report.to.bytes === pngHigh.report.to.bytes &&
+        (pngLow.report.notes ?? []).some((note) => note.title.includes('Quality does not apply')),
+      `${String(pngLow.report.to.bytes)} B at both`,
+    );
+  } finally {
+    await context.close().catch(() => {});
   }
 }
 

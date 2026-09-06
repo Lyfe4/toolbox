@@ -33,9 +33,9 @@ Each has its own README next to the code, which is where the interesting parts
 are written down: why [JWT](src/tools/jwt-decode/README.md) refuses
 `alg: none`, how [Regex](src/tools/regex-tester/README.md) survives a
 catastrophically backtracking pattern and what it tells you when a pattern
-finds nothing, what stops
-[Image](src/tools/image-convert/README.md) being killed by a decompression
-bomb, why [Text convert](src/tools/text-convert/README.md) round-trips are
+finds nothing, why
+[Image](src/tools/image-convert/README.md) strips every scrap of metadata from
+a photograph and says so, why [Text convert](src/tools/text-convert/README.md) round-trips are
 checked for _meaning_ rather than byte equality, and why
 [Structured data](src/tools/structured-data/README.md) refuses to guess that a
 CSV cell holding `01234` is a number.
@@ -178,7 +178,7 @@ about.
 
 ## Testing
 
-1,897 tests across 75 files. The count is not the interesting part; what the
+1,996 tests across 76 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Conformance, measured against the specifications
@@ -266,6 +266,44 @@ failing on:
 Each is now a named regression test, and the tool's README carries the coercion
 policy, the detection rules and what it does with data that cannot survive the
 conversion — including the one silent loss that is not fixable here.
+
+### The guard that was in the wrong place
+
+[Image](src/tools/image-convert/README.md) refused a decompression bomb by
+reading the decoded bitmap's dimensions and bailing out before allocating a
+canvas. That reads as safe. Measured in two real engines, it is not:
+
+> A 48 kB PNG declaring 20000×20000 **decodes successfully** in about two
+> seconds in both Firefox and WebKit. By the time `bitmap.width` could be read,
+> the browser had already committed 1.6 GB of RGBA.
+
+The canvas was never the expensive allocation — the decode was, and the guard
+ran after it. The limits now apply to the dimensions in the container header,
+read from about forty bytes before any decoder is called, and the bomb is
+refused in ~230 ms. The post-decode check stays as a backstop, because a header
+may only ever refuse a file and never approve one.
+
+The same pass found a GIF's frames are not obliged to fit inside its declared
+logical screen — a file can announce a 1×1 screen and hold a 20000×20000 frame
+— and that every step of the encode could throw rather than return, which is a
+tool throwing across the worker boundary.
+
+### The conversions that were plausible and wrong
+
+Also Image, and all of the same shape: output nobody would report, because it
+looks like an image.
+
+An animated GIF converted to a still frame and said nothing. A transparent PNG
+was correctly matted onto white and said nothing. A photograph's GPS
+coordinates were correctly removed and said nothing — which, in an app whose
+whole pitch is that your data does not move, is the one that most needed
+saying. Each is now a note on the result, and the warn-level ones are repeated
+in the summary line, because a caveat nobody scrolls to has not been said.
+
+Two suspicions turned out to be **correct behaviour** and were left alone: EXIF
+orientation is honoured by both engines, and an 8× downscale of one-pixel
+stripes comes back uniform grey rather than aliased. Both are now regression
+tests, measured on decoded pixels, so they cannot quietly stop being true.
 
 ### The wrong answer that looked like a big one
 
@@ -483,8 +521,11 @@ Contributing guide, including the six gates and the token-layering rule:
 
 Current Firefox, Chrome, Edge and Safari. The app degrades rather than breaks
 where a capability is missing — without `OffscreenCanvas`, image work runs on
-the main thread and produces an identical result, and the cross-browser harness
-asserts which branch was actually taken so the fallback cannot rot unnoticed.
+the main thread and produces an identical result. That is asserted rather than
+claimed: Playwright's WebKit has no `OffscreenCanvas` at all, so the harness's
+whole image suite — colour fidelity, transparency, orientation, downscaling —
+runs down the fallback path in one engine and the worker path in the other, and
+the harness also asserts which branch was actually taken.
 
 **The Safari caveat, stated plainly.** `pnpm check:browsers` runs Firefox and
 Playwright's **WebKit** — the engine behind Safari, not the Safari application.
