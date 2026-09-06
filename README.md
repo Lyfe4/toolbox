@@ -32,7 +32,8 @@ re-run, without anything you paste ever leaving the page.
 Each has its own README next to the code, which is where the interesting parts
 are written down: why [JWT](src/tools/jwt-decode/README.md) refuses
 `alg: none`, how [Regex](src/tools/regex-tester/README.md) survives a
-catastrophically backtracking pattern, what stops
+catastrophically backtracking pattern and what it tells you when a pattern
+finds nothing, what stops
 [Image](src/tools/image-convert/README.md) being killed by a decompression
 bomb, why [Text convert](src/tools/text-convert/README.md) round-trips are
 checked for _meaning_ rather than byte equality, and why
@@ -177,7 +178,7 @@ about.
 
 ## Testing
 
-1,688 tests across 72 files. The count is not the interesting part; what the
+1,897 tests across 75 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Conformance, measured against the specifications
@@ -266,6 +267,27 @@ Each is now a named regression test, and the tool's README carries the coercion
 policy, the detection rules and what it does with data that cannot survive the
 conversion — including the one silent loss that is not fixable here.
 
+### The wrong answer that looked like a big one
+
+[Regex](src/tools/regex-tester/README.md) advanced past a zero-length match with
+`lastIndex += 1`, which is the remedy every tutorial gives. Under the `u` or `v`
+flag it lands **between the two halves of a surrogate pair**, and the engine
+resolves that position back to the start of the same code point — so the match
+repeats at the same offset forever.
+
+`/^/gu` against any text containing an emoji therefore reported **5,000 matches
+at index 0** and described itself as merely truncated. Not a hang, not an error:
+a plausible-looking result with a limit note attached, which is the shape of bug
+nobody reports. The fix is the spec's own `AdvanceStringIndex`, and the whole
+match list is now asserted equal to `String.prototype.matchAll` — the
+specification's own answer to the same question — across a matrix of patterns,
+flags and subjects and again under `fast-check`.
+
+The same pass found the tool reporting `count: 5000` for a truncated listing
+(the count now outlives the listing), a match containing a newline rendering as
+two rows indistinguishable from two matches, and a sticky-without-global listing
+that disagreed with the replacement it sat next to.
+
 ### Two findings that were only ever going to be found by looking
 
 Both are `reset.css` rules that are correct in general and expensive here.
@@ -311,7 +333,7 @@ in this file have numbers behind them.
 
 |                                          | Raw      | Gzipped  |
 | ---------------------------------------- | -------- | -------- |
-| Initial JavaScript                       | 324.7 kB | 105.1 kB |
+| Initial JavaScript                       | 328.0 kB | 106.2 kB |
 | Budget (enforced by `pnpm bundle:check`) | 380.0 kB | —        |
 
 Every tool, the canvas, the styleguide and the tool pages are lazy chunks and

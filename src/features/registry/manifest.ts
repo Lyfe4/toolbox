@@ -229,7 +229,7 @@ export const TOOL_MANIFEST = [
         types: ['text'],
         description: 'The replaced text, or a list of matches with their offsets.',
       },
-      { id: 'matches', label: 'Matches', types: ['json'] },
+      { id: 'matches', label: 'Matches', types: ['json'], presentation: 'regex' },
     ],
     execution: {
       strategy: 'worker',

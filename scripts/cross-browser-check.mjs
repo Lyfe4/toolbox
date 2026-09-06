@@ -1943,6 +1943,169 @@ async function checkTruncation(browser, label) {
 }
 
 /**
+ * THE REGEX HIGHLIGHT, WHICH IS A LAYOUT PROBLEM
+ *
+ * Everything interesting about drawing regex matches is geometry, and jsdom
+ * has none. Four things the unit suite asserts the DOM shape of and cannot
+ * assert the appearance of:
+ *
+ *  1. A ZERO-LENGTH MATCH has no text to colour. It is drawn as a 2px
+ *     inline-block caret, and "is that caret actually painted" is a question
+ *     about computed size - which is exactly what `reset.css` has broken
+ *     before, twice, in this repo.
+ *  2. TWO ADJACENT MATCHES must remain two boxes. In the DOM they are always
+ *     two <mark>s; on screen they can be one continuous tint.
+ *  3. THE SIGNAL IS NOT COLOUR ALONE. The underline and the outline have to
+ *     survive whatever the reset and the theme do to them.
+ *  4. THE HIGHLIGHT SCROLLS, so it has to be focusable - and whether a box
+ *     scrolls is a layout fact.
+ *
+ * The axe pass at the end runs with `color-contrast` ENABLED, which is the
+ * rule jsdom can never evaluate, over a result that actually has marks, notes
+ * and a table in it.
+ */
+async function checkRegex(browser, label) {
+  const axeSource = await readFile(join(ROOT, 'node_modules', 'axe-core', 'axe.min.js'), 'utf8');
+
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await context.addInitScript(axeSource);
+  const page = await context.newPage();
+
+  const run = async (subject, pattern) => {
+    await page.getByLabel('Regex input').fill(subject);
+    await page.getByLabel('Pattern').fill(pattern);
+    await page.getByRole('button', { name: 'Run' }).click();
+    await page.locator('mark').first().waitFor({ timeout: 30_000 });
+  };
+
+  /** Painted size and decoration of every mark, straight from the CSSOM. */
+  const marks = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('mark')].map((node) => {
+        const box = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return {
+          width: Math.round(box.width * 100) / 100,
+          height: Math.round(box.height * 100) / 100,
+          left: Math.round(box.left * 100) / 100,
+          right: Math.round(box.right * 100) / 100,
+          underline: style.textDecorationLine,
+          outline: style.outlineWidth,
+        };
+      }),
+    );
+
+  try {
+    await page.goto(`${ORIGIN}/tools/regex-tester`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Regex' }).waitFor({ timeout: 15_000 });
+
+    /* -- The tool ran in a real worker and drew a real highlight ---------- */
+    await run('a1 bb22 c333', '\\d+');
+    const found = await marks();
+    check(
+      label,
+      'a pattern run in a real worker marks every match',
+      found.length === 3,
+      `${String(found.length)} mark(s)`,
+    );
+    check(
+      label,
+      'a match carries an underline and an outline, so the tint is not the only signal',
+      found.every((mark) => mark.underline.includes('underline') && mark.outline !== '0px'),
+      JSON.stringify(found[0] ?? null),
+    );
+
+    /* -- Adjacent matches stay two boxes ---------------------------------- */
+    await run('abab', 'ab');
+    const adjacent = await marks();
+    check(
+      label,
+      'two adjacent matches are drawn as two boxes, not one long one',
+      adjacent.length === 2 &&
+        adjacent[0] !== undefined &&
+        adjacent[1] !== undefined &&
+        adjacent[1].left >= adjacent[0].right - 1 &&
+        adjacent[0].width > 0,
+      JSON.stringify(adjacent),
+    );
+
+    /* -- A zero-length match is painted at all ---------------------------- */
+    await run('abc', 'x*');
+    const empty = await marks();
+    check(
+      label,
+      'a zero-length match is painted as a caret rather than as nothing',
+      empty.length === 4 && empty.every((mark) => mark.width > 0 && mark.height > 0),
+      JSON.stringify(empty[0] ?? null),
+    );
+
+    /* -- The highlight scrolls, so it has to be reachable ----------------- */
+    await run(Array.from({ length: 200 }, (_, i) => `line ${String(i)} value`).join('\n'), 'value');
+    const scroller = await page.evaluate(() => {
+      const region = document.querySelector('[aria-label="Subject text with matches highlighted"]');
+      if (!region) return null;
+      return {
+        scrolls: region.scrollHeight > region.clientHeight + 1,
+        tabindex: region.getAttribute('tabindex'),
+      };
+    });
+    check(
+      label,
+      'the highlight box scrolls and can be focused',
+      scroller?.scrolls === true && scroller.tabindex === '0',
+      JSON.stringify(scroller),
+    );
+
+    /* -- One enormous line must not widen the page ------------------------ */
+    await run(`x${'abcdefghij'.repeat(400)}`, '[a-e]+');
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    check(
+      label,
+      'a 4,000-character subject does not make the page scroll sideways',
+      overflow <= 1,
+      `${String(overflow)}px`,
+    );
+
+    /* -- axe, with colour contrast, over a populated result --------------- */
+    await run('ada@example.com\nbob@example.org', '(?<user>[\\w.]+)@(?<host>[\\w.]+)');
+    for (const theme of ['graphite', 'vellum']) {
+      await page.evaluate((value) => {
+        const root = document.documentElement;
+        for (const token of ['--pb-motion-fast', '--pb-motion-base', '--pb-motion-slow']) {
+          root.style.setProperty(token, '0s');
+        }
+        root.setAttribute('data-theme', value);
+      }, theme);
+      await page.waitForTimeout(250);
+
+      const violations = await page.evaluate(async () => {
+        const results = await window.axe.run(document, {
+          resultTypes: ['violations'],
+          runOnly: {
+            type: 'tag',
+            values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'],
+          },
+        });
+        return results.violations.map(
+          (violation) =>
+            `${violation.id} (${violation.impact ?? '?'}, x${String(violation.nodes.length)}) ${violation.nodes[0]?.target.join(' ') ?? ''}`,
+        );
+      });
+      check(
+        label,
+        `a populated regex result is clean in ${theme}`,
+        violations.length === 0,
+        violations.join(' | '),
+      );
+    }
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
  * The Markdown preview's sandboxed iframe.
  *
  * TWO INDEPENDENT LAYERS, and the second one was verified rather than assumed
@@ -2656,6 +2819,7 @@ async function runChecks(engine, label) {
     await checkDeepLinks(browser, label);
     await checkStructuredData(browser, label);
     await checkDiff(browser, label);
+    await checkRegex(browser, label);
     await checkHead(browser, label);
     await checkTouch(browser, label);
     await checkTruncation(browser, label);

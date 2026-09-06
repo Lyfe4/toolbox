@@ -420,8 +420,16 @@ describe('contrast', () => {
     await user.clear(tokenInput('ink-primary'));
     await user.type(tokenInput('ink-primary'), '#0c0d12');
 
-    // Debounced, so typing six characters does not produce six announcements.
-    expect(announcer).toHaveTextContent('');
+    /*
+     * Debounced, so typing six characters does not produce six announcements.
+     *
+     * Asserted as "the new announcement has not arrived yet" rather than as
+     * "the announcer is empty". The region legitimately still holds the
+     * announcement for the theme that was just created, and on a loaded
+     * machine that earlier debounce lands during the typing - which failed
+     * this test for a reason that has nothing to do with what it is checking.
+     */
+    expect(announcer).not.toHaveTextContent(/below WCAG AA/);
 
     await waitFor(() => {
       expect(announcer).toHaveTextContent(/contrast pairs? below WCAG AA/);

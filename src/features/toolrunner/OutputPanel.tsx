@@ -7,6 +7,7 @@ import { formatBytes, sniffBytes } from '@/lib/sniff';
 import { ColorView } from './ColorView';
 import { DiffView } from './DiffView';
 import { HtmlView } from './HtmlView';
+import { RegexView } from './RegexView';
 import styles from './runner.module.css';
 
 /* -------------------------------------------------------------------------- *
@@ -74,6 +75,12 @@ export function OutputView({
   // for values whose data type does not determine how to draw them.
   if (presentation === 'diff' && value.type === 'json') {
     return <DiffView value={value.data} label={label} />;
+  }
+
+  // The regex report is JSON for the same reason the diff is: a screen reader
+  // needs the matches as structure. The hint says which of the two it is.
+  if (presentation === 'regex' && value.type === 'json') {
+    return <RegexView value={value.data} label={label} />;
   }
 
   // A port that declares it carries HTML gets the preview and the rich-text
