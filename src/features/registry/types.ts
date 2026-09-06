@@ -182,8 +182,12 @@ export interface OutputPort extends PortBase {
    * optional `from` and `to` fact blocks, and a list of levelled notes. Drawn
    * as JSON it is a wall of braces in a read-only textarea, which is where
    * `GPS location was removed` had been living.
+   *
+   * `jwt` is the same again, and the one where the stakes are not aesthetic: a
+   * decoded token whose signature verdict reads as one more line of braces
+   * invites somebody to believe claims that nothing checked.
    */
-  readonly presentation?: 'diff' | 'html' | 'regex' | 'report';
+  readonly presentation?: 'diff' | 'html' | 'jwt' | 'regex' | 'report';
 }
 
 /** True when an output port's declared types overlap an input port's. */

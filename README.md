@@ -26,12 +26,13 @@ re-run, without anything you paste ever leaving the page.
 | **Diff**            | Compare two texts, with word-level highlighting.                            |
 | **Regex**           | Test a pattern, with groups and replacement.                                |
 | **Colour**          | Convert hex, `rgb()`, `hsl()` and `oklch()`, with contrast checks.          |
-| **Image**           | Convert and resize between PNG, JPEG and WebP.                              |
+| **Image**           | Convert and resize between PNG, JPEG and WebP, with a before-and-after.     |
 | **Text convert**    | Markdown, HTML and plain text, with a sandboxed preview and rich-text copy. |
 
 Each has its own README next to the code, which is where the interesting parts
 are written down: why [JWT](src/tools/jwt-decode/README.md) refuses
-`alg: none`, how [Regex](src/tools/regex-tester/README.md) survives a
+`alg: none` and why "not verified" is drawn as a warning rather than as an
+absence, how [Regex](src/tools/regex-tester/README.md) survives a
 catastrophically backtracking pattern and what it tells you when a pattern
 finds nothing, why
 [Image](src/tools/image-convert/README.md) strips every scrap of metadata from
@@ -39,6 +40,14 @@ a photograph and says so, why [Text convert](src/tools/text-convert/README.md) r
 checked for _meaning_ rather than byte equality, and why
 [Structured data](src/tools/structured-data/README.md) refuses to guess that a
 CSV cell holding `01234` is a number.
+
+**How a result is drawn** is a decision per output port rather than per tool,
+and the reasoning lives in
+[architecture.md](docs/architecture.md#output-views-are-chosen-by-the-port-except-for-bytes):
+JSON that means something particular — a diff, a regex report, a conversion
+report, a decoded token — gets a view named by the port, bytes that turn out to
+be an image get a preview, and everything else is plain text because plain text
+is already the answer. Every view keeps its payload one press away.
 
 **Rich text** is the one thing not deducible from the options: it is not a
 target format. Set Text convert's target to **HTML**, run, and press **Copy as

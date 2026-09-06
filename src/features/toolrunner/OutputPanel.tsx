@@ -7,6 +7,8 @@ import { formatBytes, sniffBytes } from '@/lib/sniff';
 import { ColorView } from './ColorView';
 import { DiffView } from './DiffView';
 import { HtmlView } from './HtmlView';
+import { ImageView, isPreviewableImage, type ImageComparison } from './ImageView';
+import { JwtView } from './JwtView';
 import { RegexView } from './RegexView';
 import { ReportView } from './ReportView';
 import styles from './runner.module.css';
@@ -61,6 +63,17 @@ export interface OutputViewProps {
   /** Writes both text/html and text/plain. Only ever called for HTML output. */
   readonly onCopyRich: (html: string) => void;
   readonly onDownload: (blob: Blob, filename: string) => void;
+  /**
+   * The image this run was given, when it was given one.
+   *
+   * Only the image preview reads it, and only to draw the before-and-after —
+   * judging a lossy conversion means comparing, and the numbers in the report
+   * cannot tell you whether quality 0.6 is acceptable for THIS picture. It is
+   * a fact about the run rather than about the value, which is why it is a
+   * separate prop rather than something smuggled into `value`; every other
+   * branch ignores it.
+   */
+  readonly comparison?: ImageComparison | null;
 }
 
 export function OutputView({
@@ -71,17 +84,55 @@ export function OutputView({
   onCopy,
   onCopyRich,
   onDownload,
+  comparison = null,
 }: OutputViewProps) {
   // The hint is checked before the type switch, because it exists precisely
   // for values whose data type does not determine how to draw them.
   if (presentation === 'diff' && value.type === 'json') {
-    return <DiffView value={value.data} label={label} />;
+    return (
+      <DiffView
+        value={value.data}
+        label={label}
+        baseFilename={baseFilename}
+        onCopy={onCopy}
+        onDownload={onDownload}
+      />
+    );
   }
 
   // The regex report is JSON for the same reason the diff is: a screen reader
   // needs the matches as structure. The hint says which of the two it is.
   if (presentation === 'regex' && value.type === 'json') {
-    return <RegexView value={value.data} label={label} />;
+    return (
+      <RegexView
+        value={value.data}
+        label={label}
+        baseFilename={baseFilename}
+        onCopy={onCopy}
+        onDownload={onDownload}
+      />
+    );
+  }
+
+  /*
+   * The signature verdict, first and unmissable, then the claims.
+   *
+   * Same bargain as the others and for a sharper reason: the tool's most
+   * important sentence - "NOT VERIFIED - no key supplied" - was a string value
+   * among other string values in a textarea, one line above a header object
+   * nobody scrolls past. An unverified decode presented as ordinary is the
+   * actual security risk with a JWT tool. See JwtView.
+   */
+  if (presentation === 'jwt' && value.type === 'json') {
+    return (
+      <JwtView
+        value={value.data}
+        label={label}
+        baseFilename={baseFilename}
+        onCopy={onCopy}
+        onDownload={onDownload}
+      />
+    );
   }
 
   /*
@@ -157,6 +208,32 @@ export function OutputView({
       );
 
     case 'bytes': {
+      /*
+       * AN IMAGE IS SHOWN, NOT DESCRIBED.
+       *
+       * "Binary output. Download it rather than trying to read it here." is
+       * true of a ZIP and false of a PNG, and it was what the image converter
+       * said about every result it produced. The sniff already ran to decide
+       * between a text preview and that sentence; asking it one more question
+       * costs nothing and turns the one tool whose output is a picture into a
+       * tool that shows you the picture.
+       *
+       * Keyed on the SNIFF rather than on a port hint, so base64's decoded
+       * output gets it too - decoding a `data:` URI and seeing the image is a
+       * real thing people do with that tool.
+       */
+      if (isPreviewableImage(value.bytes)) {
+        return (
+          <ImageView
+            bytes={value.bytes}
+            label={label}
+            filename={value.filename ?? `${baseFilename}.bin`}
+            comparison={comparison}
+            onDownload={onDownload}
+          />
+        );
+      }
+
       const sniff = sniffBytes(value.bytes);
       return (
         <div className={styles.stack}>

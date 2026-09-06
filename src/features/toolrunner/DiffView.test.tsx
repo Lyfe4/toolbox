@@ -36,9 +36,36 @@ function longFile(marker: string): string {
   ).join('\n');
 }
 
+/**
+ * The view with the three payload-handling props filled in.
+ *
+ * Every test below this line is about the RENDERED diff, and repeating a
+ * filename and two callbacks twenty-odd times would bury what each one is
+ * actually asserting. The Raw toggle has its own tests at the bottom of the
+ * file and they use `DiffView` directly, because for those the callbacks are
+ * the point.
+ */
+function DiffUnderTest(props: { readonly value: JsonValue; readonly label: string }) {
+  return (
+    <DiffView
+      {...props}
+      baseFilename="diff"
+      onCopy={() => undefined}
+      onDownload={() => undefined}
+    />
+  );
+}
+
+/** The raw box's text. `toHaveValue` does not take an asymmetric matcher. */
+function rawValue(name: string): string {
+  const box = screen.getByRole('textbox', { name });
+  if (!(box instanceof HTMLTextAreaElement)) throw new Error(`${name} is not a textarea`);
+  return box.value;
+}
+
 describe('DiffView', () => {
   it('renders the rows as a list, not as a wall of text', () => {
-    render(<DiffView value={diffOf('a\nb\nc', 'a\nB\nc')} label="Diff changes" />);
+    render(<DiffUnderTest value={diffOf('a\nb\nc', 'a\nB\nc')} label="Diff changes" />);
 
     const list = screen.getByRole('list');
     expect(within(list).getAllByRole('listitem').length).toBeGreaterThan(0);
@@ -51,7 +78,7 @@ describe('DiffView', () => {
      * text, so the two are different lines with the same number, and the two
      * gutters that make that obvious on screen are aria-hidden.
      */
-    render(<DiffView value={diffOf('one\ntwo', 'one\nTWO')} label="Diff changes" />);
+    render(<DiffUnderTest value={diffOf('one\ntwo', 'one\nTWO')} label="Diff changes" />);
 
     const items = screen.getAllByRole('listitem');
     const removed = items.find((item) => item.textContent.includes('removed, original line 2'));
@@ -68,7 +95,7 @@ describe('DiffView', () => {
    */
   it('distinguishes additions from removals without using colour', () => {
     const { container } = render(
-      <DiffView value={diffOf('keep\ngone', 'keep\nnew')} label="Diff changes" />,
+      <DiffUnderTest value={diffOf('keep\ngone', 'keep\nnew')} label="Diff changes" />,
     );
 
     const text = container.textContent;
@@ -78,7 +105,10 @@ describe('DiffView', () => {
 
   it('marks changed words with ins and del, which carry their own meaning', () => {
     const { container } = render(
-      <DiffView value={diffOf('the quick brown fox', 'the quick red fox')} label="Diff changes" />,
+      <DiffUnderTest
+        value={diffOf('the quick brown fox', 'the quick red fox')}
+        label="Diff changes"
+      />,
     );
 
     expect(container.querySelector('ins')?.textContent).toContain('red');
@@ -86,17 +116,17 @@ describe('DiffView', () => {
   });
 
   it('summarises the change before the detail', () => {
-    render(<DiffView value={diffOf('a\nb', 'a\nc')} label="Diff changes" />);
+    render(<DiffUnderTest value={diffOf('a\nb', 'a\nc')} label="Diff changes" />);
     expect(screen.getByText('1 added, 1 removed, 1 unchanged')).toBeInTheDocument();
   });
 
   it('says so plainly when the two inputs match', () => {
-    render(<DiffView value={diffOf('same', 'same')} label="Diff changes" />);
+    render(<DiffUnderTest value={diffOf('same', 'same')} label="Diff changes" />);
     expect(screen.getByText('The two inputs are identical.')).toBeInTheDocument();
   });
 
   it('degrades to a message rather than crashing on an unexpected shape', () => {
-    render(<DiffView value={{ nonsense: true }} label="Diff changes" />);
+    render(<DiffUnderTest value={{ nonsense: true }} label="Diff changes" />);
     expect(screen.getByText(/not a diff this view can render/)).toBeInTheDocument();
   });
 
@@ -104,7 +134,7 @@ describe('DiffView', () => {
     // The worker and the page are separately cached, so a running tab can be
     // handed either shape. Missing notes must read as "nothing to report".
     render(
-      <DiffView
+      <DiffUnderTest
         value={{
           stats: { added: 1, removed: 1, unchanged: 0 },
           identical: false,
@@ -129,25 +159,25 @@ describe('DiffView', () => {
  */
 describe('DiffView notes', () => {
   it('does not claim two texts are identical when only the comparison says so', () => {
-    render(<DiffView value={diffOf('Hello', 'HELLO', { ignoreCase: true })} label="Diff" />);
+    render(<DiffUnderTest value={diffOf('Hello', 'HELLO', { ignoreCase: true })} label="Diff" />);
 
     expect(screen.queryByText('The two inputs are identical.')).not.toBeInTheDocument();
     expect(screen.getByText(/No lines were added or removed/)).toBeInTheDocument();
   });
 
   it('says which line endings each side uses when they differ', () => {
-    render(<DiffView value={diffOf('a\r\nb\r\n', 'a\nb\n')} label="Diff" />);
+    render(<DiffUnderTest value={diffOf('a\r\nb\r\n', 'a\nb\n')} label="Diff" />);
     expect(screen.getByText(/uses CRLF, the changed text uses LF/)).toBeInTheDocument();
   });
 
   it('says when a final newline was added or removed', () => {
-    render(<DiffView value={diffOf('a\nb\n', 'a\nb')} label="Diff" />);
+    render(<DiffUnderTest value={diffOf('a\nb\n', 'a\nb')} label="Diff" />);
     expect(screen.getByText(/has a final newline; the changed text has none/)).toBeInTheDocument();
   });
 
   it('counts the rows whose difference the options ignored', () => {
     render(
-      <DiffView
+      <DiffUnderTest
         value={diffOf('a\n   b\nc\nd', 'a\nb\nc\nD', { whitespace: 'trailing' })}
         label="Diff"
       />,
@@ -156,7 +186,7 @@ describe('DiffView notes', () => {
   });
 
   it('warns that bidirectional controls can reorder what is drawn', () => {
-    render(<DiffView value={diffOf('x = 1;', `x = 1; ${RLO}evil${PDF}`)} label="Diff" />);
+    render(<DiffUnderTest value={diffOf('x = 1;', `x = 1; ${RLO}evil${PDF}`)} label="Diff" />);
     expect(screen.getByText(/bidirectional formatting characters/)).toBeInTheDocument();
   });
 });
@@ -166,7 +196,7 @@ describe('DiffView rows the reader could not otherwise explain', () => {
     // Not a space, because it is not the same on both sides; not a + or -,
     // because the comparison was told to look past it.
     const { container } = render(
-      <DiffView value={diffOf('   a', 'a', { whitespace: 'trailing' })} label="Diff" />,
+      <DiffUnderTest value={diffOf('   a', 'a', { whitespace: 'trailing' })} label="Diff" />,
     );
     expect(container.textContent).toContain('~');
   });
@@ -176,12 +206,12 @@ describe('DiffView rows the reader could not otherwise explain', () => {
      * `-a b` above `+a b`, where one of those spaces is a non-breaking space.
      * There is nothing to see, so the only honest rendering is a sentence.
      */
-    render(<DiffView value={diffOf(`a${NBSP}b`, 'a b')} label="Diff" />);
+    render(<DiffUnderTest value={diffOf(`a${NBSP}b`, 'a b')} label="Diff" />);
     expect(screen.getByText(/differs only in invisible characters/)).toBeInTheDocument();
   });
 
   it('does not repeat the invisible note on both halves of a pair', () => {
-    render(<DiffView value={diffOf(`a${NBSP}b`, 'a b')} label="Diff" />);
+    render(<DiffUnderTest value={diffOf(`a${NBSP}b`, 'a b')} label="Diff" />);
     expect(screen.getAllByText(/differs only in invisible characters/)).toHaveLength(1);
   });
 });
@@ -192,7 +222,7 @@ describe('DiffView rows the reader could not otherwise explain', () => {
  */
 describe('DiffView folding', () => {
   it('folds a long run of unchanged lines behind a button that counts them', () => {
-    render(<DiffView value={diffOf(longFile('before'), longFile('after'))} label="Diff" />);
+    render(<DiffUnderTest value={diffOf(longFile('before'), longFile('after'))} label="Diff" />);
 
     const button = screen.getByRole('button', { name: /unchanged lines/ });
     expect(button).toHaveAttribute('aria-expanded', 'false');
@@ -202,7 +232,7 @@ describe('DiffView folding', () => {
 
   it('shows the folded lines when the button is pressed', async () => {
     const user = userEvent.setup();
-    render(<DiffView value={diffOf(longFile('before'), longFile('after'))} label="Diff" />);
+    render(<DiffUnderTest value={diffOf(longFile('before'), longFile('after'))} label="Diff" />);
 
     const before = screen.getAllByRole('listitem').length;
     await user.click(screen.getByRole('button', { name: /unchanged lines/ }));
@@ -215,7 +245,7 @@ describe('DiffView folding', () => {
   });
 
   it('keeps context lines either side of a change', () => {
-    render(<DiffView value={diffOf(longFile('before'), longFile('after'))} label="Diff" />);
+    render(<DiffUnderTest value={diffOf(longFile('before'), longFile('after'))} label="Diff" />);
     // The three lines after the change are context and must not be folded.
     expect(screen.getByText('line 1')).toBeInTheDocument();
     expect(screen.getByText('line 3')).toBeInTheDocument();
@@ -223,13 +253,13 @@ describe('DiffView folding', () => {
   });
 
   it('folds nothing when the file is short enough to read', () => {
-    render(<DiffView value={diffOf('a\nb\nc', 'a\nB\nc')} label="Diff" />);
+    render(<DiffUnderTest value={diffOf('a\nb\nc', 'a\nB\nc')} label="Diff" />);
     expect(screen.queryByRole('button', { name: /unchanged lines/ })).not.toBeInTheDocument();
   });
 
   it('folds every unchanged line at zero context, matching the patch', () => {
     render(
-      <DiffView
+      <DiffUnderTest
         value={diffOf(longFile('before'), longFile('after'), { context: 0 })}
         label="Diff"
       />,
@@ -241,14 +271,52 @@ describe('DiffView folding', () => {
 describe('DiffView accessibility', () => {
   it('has no axe violations', async () => {
     const { container } = render(
-      <DiffView value={diffOf('a\nb\nc', 'a\nB\nc')} label="Diff changes" />,
+      <DiffUnderTest value={diffOf('a\nb\nc', 'a\nB\nc')} label="Diff changes" />,
     );
+    await expectNoAxeViolations(container);
+  });
+
+  /*
+   * THE PAYLOAD THIS VIEW USED TO WITHHOLD.
+   *
+   * It was tempting to call the tool's other output - the unified patch - the
+   * raw form and stop there. It is not the same thing: the patch is a
+   * different serialisation with its own losses. The `~` rows, the `oldText`
+   * an ignore-case comparison keeps, and the per-row `parts` the word-level
+   * highlight is built from exist only here, and until now the only way to
+   * read any of them was to wire the port into another node.
+   */
+  it('reaches the row structure the unified patch cannot express', async () => {
+    const user = userEvent.setup();
+    render(
+      <DiffView
+        value={diffOf('hello world', 'hello there')}
+        label="Diff changes"
+        baseFilename="diff"
+        onCopy={() => undefined}
+        onDownload={() => undefined}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Raw' }));
+
+    // The word-level parts: what a unified patch has no way to say.
+    expect(rawValue('Diff changes raw')).toContain('"changed": true');
+    // And the rendering is gone rather than doubled up beneath it.
+    expect(screen.queryByRole('list')).not.toBeInTheDocument();
+  });
+
+  it('has no axe violations in the raw view', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<DiffUnderTest value={diffOf('a', 'b')} label="Diff changes" />);
+
+    await user.click(screen.getByRole('button', { name: 'Raw' }));
     await expectNoAxeViolations(container);
   });
 
   it('has no axe violations with notes and a fold', async () => {
     const { container } = render(
-      <DiffView
+      <DiffUnderTest
         value={diffOf(`${longFile('before')}\r\n`, longFile('after'))}
         label="Diff changes"
       />,

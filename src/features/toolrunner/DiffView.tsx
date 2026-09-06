@@ -3,6 +3,8 @@ import { useState } from 'react';
 import { isJsonArray, isJsonObject, type JsonValue } from '@/features/registry/types';
 
 import styles from './diff.module.css';
+import { RawPayload } from './RawPayload';
+import { ViewToggle } from './ViewToggle';
 
 /**
  * ACCESSIBLE DIFF RENDERING
@@ -395,14 +397,60 @@ function chunkRows(rows: readonly Row[], context: number): readonly Chunk[] {
 export interface DiffViewProps {
   readonly value: JsonValue;
   readonly label: string;
+  readonly baseFilename: string;
+  readonly onCopy: (text: string) => void;
+  readonly onDownload: (blob: Blob, filename: string) => void;
 }
 
-export function DiffView({ value, label }: DiffViewProps) {
+export function DiffView({ value, label, baseFilename, onCopy, onDownload }: DiffViewProps) {
   const [opened, setOpened] = useState<readonly number[]>([]);
+  const [view, setView] = useState<'diff' | 'raw'>('diff');
   const report = parseReport(value);
 
   if (!report) {
     return <p className={styles.empty}>That result is not a diff this view can render.</p>;
+  }
+
+  /*
+   * THE RAW ROWS, WHICH THIS VIEW USED TO WITHHOLD ENTIRELY.
+   *
+   * The tool has a second output - the unified patch - and it was tempting to
+   * call that the raw form and stop. It is not the same thing: the patch is a
+   * different serialisation with its own losses (a `~` row, an `oldText`, the
+   * per-row `parts` a word-level highlight is built from) and it is what a
+   * REVIEW wants. `changes` is what a program wants, it is the payload this
+   * port actually carries, and until now the only way to see it was to wire
+   * the port into something else.
+   */
+  const toggle = (
+    <ViewToggle
+      label={label}
+      value={view}
+      onChange={setView}
+      options={[
+        { id: 'diff', label: 'Diff', status: 'Showing the rendered diff' },
+        { id: 'raw', label: 'Raw', status: 'Showing the raw rows' },
+      ]}
+    />
+  );
+
+  const raw = (
+    <RawPayload
+      label={label}
+      value={value}
+      baseFilename={baseFilename}
+      onCopy={onCopy}
+      onDownload={onDownload}
+    />
+  );
+
+  if (view === 'raw') {
+    return (
+      <div className={styles.wrapper}>
+        {toggle}
+        {raw}
+      </div>
+    );
   }
 
   const notes = notesOf(report);
@@ -410,6 +458,7 @@ export function DiffView({ value, label }: DiffViewProps) {
   if (report.equal) {
     return (
       <div className={styles.wrapper}>
+        {toggle}
         <p className={styles.empty}>
           {report.identical
             ? 'The two inputs are identical.'
@@ -425,6 +474,7 @@ export function DiffView({ value, label }: DiffViewProps) {
 
   return (
     <div className={styles.wrapper}>
+      {toggle}
       {/* Announced first, so the shape of the change is known before the detail. */}
       <p className={styles.summary}>{summary}</p>
       {notes.length > 0 ? <Notes notes={notes} /> : null}

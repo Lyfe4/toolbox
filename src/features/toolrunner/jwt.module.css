@@ -1,0 +1,279 @@
+/*
+ * Decoded-token rendering.
+ *
+ * The one rule that shapes every declaration here: the trust verdict must be
+ * the most prominent thing in the region, and "not verified" must never be
+ * quieter than the claims it is a caveat on. So the verdict is a filled
+ * banner with a heavy leading rule at heading size, while the claims below it
+ * are a plain table at value size — the visual weight is the opposite way
+ * round from a JSON dump, deliberately.
+ *
+ * Colour is never the only signal. The verdict carries a WORD ("Not
+ * verified"), an ICON on every state that is not a clean verification, and a
+ * rule whose weight does not depend on hue.
+ */
+
+.wrapper {
+  display: grid;
+  gap: var(--pb-space-sm);
+  min-inline-size: 0;
+}
+
+/* --- The verdict -------------------------------------------------------- */
+
+.verdict {
+  display: grid;
+  gap: var(--pb-space-2xs);
+  padding: var(--pb-space-sm) var(--pb-space-md);
+  border-inline-start: var(--pb-border-width-strong) solid var(--pb-border-strong);
+  border-radius: var(--pb-radius-control);
+  background-color: var(--pb-surface-inset);
+}
+
+.verdictHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pb-space-xs);
+  margin: 0;
+}
+
+.verdictWord {
+  font-size: var(--pb-heading-size);
+  font-weight: var(--pb-heading-weight);
+  letter-spacing: var(--pb-heading-tracking);
+  color: var(--pb-ink-primary);
+}
+
+/* The algorithm as a chip: it is a fact about the verdict, not a claim. */
+.algorithm {
+  padding: 0 var(--pb-space-xs);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-control);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  color: var(--pb-ink-secondary);
+}
+
+.verdictSummary {
+  margin: 0;
+  font-size: var(--pb-body-size);
+  line-height: var(--pb-body-leading);
+  color: var(--pb-ink-primary);
+}
+
+.verdictDetail {
+  margin: 0;
+  font-size: var(--pb-body-size);
+  line-height: var(--pb-body-leading);
+  color: var(--pb-ink-secondary);
+}
+
+.verdictOk {
+  border-inline-start-color: var(--pb-signal-ok);
+  background-color: var(--pb-signal-ok-surface);
+}
+
+/*
+ * NOT a neutral surface. "Nobody checked this" is the state a decoder is most
+ * tempted to draw as an absence, and an absence is what makes a forged token
+ * look ordinary.
+ */
+.verdictUnverified {
+  border-inline-start-color: var(--pb-signal-warn);
+  background-color: var(--pb-signal-warn-surface);
+}
+
+.verdictBroken {
+  border-inline-start-color: var(--pb-signal-error);
+  background-color: var(--pb-signal-error-surface);
+}
+
+.verdictOk .verdictWord,
+.verdictUnverified .verdictWord,
+.verdictBroken .verdictWord,
+.verdictOk .verdictSummary,
+.verdictUnverified .verdictSummary,
+.verdictBroken .verdictSummary {
+  color: var(--pb-signal-on-surface);
+}
+
+.verdictOk .verdictDetail,
+.verdictUnverified .verdictDetail,
+.verdictBroken .verdictDetail {
+  color: var(--pb-signal-on-surface);
+}
+
+/*
+ * The chip sits on a SIGNAL surface, not on the panel, so it cannot keep the
+ * panel's secondary ink. Measured in a real engine by `check:browsers`: muted
+ * ink on the warn surface fails WCAG AA in graphite, which is exactly the
+ * failure jsdom's axe pass is structurally unable to see. The border follows
+ * the text so the chip reads as an outline rather than as a second surface.
+ */
+.verdictOk .algorithm,
+.verdictUnverified .algorithm,
+.verdictBroken .algorithm {
+  color: var(--pb-signal-on-surface);
+  border-color: currentcolor;
+}
+
+/* --- Expiry, which is a separate verdict -------------------------------- */
+
+.validity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pb-space-xs);
+  margin: 0;
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-secondary);
+}
+
+.validityBad {
+  color: var(--pb-signal-error);
+}
+
+/* --- Registered claims -------------------------------------------------- */
+
+.table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--pb-value-size);
+}
+
+.table th {
+  text-align: start;
+  padding: var(--pb-space-2xs) var(--pb-space-xs);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  font-weight: var(--pb-label-weight);
+  color: var(--pb-ink-muted);
+  border-block-end: var(--pb-border-width) solid var(--pb-border-hairline);
+}
+
+.table td {
+  padding: var(--pb-space-2xs) var(--pb-space-xs);
+  vertical-align: top;
+  color: var(--pb-ink-primary);
+  border-block-start: var(--pb-border-width) solid var(--pb-border-subtle);
+  overflow-wrap: anywhere;
+}
+
+.rowHead {
+  white-space: nowrap;
+  border-block-start: var(--pb-border-width) solid var(--pb-border-subtle);
+  border-block-end: none;
+}
+
+/* The claim's own key, so "Expires" can also be found as `exp`. */
+.claimKey {
+  font-family: var(--pb-font-ui);
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--pb-ink-muted);
+}
+
+.relative {
+  color: var(--pb-ink-secondary);
+}
+
+/* Epoch seconds. Tabular, because the column is read by comparing. */
+.raw {
+  font-family: var(--pb-font-ui);
+  font-variant-numeric: tabular-nums;
+  color: var(--pb-ink-secondary);
+  white-space: nowrap;
+}
+
+.value {
+  font-family: var(--pb-font-ui);
+}
+
+/* --- Header and payload ------------------------------------------------- */
+
+.block {
+  display: grid;
+  gap: var(--pb-space-2xs);
+  min-inline-size: 0;
+}
+
+.blockHead {
+  margin: 0;
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  font-weight: var(--pb-label-weight);
+  color: var(--pb-ink-muted);
+}
+
+/*
+ * The caveat that travels with the claims. Warn-coloured and at body size, so
+ * it is not smaller or fainter than the payload it qualifies — see rule 2 in
+ * JwtView.tsx.
+ */
+.untrusted {
+  margin: 0;
+  padding: var(--pb-space-2xs) var(--pb-space-xs);
+  border-inline-start: var(--pb-border-width-strong) solid var(--pb-signal-warn);
+  background-color: var(--pb-surface-inset);
+  font-size: var(--pb-body-size);
+  line-height: var(--pb-body-leading);
+  color: var(--pb-ink-primary);
+}
+
+.json {
+  inline-size: 100%;
+  min-block-size: 140px;
+  resize: vertical;
+  font-variant-ligatures: none;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pb-space-sm);
+}
+
+.aside {
+  margin: 0;
+  font-size: var(--pb-label-size);
+  color: var(--pb-ink-muted);
+  font-style: italic;
+}
+
+/*
+ * Available to assistive technology, invisible on screen. The 1px clipped box
+ * is the form that survives every browser; `display: none` and
+ * `visibility: hidden` remove it from the accessibility tree too.
+ */
+.hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * Forced colours drops every background, which is exactly where a verdict
+ * distinguished only by its surface would vanish. The rule is what survives,
+ * and the word beside it is what carries the meaning regardless.
+ */
+@media (forced-colors: active) {
+  .verdict,
+  .untrusted {
+    border-inline-start-color: CanvasText;
+  }
+
+  .validityBad {
+    color: CanvasText;
+  }
+}

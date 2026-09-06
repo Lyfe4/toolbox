@@ -398,6 +398,16 @@ another node and the view model for the highlight, which is the same bargain the
 diff tool makes: one payload, drawn richly here and readable as plain JSON
 anywhere else.
 
+"Readable as plain JSON anywhere else" was, for a while, not true of the page
+itself: `RegexView` rendered the report and offered no way back to it, so the
+only route to the payload was to wire the port into another node. The view now
+carries the same **Raw** toggle every other view does, with Copy and Download.
+It is not redundant with `output` — that is the replaced text or a printed
+listing, an answer to a different question — and the group names, the
+per-capture offsets, the `risk` findings and the segment model behind the
+highlight exist nowhere else. The match table also stops at 200 rows; the
+payload does not, which is exactly the case where somebody wants it.
+
 A group that did not participate in the match is `undefined` at runtime. The DOM
 types model the match as `string[]`, and `match.indices` as an array of tuples,
 neither of which is true; the code corrects both and reports such groups as

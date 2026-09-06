@@ -446,21 +446,80 @@ that already scrolls is a defect this project has already fixed once.
 > instead of to the viewport and scrolled away with the page. `clip` clips
 > exactly the same pixels and establishes no scroll container.
 
-### Output views are chosen by the port, not sniffed
+### Output views are chosen by the port, except for bytes
 
-A `ToolValue`'s data type decides how it is drawn, except where it cannot: a
-diff, a regex report and an image-conversion report are all `json`, and a JSON
-tree is the wrong view for each. `OutputPort.presentation` names the renderer —
-`diff`, `regex`, `html` or `report` — and it is a hint only: the value stays
-ordinary JSON, and anything consuming the port ignores it and still gets valid
-data.
+There are two rules here and they are deliberately different, because they
+answer two different questions.
 
-`report` is the newest, and it exists because the image tool's careful prose
-about what it changed without being asked — transparency flattened, frames
-dropped, GPS coordinates removed — was being rendered as `JSON.stringify` in a
-read-only textarea in the third output panel. The raw payload is still one
-press away behind the view's own **Raw** toggle, the same bargain the HTML
-output strikes between its source and its preview.
+**A `json` value is drawn by whatever its PORT declared.** A diff, a regex
+report, an image-conversion report and a decoded JWT are all `json`, and a JSON
+tree is the wrong view for every one of them. Nothing in the value itself can
+tell them apart, so `OutputPort.presentation` names the renderer — `diff`,
+`regex`, `html`, `report` or `jwt`. It is a hint only: the value stays ordinary
+JSON, and anything consuming the port ignores it and still gets valid data.
+
+**A `bytes` value is drawn by what the BYTES ARE.** That question has an answer,
+and the branch was already asking half of it — the sniff is how it chose between
+a text preview and "Binary output. Download it rather than trying to read it
+here." Asking it one step further is what turns the image converter into a tool
+that shows you the picture, and it does so without a port hint, which means
+base64's decoded output gets the preview too. Declared media types are ignored
+in favour of sniffed ones, the same rule the rest of the app follows.
+
+Two of the five views exist because a tool did careful work that the
+presentation threw away:
+
+- **`report`**, because the image tool's prose about what it changed without
+  being asked — transparency flattened, frames dropped, GPS coordinates removed
+  — was rendered as `JSON.stringify` in a read-only textarea three panels down.
+- **`jwt`**, because `NOT VERIFIED - no key supplied` was a string value among
+  other string values, one line above a `header` object nobody scrolls past.
+  That one is not an aesthetic problem: a JWT payload is base64 rather than
+  encryption, so a decoder that shows claims without the verdict being obvious
+  is one that makes forgeries look authoritative. The view's rules are written
+  down in [the tool's README](../src/tools/jwt-decode/README.md#how-it-is-drawn).
+
+### One toggle, and the rule it follows
+
+A view is a presentation of an output, never a replacement for it, so every
+view that renders a payload as something other than the payload has to hand the
+payload back. That was true of two of the four views: the HTML output had Source
+and Preview, the report had Report and Raw — with identical markup and two
+byte-identical copies of the same CSS — and the diff and the regex report had no
+way to reach their JSON at all. Three implementations of one decision, and a
+fourth that had quietly opted out of it.
+
+[`ViewToggle`](../src/features/toolrunner/ViewToggle.tsx) and
+[`RawPayload`](../src/features/toolrunner/RawPayload.tsx) are now the only
+implementation, and the rule is:
+
+> A view is `[rendering] [raw]`, in that order, with the rendering pressed by
+> default — **except** where the raw payload is what the person came for, in
+> which case raw comes first and is the default.
+
+HTML source is the one case of the exception: it is a developer tool, and a
+preview you have to dismiss before you can read the markup would be in the way.
+Two `aria-pressed` buttons describe the control; a `role="status"` line says
+which view is SHOWING, because "Raw, pressed" is a fact about a button.
+`views.consistency.test.tsx` asserts all of that for every view at once, which
+is the test that stops them drifting apart a second time.
+
+**Bytes are the one documented exception, and have no raw state.** Their payload
+is a file rather than text — nothing to put in a textarea, nothing to copy — so
+Download and the sniffed facts are on screen in every state instead of behind a
+switch. That is a stronger form of the same guarantee rather than an exemption
+from it, and the consistency test asserts the absence so it reads as a decision.
+
+### What a node shows instead
+
+**The canvas renders no output values at all**, and did not before this either.
+A node is a fixed 224px box carrying a title, a status LED, a timing, its ports
+and either the tool's summary or the reason it is blocked; `NodeRunState` holds
+`outputs`, and nothing on the canvas reads them. So a view cannot fail to work
+on a node — there is nowhere for one to go — and the tool page is where a result
+is read. Wiring output values into nodes is a canvas design question (what does
+a 30 MB decoded image look like at 224px, and what happens to node geometry when
+it changes size) rather than a gap in these views.
 
 ### An input port that cannot take text gets no text box
 

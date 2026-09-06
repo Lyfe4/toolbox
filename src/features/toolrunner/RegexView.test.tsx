@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import type { JsonValue } from '@/features/registry/types';
@@ -22,8 +23,31 @@ async function reportFor(subject: string, overrides: Partial<RegexOptions>): Pro
   return matches.data;
 }
 
+/**
+ * The view with its payload-handling props filled in. The Raw toggle's own
+ * tests pass real callbacks; everything else here is about the rendering.
+ */
+function renderView(value: JsonValue) {
+  return render(
+    <RegexView
+      value={value}
+      label="Regex matches"
+      baseFilename="regex-tester"
+      onCopy={() => undefined}
+      onDownload={() => undefined}
+    />,
+  );
+}
+
 async function renderReport(subject: string, overrides: Partial<RegexOptions>) {
-  return render(<RegexView value={await reportFor(subject, overrides)} label="Regex matches" />);
+  return renderView(await reportFor(subject, overrides));
+}
+
+/** The raw box's text. `toHaveValue` does not take an asymmetric matcher. */
+function rawValue(name: string): string {
+  const box = screen.getByRole('textbox', { name });
+  if (!(box instanceof HTMLTextAreaElement)) throw new Error(`${name} is not a textarea`);
+  return box.value;
 }
 
 describe('RegexView', () => {
@@ -162,7 +186,7 @@ describe('RegexView', () => {
     // The value arrives as JsonValue because it crossed the worker boundary.
     // A future change to the tool should show up as "nothing to show", never
     // as a crash inside a render.
-    render(<RegexView value={{ nonsense: true }} label="Regex matches" />);
+    renderView({ nonsense: true });
     expect(screen.getByText('Nothing to show.')).toBeInTheDocument();
   });
 
@@ -173,6 +197,36 @@ describe('RegexView', () => {
 
   it('has no accessibility violations with notes and a risk warning', async () => {
     const { container } = await renderReport('aaa!', { pattern: '(a+)+$' });
+    await expectNoAxeViolations(container);
+  });
+
+  /*
+   * THE PAYLOAD THIS VIEW USED TO WITHHOLD.
+   *
+   * The tool's other output is the replaced text or a printed match list - an
+   * answer to a different question. The offsets, the group names, the risk
+   * findings and the segment model behind the highlight only exist on THIS
+   * port, and the only way to read them was to wire it into another node. The
+   * table stops at 200 rows; the payload does not, which is exactly the case
+   * where somebody needs it.
+   */
+  it('reaches every match through the raw payload, past the table cap', async () => {
+    const user = userEvent.setup();
+    const subject = Array.from({ length: 250 }, (_, index) => index.toString()).join(' ');
+    renderView(await reportFor(subject, { pattern: '\\d+' }));
+
+    expect(screen.getAllByRole('row').length).toBeLessThan(250);
+
+    await user.click(screen.getByRole('button', { name: 'Raw' }));
+
+    expect(rawValue('Regex matches raw')).toContain('"count": 250');
+  });
+
+  it('has no accessibility violations in the raw view', async () => {
+    const user = userEvent.setup();
+    const { container } = await renderReport('a1 b22', { pattern: '\\d+' });
+
+    await user.click(screen.getByRole('button', { name: 'Raw' }));
     await expectNoAxeViolations(container);
   });
 });

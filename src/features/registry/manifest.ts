@@ -147,6 +147,7 @@ export const TOOL_MANIFEST = [
         label: 'Decoded',
         types: ['json'],
         description: 'Signature verdict first, then the header and payload.',
+        presentation: 'jwt',
       },
     ],
     secretOptionKeys: ['key'],

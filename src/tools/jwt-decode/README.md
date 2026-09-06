@@ -18,8 +18,62 @@ is why:
   believed.
 - `verified` is a boolean, and it is `true` **only** when a signature was
   actually checked cryptographically against a key you supplied.
+- `state` carries the same answer as a token rather than as prose — `verified`,
+  `invalid`, `rejected`, `no-key` or `unsupported`. `verified: false` covers
+  five different situations, and the difference between "nobody checked" and
+  "this is forged" is most of the content of this output; anything drawing it
+  should not have to sniff a sentence for the word INVALID.
 - Every other outcome says `NOT VERIFIED` in capitals, with a sentence
   explaining that the claims prove nothing.
+
+## How it is drawn
+
+All of the care above used to be spent on a payload rendered as
+`JSON.stringify(..., 2)` in a read-only textarea, where
+`NOT VERIFIED - no key supplied` was a string value among other string values,
+one line above a `header` object nobody scrolls past. The caveat was said, and
+nobody was going to read it — which is the same failure the ordering above
+exists to prevent, reintroduced one level up.
+
+The `output` port therefore declares `presentation: 'jwt'`, and
+[`JwtView`](../../features/toolrunner/JwtView.tsx) draws it under three rules:
+
+1. **The verdict is first and it is the loudest thing on screen** — a banner
+   with a word, a rule, an icon and a sentence, at heading size above claims
+   set at value size. `check:browsers` measures that, because "louder" is a
+   claim about computed font size and box position that jsdom cannot evaluate.
+2. **"Not verified" is never quiet and never neutral.** Five of the six
+   outcomes mean the claims cannot be relied on and all five are drawn as a
+   warning or as danger; there is one calm state and it is the one where a real
+   signature was checked against a real key. The no-key case — the common one,
+   because most people paste a token simply to read it — is a **warning**
+   rather than an absence, because an absence is what makes a forged token look
+   ordinary.
+3. **The caveat travels with the claims.** A banner at the top is a banner you
+   scroll past, so the payload's own heading reads `Payload (unverified)` and a
+   sentence sits between that heading and the data.
+
+The view **fails closed** in every direction: a payload with no `state`, a
+`state` it has never heard of, and a `state` claiming `verified` over a
+`verified` flag that is not `true` all report as unverified. There is no route
+to the calm treatment that does not pass through `verified === true`.
+
+Expiry is drawn **separately** from the signature. A token whose signature
+verifies and whose `exp` passed last Tuesday is still a token every server
+refuses, and folding the two verdicts into one loses one of them.
+
+Registered claims are a table: the moment in words, in the reader's own time
+zone with the zone named, and the raw epoch integer in its own column — because
+the reason somebody is reading a token by hand is usually that a server
+disagreed with them about one of those numbers, and the number is what they
+will paste into the argument. The relative phrase comes from `claims.checkedAt`,
+the instant the tool computed `expired`, so a tab left open for an hour cannot
+render a countdown that contradicts the flag beside it.
+
+The whole payload stays one press away behind the view's **Raw** toggle, with
+Copy and Download — and the verdict banner sits **outside** that toggle, so one
+press cannot turn a token the tool warned about into an unlabelled wall of
+claims.
 
 ## `alg: none` is never accepted
 

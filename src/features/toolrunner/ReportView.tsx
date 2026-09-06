@@ -1,10 +1,10 @@
-import { useId, useState } from 'react';
+import { useState } from 'react';
 
-import { Button } from '@/components/Button';
-import { TextArea } from '@/components/TextArea';
 import { isJsonArray, isJsonObject, type JsonValue } from '@/features/registry/types';
 
+import { RawPayload } from './RawPayload';
 import styles from './report.module.css';
+import { ViewToggle } from './ViewToggle';
 
 /**
  * A CONVERSION REPORT: what changed, and what changed that you did not ask for.
@@ -178,80 +178,33 @@ export interface ReportViewProps {
 }
 
 export function ReportView({ value, label, baseFilename, onCopy, onDownload }: ReportViewProps) {
-  const [raw, setRaw] = useState(false);
-  const statusId = useId();
+  const [view, setView] = useState<'report' | 'raw'>('report');
+  const raw = view === 'raw';
   const report = parseReport(value);
   if (!report) return <p className={styles.aside}>Nothing to show.</p>;
 
   const rows = factRows(report.from, report.to);
-  const json = JSON.stringify(value, null, 2);
 
   return (
     <section className={styles.wrapper} aria-label={label}>
-      <div className={styles.toggle} role="group" aria-label={`${label} view`}>
-        <Button
-          size="sm"
-          variant={raw ? 'ghost' : 'primary'}
-          aria-pressed={!raw}
-          onClick={() => {
-            setRaw(false);
-          }}
-        >
-          Report
-        </Button>
-        <Button
-          size="sm"
-          variant={raw ? 'primary' : 'ghost'}
-          aria-pressed={raw}
-          onClick={() => {
-            setRaw(true);
-          }}
-        >
-          Raw
-        </Button>
-        {/*
-          Two aria-pressed buttons already announce as pressed or not, which
-          describes the CONTROL. This says what is on screen, which is the
-          RESULT - the same split the HTML output's toggle makes.
-        */}
-        <span className={styles.status} id={statusId} role="status">
-          {raw ? 'Showing the raw report' : 'Showing the summarised report'}
-        </span>
-      </div>
+      <ViewToggle
+        label={label}
+        value={view}
+        onChange={setView}
+        options={[
+          { id: 'report', label: 'Report', status: 'Showing the summarised report' },
+          { id: 'raw', label: 'Raw', status: 'Showing the raw report' },
+        ]}
+      />
 
       {raw ? (
-        <>
-          <TextArea
-            className={styles.json}
-            aria-label={`${label} raw`}
-            value={json}
-            readOnly
-            spellCheck={false}
-          />
-          <div className={styles.actions}>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                onCopy(json);
-              }}
-            >
-              Copy
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                onDownload(
-                  new Blob([json], { type: 'application/json;charset=utf-8' }),
-                  `${baseFilename}.json`,
-                );
-              }}
-            >
-              Download
-            </Button>
-          </div>
-        </>
+        <RawPayload
+          label={label}
+          value={value}
+          baseFilename={baseFilename}
+          onCopy={onCopy}
+          onDownload={onDownload}
+        />
       ) : null}
 
       {/*

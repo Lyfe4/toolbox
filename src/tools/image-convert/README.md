@@ -312,6 +312,48 @@ report's own **Raw** toggle, with Copy and Download, because the exact byte
 counts and the note levels are worth having. See
 [`ReportView.tsx`](../../features/toolrunner/ReportView.tsx).
 
+## And the image itself is shown
+
+The `output` port is `bytes`, so the runner used to say **"Binary output.
+Download it rather than trying to read it here."** about every result this tool
+produced. That sentence is true of a ZIP and false of a picture: you converted
+an image at quality 0.6 and the only way to find out what 0.6 looked like was to
+download the file and open it somewhere else. A converter whose result you
+cannot look at has not converted anything you can judge.
+
+[`ImageView`](../../features/toolrunner/ImageView.tsx) draws it, and four
+decisions in it are worth stating:
+
+- **The sniff chooses the view, not a `presentation` hint.** The bytes branch
+  already sniffed — that is how it chose between a text preview and the binary
+  summary — so this is the same question asked one step further. Doing it there
+  rather than on this tool's port also means base64's decoded output gets the
+  preview, which is a real thing people do with that tool.
+- **Compare is a view, not the default.** Judging a lossy conversion means
+  comparing, so the source is offered beside the result whenever the page still
+  has it. It is not the default because at 320px two images side by side are two
+  images too small to judge anything by. The source is captured when the run
+  starts rather than read live off the file picker: choosing a different picture
+  without pressing Run again would otherwise relabel the comparison without
+  changing either image.
+- **There is no Raw state**, and that is the one deliberate departure from the
+  toggle every other view uses. The raw payload here is a file rather than text
+  — nothing to put in a textarea, nothing to copy — so Download and the sniffed
+  facts are on screen in _every_ state instead of behind a switch.
+- **A very large result is not decoded until asked.** A preview costs a decoded
+  bitmap whatever the file size — a 40-megapixel PNG is around 160 MB of RGBA,
+  and the comparison holds two — so past 8 MB of encoded bytes the size is
+  stated and the preview is one press away with its cost named. The limit is on
+  encoded bytes because that is the only number available before anything is
+  decoded.
+
+The preview background is a chequerboard drawn from theme tokens, so
+transparency matted onto white by a JPEG conversion is visible rather than
+merely warned about. Object URLs are owned by the `<img>` element and revoked
+when it unmounts or its blob changes; `check:browsers` asserts the image really
+decodes (`naturalWidth > 0`) under the real `img-src 'self' data: blob:`, which
+is a fact jsdom cannot produce because it loads no images at all.
+
 ## Known limitations
 
 **Colour management is the browser's, and the browsers disagree.** A PNG

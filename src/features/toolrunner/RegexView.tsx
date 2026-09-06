@@ -1,6 +1,10 @@
+import { useState } from 'react';
+
 import { isJsonArray, isJsonObject, type JsonValue } from '@/features/registry/types';
 
+import { RawPayload } from './RawPayload';
 import styles from './regex.module.css';
+import { ViewToggle } from './ViewToggle';
 
 /**
  * REGEX RESULT RENDERING
@@ -353,9 +357,13 @@ function visible(value: string): string {
 export interface RegexViewProps {
   readonly value: JsonValue;
   readonly label: string;
+  readonly baseFilename: string;
+  readonly onCopy: (text: string) => void;
+  readonly onDownload: (blob: Blob, filename: string) => void;
 }
 
-export function RegexView({ value, label }: RegexViewProps) {
+export function RegexView({ value, label, baseFilename, onCopy, onDownload }: RegexViewProps) {
+  const [view, setView] = useState<'matches' | 'raw'>('matches');
   const report = parseReport(value);
   if (!report) return <p className={styles.aside}>Nothing to show.</p>;
 
@@ -363,58 +371,89 @@ export function RegexView({ value, label }: RegexViewProps) {
 
   return (
     <section className={styles.wrapper} aria-label={label}>
-      <p className={styles.summary}>
-        <span className={styles.count}>
-          {report.count.toLocaleString('en')} {plural}
-          {report.complete ? '' : ' so far'}
-        </span>
-        {report.pattern === '' ? null : (
-          <span className={styles.pattern}>
-            /{report.pattern}/{report.flags}
-          </span>
-        )}
-      </p>
+      {/*
+        THE PAYLOAD, WHICH THIS VIEW USED TO WITHHOLD.
 
-      {report.riskLevel === 'none' ? null : (
-        <div className={styles.risk}>
-          <p className={styles.riskHead}>
-            {report.riskLevel === 'danger'
-              ? 'This pattern can backtrack catastrophically'
-              : 'Worth a look before running this on more text'}
-          </p>
-          <ul className={styles.riskList}>
-            {report.riskFindings.map((finding) => (
-              <li key={finding.message}>
-                <Prose>{finding.message}</Prose>
-              </li>
-            ))}
-          </ul>
-          <p className={styles.aside}>
-            A structural check, not a proof. It can be wrong in both directions.
-          </p>
-        </div>
-      )}
+        The tool's other output is the replaced text or a printed match list -
+        an answer to a different question. The offsets, the group names, the
+        `risk` findings and the segment model behind the highlight only exist
+        here, and until now the only way to read them was to wire the port into
+        another node. The table stops at 200 rows; this does not.
+      */}
+      <ViewToggle
+        label={label}
+        value={view}
+        onChange={setView}
+        options={[
+          { id: 'matches', label: 'Matches', status: 'Showing the rendered matches' },
+          { id: 'raw', label: 'Raw', status: 'Showing the raw match data' },
+        ]}
+      />
 
-      {report.notes.length === 0 ? null : (
-        <ul className={styles.notes}>
-          {report.notes.map((note) => (
-            <li key={note.title} className={noteClass(note.level)}>
-              <span className={styles.noteWord}>{NOTE_WORD[note.level] ?? 'Note'}</span>
-              <span className={styles.noteTitle}>
-                <Prose>{note.title}</Prose>
-              </span>
-              <span className={styles.noteBody}>
-                <Prose>{note.body}</Prose>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {report.matches.length === 0 ? null : (
+      {view === 'raw' ? (
+        <RawPayload
+          label={label}
+          value={value}
+          baseFilename={baseFilename}
+          onCopy={onCopy}
+          onDownload={onDownload}
+        />
+      ) : (
         <>
-          <Highlight report={report} />
-          <MatchTable report={report} />
+          <p className={styles.summary}>
+            <span className={styles.count}>
+              {report.count.toLocaleString('en')} {plural}
+              {report.complete ? '' : ' so far'}
+            </span>
+            {report.pattern === '' ? null : (
+              <span className={styles.pattern}>
+                /{report.pattern}/{report.flags}
+              </span>
+            )}
+          </p>
+
+          {report.riskLevel === 'none' ? null : (
+            <div className={styles.risk}>
+              <p className={styles.riskHead}>
+                {report.riskLevel === 'danger'
+                  ? 'This pattern can backtrack catastrophically'
+                  : 'Worth a look before running this on more text'}
+              </p>
+              <ul className={styles.riskList}>
+                {report.riskFindings.map((finding) => (
+                  <li key={finding.message}>
+                    <Prose>{finding.message}</Prose>
+                  </li>
+                ))}
+              </ul>
+              <p className={styles.aside}>
+                A structural check, not a proof. It can be wrong in both directions.
+              </p>
+            </div>
+          )}
+
+          {report.notes.length === 0 ? null : (
+            <ul className={styles.notes}>
+              {report.notes.map((note) => (
+                <li key={note.title} className={noteClass(note.level)}>
+                  <span className={styles.noteWord}>{NOTE_WORD[note.level] ?? 'Note'}</span>
+                  <span className={styles.noteTitle}>
+                    <Prose>{note.title}</Prose>
+                  </span>
+                  <span className={styles.noteBody}>
+                    <Prose>{note.body}</Prose>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {report.matches.length === 0 ? null : (
+            <>
+              <Highlight report={report} />
+              <MatchTable report={report} />
+            </>
+          )}
         </>
       )}
     </section>

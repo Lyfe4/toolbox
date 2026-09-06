@@ -6,6 +6,7 @@ import { TextArea } from '@/components/TextArea';
 
 import styles from './html.module.css';
 import { previewDocument } from './previewDocument';
+import { ViewToggle } from './ViewToggle';
 
 /**
  * Writes HTML to the clipboard as BOTH `text/html` and `text/plain`.
@@ -90,43 +91,27 @@ export function HtmlView({
   onCopyRich,
   onDownload,
 }: HtmlViewProps) {
-  const [preview, setPreview] = useState(false);
-  const statusId = useId();
+  const [view, setView] = useState<'source' | 'preview'>('source');
   const noteId = useId();
+  const preview = view === 'preview';
 
   return (
     <div className={styles.stack}>
-      <div className={styles.toggle} role="group" aria-label={`${label} view`}>
-        <Button
-          size="sm"
-          variant={preview ? 'ghost' : 'primary'}
-          aria-pressed={!preview}
-          onClick={() => {
-            setPreview(false);
-          }}
-        >
-          Source
-        </Button>
-        <Button
-          size="sm"
-          variant={preview ? 'primary' : 'ghost'}
-          aria-pressed={preview}
-          onClick={() => {
-            setPreview(true);
-          }}
-        >
-          Preview
-        </Button>
-        {/*
-          The toggle is two aria-pressed buttons, which a screen reader already
-          announces as pressed or not. This says which view is showing in
-          words as well, because "Preview, pressed" describes the CONTROL and
-          this describes the RESULT.
-        */}
-        <span className={styles.status} id={statusId} role="status">
-          {preview ? 'Showing rendered preview' : 'Showing HTML source'}
-        </span>
-      </div>
+      {/*
+        SOURCE FIRST, and pressed by default, which is the one place in the app
+        where the raw payload leads. The rule in ViewToggle.tsx is that the
+        default is whichever half the person came for, and for HTML in a
+        developer tool that is the markup.
+      */}
+      <ViewToggle
+        label={label}
+        value={view}
+        onChange={setView}
+        options={[
+          { id: 'source', label: 'Source', status: 'Showing HTML source' },
+          { id: 'preview', label: 'Preview', status: 'Showing rendered preview' },
+        ]}
+      />
 
       {preview ? (
         <iframe

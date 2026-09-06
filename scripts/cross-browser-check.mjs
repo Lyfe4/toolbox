@@ -3509,6 +3509,263 @@ async function checkRegex(browser, label) {
 }
 
 /**
+ * THE TWO OUTPUT VIEWS jsdom CANNOT SEE.
+ *
+ * Both of the things these views promise are claims about a real engine:
+ *
+ *  1. THE IMAGE ACTUALLY DECODES. `img-src 'self' data: blob:` is in the real
+ *     `_headers`, and an `<img>` pointed at a blob: URL either paints or is
+ *     refused with nothing in the DOM to say so - a CSP refusal produces no
+ *     error the page can see and an image of zero width. jsdom loads no
+ *     images at all, so `naturalWidth > 0` is a fact that exists only here.
+ *
+ *  2. "NOT VERIFIED" IS NOT QUIETER THAN THE CLAIMS. That is a sentence about
+ *     computed font size, computed colour and box position - none of which
+ *     jsdom has an opinion about, because it has no layout engine. Asserting
+ *     the markup order in a unit test proves the reading order and nothing
+ *     about whether the verdict is the loudest thing on screen.
+ *
+ * The axe passes here run with `color-contrast` ENABLED over populated
+ * results, which is the rule jsdom can never evaluate and the one most likely
+ * to be broken by a coloured verdict banner.
+ */
+async function checkOutputViews(browser, label) {
+  const axeSource = await readFile(join(ROOT, 'node_modules', 'axe-core', 'axe.min.js'), 'utf8');
+
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await context.addInitScript(axeSource);
+  const page = await context.newPage();
+
+  const violations = () =>
+    page.evaluate(async () => {
+      const results = await window.axe.run(document, {
+        resultTypes: ['violations'],
+        runOnly: {
+          type: 'tag',
+          values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'],
+        },
+      });
+      return results.violations.map(
+        (violation) =>
+          `${violation.id} (${violation.impact ?? '?'}, x${String(violation.nodes.length)}) ${violation.nodes[0]?.target.join(' ') ?? ''}`,
+      );
+    });
+
+  /** Runs axe in both presets, with colour contrast on. */
+  const axeInBothThemes = async (what) => {
+    for (const theme of ['graphite', 'vellum']) {
+      await page.evaluate((value) => {
+        const root = document.documentElement;
+        for (const token of ['--pb-motion-fast', '--pb-motion-base', '--pb-motion-slow']) {
+          root.style.setProperty(token, '0s');
+        }
+        root.setAttribute('data-theme', value);
+      }, theme);
+      await page.waitForTimeout(250);
+
+      const found = await violations();
+      check(label, `${what} is clean in ${theme}`, found.length === 0, found.join(' | '));
+    }
+
+    await page.evaluate(() => {
+      document.documentElement.removeAttribute('data-theme');
+    });
+  };
+
+  try {
+    /* ================================================================== *
+     * JWT: the verdict has to dominate
+     * ================================================================== */
+
+    /*
+     * An HS256 token with a signature nobody can check, and no key supplied.
+     * This is the common case - most people paste a token simply to read it -
+     * and it is exactly the case a decoder is most tempted to draw as an
+     * absence. An absence is what makes a forged token look ordinary.
+     */
+    const token = [
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+      'eyJzdWIiOiJhZGEiLCJpc3MiOiJodHRwczovL2V4YW1wbGUudGVzdCIsImV4cCI6MTAwMDAwMDAwMH0',
+      'bm90LWEtcmVhbC1zaWduYXR1cmU',
+    ].join('.');
+
+    await page.goto(`${ORIGIN}/tools/jwt-decode`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'JWT' }).waitFor({ timeout: 15_000 });
+    await page.getByLabel('JWT input').fill(token);
+    await page.getByRole('button', { name: 'Run' }).click();
+    await page.locator('[data-trust]').waitFor({ timeout: 30_000 });
+
+    const verdict = await page.evaluate(() => {
+      const banner = document.querySelector('[data-trust]');
+      const payload = document.querySelector('textarea[aria-label$="payload"]');
+      if (!banner || !payload) return null;
+
+      const word = banner.querySelector('span');
+      const bannerBox = banner.getBoundingClientRect();
+      const payloadBox = payload.getBoundingClientRect();
+
+      return {
+        trust: banner.getAttribute('data-trust'),
+        // The size of the verdict word against the size of the claims it
+        // qualifies. "Not quieter than" is literally this comparison.
+        wordSize: word === null ? 0 : parseFloat(getComputedStyle(word).fontSize),
+        payloadSize: parseFloat(getComputedStyle(payload).fontSize),
+        above: bannerBox.bottom <= payloadBox.top + 1,
+        // A neutral surface is what makes an unchecked token look ordinary.
+        background: getComputedStyle(banner).backgroundColor,
+        pageBackground: getComputedStyle(document.body).backgroundColor,
+      };
+    });
+
+    check(
+      label,
+      'an unchecked JWT signature is reported as unverified',
+      verdict?.trust === 'unverified',
+      JSON.stringify(verdict?.trust ?? null),
+    );
+    check(
+      label,
+      'the JWT verdict is painted above the claims it qualifies',
+      verdict?.above === true,
+      JSON.stringify(verdict),
+    );
+    check(
+      label,
+      'the JWT verdict is not smaller than the claims below it',
+      (verdict?.wordSize ?? 0) > (verdict?.payloadSize ?? Number.POSITIVE_INFINITY),
+      `verdict ${String(verdict?.wordSize)}px, payload ${String(verdict?.payloadSize)}px`,
+    );
+    check(
+      label,
+      'an unverified verdict does not sit on the page background',
+      verdict !== null && verdict.background !== verdict.pageBackground,
+      `${String(verdict?.background)} vs ${String(verdict?.pageBackground)}`,
+    );
+
+    await axeInBothThemes('an unverified JWT');
+
+    /* -- The verdict survives the Raw toggle ---------------------------- */
+    await page.getByRole('button', { name: 'Raw' }).click();
+    const stillThere = await page.locator('[data-trust]').count();
+    check(
+      label,
+      'the JWT verdict stays on screen in the raw view',
+      stillThere === 1,
+      `${String(stillThere)} banner(s)`,
+    );
+
+    /* -- alg: none is drawn differently, not merely worded differently -- */
+    const unsigned = 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJhZGEifQ.';
+    await page.getByLabel('JWT input').fill(unsigned);
+    await page.getByRole('button', { name: 'Run' }).click();
+    await page.locator('[data-trust="broken"]').waitFor({ timeout: 30_000 });
+
+    const rejected = await page.evaluate(() => {
+      const banner = document.querySelector('[data-trust]');
+      return banner === null ? null : getComputedStyle(banner).backgroundColor;
+    });
+    check(
+      label,
+      'a rejected token is painted differently from an unchecked one',
+      rejected !== null && rejected !== verdict?.background,
+      `${String(rejected)} vs ${String(verdict?.background)}`,
+    );
+
+    await axeInBothThemes('a rejected JWT');
+
+    /* ================================================================== *
+     * Image: the preview has to actually paint
+     * ================================================================== */
+
+    await page.goto(`${ORIGIN}/tools/image-convert`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Image' }).waitFor({ timeout: 15_000 });
+
+    await page.locator('input[type="file"]').setInputFiles({
+      name: 'swatch.png',
+      mimeType: 'image/png',
+      buffer: makeSwatchPng(),
+    });
+    await page.getByRole('button', { name: 'Run' }).click();
+    await page.locator('img[src^="blob:"]').first().waitFor({ timeout: 30_000 });
+
+    /** Every preview image, with the size the engine actually decoded. */
+    const painted = () =>
+      page.evaluate(async () => {
+        const images = [...document.querySelectorAll('img')];
+        await Promise.all(
+          images.map((image) =>
+            image.complete
+              ? Promise.resolve()
+              : new Promise((resolve) => {
+                  image.addEventListener('load', resolve, { once: true });
+                  image.addEventListener('error', resolve, { once: true });
+                }),
+          ),
+        );
+        return images.map((image) => ({
+          blob: image.currentSrc.startsWith('blob:'),
+          naturalWidth: image.naturalWidth,
+          width: Math.round(image.getBoundingClientRect().width),
+        }));
+      });
+
+    const result = await painted();
+    check(
+      label,
+      'the converted image is drawn from a blob: URL the real CSP permits',
+      result.length === 1 && result[0]?.blob === true && (result[0]?.naturalWidth ?? 0) > 0,
+      JSON.stringify(result),
+    );
+
+    /* -- Before and after, both decoded --------------------------------- */
+    await page.getByRole('button', { name: 'Compare' }).click();
+    await page.waitForFunction(() => document.querySelectorAll('img').length === 2, undefined, {
+      timeout: 15_000,
+    });
+
+    const compared = await painted();
+    check(
+      label,
+      'the comparison paints both the original and the result',
+      compared.length === 2 && compared.every((image) => image.naturalWidth > 0),
+      JSON.stringify(compared),
+    );
+
+    /* -- And it releases the source when closed ------------------------- */
+    await page.getByRole('button', { name: 'Result' }).click();
+    await page.waitForFunction(() => document.querySelectorAll('img').length === 1, undefined, {
+      timeout: 15_000,
+    });
+    const back = await painted();
+    check(
+      label,
+      'closing the comparison leaves one painted image behind',
+      back.length === 1 && (back[0]?.naturalWidth ?? 0) > 0,
+      JSON.stringify(back),
+    );
+
+    await axeInBothThemes('a populated image result');
+
+    /* -- A preview must not widen the page on a phone ------------------- */
+    await page.setViewportSize({ width: 320, height: 720 });
+    await page.waitForTimeout(150);
+    const narrow = await page.evaluate(() => ({
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      image: Math.round(document.querySelector('img')?.getBoundingClientRect().width ?? 0),
+      viewport: document.documentElement.clientWidth,
+    }));
+    check(
+      label,
+      'an image preview stays inside a 320px viewport',
+      narrow.overflow <= 1 && narrow.image <= narrow.viewport,
+      JSON.stringify(narrow),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
  * The Markdown preview's sandboxed iframe.
  *
  * TWO INDEPENDENT LAYERS, and the second one was verified rather than assumed
@@ -4232,6 +4489,7 @@ async function runChecks(engine, label) {
     await checkStructuredData(browser, label);
     await checkDiff(browser, label);
     await checkRegex(browser, label);
+    await checkOutputViews(browser, label);
     await checkHead(browser, label);
     await checkTouch(engine, label);
     await checkMobileLayout(engine, label);

@@ -22,6 +22,8 @@ import { ErrorReport, OutputView } from './OutputPanel';
 import { richTextDocument, richTextPlain } from './richText';
 import styles from './runner.module.css';
 
+import type { ImageComparison } from './ImageView';
+
 /** Builds the value for a port from whatever the user supplied. */
 function buildInputValue(
   port: InputPort,
@@ -68,6 +70,34 @@ function buildInputValue(
   return { value: { type: 'text', text } };
 }
 
+/**
+ * The source image to draw a before-and-after against, or nothing.
+ *
+ * Three conditions, and each one is a case where offering a comparison would
+ * be worse than offering none:
+ *
+ *  - No file at all: there is no "before".
+ *  - A file that is not an image: a CSV has nothing to look at, and labelling
+ *    an unrelated thing "Before" is a comparison that lies.
+ *  - A file the run did not read: the bytes are what was actually handed to
+ *    the tool, so a null there means this file fed nothing.
+ *
+ * The sniffed type decides, never the declared one - rename `payload.zip` to
+ * `photo.png` and the operating system will tell you it is an image.
+ */
+export function comparisonFor(
+  file: LoadedFile | null,
+  bytes: Bytes | null,
+): ImageComparison | null {
+  if (file === null || bytes === null) return null;
+  if (file.sniff.mediaType?.startsWith('image/') !== true) return null;
+
+  // The File itself, not its bytes: a File IS a Blob, the browser is already
+  // holding it, and copying tens of megabytes into React state to show a
+  // thumbnail would be the one genuinely expensive way to do this.
+  return { blob: file.file, label: file.sniff.label, byteLength: bytes.byteLength };
+}
+
 function busyLabel(state: ExecutionState): string {
   if (state.status !== 'running') return '';
   return state.label ?? 'Running';
@@ -92,6 +122,20 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
    */
   const [texts, setTexts] = useState<Record<string, string>>({});
   const [file, setFile] = useState<LoadedFile | null>(null);
+  /*
+   * THE IMAGE THIS RESULT WAS MADE FROM, captured when the run starts.
+   *
+   * The output preview offers a before-and-after, and "before" is an input
+   * rather than an output, so it has to come from here. It is pinned at the
+   * moment of the run and not read live off `file`: choosing a different
+   * picture without pressing Run again would otherwise relabel the comparison
+   * without changing either image, which is a comparison that quietly lies.
+   *
+   * The File itself is held, not its bytes. A File IS a Blob, the browser is
+   * already holding it, and copying tens of megabytes into React state to show
+   * a thumbnail would be the one genuinely expensive way to do this.
+   */
+  const [comparison, setComparison] = useState<ImageComparison | null>(null);
   const announced = useRef<ExecutionState | null>(null);
 
   // The tool module is imported here for its options schema and field
@@ -164,6 +208,9 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
       // port id from the manifest, never anything user-supplied.
       inputs[input.id] = built.value;
     }
+
+    // Pinned HERE, at the moment of the run - see the note on the state above.
+    setComparison(comparisonFor(file, bytes));
 
     run(inputs satisfies ToolInputs, options);
   }
@@ -341,6 +388,7 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
                     {...(output.presentation === undefined
                       ? {}
                       : { presentation: output.presentation })}
+                    comparison={comparison}
                     onCopy={(copied) => {
                       void navigator.clipboard.writeText(copied).then(
                         () => {

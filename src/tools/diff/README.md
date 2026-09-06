@@ -242,6 +242,13 @@ reads it and renders:
 
 Any consumer that ignores `presentation` still gets valid JSON.
 
+The view also carries a **Raw** toggle, and it is not redundant with the patch.
+It was tempting to call `output` the raw form and stop there, but the two are
+different serialisations with different losses: the `~` rows, the `oldText` an
+ignore-case comparison keeps, and the per-row `parts` the word-level highlight is
+built from exist only in `changes`. Until the toggle existed, the only way to
+read any of them was to wire the port into another node.
+
 ### `~`: unchanged, but not the same
 
 An unchanged row whose two sides are not the same string — what "ignore case"
