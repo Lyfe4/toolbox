@@ -1650,6 +1650,31 @@ async function checkHead(browser, label) {
 }
 
 /**
+ * A BROWSER WHOSE POINTER REALLY IS COARSE, UNDER THE REAL HEADERS.
+ *
+ * Playwright's per-context `hasTouch` sets Gecko's pointer-capability prefs in
+ * the content process it happens to be talking to. `_headers` sets COOP and
+ * COEP, so the built app is cross-origin isolated - and Gecko moves an isolated
+ * document into a FRESH content process, which the emulation never reaches. The
+ * measurable result is that `(pointer: coarse)` is true for the dev server and
+ * false for the production build in the same context, and stays false for every
+ * later navigation in it.
+ *
+ * That is not "Firefox cannot emulate a touch pointer", which is what this
+ * harness recorded for as long as it had a skip branch here. Setting the two
+ * prefs at LAUNCH survives the process switch, so both engines can be held to
+ * the same 44px bar. WebKit needs nothing and would reject the option.
+ *
+ * The bitmask is Gecko's own: 1 coarse, 2 fine, 4 hover.
+ */
+async function launchTouchBrowser(engine) {
+  if (engine.name() !== 'firefox') return engine.launch();
+  return engine.launch({
+    firefoxUserPrefs: { 'ui.primaryPointerCapabilities': 1, 'ui.allPointerCapabilities': 1 },
+  });
+}
+
+/**
  * Touch.
  *
  * The canvas could not be panned or pinched with fingers at all: panning was
@@ -1662,7 +1687,8 @@ async function checkHead(browser, label) {
  * than Playwright's touchscreen API, because that is what the canvas listens
  * for and it lets a second and third finger be placed precisely.
  */
-async function checkTouch(browser, label) {
+async function checkTouch(engine, label) {
+  const browser = await launchTouchBrowser(engine);
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
     hasTouch: true,
@@ -1866,16 +1892,16 @@ async function checkTouch(browser, label) {
     );
 
     /* -- Touch target sizes ---------------------------------------------- */
-    const coarse = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
 
-    if (!coarse) {
-      skip(
-        label,
-        'touch targets reach 44px',
-        "this engine's driver does not report (pointer: coarse) with hasTouch, so the coarse-pointer rules never apply",
-      );
-      return;
-    }
+    /*
+     * Asserted rather than skipped past. Every 44px rule in the application is
+     * inside `@media (pointer: coarse)`, so a harness that does not report one
+     * measures the dense desktop layout and calls it a touch audit. This used
+     * to be a `skip` in Firefox, which meant the target sizes below had never
+     * actually been checked in Gecko - see `launchTouchBrowser`.
+     */
+    const coarse = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
+    check(label, 'the harness reports a coarse pointer', coarse, '');
 
     const targets = await page.evaluate(() => {
       const selector = 'button, a[href], input, textarea, [role="option"], [role="menuitem"]';
@@ -1933,6 +1959,706 @@ async function checkTouch(browser, label) {
     check(label, 'a node field will not make iOS zoom in', field >= 16, `${String(field)}px`);
   } finally {
     await context.close().catch(() => {});
+    // This function owns its browser: it needs Gecko prefs the shared one does
+    // not have. See `launchTouchBrowser`.
+    await browser.close().catch(() => {});
+  }
+}
+
+/* ========================================================================== *
+ * MOBILE LAYOUT
+ * ========================================================================== */
+
+/**
+ * The phone widths this application claims to support.
+ *
+ * 320 is the narrowest viewport still in use (an iPhone SE in landscape-locked
+ * apps, and the floor every responsive audit uses); 430 is an iPhone Pro Max.
+ * 360 and 390 are the two commonest Android and iPhone widths respectively, and
+ * they are here because the interesting breakpoints sit between them - the
+ * regex match table stops needing its horizontal scroller between 360 and 390.
+ */
+const MOBILE_WIDTHS = [320, 360, 390, 430];
+
+/** Every route, including the one nobody navigates to on purpose. */
+const MOBILE_ROUTES = [
+  ['/', 'the canvas'],
+  ['/tools', 'the tool index'],
+  ['/styleguide', 'the styleguide'],
+  ['/tools/base64', 'base64'],
+  ['/tools/structured-data', 'structured data'],
+  ['/tools/hash', 'hash'],
+  ['/tools/jwt-decode', 'jwt-decode'],
+  ['/tools/diff', 'diff'],
+  ['/tools/regex-tester', 'the regex tester'],
+  ['/tools/color-convert', 'colour convert'],
+  ['/tools/image-convert', 'image convert'],
+  ['/tools/text-convert', 'text convert'],
+  ['/nothing-here', 'the 404'],
+];
+
+/**
+ * EVERY GEOMETRIC COMPLAINT THE PAGE CAN MAKE ABOUT ITSELF.
+ *
+ * Serialised into the page, so it has to be self-contained. It returns raw
+ * findings rather than verdicts - deciding which of them is a failure is the
+ * harness's job, and keeping the two apart is what lets one probe serve a
+ * sweep over every route and a handful of named regression checks.
+ *
+ * The exclusions are all load-bearing, and each is an exception somebody
+ * decided rather than a case the probe could not handle:
+ *
+ *   - The route-progress bar is translated off-canvas until a route changes.
+ *   - Visually hidden text is measured at its static position, which is often
+ *     outside the viewport; it is not painted, so it is not a layout fact.
+ *   - Anything inside a deliberate horizontal scroller. The regex match table
+ *     is five columns of data and scrolls sideways at 320px on purpose.
+ *   - `<input>` reports scrollWidth > clientWidth whenever its value is longer
+ *     than its box. That is a caret scrolling, not a clip.
+ *   - An inline box's rect is its line box, which padded inline-block children
+ *     legitimately stick out of. `<kbd>` inside a `<span>` does exactly that.
+ */
+const MOBILE_PROBE = () => {
+  const vw = window.innerWidth;
+  const root = document.documentElement;
+
+  const describe = (el) => {
+    const aria = el.getAttribute?.('aria-label');
+    const text = (el.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 28);
+    const cls = (typeof el.className === 'string' ? el.className : '')
+      .split(' ')
+      .map((one) => one.replace(/^_/, '').replace(/_[a-z0-9]{5,}_?\d*$/i, ''))
+      .filter(Boolean)
+      .join('.');
+    return `${el.tagName.toLowerCase()}${cls ? `.${cls}` : ''}${aria ? `[${aria}]` : ''}${
+      text ? ` "${text}"` : ''
+    }`;
+  };
+
+  const painted = (el) => {
+    for (let node = el; node && node !== root; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') {
+        return false;
+      }
+      // The visually-hidden recipe: a 1px box clipped away but still in the
+      // accessibility tree.
+      if (style.clipPath !== 'none' && style.position === 'absolute') return false;
+      if (node.dataset?.testid === 'route-progress') return false;
+    }
+    const box = el.getBoundingClientRect();
+    return box.width > 2 && box.height > 2;
+  };
+
+  const insideScroller = (el) => {
+    for (let node = el.parentElement; node; node = node.parentElement) {
+      const overflow = getComputedStyle(node).overflowX;
+      if (overflow === 'auto' || overflow === 'scroll') return true;
+    }
+    return false;
+  };
+
+  const everything = [...document.querySelectorAll('body *')];
+
+  const offscreen = [];
+  const clipped = [];
+  const escaping = [];
+
+  for (const el of everything) {
+    if (!painted(el)) continue;
+    const box = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+
+    if ((box.right > vw + 0.5 || box.left < -0.5) && !insideScroller(el)) {
+      offscreen.push(`${describe(el)} @ ${Math.round(box.left)}..${Math.round(box.right)}`);
+    }
+
+    if (
+      el.scrollWidth > el.clientWidth + 1 &&
+      el.tagName !== 'INPUT' &&
+      (style.overflowX === 'hidden' || style.overflowX === 'clip') &&
+      style.textOverflow !== 'ellipsis' &&
+      style.webkitLineClamp === 'none'
+    ) {
+      clipped.push(`${describe(el)} ${String(el.scrollWidth)} in ${String(el.clientWidth)}`);
+    }
+
+    /*
+     * A child drawn outside a parent that has a definite height. Nothing is
+     * clipped and nothing overflows the viewport, so no other measurement sees
+     * it - it simply looks wrong. This is how 44px buttons inside a 24px panel
+     * title bar drew across the panel's own border unnoticed.
+     */
+    if (style.overflowY === 'visible' && style.display !== 'inline' && box.height > 0) {
+      for (const child of el.children) {
+        const childStyle = getComputedStyle(child);
+        if (childStyle.position === 'absolute' || childStyle.position === 'fixed') continue;
+        if (!painted(child)) continue;
+        const childBox = child.getBoundingClientRect();
+        const over = Math.max(box.top - childBox.top, childBox.bottom - box.bottom);
+        if (over > 1) {
+          escaping.push(
+            `${describe(child)} out of ${describe(el)} by ${String(Math.round(over))}px`,
+          );
+        }
+      }
+    }
+  }
+
+  /* -- Targets ---------------------------------------------------------- */
+
+  const TARGETS =
+    'button, a[href], input, textarea, select, [role="option"], [role="menuitem"], [role="tab"], [role="switch"], [role="combobox"], summary';
+  const small = [];
+  const smallType = [];
+
+  for (const el of document.querySelectorAll(TARGETS)) {
+    if (!painted(el)) continue;
+    // Ports sit on a 32px pitch and are the documented exception; see the
+    // comment in canvas.module.css and the assertion in checkTouch.
+    if (el.hasAttribute('data-port-id')) continue;
+
+    const box = el.getBoundingClientRect();
+    // WCAG 2.5.8's inline exception: a link inside a run of text cannot be
+    // grown without breaking the line it sits in. The tool breadcrumb is one.
+    const isInlineLink = el.tagName === 'A' && getComputedStyle(el).display === 'inline';
+    if (box.height < 44 && !isInlineLink) {
+      small.push(`${describe(el)} ${String(Math.round(box.height))}px`);
+    }
+
+    /*
+     * Below 16px, iOS Safari zooms the viewport when the field is focused and
+     * never zooms back. Only fields you can type into: a checkbox or a colour
+     * well has no text to zoom towards.
+     */
+    const typed = ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
+    const inert = ['checkbox', 'radio', 'color', 'file', 'range', 'submit', 'button'];
+    if (typed && !inert.includes(el.type)) {
+      const size = parseFloat(getComputedStyle(el).fontSize);
+      if (size < 16) smallType.push(`${describe(el)} ${String(size)}px`);
+    }
+  }
+
+  return {
+    scrollWidth: root.scrollWidth,
+    clientWidth: root.clientWidth,
+    offscreen: [...new Set(offscreen)].slice(0, 8),
+    clipped: [...new Set(clipped)].slice(0, 8),
+    escaping: [...new Set(escaping)].slice(0, 8),
+    small: [...new Set(small)].slice(0, 12),
+    smallType: [...new Set(smallType)].slice(0, 8),
+  };
+};
+
+/**
+ * EVERY ROUTE AND EVERY OVERLAY AT FOUR PHONE WIDTHS, WITH A TOUCH POINTER.
+ *
+ * `checkTouch` above proves the canvas responds to fingers. This proves the
+ * application FITS on the thing the fingers belong to, which is a different
+ * claim and was never made: the touch pass predates the theme editor, the
+ * conditional option panels and the notes output, and none of those had ever
+ * been looked at below 640px.
+ *
+ * What it found, in order of how badly it broke:
+ *
+ *   The theme editor made the whole document 487px wide inside a 320px window.
+ *   The token column carried `styles.tokens`, a class that was never written,
+ *   so its `min-inline-size: 0` never applied - and a grid item defaults to
+ *   `min-inline-size: auto`, so the tab strip's min-content width (seven
+ *   nowrap tabs, ~490px) travelled up through every ancestor to the page.
+ *
+ *   The toolbar's overflow menu opened rightwards off the screen, putting
+ *   Undo, Redo, Share and Shortcuts where no finger could reach them - on the
+ *   only layout where that menu exists at all.
+ *
+ *   The Panel title bar is 24px and holds real Buttons, which grow to 44px on
+ *   a coarse pointer. They drew straight through the panel's top border.
+ *
+ *   Six kinds of control were below 44px on a coarse pointer: the Select
+ *   trigger and its list rows, tabs, the Toggle's rocker, the command
+ *   palette's rows, the file-drop label, the 404's two links and the theme
+ *   editor's colour wells.
+ *
+ * jsdom can see NONE of this. It has no layout engine, so every box is zero
+ * wide, every element fits, and every target is 0px tall - which passes.
+ */
+async function checkMobileLayout(engine, label) {
+  // Its own browser, for the pointer prefs. See `launchTouchBrowser`.
+  const browser = await launchTouchBrowser(engine);
+
+  /** Turns one probe result into pass/fail lines under a scene's name. */
+  const assess = (width, scene, probe) => {
+    const at = `${scene} at ${String(width)}px`;
+    check(
+      label,
+      `${at}: the document does not scroll sideways`,
+      probe.scrollWidth <= probe.clientWidth,
+      `scrollWidth ${String(probe.scrollWidth)} vs ${String(probe.clientWidth)}`,
+    );
+    check(
+      label,
+      `${at}: nothing is drawn outside the viewport`,
+      probe.offscreen.length === 0,
+      probe.offscreen.join(' | '),
+    );
+    check(
+      label,
+      `${at}: nothing is clipped by an ancestor`,
+      probe.clipped.length === 0,
+      probe.clipped.join(' | '),
+    );
+    check(
+      label,
+      `${at}: nothing overlaps out of its container`,
+      probe.escaping.length === 0,
+      probe.escaping.join(' | '),
+    );
+    check(
+      label,
+      `${at}: every target reaches 44px`,
+      probe.small.length === 0,
+      probe.small.join(' | '),
+    );
+    check(
+      label,
+      `${at}: no typeable field is under 16px`,
+      probe.smallType.length === 0,
+      probe.smallType.join(' | '),
+    );
+  };
+
+  try {
+    for (const width of MOBILE_WIDTHS) {
+      /*
+       * A fresh context per width rather than a resize, for the reason
+       * `checkChromeWidths` gives: Firefox's driver dislikes closing a context
+       * whose window was resized mid-run, and a fresh page guarantees every
+       * media query is evaluated at load.
+       */
+      const context = await browser.newContext({
+        viewport: { width, height: 780 },
+        hasTouch: true,
+      });
+      const page = await context.newPage();
+
+      try {
+        await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+        await page.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
+
+        /*
+         * WITHOUT THIS EVERYTHING BELOW IS THEATRE.
+         *
+         * Every 44px rule in the application is inside `@media (pointer: coarse)`.
+         * If the driver does not report a coarse pointer, none of them applies,
+         * the measured heights are the desktop ones, and the target assertions
+         * either fail for the wrong reason or - worse - a future harness that
+         * reports `fine` turns them into a check of the dense layout that nobody
+         * notices has stopped testing touch. So it is asserted, not assumed.
+         */
+        const pointer = await page.evaluate(() => ({
+          coarse: matchMedia('(pointer: coarse)').matches,
+          hover: matchMedia('(hover: hover)').matches,
+        }));
+        check(
+          label,
+          `the harness reports a touch pointer at ${String(width)}px`,
+          pointer.coarse && !pointer.hover,
+          `coarse=${String(pointer.coarse)}, hover=${String(pointer.hover)}`,
+        );
+
+        /* -- Every route --------------------------------------------------- */
+        for (const [path, name] of MOBILE_ROUTES) {
+          await page.goto(`${ORIGIN}${path}`, { waitUntil: 'networkidle' });
+          await page.waitForTimeout(250);
+          assess(width, name, await page.evaluate(MOBILE_PROBE));
+        }
+
+        /* -- Every overlay ------------------------------------------------- */
+        await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+        await page.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
+
+        await page.getByRole('button', { name: 'Add tool' }).click();
+        await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+        await page.waitForTimeout(200);
+        const palette = await page.evaluate(MOBILE_PROBE);
+        assess(width, 'the command palette', palette);
+        await page.keyboard.press('Escape');
+
+        await page
+          .locator('[role="application"]')
+          .first()
+          .click({ position: { x: 30, y: 300 } });
+        await page.keyboard.press('?');
+        await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+        await page.waitForTimeout(200);
+        assess(width, 'the shortcuts reference', await page.evaluate(MOBILE_PROBE));
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(150);
+
+        /*
+         * THE OVERFLOW MENU, which is the one overlay that exists ONLY at these
+         * widths - so nothing wider than a phone has ever rendered it. It hung
+         * off its own trigger, the last control in a ~190px bar, and there was no
+         * room on either side: opening from the trigger's leading edge put it off
+         * the right of the screen and from its trailing edge off the left. It is
+         * anchored to the toolbar now, which has a definite position and a
+         * definite width.
+         */
+        const more = page.getByRole('button', { name: 'More' });
+        check(
+          label,
+          `the toolbar collapses into an overflow menu at ${String(width)}px`,
+          (await more.count()) === 1,
+          '',
+        );
+        await more.click();
+        await page.locator('[role="menuitem"]').first().waitFor({ timeout: 5_000 });
+        await page.waitForTimeout(200);
+
+        const menu = await page.evaluate(MOBILE_PROBE);
+        assess(width, 'the overflow menu', menu);
+
+        const items = await page.evaluate(() =>
+          [...document.querySelectorAll('[role="menuitem"]')].map((el) => {
+            const box = el.getBoundingClientRect();
+            return {
+              name: (el.textContent ?? '').trim().slice(0, 16),
+              inside: box.left >= -0.5 && box.right <= window.innerWidth + 0.5,
+            };
+          }),
+        );
+        check(
+          label,
+          `every overflow-menu item is reachable at ${String(width)}px`,
+          items.length >= 4 && items.every((item) => item.inside),
+          `${String(items.length)} items, outside [${items
+            .filter((item) => !item.inside)
+            .map((item) => item.name)
+            .join(', ')}]`,
+        );
+        await page.keyboard.press('Escape');
+
+        /* -- A node on the canvas ------------------------------------------ */
+        await page.getByRole('button', { name: 'Add tool' }).click();
+        await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+        await page.getByTestId('dialog-option-diff').click();
+        await page.waitForTimeout(500);
+        assess(width, 'the canvas with a node', await page.evaluate(MOBILE_PROBE));
+
+        /*
+         * The connect dialog, which is the one overlay a phone cannot open by
+         * itself: it is reached by pressing C on a focused node, and a
+         * touchscreen has no C. That is a gap in the touch model rather than a
+         * layout defect - wiring by dragging from a port does work, and the
+         * port's full label is only otherwise available through this dialog -
+         * so it is recorded here rather than papered over. The dialog is
+         * measured anyway, because a phone with a keyboard attached reaches it.
+         */
+        await page.locator('[data-node-id]').first().focus();
+        await page.keyboard.press('c');
+        await page.waitForTimeout(300);
+        if ((await page.locator('[role="dialog"]').count()) > 0) {
+          assess(width, 'the connect dialog', await page.evaluate(MOBILE_PROBE));
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(150);
+        } else {
+          skip(label, `the connect dialog at ${String(width)}px`, 'it did not open from the C key');
+        }
+
+        /* -- The theme editor ---------------------------------------------- */
+        await page.goto(`${ORIGIN}/styleguide`, { waitUntil: 'networkidle' });
+        await page.getByRole('button', { name: 'Create theme' }).click();
+        await page.waitForTimeout(400);
+        assess(width, 'the theme editor', await page.evaluate(MOBILE_PROBE));
+
+        /*
+         * The two controls named in the original report, asserted by name so a
+         * regression says which one came back rather than "something is 490px".
+         */
+        const editor = await page.evaluate(() => {
+          const fits = (el) => {
+            const box = el.getBoundingClientRect();
+            return box.left >= -0.5 && box.right <= window.innerWidth + 0.5;
+          };
+          const tabs = [...document.querySelectorAll('[role="tab"]')].filter((el) =>
+            el.closest('[aria-label="Token groups"]'),
+          );
+          const toggle = document.querySelector('[role="switch"]');
+          const list = document.querySelector('[class*="contrastList"]');
+          return {
+            tabs: tabs.length,
+            tabsOutside: tabs.filter((el) => !fits(el)).map((el) => (el.textContent ?? '').trim()),
+            // Wrapping is the fix, so a strip that fits must be using more than
+            // one row at these widths - if it is one row, it is one row because
+            // something removed the tabs, not because they got smaller.
+            tabRows: new Set(tabs.map((el) => Math.round(el.getBoundingClientRect().top))).size,
+            toggleFits: toggle !== null && fits(toggle),
+            toggleClipped:
+              toggle !== null &&
+              (toggle.parentElement?.scrollWidth ?? 0) >
+                (toggle.parentElement?.clientWidth ?? 0) + 1,
+            contrastScrolls: list !== null && list.scrollHeight > list.clientHeight + 1,
+          };
+        });
+
+        check(
+          label,
+          `every token-group tab is on screen at ${String(width)}px`,
+          editor.tabs === 7 && editor.tabsOutside.length === 0,
+          `${String(editor.tabs)} tabs over ${String(editor.tabRows)} row(s), outside [${editor.tabsOutside.join(', ')}]`,
+        );
+        check(
+          label,
+          `the token-group strip wraps rather than overflowing at ${String(width)}px`,
+          editor.tabRows > 1,
+          `${String(editor.tabRows)} row(s)`,
+        );
+        check(
+          label,
+          `the live-preview toggle is whole at ${String(width)}px`,
+          editor.toggleFits && !editor.toggleClipped,
+          `fits=${String(editor.toggleFits)}, clipped=${String(editor.toggleClipped)}`,
+        );
+        /*
+         * Stacked, the contrast readout is a block in the page's own flow. It
+         * used to keep the 420px cap and the scroller it has beside the tokens,
+         * which on a phone is a small window with its own scrollbar inside a page
+         * that already scrolls - the "nested scrollbar" in the bug report.
+         */
+        check(
+          label,
+          `the contrast list is not its own scroller at ${String(width)}px`,
+          !editor.contrastScrolls,
+          '',
+        );
+
+        /* -- A tool with output, including the notes ----------------------- */
+        await page.goto(`${ORIGIN}/tools/diff`, { waitUntil: 'networkidle' });
+        const boxes = page.locator('textarea:not([readonly])');
+        await boxes
+          .nth(0)
+          .fill('alpha\r\nbravo\r\ncharlie is quite a long line of text here\r\ndelta');
+        await boxes
+          .nth(1)
+          .fill('alpha\nbravo\ncharlie is quite a long line of prose here\nepsilon\n');
+        await page.getByRole('button', { name: 'Run' }).click();
+        // The notes list, by its own accessible name rather than a hashed class.
+        await page
+          .locator('[aria-label="What this comparison ignored"]')
+          .waitFor({ timeout: 20_000 });
+        await page.waitForTimeout(300);
+        assess(width, 'the diff output and its notes', await page.evaluate(MOBILE_PROBE));
+
+        await page.goto(`${ORIGIN}/tools/regex-tester`, { waitUntil: 'networkidle' });
+        await page
+          .locator('textarea:not([readonly])')
+          .first()
+          .fill('ada@example.com\nbob@example.org');
+        await page
+          .getByLabel(/pattern/i)
+          .first()
+          .fill('(?<user>[\\w.]+)@(?<host>[\\w.]+)');
+        await page.getByRole('button', { name: 'Run' }).click();
+        await page.locator('[aria-label="Match listing"]').waitFor({ timeout: 20_000 });
+        await page.waitForTimeout(300);
+        assess(width, 'the regex match table', await page.evaluate(MOBILE_PROBE));
+
+        /*
+         * The match table is five columns of data and DOES scroll sideways on the
+         * narrower phones. That is the deliberate exception the probe skips, so
+         * it is asserted here instead: a scroller a finger can reach and a
+         * keyboard can focus, with a name, rather than data quietly cut off.
+         */
+        const table = await page.evaluate(() => {
+          const wrap = document.querySelector('[aria-label="Match listing"]');
+          if (!wrap) return null;
+          return {
+            scrolls: wrap.scrollWidth > wrap.clientWidth + 1,
+            focusable: wrap.tabIndex >= 0,
+            named: (wrap.getAttribute('aria-label') ?? '') !== '',
+            overflow: getComputedStyle(wrap).overflowX,
+          };
+        });
+        check(
+          label,
+          `the regex match table stays a reachable scroller at ${String(width)}px`,
+          table !== null &&
+            table.focusable &&
+            table.named &&
+            (table.overflow === 'auto' || table.overflow === 'scroll'),
+          table === null ? 'no table' : `scrolls=${String(table.scrolls)}, ${table.overflow}`,
+        );
+
+        /* -- The options panel, whose selects were the worst targets -------- */
+        const trigger = page.locator('[role="combobox"]').first();
+        await trigger.click();
+        await page.locator('[role="option"]').first().waitFor({ timeout: 5_000 });
+        await page.waitForTimeout(200);
+        assess(width, 'an open select', await page.evaluate(MOBILE_PROBE));
+        await page.keyboard.press('Escape');
+      } finally {
+        await context.close().catch(() => {});
+      }
+    }
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
+/**
+ * THE ON-SCREEN KEYBOARD, AND EXACTLY HOW MUCH OF IT CAN BE CHECKED.
+ *
+ * Neither engine Playwright drives can open a soft keyboard. There is no API
+ * for it, and no way to shrink the VISUAL viewport while leaving the layout
+ * viewport alone - which is the whole of what a keyboard does on iOS. So the
+ * one thing everybody wants asserted here, "the keyboard does not cover the
+ * field you are typing into", cannot be asserted by this harness at all, and
+ * a check that claimed to would be lying.
+ *
+ * What CAN be established, and is:
+ *
+ *   1. Whether the app leaves the browser anything to work with. Every route
+ *      except the canvas is an ordinary scrolling document, so the engine's own
+ *      scroll-into-view has somewhere to put the field and no application code
+ *      is involved. The canvas is not: its root is `overflow: hidden` over a
+ *      0x0 transformed plane, so `scrollHeight` equals `clientHeight` however
+ *      far the graph extends and there is nothing to scroll. That is a fact
+ *      about the DOM, and it is why the canvas has to move the field itself.
+ *
+ *   2. That the canvas actually does move it, driven by shrinking the window.
+ *      Same code, same branch, same numbers - a different event. Stated rather
+ *      than glossed, because the distinction is the entire caveat.
+ *
+ *   3. That a mouse never sees any of it. This is the half most likely to
+ *      regress into an annoyance: a canvas that jumped whenever a field was
+ *      clicked would be worse than the bug being fixed.
+ */
+async function checkSoftKeyboard(engine, label) {
+  skip(
+    label,
+    'a real on-screen keyboard does not cover a focused field',
+    'no engine Playwright drives can open one, and none can shrink the visual viewport independently of the layout viewport - the checks below shrink the WINDOW, which runs the same code on a different event',
+  );
+
+  const browser = await launchTouchBrowser(engine);
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 780 },
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+
+  try {
+    /* -- The canvas has nothing for the browser to scroll ---------------- */
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: 'Add tool' }).click();
+    await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+    await page.getByTestId('dialog-option-base64').click();
+    await page.waitForTimeout(600);
+
+    const canvasScroll = await page.evaluate(() => {
+      const root = document.querySelector('[role="application"]');
+      const doc = document.scrollingElement;
+      return {
+        rootScrollable: root.scrollHeight > root.clientHeight,
+        docScrollable: doc.scrollHeight > doc.clientHeight,
+      };
+    });
+    check(
+      label,
+      'the canvas gives the browser nothing to scroll, so it must reveal fields itself',
+      !canvasScroll.rootScrollable && !canvasScroll.docScrollable,
+      `root=${String(canvasScroll.rootScrollable)}, document=${String(canvasScroll.docScrollable)}`,
+    );
+
+    /* -- And does reveal them -------------------------------------------- */
+    const before = await page.evaluate(() => {
+      const field = document.querySelector('[data-node-input]');
+      field.focus();
+      const box = field.getBoundingClientRect();
+      return { top: Math.round(box.top), bottom: Math.round(box.bottom) };
+    });
+
+    // 336px is roughly an iPhone keyboard. The window rather than the visual
+    // viewport, because nothing here can move the two independently.
+    await page.setViewportSize({ width: 390, height: 780 - 336 });
+    await page.waitForTimeout(400);
+
+    const after = await page.evaluate(() => {
+      const box = document.activeElement.getBoundingClientRect();
+      return {
+        tag: document.activeElement.tagName,
+        top: Math.round(box.top),
+        bottom: Math.round(box.bottom),
+        height: window.innerHeight,
+      };
+    });
+    check(
+      label,
+      'the canvas pans a focused node field back above a shrunken viewport',
+      after.tag === 'TEXTAREA' && after.top >= 0 && after.bottom <= after.height,
+      `${String(before.top)}..${String(before.bottom)} -> ${String(after.top)}..${String(after.bottom)} in ${String(after.height)}px`,
+    );
+
+    /* -- A tool page needs none of this ---------------------------------- */
+    await page.setViewportSize({ width: 390, height: 780 });
+    await page.goto(`${ORIGIN}/tools/regex-tester`, { waitUntil: 'networkidle' });
+    const documentScrolls = await page.evaluate(() => {
+      const doc = document.scrollingElement;
+      return doc.scrollHeight > doc.clientHeight;
+    });
+    /*
+     * Deliberately the weaker claim. Whether the field ends up visible is the
+     * ENGINE's business once there is a scroll to perform, and the resize this
+     * harness can produce does not trigger the same scroll-into-view a keyboard
+     * does - WebKit leaves the field 12px low here and would not on a device.
+     * What matters, and what is asserted, is that the document can scroll at
+     * all: a tool page laid out inside a fixed 100dvh shell would leave the
+     * engine as helpless as the canvas was.
+     */
+    check(
+      label,
+      'a tool page scrolls, so the engine can reveal a focused field itself',
+      documentScrolls,
+      '',
+    );
+  } finally {
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
+  }
+
+  /* -- Nothing of the above happens with a mouse ------------------------- */
+  const fine = await engine.launch();
+  const fineContext = await fine.newContext({ viewport: { width: 390, height: 780 } });
+  const finePage = await fineContext.newPage();
+
+  try {
+    await finePage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await finePage.getByRole('button', { name: 'Add tool' }).click();
+    await finePage.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+    await finePage.getByTestId('dialog-option-base64').click();
+    await finePage.waitForTimeout(600);
+
+    const plane = () =>
+      finePage.evaluate(
+        () => document.querySelector('[data-testid="canvas-plane"]')?.style.transform ?? '',
+      );
+
+    const settled = await plane();
+    await finePage.evaluate(() => {
+      document.querySelector('[data-node-input]')?.focus();
+    });
+    await finePage.setViewportSize({ width: 390, height: 780 - 336 });
+    await finePage.waitForTimeout(400);
+
+    check(
+      label,
+      'a fine pointer never has the canvas move under a focused field',
+      (await plane()) === settled,
+      `${settled} -> ${await plane()}`,
+    );
+  } finally {
+    await fineContext.close().catch(() => {});
+    await fine.close().catch(() => {});
   }
 }
 
@@ -3043,7 +3769,9 @@ async function runChecks(engine, label) {
     await checkDiff(browser, label);
     await checkRegex(browser, label);
     await checkHead(browser, label);
-    await checkTouch(browser, label);
+    await checkTouch(engine, label);
+    await checkMobileLayout(engine, label);
+    await checkSoftKeyboard(engine, label);
     await checkTruncation(browser, label);
     await checkPreviewSandbox(browser, label);
     await checkPipeline(browser, label);
@@ -3140,24 +3868,47 @@ async function checkPipeline(browser, label) {
       link(
         [
           /*
-           * WHY THIS PATTERN AND NOT (a+)+$.
+           * WHY THIS PATTERN AND NOT (a+)+$, AND WHY THE ALPHABET IS IN IT.
            *
            * The two engines disagree about catastrophic backtracking, and the
            * disagreement decides whether this check tests anything at all.
            * SpiderMonkey runs the backtracking until it exhausts its stack -
            * about seven seconds here - and then throws. JavaScriptCore instead
-           * bounds the backtracking count and gives up quietly, which for
+           * bounds the backtracking COUNT and gives up quietly, which for
            * (a+)+$ over 32 characters lands at roughly 0.9s: comfortably
            * inside the tool's 2s deadline, so the worker was never wedged and
            * the check passed while proving nothing.
            *
-           * (a*)*(b*)*c over 40 characters costs JSC about 2.4s before it
-           * gives up, which is past the deadline in both engines. The margin
-           * over WebKit is real but modest - if this ever starts reporting
-           * `ok` here, JSC has got faster rather than the engine having
-           * regressed, and the pattern needs to grow.
+           * (a*)*(b*)*c over 40 characters replaced it, at a measured ~2.4s in
+           * JSC - past the deadline, but by less than half a second. That
+           * margin has since closed: the same pattern now measures 1.3-2.9s
+           * across runs on the same machine, so the check reports `ok` for n1
+           * about as often as it reports `error`, which is worse than a
+           * failing check because it looks like a flake.
+           *
+           * LENGTHENING THE SUBJECT DOES NOT HELP, and that is the thing worth
+           * writing down. JSC's budget is a count of backtracks, not a time,
+           * and it is spent inside a single `exec` however long the subject
+           * is: 40 characters and 200 characters both give up at ~1.9s. What
+           * raises the cost is making each backtrack step more expensive, so
+           * the alternation is the whole lower-case alphabet rather than `a*`.
+           * Measured: WebKit ~6.8s, Firefox ~7.0s (stack exhaustion), against
+           * a 2s deadline. Both engines are now more than 3x past it.
+           *
+           * If this ever reports `ok` again, JSC has got faster rather than
+           * anything having regressed - widen the alternation, do not lengthen
+           * the input.
            */
-          ['n1', 'regex-tester', 0, 0, { pattern: '(a*)*(b*)*c', mode: 'match' }],
+          [
+            'n1',
+            'regex-tester',
+            0,
+            0,
+            {
+              pattern: '((a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z)*)*!!',
+              mode: 'match',
+            },
+          ],
           ['n2', 'base64', 0, 320, { mode: 'decode' }],
           ['n3', 'structured-data', 320, 320, { source: 'auto', target: 'yaml', indent: 2 }],
         ],

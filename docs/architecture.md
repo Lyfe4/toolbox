@@ -441,6 +441,25 @@ conversion across frames, which is a redesign of the tool rather than a fix to
 the engine. `scripts/cross-browser-check.mjs` asserts which branch each engine
 takes, so the fallback cannot rot unnoticed.
 
+**No harness here has seen a real on-screen keyboard.** Playwright cannot open
+one in either engine, and cannot shrink the _visual_ viewport independently of
+the layout viewport — which is exactly what a keyboard does on iOS. So the one
+claim everybody wants, "the keyboard does not cover the field you are typing
+into", is not proved anywhere in this repo.
+
+What is established instead, and stated as such in `check:browsers`: every route
+except the canvas is an ordinary scrolling document, so the engine's own
+scroll-into-view has somewhere to put a focused field and no application code is
+involved. The canvas is the exception and has to do it itself — its root is
+`overflow: hidden` over a 0×0 transformed plane, so `scrollHeight` equals
+`clientHeight` however far the graph extends and there is nothing for a browser
+to scroll. Measured before the fix: a node's textarea at y=491, the visible area
+cut to 444px, `scrollTop` still 0 in both engines, field still behind the
+keyboard. [`keyboardInset.ts`](../src/features/canvas/keyboardInset.ts) pans the
+viewport instead, on `visualViewport`'s resize and on a coarse pointer only. The
+arithmetic is unit-tested, the wiring is driven in both engines by shrinking the
+window, and the keyboard itself is not tested.
+
 **Progress is not reported through a pipeline.** `runPipeline` passes no
 `onProgress`, so a tool that reports progress shows none on the canvas. No
 shipped tool declares `reportsProgress: true`, so nothing is currently lost;
@@ -449,10 +468,20 @@ adding one would need this wiring first.
 **The two engines disagree about catastrophic backtracking**, which matters for
 any test that wants to wedge a worker on purpose. SpiderMonkey runs until it
 exhausts its stack — about seven seconds — and throws. JavaScriptCore bounds
-the backtracking count and gives up quietly, at around 2.4s for the pattern the
-cross-browser check uses and under a second for the more familiar `(a+)+$`.
-A check that assumes the Firefox behaviour passes in WebKit while proving
-nothing.
+the backtracking **count**, not the time, and gives up quietly: under a second
+for the familiar `(a+)+$`, and around two for `(a*)*(b*)*c`. A check that
+assumes the Firefox behaviour passes in WebKit while proving nothing.
+
+The consequence for the harness is that **lengthening the subject does not make
+a pattern more expensive in WebKit**. The budget is spent inside a single
+`exec` however long the input is — 40 characters and 200 characters both give
+up at about the same moment — so `(a*)*(b*)*c` over 40 characters sat within a
+few hundred milliseconds of the regex tool's 2s deadline and drifted onto the
+wrong side of it, reporting `ok` for a node that was supposed to wedge. What
+raises the cost is making each backtrack step more expensive, so the pattern
+`scripts/cross-browser-check.mjs` uses now alternates over the whole lower-case
+alphabet: about 6.8s in WebKit and 7.0s in Firefox, better than three times the
+deadline in both.
 
 ### What was looked at and found sound
 
@@ -479,6 +508,13 @@ list of things it found:
   target waiting forever and absent from the run's states — neither failed nor
   blocked, just unmentioned. Nothing in the app produces one, and there is now
   a guard for when something does.
+- **Every route and every overlay at 320, 360, 390 and 430px**, in both engines,
+  with a coarse pointer. `checkMobileLayout` in `check:browsers` asserts the
+  document's own `scrollWidth`, every visible box against the viewport, every
+  box against a clipping ancestor, every child against a parent with a definite
+  height, every interactive target against 44px and every typeable field against
+  16px. It found a good deal the first time it ran — see the commit — and the
+  measurements, not the controls' existence, are what it keeps asserting.
 
 ## State
 

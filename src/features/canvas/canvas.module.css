@@ -1111,11 +1111,31 @@
 
 /* --- Overflow menu ------------------------------------------------------- */
 
+/*
+ * DELIBERATELY NOT POSITIONED, so the menu below hangs off the TOOLBAR rather
+ * than off this button. See `.overflowMenu`.
+ */
 .overflow {
-  position: relative;
   display: flex;
 }
 
+/*
+ * ANCHORED TO THE TOOLBAR, NOT TO ITS OWN TRIGGER.
+ *
+ * The menu only exists below `COMPACT_TOOLBAR`, and there its button is the
+ * LAST thing in a bar that is itself only ~190px wide. Hung off that button it
+ * did not fit on either side: opening from the button's leading edge put a
+ * 200px panel out past the right of every phone, and opening from its trailing
+ * edge put it out past the LEFT. Undo, Redo, Share and Shortcuts were partly or
+ * wholly off-screen either way - the same defect the toolbar itself was fixed
+ * for, one level down.
+ *
+ * The toolbar has a definite position and a definite width, so hanging the menu
+ * from its leading edge is the one anchor that cannot escape: the bar is inset
+ * by `--pb-space-md` and can never be wider than the viewport, so neither can
+ * this. `100%` is now the toolbar's height, which drops the menu just below the
+ * bar rather than below the button, and aligning to the bar reads better too.
+ */
 .overflowMenu {
   position: absolute;
   inset-block-start: calc(100% + var(--pb-space-xs));
@@ -1124,6 +1144,9 @@
 
   display: grid;
   min-inline-size: 200px;
+  /* The toolbar's own inset, so the menu can never be wider than the bar's
+     gutters allow however long an item's label becomes. */
+  max-inline-size: calc(100dvw - 2 * var(--pb-space-md));
   padding: var(--pb-space-2xs);
 
   background-color: var(--pb-surface-overlay);
@@ -1271,6 +1294,20 @@
   .readoutZoom,
   .overflowItem {
     min-block-size: 44px;
+  }
+
+  /*
+   * The command palette's rows. They were missed by the original touch pass
+   * because the palette is a dialog rather than canvas chrome, and adding a
+   * tool is the first thing anybody does here - a 32px row is the one target
+   * that has to be right before any of the others matter.
+   *
+   * `block-size` rather than `min-block-size`: the rows are asserted to be all
+   * the same height (a long summary must truncate rather than grow its row),
+   * and a minimum would let one row win.
+   */
+  .option {
+    block-size: 44px;
   }
 
   /*

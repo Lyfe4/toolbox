@@ -64,6 +64,26 @@
   color: var(--pb-ink-muted);
 }
 
+/*
+ * THE TITLE BAR IS THE ONE CONTAINER WITH A FIXED HEIGHT, so it is the one that
+ * breaks when the controls inside it grow.
+ *
+ * `actions` hold real Buttons, and Button grows to 44px on a coarse pointer
+ * (WCAG 2.5.5). In a 24px bar those buttons simply overflowed it, drawing
+ * across the panel's top border and over the first line of the body. Nothing
+ * clipped, so the layout never reported an error - it just looked broken.
+ *
+ * The bar keeps its 24px floor on a fine pointer, so the baseline grid the
+ * comment above describes is unchanged where the dense layout applies.
+ */
+@media (pointer: coarse) {
+  .titleBar {
+    block-size: auto;
+    min-block-size: 44px;
+    padding-block: var(--pb-space-2xs);
+  }
+}
+
 @media (forced-colors: active) {
   .panel,
   .titleBar,

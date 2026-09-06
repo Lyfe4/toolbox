@@ -8,17 +8,30 @@
   gap: var(--pb-space-sm);
 }
 
+/*
+ * The button is the TARGET. It carries no paint of its own, so it can be grown
+ * to a finger's size on a coarse pointer without the rocker growing with it.
+ */
 .track {
-  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+/* The rocker itself: the part that is actually drawn. */
+.visual {
+  position: relative;
   inline-size: 32px;
   block-size: 18px;
-  padding: 0;
 
   background-color: var(--pb-surface-inset);
   border: var(--pb-border-width) solid var(--pb-control-border);
   border-radius: var(--pb-radius-control);
-  cursor: pointer;
 
   transition:
     background-color var(--pb-motion-fast) var(--pb-ease),
@@ -38,7 +51,7 @@
     background-color var(--pb-motion-fast) var(--pb-ease);
 }
 
-.track[aria-checked='true'] {
+.track[aria-checked='true'] .visual {
   background-color: var(--pb-accent-subtle);
   border-color: var(--pb-accent);
 }
@@ -48,12 +61,15 @@
   background-color: var(--pb-accent);
 }
 
-.track:is(:hover, [data-force='hover']):not(:disabled) {
+.track:is(:hover, [data-force='hover']):not(:disabled) .visual {
   border-color: var(--pb-control-border-hover);
 }
 
 .track:disabled {
   cursor: not-allowed;
+}
+
+.track:disabled .visual {
   border-color: var(--pb-border-hairline);
 }
 
@@ -72,11 +88,26 @@
 }
 
 /*
+ * `pointer: coarse` is the finger, not the screen size - a narrow window on a
+ * laptop keeps the dense instrument layout, a tablet does not. 44px is WCAG
+ * 2.5.5; the switch was a 32x18 target, the smallest control in the app.
+ *
+ * Only the button grows. The rocker stays 32x18, so the instrument look is
+ * unchanged and the extra 26px is invisible hit area around it.
+ */
+@media (pointer: coarse) {
+  .track {
+    min-inline-size: 44px;
+    min-block-size: 44px;
+  }
+}
+
+/*
  * In forced-colors the accent fill is discarded, so state must also be carried
  * by something the OS keeps: the thumb's position, plus a solid system colour.
  */
 @media (forced-colors: active) {
-  .track {
+  .visual {
     border-color: ButtonText;
   }
 
@@ -88,7 +119,7 @@
     background-color: Highlight;
   }
 
-  .track:disabled,
+  .track:disabled .visual,
   .track:disabled .thumb {
     border-color: GrayText;
     background-color: GrayText;

@@ -44,6 +44,7 @@ import {
   type PortSide,
 } from './geometry';
 import { useCanvasStore } from './graphStore';
+import { useRevealFocusedField } from './keyboardInset';
 import { OverflowMenu, type OverflowItem } from './OverflowMenu';
 import { createDebouncedSaver, loadGraph } from './persistence';
 import { pinchPair, pinchSample, pinchStep, type PinchSample } from './pinch';
@@ -220,6 +221,14 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
 
   const viewport = useViewportStore((state) => state.viewport);
   const isPanning = useViewportStore((state) => state.isPanning);
+
+  /*
+   * The on-screen keyboard, which the canvas has to handle itself because it
+   * has nothing for the browser to scroll. See keyboardInset.ts.
+   */
+  const panBy = useCallback((delta: Point) => {
+    useViewportStore.getState().panBy(delta);
+  }, []);
 
   const { notify } = useToast();
   const [overlay, setOverlay] = useState<Overlay>({ kind: 'none' });
@@ -1158,6 +1167,12 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       endGestures,
     };
   });
+
+  /*
+   * A node field focused with a keyboard open would otherwise sit behind it -
+   * the canvas is the one route with no scroll for the browser to use.
+   */
+  useRevealFocusedField(rootRef, panBy);
 
   /*
    * NOT BOUND WHILE AN OVERLAY IS OPEN, for the same reason the wheel listener

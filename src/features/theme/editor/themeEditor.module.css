@@ -187,6 +187,25 @@
 }
 
 /*
+ * THE TOKEN COLUMN, AND WHY IT NEEDS A RULE OF ITS OWN.
+ *
+ * A grid item's `min-inline-size` defaults to `auto`, which means its track can
+ * never be narrower than its min-content. The tab strip below is a flex row, so
+ * ITS min-content is the sum of all seven tabs - about 490px - and that number
+ * used to travel all the way up: editorBody -> editor -> panel -> section ->
+ * page, until the styleguide was 490px wide inside a 320px window.
+ *
+ * This class was named in ThemeEditor.tsx from the day the editor was written
+ * and never existed here, so the declaration below has never been applied.
+ * `styles.tokens` was `undefined`, cx dropped it, and Vite's CSS-module typing
+ * is `Record<string, string>`, so nothing on the way to production said a word.
+ * `cssModules.test.ts` now fails the build for a class named but not declared.
+ */
+.tokens {
+  min-inline-size: 0;
+}
+
+/*
  * Side by side once there is room for the contrast list to be read without
  * scrolling past the tokens it describes. Below that the two stack, tokens
  * first, because you edit before you check.
@@ -194,6 +213,12 @@
 @media (min-width: 1000px) {
   .editorBody {
     grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+  }
+
+  /* Only a column beside the tokens earns its own scroller. See below. */
+  .contrastList {
+    max-block-size: 420px;
+    overflow-y: auto;
   }
 }
 
@@ -261,6 +286,31 @@
   outline-offset: var(--pb-focus-offset);
 }
 
+/* --- Touch ---------------------------------------------------------------- */
+
+/*
+ * `pointer: coarse` is the finger, not the screen size - the same rule the rest
+ * of the application uses. 44px is WCAG 2.5.5.
+ */
+@media (pointer: coarse) {
+  .picker {
+    inline-size: 44px;
+    block-size: 44px;
+    /*
+     * 16px on a colour input looks pointless, and is not. Where
+     * `<input type="color">` is unimplemented the engine degrades it to a TEXT
+     * input - iOS Safari before 16.4 does exactly this, and so does the WebKit
+     * build `check:browsers` drives - and a text input under 16px makes iOS
+     * zoom the viewport on focus and never zoom back.
+     */
+    font-size: 16px;
+  }
+
+  .fileInput::file-selector-button {
+    min-block-size: 44px;
+  }
+}
+
 .tokenInput {
   min-inline-size: 0;
 }
@@ -326,14 +376,23 @@
   color: var(--pb-signal-error);
 }
 
+/*
+ * THE CAP AND THE SCROLLER BELONG TO THE SIDE COLUMN, NOT TO THE LIST.
+ *
+ * Side by side, the contrast panel is a fixed column beside a page that scrolls
+ * past it, so capping it keeps the summary in view. Stacked - which is every
+ * phone - it is just another block in the flow, and a 420px window with its own
+ * scrollbar inside a page that already scrolls is the worst of both: you cannot
+ * see the whole list, and flicking at it fights the page.
+ *
+ * So the cap is declared with the two-column layout rather than here.
+ */
 .contrastList {
   display: grid;
   gap: var(--pb-space-2xs);
   margin: 0;
   padding: 0;
   list-style: none;
-  max-block-size: 420px;
-  overflow-y: auto;
 }
 
 .contrastEmpty {
