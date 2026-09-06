@@ -8,6 +8,7 @@ import { ColorView } from './ColorView';
 import { DiffView } from './DiffView';
 import { HtmlView } from './HtmlView';
 import { RegexView } from './RegexView';
+import { ReportView } from './ReportView';
 import styles from './runner.module.css';
 
 /* -------------------------------------------------------------------------- *
@@ -83,6 +84,24 @@ export function OutputView({
     return <RegexView value={value.data} label={label} />;
   }
 
+  /*
+   * A conversion report: the notes that matter, then the before-and-after
+   * facts. Same bargain again - the payload is ordinary JSON for anything
+   * downstream, and the hint says it is a report rather than a data structure
+   * somebody wants to read as braces.
+   */
+  if (presentation === 'report' && value.type === 'json') {
+    return (
+      <ReportView
+        value={value.data}
+        label={label}
+        baseFilename={baseFilename}
+        onCopy={onCopy}
+        onDownload={onDownload}
+      />
+    );
+  }
+
   // A port that declares it carries HTML gets the preview and the rich-text
   // copy. Declared on the port rather than sniffed from the string, so the
   // affordance is a fact about the tool rather than a guess about its output.
@@ -104,7 +123,7 @@ export function OutputView({
       return (
         <div className={styles.stack}>
           <TextArea
-            className={styles.output}
+            className={styles.editor}
             aria-label={label}
             value={value.text}
             readOnly

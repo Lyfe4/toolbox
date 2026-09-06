@@ -32,10 +32,28 @@
   color: var(--pb-ink-secondary);
 }
 
+/*
+ * `position: relative` IS LOAD-BEARING, and not for placing anything.
+ *
+ * Every row carries a visually-hidden `<span>` naming the change and the line
+ * - "removed, original line 12" - and the recipe for that is
+ * `position: absolute` with a 1px clip. An absolutely positioned box is
+ * clipped by an ancestor's `overflow` ONLY IF that ancestor is its containing
+ * block, and with no positioned ancestor the containing block was the
+ * document itself.
+ *
+ * So the hidden spans escaped this scroller and were laid out down the page at
+ * their static positions. They paint nothing, but they are in the document's
+ * scrollable overflow: a 600-row diff gave the page 7,600px of empty space
+ * below its own content to scroll through, and the scrollbar said the article
+ * was five times longer than it is. Nothing was visibly wrong, which is why
+ * this survived until a sticky sidebar was measured against the page height.
+ */
 .rows {
   margin: 0;
   padding: 0;
   list-style: none;
+  position: relative;
   max-block-size: 520px;
   overflow: auto;
   background-color: var(--pb-surface-inset);

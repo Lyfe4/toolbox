@@ -177,8 +177,13 @@ export interface OutputPort extends PortBase {
    * everything else, and a JSON tree is the wrong view for it. This says which
    * renderer to reach for. It is a presentation hint only: the value is
    * ordinary JSON, and any consumer that ignores this still gets valid data.
+   *
+   * `report` is the same bargain for a conversion report: a `summary` line,
+   * optional `from` and `to` fact blocks, and a list of levelled notes. Drawn
+   * as JSON it is a wall of braces in a read-only textarea, which is where
+   * `GPS location was removed` had been living.
    */
-  readonly presentation?: 'diff' | 'html' | 'regex';
+  readonly presentation?: 'diff' | 'html' | 'regex' | 'report';
 }
 
 /** True when an output port's declared types overlap an input port's. */

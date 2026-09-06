@@ -108,7 +108,21 @@
      allowed to shrink below its content. */
   min-inline-size: 0;
   min-block-size: 0;
-  overflow: hidden;
+  /*
+   * `clip`, not `hidden`, and the difference is load-bearing rather than
+   * stylistic: `hidden` makes this element a SCROLL CONTAINER - one that
+   * happens never to scroll - and `position: sticky` inside a scroll container
+   * that never scrolls never moves. The tool runner's options rail was pinned
+   * to this box rather than to the viewport and scrolled away with the page.
+   *
+   * `clip` clips exactly the same pixels and establishes no scroll container,
+   * so the nearest scrollport for anything inside is the document again. The
+   * canvas does not depend on the difference: its own root carries
+   * `overflow: hidden`, and nothing in this application scrolls <main>
+   * programmatically. Asserted in check:browsers, which measures both that the
+   * canvas still gives the browser nothing to scroll and that the rail sticks.
+   */
+  overflow: clip;
 }
 
 @media (forced-colors: active) {

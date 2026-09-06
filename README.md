@@ -187,7 +187,7 @@ about.
 
 ## Testing
 
-1,996 tests across 76 files. The count is not the interesting part; what the
+2,113 tests across 83 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Conformance, measured against the specifications
@@ -335,10 +335,10 @@ The same pass found the tool reporting `count: 5000` for a truncated listing
 two rows indistinguishable from two matches, and a sticky-without-global listing
 that disagreed with the replacement it sat next to.
 
-### Two findings that were only ever going to be found by looking
+### Three findings that were only ever going to be found by looking
 
-Both are `reset.css` rules that are correct in general and expensive here.
-Neither is visible to a unit test, because jsdom has no layout engine.
+None of them is visible to a unit test, because jsdom has no layout engine. The
+first two are `reset.css` rules that are correct in general and expensive here.
 
 **`svg { max-inline-size: 100% }` collapsed every wire.** The canvas plane is a
 0×0 box whose `transform` _is_ the coordinate system. 100% of a zero-width
@@ -354,6 +354,23 @@ line becomes three. A `display: flex` wrapper does _not_ rescue it (still
 60.8px); only `inline-flex` does (22.4px). That is why every icon-plus-text
 control in this codebase is `inline-flex` rather than a plain span, and why an
 icon cannot simply be dropped into prose.
+
+**450 invisible spans gave a long diff 7,600px of nothing to scroll.** Every
+diff row carries a visually hidden `<span>` naming the change and the line —
+_"removed, original line 12"_ — and the recipe for that is `position: absolute`
+with a 1px clip. An absolutely positioned box is clipped by an ancestor's
+`overflow` **only if that ancestor is its containing block**, and the row
+scroller was not positioned, so the containing block was the document. The
+hidden spans escaped the scroller, laid themselves out down the page, and
+contributed to the document's scrollable overflow: on a 600-row comparison the
+scrollbar said the page was five times longer than it is, and dragging it
+landed you in blank space. `position: relative` on the scroller is the whole
+fix.
+
+Nothing painted there, nothing overflowed sideways and nothing was clipped, so
+none of the existing geometric checks could see it — it was found by measuring
+the page height while making the tool runner's options panel sticky, which is
+the only reason anybody asked how tall the page was.
 
 ### Where each kind of test lives
 

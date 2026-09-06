@@ -506,6 +506,461 @@ async function checkChromeWidths(browser, label) {
   }
 }
 
+/* ========================================================================== *
+ * THE TOOL RUNNER'S LAYOUT
+ * ========================================================================== */
+
+/**
+ * The four regions of a tool page, in source order, with their geometry.
+ *
+ * Serialised into the page, so it has to be self-contained. It reports the DOM
+ * index alongside the box because the assertion that matters is a comparison
+ * between the two orders - which is a thing jsdom cannot express at all, since
+ * every box there is zero by zero and every order therefore agrees.
+ */
+const RUNNER_PROBE = () => {
+  const layout = document.querySelector('[class*="layout"]');
+  if (!layout) return null;
+
+  const box = (el) => {
+    const r = el.getBoundingClientRect();
+    return {
+      top: Math.round(r.top + window.scrollY),
+      bottom: Math.round(r.bottom + window.scrollY),
+      left: Math.round(r.left),
+      right: Math.round(r.right),
+      height: Math.round(r.height),
+    };
+  };
+
+  const regions = [...layout.children].map((el, index) => {
+    const heading = el.querySelector('h2');
+    return {
+      index,
+      // The controls rail is a plain div holding the Options panel and the run
+      // bar, so it is named from the panel inside it.
+      name: (heading?.textContent ?? '(unnamed)').trim(),
+      ...box(el),
+    };
+  });
+
+  const run = [...document.querySelectorAll('button')].find(
+    (el) => (el.textContent ?? '').trim() === 'Run',
+  );
+  const scroller = document.querySelector('[class*="optionsScroll"]');
+  const rail = document.querySelector('[class*="controls"]');
+
+  return {
+    regions,
+    run: run ? { ...box(run), viewportTop: Math.round(run.getBoundingClientRect().top) } : null,
+    rail: rail
+      ? {
+          position: getComputedStyle(rail).position,
+          viewportTop: Math.round(rail.getBoundingClientRect().top),
+          viewportBottom: Math.round(rail.getBoundingClientRect().bottom),
+          // Where the rail sits in the DOCUMENT. A sticky box that is actually
+          // sticking moves down the document as the page scrolls; one that is
+          // merely in view does not.
+          documentTop: Math.round(rail.getBoundingClientRect().top + window.scrollY),
+        }
+      : null,
+    scroller: scroller
+      ? {
+          scrolls: scroller.scrollHeight > scroller.clientHeight + 1,
+          overflowY: getComputedStyle(scroller).overflowY,
+          focusableInside: scroller.querySelectorAll(
+            'button, input, select, textarea, [tabindex]:not([tabindex="-1"])',
+          ).length,
+        }
+      : null,
+    innerHeight: window.innerHeight,
+    innerWidth: window.innerWidth,
+    docScrollWidth: document.documentElement.scrollWidth,
+    docClientWidth: document.documentElement.clientWidth,
+    docHeight: document.documentElement.scrollHeight,
+  };
+};
+
+/**
+ * THE LAYOUT DECISION, MEASURED RATHER THAN DESCRIBED.
+ *
+ * The tool runner used to draw two stacked columns - [Input, Output] beside
+ * [Options, Ports] - which meant the options panel came after the output in
+ * source order. Below the two-column breakpoint that put the whole options
+ * panel BELOW the result, so changing one flag meant scrolling past an
+ * arbitrarily long output and back; above it, the eye read Input, Options,
+ * Output while Tab and a screen reader went Input, Output, Options.
+ *
+ * The DOM is now in reading order and the CSS only decides where the columns
+ * break. Two of the three claims that makes are geometric, so they can only
+ * be checked here:
+ *
+ *   1. VISUAL ORDER EQUALS SOURCE ORDER, at every width. Sorting the four
+ *      regions by (top, left) - which is how a language read left to right
+ *      and top to bottom is read - must reproduce their DOM order. This is the
+ *      assertion an `order: -1` would fail, and it is the reason a CSS-only
+ *      fix was rejected.
+ *   2. THE OPTIONS ARE CO-VISIBLE WITH THE OUTPUT once there is room for a
+ *      rail, and stay so however far down a long result you scroll - which is
+ *      the entire point of the change.
+ *
+ * jsdom sees none of it: it has no layout engine, so every box is 0x0, every
+ * region shares a position, and any order agrees with any other.
+ */
+async function checkRunnerLayout(browser, label) {
+  /*
+   * 999 and 1000 pin the breakpoint from both sides. The number is arithmetic
+   * rather than a device - a 300px rail plus gutters leaves the main column
+   * about 600px, which is what the regex match table and the side-by-side diff
+   * want - and a breakpoint nobody asserts is a breakpoint that drifts.
+   */
+  const widths = [320, 390, 768, 999, 1000, 1280, 1920];
+
+  for (const width of widths) {
+    // A fresh context per width rather than a resize, for the reason
+    // `checkChromeWidths` gives about Firefox's driver and media queries.
+    const context = await browser.newContext({ viewport: { width, height: 800 } });
+    const page = await context.newPage();
+    const at = `${String(width)}px`;
+
+    try {
+      await page.goto(`${ORIGIN}/tools/regex-tester`, { waitUntil: 'networkidle' });
+      await page.getByRole('heading', { level: 1, name: 'Regex' }).waitFor({ timeout: 15_000 });
+      // The options come from the tool's own lazily-imported module, so the
+      // rail is not its final height until that has landed.
+      await page
+        .getByLabel(/pattern/i)
+        .first()
+        .waitFor({ timeout: 15_000 });
+
+      await page
+        .locator('textarea:not([readonly])')
+        .first()
+        .fill(Array.from({ length: 60 }, (_, i) => `user${String(i)}@example.com`).join('\n'));
+      await page
+        .getByLabel(/pattern/i)
+        .first()
+        .fill('(?<user>[\\w.]+)@(?<host>[\\w.]+)');
+      await page.getByRole('button', { name: 'Run' }).click();
+      await page.locator('[aria-label="Match listing"]').waitFor({ timeout: 20_000 });
+      await page.waitForTimeout(250);
+
+      const probe = await page.evaluate(RUNNER_PROBE);
+      check(label, `the tool runner has a measurable layout at ${at}`, probe !== null, '');
+      if (!probe) continue;
+
+      const names = probe.regions.map((region) => region.name);
+      check(
+        label,
+        `the four regions are in reading order in the DOM at ${at}`,
+        names.join(' > ') === 'Input > Options > Output > Ports',
+        names.join(' > '),
+      );
+
+      /* -- 1. Visual order is source order ------------------------------- */
+      const visual = [...probe.regions].sort((a, b) =>
+        Math.abs(a.top - b.top) > 4 ? a.top - b.top : a.left - b.left,
+      );
+      check(
+        label,
+        `nothing is reordered on screen at ${at}: the eye and the DOM agree`,
+        visual.every((region, position) => region.index === position),
+        `DOM ${probe.regions.map((r) => r.name).join(',')} / screen ${visual
+          .map((r) => r.name)
+          .join(',')}`,
+      );
+
+      const [input, options, output, ports] = probe.regions;
+
+      check(
+        label,
+        `the page does not scroll sideways at ${at}`,
+        probe.docScrollWidth <= probe.docClientWidth,
+        `${String(probe.docScrollWidth)} in ${String(probe.docClientWidth)}`,
+      );
+
+      /* -- 2. Run sits between the options and the output ---------------- */
+      check(
+        label,
+        `Run is below the options and above the output at ${at}`,
+        probe.run !== null && probe.run.top >= options.top && probe.run.bottom <= options.bottom,
+        probe.run === null
+          ? 'no Run button'
+          : `run ${String(probe.run.top)}..${String(probe.run.bottom)} in options ${String(
+              options.top,
+            )}..${String(options.bottom)}`,
+      );
+
+      if (width < 1000) {
+        /* -- Stacked ---------------------------------------------------- */
+        check(
+          label,
+          `the options are above the output, not below it, at ${at}`,
+          options.bottom <= output.top,
+          `options end ${String(options.bottom)}, output starts ${String(output.top)}`,
+        );
+        check(
+          label,
+          `everything is one column at ${at}`,
+          input.left === options.left &&
+            options.left === output.left &&
+            output.left === ports.left &&
+            input.right === output.right,
+          `lefts ${[input.left, options.left, output.left, ports.left].join(',')}`,
+        );
+        /*
+         * Not a scroller and not pinned below the breakpoint. A nested
+         * scrollbar inside a document that already scrolls is the defect the
+         * mobile audit found in the theme editor's contrast list, and a pinned
+         * rail on a phone spends viewport the result needs.
+         */
+        check(
+          label,
+          `the options rail is neither pinned nor its own scroller at ${at}`,
+          probe.rail?.position === 'static' && probe.scroller?.scrolls === false,
+          `${String(probe.rail?.position)}, scrolls=${String(probe.scroller?.scrolls)}`,
+        );
+      } else {
+        /* -- Two columns ------------------------------------------------ */
+        check(
+          label,
+          `the options sit in a rail beside the input at ${at}`,
+          options.left >= input.right && Math.abs(options.top - input.top) <= 2,
+          `input ends ${String(input.right)}, options start ${String(options.left)} at ${String(
+            options.top,
+          )} against ${String(input.top)}`,
+        );
+        /*
+         * THE ROW HEIGHTS ARE NOT COUPLED, which is what the rail spanning
+         * both content rows buys. The regex options panel is taller than the
+         * input, and a plain two-row auto-flow grid would have pushed the
+         * output down to clear it - leaving a few hundred pixels of nothing
+         * under the input on the busiest tool in the set.
+         */
+        check(
+          label,
+          `the output starts under the input rather than under the rail at ${at}`,
+          output.top < options.bottom,
+          `output starts ${String(output.top)}, rail ends ${String(options.bottom)}`,
+        );
+        check(
+          label,
+          `the ports footnote spans both columns at ${at}`,
+          ports.left === input.left && ports.right >= options.right - 1 && ports.top >= output.top,
+          `ports ${String(ports.left)}..${String(ports.right)} against ${String(
+            input.left,
+          )}..${String(options.right)}`,
+        );
+      }
+    } finally {
+      await context.close().catch(() => {});
+    }
+  }
+
+  /* -- 3. The rail stays with the output while the output scrolls -------- */
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${ORIGIN}/tools/diff`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Diff' }).waitFor({ timeout: 15_000 });
+
+    const boxes = page.locator('textarea:not([readonly])');
+    await boxes.nth(0).fill(Array.from({ length: 300 }, (_, i) => `line ${String(i)}`).join('\n'));
+    await boxes
+      .nth(1)
+      .fill(Array.from({ length: 300 }, (_, i) => `line ${String(i * 2)}`).join('\n'));
+    await page.getByRole('button', { name: 'Run' }).click();
+    // The patch output rather than the notes list: these two inputs differ on
+    // almost every line and agree about line endings, so the tool has no notes
+    // to draw and waiting for them would wait forever.
+    await page.getByRole('textbox', { name: 'Diff Unified patch' }).waitFor({ timeout: 20_000 });
+    await page.waitForTimeout(300);
+
+    /*
+     * A 600-ROW DIFF MUST NOT GIVE THE PAGE 7,600px OF NOTHING TO SCROLL.
+     *
+     * Found while measuring the sticky rail against the page height, which is
+     * the only reason anybody looked. Every diff row carries a visually hidden
+     * `<span>` naming the change - "removed, original line 12" - and the
+     * recipe for that is `position: absolute` with a 1px clip. An absolutely
+     * positioned box is clipped by an ancestor's `overflow` only when that
+     * ancestor is its containing block, and the row list was not positioned,
+     * so the containing block was the document. Four hundred and fifty hidden
+     * spans therefore escaped the row scroller, laid themselves out down the
+     * page, and contributed their positions to the document's scrollable
+     * overflow. Nothing painted there. The scrollbar simply said the page was
+     * five times longer than it is, and dragging it landed you in blank space.
+     *
+     * `position: relative` on the scroller is the whole fix, and it is
+     * invisible to every other check here: the boxes were never painted, the
+     * document never scrolled sideways, and jsdom has no layout at all.
+     */
+    const overflow = await page.evaluate(() => ({
+      doc: document.documentElement.scrollHeight,
+      body: Math.round(document.body.getBoundingClientRect().height),
+    }));
+    check(
+      label,
+      'a long diff adds no empty scrollable height to the page',
+      overflow.doc - overflow.body <= 32,
+      `document ${String(overflow.doc)} against body ${String(overflow.body)}`,
+    );
+
+    const before = await page.evaluate(RUNNER_PROBE);
+    check(
+      label,
+      'a long diff scrolls the page at all, so the rail has something to survive',
+      before !== null && before.docHeight > before.innerHeight,
+      before === null
+        ? 'no layout'
+        : `${String(before.docHeight)} against ${String(before.innerHeight)}`,
+    );
+
+    /*
+     * Scrolled so the OUTPUT fills the viewport, which is the moment the whole
+     * change exists for: the option that produced the result and the button
+     * that re-runs it are both still on screen. The rail deliberately stops
+     * travelling at the bottom of the output - below that you are reading the
+     * ports footnote, not the result - so this scrolls to the output rather
+     * than to the end of the document.
+     */
+    const outputTop = before?.regions[2]?.top ?? 0;
+    await page.evaluate((top) => {
+      window.scrollTo(0, top);
+    }, outputTop);
+    await page.waitForTimeout(300);
+    const after = await page.evaluate(RUNNER_PROBE);
+
+    check(
+      label,
+      'the options rail is still on screen with the output scrolled under it',
+      after?.rail != null &&
+        after.rail.position === 'sticky' &&
+        after.rail.viewportTop >= 0 &&
+        after.rail.viewportBottom <= after.innerHeight,
+      after?.rail == null
+        ? 'no rail'
+        : `${after.rail.position} at ${String(after.rail.viewportTop)}..${String(
+            after.rail.viewportBottom,
+          )} in ${String(after.innerHeight)}px`,
+    );
+    /*
+     * And it is on screen because it MOVED, not because the page happened to
+     * be short. Without the sticky the rail's document position is fixed, so
+     * this is the assertion that would have caught `<main>`'s
+     * `overflow: hidden` - which made it a scroll container that never
+     * scrolls, inside which nothing sticky ever moves.
+     */
+    check(
+      label,
+      'the rail is on screen because it stuck, not because the page is short',
+      after?.rail != null &&
+        before?.rail != null &&
+        after.rail.documentTop > before.rail.documentTop + 50,
+      `${String(before?.rail?.documentTop)} -> ${String(after?.rail?.documentTop)}`,
+    );
+    check(
+      label,
+      'Run is still on screen with the output scrolled under it',
+      after?.run != null && after.run.viewportTop >= 0 && after.run.viewportTop < after.innerHeight,
+      after?.run == null
+        ? 'no Run button'
+        : `${String(after.run.viewportTop)} in ${String(after.innerHeight)}px`,
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+
+  /* -- 4. A rail taller than a short window scrolls itself --------------- */
+  const shortContext = await browser.newContext({ viewport: { width: 1280, height: 460 } });
+  const shortPage = await shortContext.newPage();
+
+  try {
+    await shortPage.goto(`${ORIGIN}/tools/regex-tester`, { waitUntil: 'networkidle' });
+    await shortPage.getByRole('heading', { level: 1, name: 'Regex' }).waitFor({ timeout: 15_000 });
+    await shortPage
+      .getByLabel(/pattern/i)
+      .first()
+      .waitFor({ timeout: 15_000 });
+    /*
+     * Run first, and scroll to the result. The rail can only be measured
+     * against the viewport while it is actually pinned, and it stops
+     * travelling at the bottom of the output - so on an unrun page, whose
+     * output is the one line "Run the tool to see output here", there is
+     * nothing for it to be pinned over.
+     */
+    await shortPage
+      .locator('textarea:not([readonly])')
+      .first()
+      .fill(Array.from({ length: 60 }, (_, i) => `user${String(i)}@example.com`).join('\n'));
+    await shortPage
+      .getByLabel(/pattern/i)
+      .first()
+      .fill('(?<user>[\\w.]+)@(?<host>[\\w.]+)');
+    await shortPage.getByRole('button', { name: 'Run' }).click();
+    await shortPage.locator('[aria-label="Match listing"]').waitFor({ timeout: 20_000 });
+    await shortPage.waitForTimeout(250);
+
+    const resting = await shortPage.evaluate(RUNNER_PROBE);
+    await shortPage.evaluate((top) => {
+      window.scrollTo(0, top);
+    }, resting?.regions[2]?.top ?? 400);
+    await shortPage.waitForTimeout(300);
+
+    const probe = await shortPage.evaluate(RUNNER_PROBE);
+
+    /*
+     * Regex declares the most options of any tool here - a pattern, a mode, a
+     * replacement and five flags - and in a 460px window that rail is taller
+     * than the viewport. Capping it and letting the OPTIONS take the scroll
+     * (rather than the whole rail) is what keeps Run reachable:
+     * `minmax(0, 1fr) auto` gives row one permission to shrink and row two
+     * none.
+     */
+    check(
+      label,
+      'a rail taller than the window is capped rather than running off the bottom',
+      probe?.rail != null &&
+        probe.rail.viewportTop >= 0 &&
+        probe.rail.viewportBottom <= probe.innerHeight + 1,
+      probe?.rail == null
+        ? 'no rail'
+        : `rail ${String(probe.rail.viewportTop)}..${String(probe.rail.viewportBottom)} in ${String(
+            probe.innerHeight,
+          )}px`,
+    );
+    check(
+      label,
+      'the options take that scroll, and Run stays on screen',
+      probe?.scroller != null &&
+        probe.scroller.scrolls &&
+        probe.run != null &&
+        probe.run.viewportTop >= 0 &&
+        probe.run.viewportTop < probe.innerHeight,
+      probe?.scroller == null
+        ? 'no scroller'
+        : `scrolls=${String(probe.scroller.scrolls)}, run at ${String(probe.run?.viewportTop)}`,
+    );
+    /*
+     * A scrollable region has to be reachable from a keyboard - the defect
+     * this project already found once in its shortcuts dialog, where a box
+     * scrolled and nothing inside it could be focused. Here the controls
+     * themselves are the focus targets, so scrolling follows from tabbing;
+     * asserted rather than assumed, because a tool with only static option
+     * descriptions would need its own tabindex.
+     */
+    check(
+      label,
+      'the options scroller is reachable by keyboard through the controls inside it',
+      (probe?.scroller?.focusableInside ?? 0) > 0,
+      `${String(probe?.scroller?.focusableInside)} focusable`,
+    );
+  } finally {
+    await shortContext.close().catch(() => {});
+  }
+}
+
 /**
  * Scroll containment, which is a LAYOUT fact and so cannot be asserted in
  * jsdom.
@@ -3710,6 +4165,14 @@ async function runChecks(engine, label) {
     });
     await page.getByRole('button', { name: 'Run' }).click();
 
+    /*
+     * The details port is drawn as a REPORT now - the notes in sentences, then
+     * a before-and-after table - so the machine-readable payload lives behind
+     * the view's own Raw toggle rather than being the only thing on offer.
+     * Every numeric assertion below wants the payload, so the toggle is
+     * pressed rather than the numbers being read back out of prose.
+     */
+    await page.getByRole('button', { name: 'Raw' }).click({ timeout: 30_000 });
     const details = page.locator('textarea[readonly]').last();
     await details.waitFor({ timeout: 30_000 });
     await page.waitForFunction(
@@ -3759,6 +4222,7 @@ async function runChecks(engine, label) {
 
   try {
     await checkChromeWidths(browser, label);
+    await checkRunnerLayout(browser, label);
     await checkDialogScroll(browser, label);
     await checkRouteFeedback(browser, label);
     await checkOffline(browser, label);
@@ -4052,6 +4516,10 @@ async function checkImageConvert(browser, label) {
         };
       }
 
+      // The report's Raw toggle; see the note in runChecks. The button only
+      // exists once a report has been drawn, so waiting for it is also the
+      // wait for the run to finish.
+      await page.getByRole('button', { name: 'Raw' }).click({ timeout: 30_000 });
       await page.waitForFunction(
         () =>
           [...document.querySelectorAll('textarea[readonly]')].some((box) =>

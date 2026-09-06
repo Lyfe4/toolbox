@@ -48,6 +48,12 @@ export const imageConvertTool = defineTool({
       label: 'Details',
       types: ['json'],
       description: 'Dimensions and sizes before and after.',
+      /*
+       * Not a JSON tree. Everything in `notes` below is a change to the image
+       * the user did not ask for, and a caveat rendered as `JSON.stringify`
+       * two panels down has not been said. See ReportView.
+       */
+      presentation: 'report',
     },
   ],
 

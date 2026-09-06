@@ -305,6 +305,7 @@ export const TOOL_MANIFEST = [
         label: 'Details',
         types: ['json'],
         description: 'Dimensions and sizes before and after.',
+        presentation: 'report',
       },
     ],
     execution: {

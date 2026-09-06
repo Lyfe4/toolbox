@@ -141,7 +141,15 @@
 
 /* --- Highlight ---------------------------------------------------------- */
 
+/*
+ * `position: relative` for the reason diff.module.css spells out at `.rows`:
+ * the hidden label inside a zero-length match, and this view's table caption,
+ * are `position: absolute`, and without a positioned ancestor their containing
+ * block is the document - so they escape this scroller's clip and add empty
+ * scrollable height to the whole page.
+ */
 .highlight {
+  position: relative;
   max-block-size: 320px;
   overflow: auto;
   background-color: var(--pb-surface-inset);
@@ -206,6 +214,8 @@
 /* --- Table -------------------------------------------------------------- */
 
 .tableWrap {
+  /* See `.highlight` above: the caption is absolutely positioned. */
+  position: relative;
   max-block-size: 380px;
   overflow: auto;
   border: var(--pb-border-width) solid var(--pb-border-hairline);

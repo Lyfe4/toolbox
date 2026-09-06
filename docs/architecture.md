@@ -9,6 +9,7 @@ way they are.
 - [The worker boundary](#the-worker-boundary)
 - [Incremental caching](#incremental-caching)
 - [The canvas](#the-canvas)
+- [The tool runner page](#the-tool-runner-page)
 - [Between tools](#between-tools)
 - [State](#state)
 - [Build and deployment](#build-and-deployment)
@@ -354,6 +355,122 @@ Only real failures are counted. A node that never ran because something
 upstream broke did not fail, and counting it would turn one broken node into
 "5 failed" and send someone looking for five bugs. The run summary reports the
 two separately (`failed` and `skipped`) for the same reason.
+
+## The tool runner page
+
+`/tools/:id` is the plain view of one tool. It is generated entirely from the
+manifest entry plus the tool's own `optionFields`, so nine tools share one
+component and adding a tenth adds no UI.
+
+### Four regions, in reading order
+
+The page is one grid with four children, and the source order is the reading
+order:
+
+```
+                        < 1000px                  >= 1000px
+
+                     +--------------+      +-------------+--------+
+                  1  |    Input     |      |    Input    |        |
+                     +--------------+      +-------------+ Options|
+                  2  |   Options    |      |             |   Run  |
+                     |     Run      |      |   Output    | sticky |
+                     +--------------+      |             |        |
+                  3  |    Output    |      +-------------+--------+
+                     +--------------+      |         Ports        |
+                  4  |    Ports     |      +----------------------+
+                     +--------------+
+```
+
+**Options come before Output in the DOM.** This is the whole design, and it is
+in the markup rather than in the CSS on purpose. The layout it replaced was two
+stacked columns — `[Input, Output]` beside `[Options, Ports]` — which put the
+options panel after the output in source order and had both available defects
+at once:
+
+- Stacked, below the breakpoint, the options were literally _below the result_.
+  Changing one option meant scrolling past an arbitrarily long output, changing
+  it, and scrolling back up to see what happened — on every tool, on every
+  visit.
+- Side by side, above the breakpoint, the eye read Input, Options, Output while
+  Tab and a screen reader went Input, Output, Options. Nothing looked wrong,
+  which is why it survived.
+
+`order`, `row-reverse` and a column-major grid would each have fixed the first
+and made the second worse, so none of them is used. Two tests hold the line:
+`ToolRunner.layout.test.tsx` asserts the heading order, the tab order and that
+the stylesheet contains no reordering property at all; `checkRunnerLayout` in
+`cross-browser-check.mjs` measures the four regions at 320, 390, 768, 999,
+1000, 1280 and 1920 px and asserts that sorting them by (top, left) reproduces
+their DOM order.
+
+### The decisions, and why
+
+**The breakpoint is 1000px, and the number is arithmetic.** The rail is 300px
+and the page's gutters are 16px a side, so a second column only pays for itself
+once what is left over is a main column wide enough for the widest thing drawn
+in it — the regex match table and the side-by-side diff both want about 600px
+before they start scrolling. 600 + 300 + 16 + 32 = 948, and 1000 is the next
+round number clear of it. Below that the rail would be taking width from the
+data in order to show four select boxes. There is deliberately only one
+breakpoint: the extra width on a large monitor goes to the output, where a diff
+and a match table can use it.
+
+**The options are never collapsed or hidden.** A `<details>` closed by default
+would reproduce the original bug in a different shape — the options would be
+discoverable only by knowing they were there — and open by default it saves
+nothing. The panel is always expanded, at every width.
+
+**Run moved out of the Input panel and into the rail, below the options.**
+Required rather than cosmetic: with the options directly above the output, a
+Run button above the options would mean change a flag, scroll up past them to
+reach the button, scroll back down past them to see the result. It also means
+that on a wide screen — where the rail is sticky — Run is on screen however far
+down a long result you have scrolled, which it was not before.
+
+**The rail is sticky above the breakpoint, and scrolls independently when it
+has to.** It spans both content rows, so `sticky` has somewhere to travel; it
+stops at the bottom of the output, because below that you are reading the ports
+footnote rather than the result. It is capped to the viewport with
+`grid-template-rows: minmax(0, 1fr) auto`, which puts the scroll on the options
+and never on the run button — the tallest options panel in the set (regex, with
+a pattern, a mode, a replacement and five flags) is taller than a 460px window.
+Below the breakpoint it is neither sticky nor a scroller: a pinned rail on a
+phone spends viewport the result needs, and a nested scrollbar inside a document
+that already scrolls is a defect this project has already fixed once.
+
+> `<main>` carries `overflow: clip` rather than `overflow: hidden`, and the
+> difference is load-bearing. `hidden` makes an element a scroll container —
+> one that happens never to scroll — and `position: sticky` inside a scroll
+> container that never scrolls never moves. The rail was pinned to `<main>`
+> instead of to the viewport and scrolled away with the page. `clip` clips
+> exactly the same pixels and establishes no scroll container.
+
+### Output views are chosen by the port, not sniffed
+
+A `ToolValue`'s data type decides how it is drawn, except where it cannot: a
+diff, a regex report and an image-conversion report are all `json`, and a JSON
+tree is the wrong view for each. `OutputPort.presentation` names the renderer —
+`diff`, `regex`, `html` or `report` — and it is a hint only: the value stays
+ordinary JSON, and anything consuming the port ignores it and still gets valid
+data.
+
+`report` is the newest, and it exists because the image tool's careful prose
+about what it changed without being asked — transparency flattened, frames
+dropped, GPS coordinates removed — was being rendered as `JSON.stringify` in a
+read-only textarea in the third output panel. The raw payload is still one
+press away behind the view's own **Raw** toggle, the same bargain the HTML
+output strikes between its source and its preview.
+
+### An input port that cannot take text gets no text box
+
+The runner used to draw a full-size editor for every declared input port.
+`image-convert` declares `types: ['bytes']`, so every keystroke in its editor
+could only ever produce `Input "Image" cannot accept text data` — an affordance
+for behaviour that does not exist. A port that does not accept `text` now
+renders its own description as the instruction for the file control instead,
+and running with nothing chosen says "Image takes a file. Choose or drop one
+first." rather than reporting a type error.
 
 ## Between tools
 

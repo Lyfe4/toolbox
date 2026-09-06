@@ -300,8 +300,17 @@ uses. Every note is a change to the image the user did not ask for:
 | Re-encoding costs a generation | `info` | The source is already lossily compressed.                |
 | The image was not enlarged     | `info` | A longest edge was set that the image is already inside. |
 
-**Warn-level titles are repeated in `summary`.** The notes list is below the
-fold in the JSON view, and a caveat nobody scrolls to has not been said.
+**Warn-level titles are repeated in `summary`.** A caveat nobody scrolls to
+has not been said, so the warnings travel with the one-line summary as well.
+
+**And the notes are drawn as notes.** The `info` port declares
+`presentation: 'report'`, so the tool runner renders it as the warnings first
+in sentences, then a before-and-after table, then the summary — rather than as
+`JSON.stringify(..., 2)` in a read-only textarea, which is where "GPS location
+was removed" used to live. The raw payload is one press away behind the
+report's own **Raw** toggle, with Copy and Download, because the exact byte
+counts and the note levels are worth having. See
+[`ReportView.tsx`](../../features/toolrunner/ReportView.tsx).
 
 ## Known limitations
 
