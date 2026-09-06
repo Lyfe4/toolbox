@@ -190,6 +190,39 @@ describe('graph persistence', () => {
   });
 });
 
+describe('the id counter on load', () => {
+  /*
+   * The stored counter is a floor rather than the answer.
+   *
+   * It comes out of localStorage, which is neither signed nor beyond a user's
+   * reach, and a counter that has fallen behind the ids stored beside it
+   * reissues an id that is already taken. `withNode` treats a repeat id as an
+   * update, so the canvas would overwrite an existing node in place instead of
+   * adding one - no error, no clue, and the wires would still be attached.
+   */
+  it('never trusts a stored counter that has fallen behind the ids', () => {
+    window.localStorage.setItem(
+      GRAPH_STORAGE_KEY,
+      JSON.stringify({
+        version: CURRENT_GRAPH_VERSION,
+        nextId: 1,
+        nodes: [
+          { id: 'n1', toolId: 'base64', position: { x: 0, y: 0 }, options: {}, inputs: {} },
+          { id: 'n9', toolId: 'hash', position: { x: 320, y: 0 }, options: {}, inputs: {} },
+        ],
+        edges: [],
+      }),
+    );
+
+    const result = loadGraph();
+    expect(result.status).toBe('loaded');
+    if (result.status !== 'loaded') return;
+
+    expect(result.graph.nextId).toBeGreaterThan(9);
+    expect(`n${result.graph.nextId.toString()}` in result.graph.nodes).toBe(false);
+  });
+});
+
 describe('debounced saving', () => {
   beforeEach(() => {
     window.localStorage.clear();

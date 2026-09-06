@@ -39,6 +39,14 @@ async function execute(request: Extract<WorkerRequest, { kind: 'execute' }>): Pr
     const tool = await loadTool(request.toolId);
     importedAt = performance.now();
 
+    /*
+     * Told BEFORE the tool runs, not after: this is what lets the engine time
+     * the tool's own work instead of the wall clock since the request was
+     * posted. Several requests can be in flight against this one worker, and
+     * a request that waited its turn must not spend its deadline waiting.
+     */
+    post({ kind: 'started', requestId: request.requestId });
+
     result = await tool.run({
       inputs: request.inputs,
       options: request.options,

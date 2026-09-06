@@ -158,6 +158,15 @@ deliberately — movement and selection go to a polite live region, while a
 refused connection also raises a toast, so the reason reaches sighted users as
 well as screen-reader users rather than only one of them.
 
+That live region is **queued**, not overwritten. Several unrelated things
+announce into it — the graph, the running pipeline, the viewport — and a region
+that holds one string loses whichever message arrives second. Messages are
+appended to a log and delivered one at a time, so a fit-to-view during a run
+says both things rather than whichever finished last. Position chatter from a
+held arrow key is the one exception: queued messages there supersede each
+other, so nobody hears where a node used to be several seconds after it
+stopped. See [architecture.md](docs/architecture.md#announcements-are-a-log-not-a-variable).
+
 **Nothing relies on colour alone.** Port data types are shapes — square for
 text, diamond for JSON, circle for bytes. The selected palette row is a raised
 surface _and_ a solid accent bar. Wires and ports switch to `CanvasText` and

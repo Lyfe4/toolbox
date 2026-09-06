@@ -85,6 +85,17 @@ export function useToolExecution(toolId: ToolId): UseToolExecutionResult {
         })
         .then((result) => {
           if (!mountedRef.current) return;
+          /*
+           * A SUPERSEDED RUN MUST NOT PAINT OVER THE ONE THAT REPLACED IT.
+           *
+           * Aborting a worker run settles it immediately, so the old result
+           * always arrived first and the ordering happened to work out. A
+           * main-thread tool cannot be interrupted from outside: it keeps
+           * going and settles whenever it finishes, which can be after the run
+           * that replaced it. The stale "Cancelled." then overwrote a correct
+           * result that was already on screen.
+           */
+          if (controllerRef.current !== controller) return;
           setState(
             result.ok
               ? {

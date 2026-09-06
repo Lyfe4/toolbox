@@ -2,7 +2,9 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { ToastProvider } from '@/components/Toast';
+import { usePipelineStore } from '@/features/execution/pipelineStore';
 import { TOOL_MANIFEST } from '@/features/registry';
+import { EMPTY_ANNOUNCEMENTS } from '@/lib/announce';
 
 import { Canvas } from './Canvas';
 import { useCanvasStore } from './graphStore';
@@ -38,6 +40,13 @@ function node(id: string, toolId: CanvasNode['toolId'], x = 0, y = 0): CanvasNod
 }
 
 function seed(nodes: readonly CanvasNode[], edges: readonly CanvasEdge[] = []): void {
+  /*
+   * The pipeline store keeps a result cache keyed by node id, and every test
+   * here builds a canvas whose first node is n1. Without this, one test's
+   * result can be served to the next as a cache hit - state leaking between
+   * tests in exactly the shape it leaks between documents.
+   */
+  usePipelineStore.getState().reset();
   useCanvasStore.setState({
     graph: {
       nodes: Object.fromEntries(nodes.map((n) => [n.id, n])),
@@ -50,7 +59,7 @@ function seed(nodes: readonly CanvasNode[], edges: readonly CanvasEdge[] = []): 
     past: [],
     future: [],
     pendingMove: null,
-    announcement: { text: '', seq: 0 },
+    ...EMPTY_ANNOUNCEMENTS,
   });
 }
 
@@ -60,6 +69,24 @@ function renderCanvas() {
       <Canvas />
     </ToastProvider>,
   );
+}
+
+/**
+ * Waits for the pipeline to have decided a node is blocked.
+ *
+ * Guidance replaces the tool's own summary only once a RUN has said the node
+ * is blocked, and a run is behind a debounce. Several tests below used to wait
+ * for "some text" instead, which the tool summary already satisfies on the
+ * first paint - so they were asserting against the wrong string whenever the
+ * run had not landed yet. They passed anyway because every test in this file
+ * names its node `a`, and the previous test's blocked state was still sitting
+ * in the pipeline store. Resetting that store between tests removed the
+ * accident; waiting for the real signal removes the race.
+ */
+async function untilBlocked(nodeId: string): Promise<void> {
+  await waitFor(() => {
+    expect(screen.getByTestId(`node-${nodeId}`)).toHaveTextContent(/blocked/);
+  });
 }
 
 function summaryOf(nodeId: string): string {
@@ -78,7 +105,7 @@ beforeEach(() => {
     past: [],
     future: [],
     pendingMove: null,
-    announcement: { text: '', seq: 0 },
+    ...EMPTY_ANNOUNCEMENTS,
   });
   useViewportStore.setState({ viewport: DEFAULT_VIEWPORT, isPanning: false });
 });
@@ -181,9 +208,8 @@ describe('guidance fits the node', () => {
     seed([node('a', toolId)]);
     renderCanvas();
 
-    await waitFor(() => {
-      expect(summaryOf('a').length).toBeGreaterThan(0);
-    });
+    await untilBlocked('a');
+    expect(summaryOf('a').length).toBeGreaterThan(0);
     expect(summaryOf('a').length).toBeLessThanOrEqual(SUMMARY_MAX_CHARS);
   });
 
@@ -223,6 +249,7 @@ describe('the node summary when nothing is wrong', () => {
     seed([node('a', 'structured-data')]);
     renderCanvas();
 
+    await untilBlocked('a');
     const group = await screen.findByRole('group', { name: /Structured data/ });
     // The blocked reason is part of the name; the guidance is the visible
     // elaboration of it. Both must be present, neither may contradict.

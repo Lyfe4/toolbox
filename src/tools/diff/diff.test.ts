@@ -677,6 +677,30 @@ describe('reconstruction', () => {
     );
   });
 
+  /*
+   * THE CONCRETE COUNTEREXAMPLE, so this cannot go back to failing one run in
+   * a hundred.
+   *
+   * The property test above found it and then could not be made to find it
+   * again: comparing "Y" with "y " under `ignoreCase` reported the common run
+   * once, in the NEW side's casing, and pushed it into both rows. The removed
+   * line therefore rendered as "y" - text the user never wrote - and only with
+   * the option whose whole purpose is to look past case turned on.
+   */
+  it('renders each side in its own casing when case is being ignored', () => {
+    const result = report('Y', 'y ', { ignoreCase: true, refineWords: true, context: 0 });
+
+    for (const row of result.rows) {
+      if (row.parts === null) continue;
+      expect(row.parts.map((part) => part.text).join('')).toBe(row.text);
+    }
+
+    const removed = result.rows.find((row) => row.kind === 'remove');
+    expect(removed?.text).toBe('Y');
+    // The point: the removed row still says Y, not the y it was compared to.
+    expect(removed?.parts?.map((part) => part.text).join('')).toBe('Y');
+  });
+
   it('keeps the parts of a refined row equal to its text', () => {
     /*
      * This is why refinement uses `diffWordsWithSpace` and not `diffWords`:

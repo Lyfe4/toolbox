@@ -6,6 +6,7 @@ import { ok, fail, type ToolOutputs, type ToolResult } from '@/features/registry
 import {
   CycleError,
   nodeCacheKey,
+  type UpstreamRef,
   runPipeline,
   topologicalOrder,
   type PipelineCache,
@@ -56,6 +57,8 @@ function graphOf(
     nextId: nodes.length + 1,
   };
 }
+
+const TEXT = { type: 'text', text: 'out' } as const;
 
 /** Records every execute call and returns a deterministic output. */
 function recordingExecutor(
@@ -209,6 +212,30 @@ describe('blocked nodes', () => {
     expect(summary.states.d?.failedUpstream).toBe('b');
   });
 
+  /*
+   * A tool is supposed to produce every output it declares, and the compiler
+   * enforces that - right up to the registry boundary, where `ErasedTool.run`
+   * returns a loose record and the guarantee is gone.
+   *
+   * When a value did not arrive, the missing input used to be reported on the
+   * node that was waiting for it: "Missing required input" on a port that is
+   * visibly wired up, which sends the reader to the wrong node entirely.
+   */
+  it('blames the empty port rather than the node waiting on it', async () => {
+    // Succeeds, but produces nothing on the port the wire leaves from.
+    const execute = vi.fn((): Promise<ToolResult<ToolOutputs>> =>
+      Promise.resolve(ok({ somethingElse: TEXT })),
+    );
+
+    const graph = graphOf([node('a', 'base64', 'seed'), node('b', 'hash')], [['a', 'b']]);
+    const summary = await runPipeline(graph, { execute });
+
+    expect(summary.states.a?.status).toBe('ok');
+    expect(summary.states.b?.status).toBe('blocked');
+    expect(summary.states.b?.blockedReason).toContain('Nothing arrived');
+    expect(summary.states.b?.error).toBeNull();
+  });
+
   it('blocks a downstream node while its source is blocked', async () => {
     const { execute } = recordingExecutor();
     const graph = graphOf([node('a', 'base64', ''), node('b', 'hash')], [['a', 'b']]);
@@ -357,7 +384,60 @@ describe('result cache', () => {
 
   it('changes its key when an upstream key changes', () => {
     const n = node('b', 'hash');
-    expect(nodeCacheKey(n, ['aaaa'])).not.toBe(nodeCacheKey(n, ['bbbb']));
+    const ref = (key: string): UpstreamRef => ({ toPortId: 'input', fromPortId: 'output', key });
+    expect(nodeCacheKey(n, [ref('aaaa')])).not.toBe(nodeCacheKey(n, [ref('bbbb')]));
+  });
+
+  /*
+   * WHICH WIRE GOES WHERE IS PART OF THE IDENTITY.
+   *
+   * The key was the sorted SET of upstream keys, so swapping the two wires
+   * into a two-input node left it unchanged. On a diff node that means the
+   * cached patch is served for the reversed comparison: the answer is
+   * confident, well formed, and describes the wiring from a moment ago.
+   * Nobody reports a bug like that, which is exactly why it needs a test.
+   */
+  it('changes its key when two upstreams swap input ports', () => {
+    const n = node('d', 'diff');
+    const forwards: readonly UpstreamRef[] = [
+      { toPortId: 'original', fromPortId: 'digest', key: 'aaaa' },
+      { toPortId: 'changed', fromPortId: 'digest', key: 'bbbb' },
+    ];
+    const backwards: readonly UpstreamRef[] = [
+      { toPortId: 'original', fromPortId: 'digest', key: 'bbbb' },
+      { toPortId: 'changed', fromPortId: 'digest', key: 'aaaa' },
+    ];
+    expect(nodeCacheKey(n, forwards)).not.toBe(nodeCacheKey(n, backwards));
+  });
+
+  /*
+   * The same again at the other end of the wire. A tool with several outputs -
+   * structured-data's `output` text and `data` JSON - has the same cache key
+   * whichever port you take, so moving a wire between them used to serve the
+   * previous port's answer for the new one.
+   */
+  it('changes its key when the wire moves to another output port', () => {
+    const n = node('h', 'hash');
+    const fromText: readonly UpstreamRef[] = [
+      { toPortId: 'input', fromPortId: 'output', key: 'aaaa' },
+    ];
+    const fromData: readonly UpstreamRef[] = [
+      { toPortId: 'input', fromPortId: 'data', key: 'aaaa' },
+    ];
+    expect(nodeCacheKey(n, fromText)).not.toBe(nodeCacheKey(n, fromData));
+  });
+
+  /*
+   * ...but the order edges happen to sit in the document must NOT change it,
+   * or every re-run would be a miss and the cache would do nothing at all.
+   */
+  it('keys the same however the wires are ordered', () => {
+    const n = node('d', 'diff');
+    const one: readonly UpstreamRef[] = [
+      { toPortId: 'original', fromPortId: 'digest', key: 'aaaa' },
+      { toPortId: 'changed', fromPortId: 'digest', key: 'bbbb' },
+    ];
+    expect(nodeCacheKey(n, one)).toBe(nodeCacheKey(n, [...one].reverse()));
   });
 });
 
@@ -467,6 +547,49 @@ describe('scheduling', () => {
 
     expect(summary.cancelled).toBe(true);
     expect(started).toBeLessThan(10);
+  });
+
+  /*
+   * A NODE MUST NEVER JUST NOT BE MENTIONED.
+   *
+   * A wire whose source node is gone left its target waiting for a run that
+   * would never come. The scheduler finishes when nothing is active and
+   * nothing is ready, so the target was neither failed nor blocked - it was
+   * absent from the summary entirely, and the canvas kept showing whatever it
+   * had last said about it. Nothing in the app is supposed to produce a
+   * dangling edge; this is the guard for when something does.
+   */
+  it('still reports a node whose only wire comes from a node that is gone', async () => {
+    const { execute } = recordingExecutor();
+    const graph = graphOf([node('b', 'hash')], [['ghost', 'b']]);
+
+    const summary = await runPipeline(graph, { execute });
+
+    expect(summary.states.b).toBeDefined();
+    expect(summary.states.b?.status).toBe('blocked');
+  });
+
+  /*
+   * `execute` is injected, and not every path beneath it is ours:
+   * `postMessage` throws outright on a value it cannot clone or cannot
+   * allocate a copy of. That rejection used to escape as an unhandled promise
+   * rejection, and - worse - the node was never emitted at all. It kept
+   * whatever status it had and the summary did not mention it. A node that
+   * vanishes is harder to explain than a node that fails.
+   */
+  it('fails a node whose executor throws rather than dropping it', async () => {
+    const execute = vi.fn((): Promise<ToolResult<ToolOutputs>> =>
+      Promise.reject(new Error('could not be cloned')),
+    );
+
+    const graph = graphOf([node('a', 'hash', 'x'), node('b', 'hash', 'y')]);
+    const summary = await runPipeline(graph, { execute });
+
+    expect(summary.states.a?.status).toBe('error');
+    expect(summary.states.a?.error?.detail).toContain('could not be cloned');
+    // The other node is unaffected, and both are accounted for.
+    expect(summary.states.b?.status).toBe('error');
+    expect(summary.failed).toBe(2);
   });
 
   it('refuses to run a graph beyond the node cap rather than wedging the tab', async () => {

@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { ToastProvider } from '@/components/Toast';
+import { usePipelineStore } from '@/features/execution/pipelineStore';
+import { EMPTY_ANNOUNCEMENTS } from '@/lib/announce';
 import { expectNoAxeViolations } from '@/lib/testing/axe';
 
 import { Canvas } from './Canvas';
@@ -23,6 +25,53 @@ function announcer(): HTMLElement {
   return screen.getByTestId('canvas-announcer');
 }
 
+/**
+ * Waits for a message to reach the live region.
+ *
+ * The region delivers ONE MESSAGE AT A TIME - see `LiveRegion` - so a message
+ * produced while an earlier one still holds the floor arrives a beat later.
+ * These assertions used to be synchronous, and passed only because whatever
+ * announced last overwrote everything before it. That overwriting was the
+ * defect; waiting is the contract.
+ */
+async function expectAnnounced(text: string | RegExp): Promise<void> {
+  await waitFor(() => {
+    expect(announcer()).toHaveTextContent(text);
+  });
+}
+
+/**
+ * Records every distinct message the live region actually displays.
+ *
+ * Asserting on the region's CURRENT text can only ever ask "was this the last
+ * thing said", which is the question that made this area look like a series of
+ * unrelated races. What these tests need to ask is "was this said at all", and
+ * that needs a recording rather than a snapshot - especially where the order
+ * of two independent sources is genuinely not fixed.
+ */
+function recordAnnouncements(): { readonly seen: () => readonly string[] } {
+  const target = announcer();
+  const seen: string[] = [];
+
+  const take = (): void => {
+    const text = target.textContent;
+    if (text !== '' && seen[seen.length - 1] !== text) seen.push(text);
+  };
+
+  take();
+  new MutationObserver(take).observe(target, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
+
+  return { seen: () => seen };
+}
+
+function announced(seen: readonly string[], text: string): boolean {
+  return seen.some((entry) => entry.includes(text));
+}
+
 async function addTool(user: ReturnType<typeof userEvent.setup>, name: string): Promise<void> {
   await user.click(screen.getByRole('button', { name: /Add tool/ }));
   const search = await screen.findByRole('combobox', { name: 'Search tools' });
@@ -35,13 +84,20 @@ async function addTool(user: ReturnType<typeof userEvent.setup>, name: string): 
 
 beforeEach(() => {
   window.localStorage.clear();
+  /*
+   * The pipeline store keeps a result cache keyed by node id, and every test
+   * here builds a canvas whose first node is n1. Without this, one test's
+   * result can be served to the next as a cache hit - state leaking between
+   * tests in exactly the shape it leaks between documents.
+   */
+  usePipelineStore.getState().reset();
   useCanvasStore.setState({
     graph: EMPTY_GRAPH,
     selection: { nodes: [], edges: [] },
     past: [],
     future: [],
     pendingMove: null,
-    announcement: { text: '', seq: 0 },
+    ...EMPTY_ANNOUNCEMENTS,
   });
   useViewportStore.setState({ viewport: DEFAULT_VIEWPORT, isPanning: false });
 });
@@ -80,7 +136,7 @@ describe('adding tools', () => {
     await waitFor(() => {
       expect(useCanvasStore.getState().graph.nodeOrder).toHaveLength(1);
     });
-    expect(announcer()).toHaveTextContent('Added Base64');
+    await expectAnnounced('Added Base64');
   });
 
   it('fuzzy-matches on summary as well as name', async () => {
@@ -114,7 +170,7 @@ describe('adding tools', () => {
     expect(graph.edgeOrder).toHaveLength(1);
     // Structure only: a preset ships no data.
     for (const id of graph.nodeOrder) expect(graph.nodes[id]?.inputs).toEqual({});
-    expect(announcer()).toHaveTextContent('No data included');
+    await expectAnnounced('No data included');
   });
 
   it('undoes a whole preset in one press', async () => {
@@ -187,7 +243,7 @@ describe('nodes', () => {
 
     await user.keyboard('{ArrowRight}');
     expect(useCanvasStore.getState().graph.nodes[id]?.position.x).toBe(before + 8);
-    expect(announcer()).toHaveTextContent('Moved to');
+    await expectAnnounced('Moved to');
 
     await user.keyboard('{Shift>}{ArrowRight}{/Shift}');
     expect(useCanvasStore.getState().graph.nodes[id]?.position.x).toBe(before + 8 + 64);
@@ -214,7 +270,7 @@ describe('nodes', () => {
 
     await user.keyboard('{Delete}');
     expect(useCanvasStore.getState().graph.nodeOrder).toHaveLength(0);
-    expect(announcer()).toHaveTextContent('Deleted 1 item');
+    await expectAnnounced('Deleted 1 item');
 
     await user.keyboard('{Control>}z{/Control}');
     expect(useCanvasStore.getState().graph.nodeOrder).toHaveLength(1);
@@ -227,7 +283,7 @@ describe('nodes', () => {
 
     await user.keyboard('{Control>}d{/Control}');
     expect(useCanvasStore.getState().graph.nodeOrder).toHaveLength(2);
-    expect(announcer()).toHaveTextContent('Duplicated node');
+    await expectAnnounced('Duplicated node');
   });
 
   it('walks nodes with Tab in spatial order, top-to-bottom then left-to-right', async () => {
@@ -328,7 +384,7 @@ describe('connecting without a pointer', () => {
     await waitFor(() => {
       expect(useCanvasStore.getState().graph.edgeOrder).toHaveLength(1);
     });
-    expect(announcer()).toHaveTextContent('Connected Base64 to Structured data');
+    await expectAnnounced('Connected Base64 to Structured data');
   });
 
   it('lists every port of the node, both sides, before asking where to', async () => {
@@ -399,8 +455,8 @@ describe('connecting without a pointer', () => {
     });
 
     expect(refused).toBe(true);
-    expect(announcer()).toHaveTextContent('Connection refused');
-    expect(announcer()).toHaveTextContent('loop');
+    await expectAnnounced('Connection refused');
+    await expectAnnounced('loop');
   });
 
   it('cancels the flow on Escape', async () => {
@@ -484,36 +540,113 @@ describe('viewport controls', () => {
     await user.keyboard('0');
 
     expect(useViewportStore.getState().viewport.zoom).toBe(1);
-    expect(announcer()).toHaveTextContent('Zoom reset');
+    await expectAnnounced('Zoom reset');
   });
 
-  it('fits content with F', async () => {
+  /*
+   * THE FLAKY TEST, AND WHY IT NO LONGER NEEDS A WORKAROUND.
+   *
+   * Adding a node starts a pipeline run. The run and the fit announce into the
+   * SAME live region, which held one string, so whichever arrived last won and
+   * the other was simply gone. This test used to wait for the run to settle
+   * before pressing `f` - a workaround that made the test green while leaving
+   * the application dropping messages, and which is now known to have been one
+   * of four sightings of a single problem.
+   *
+   * It presses `f` straight into the middle of the run, and asserts that BOTH
+   * messages are delivered, in order. See `@/lib/announce`.
+   */
+  it('fits content with F without losing the run announcement', async () => {
     const user = userEvent.setup();
     renderCanvas();
+    const recorder = recordAnnouncements();
+
     await addTool(user, 'base');
-
-    /*
-     * WAIT FOR THE RUN TO SETTLE FIRST, and the reason is a real race rather
-     * than a slow machine.
-     *
-     * Adding a node starts a pipeline run, and both the run and the fit
-     * announce into the SAME live region. Pressing `f` immediately meant the
-     * run's "Pipeline finished" arrived afterwards and overwrote "Fitted every
-     * node", so the assertion failed against a perfectly correct application -
-     * intermittently, and only under a load that made the run slower than the
-     * keystroke.
-     */
-    await waitFor(() => {
-      expect(announcer()).toHaveTextContent('Pipeline finished');
-    });
-
     await user.click(screen.getByRole('application'));
     await user.keyboard('f');
 
-    // Still a wait: the fit updates the store and the live region is written
-    // on the next render, not on the keystroke.
+    /*
+     * BOTH, IN WHICHEVER ORDER THEY HAPPEN.
+     *
+     * Which of the two lands first depends on whether the run's debounce
+     * elapses before the keystroke, which depends on how loaded the machine
+     * is - and pinning an order here would just be a new way to be flaky
+     * about the same thing. What is being tested is that neither message is
+     * LOST, and that is true either way round.
+     */
     await waitFor(() => {
-      expect(announcer()).toHaveTextContent('Fitted every node');
+      expect(announced(recorder.seen(), 'Fitted every node')).toBe(true);
+      expect(announced(recorder.seen(), 'Pipeline finished')).toBe(true);
     });
+
+    // ...and the one that came first was not simply overwritten by the second.
+    expect(recorder.seen().filter((entry) => entry.includes('Added Base64'))).toHaveLength(1);
+  });
+});
+
+describe('the live region', () => {
+  /*
+   * THE OTHER HALF OF THE SAME PROBLEM.
+   *
+   * Two announcements inside one React batch used to produce a single render
+   * carrying only the second. The first never existed as a rendered value, so
+   * no amount of care in the region itself could have recovered it - which is
+   * why the fix is a log in the store rather than a smarter component.
+   */
+  it('delivers both messages announced in the same tick', async () => {
+    renderCanvas();
+
+    act(() => {
+      const { announce } = useCanvasStore.getState();
+      announce('First message.');
+      announce('Second message.');
+    });
+
+    await expectAnnounced('First message.');
+    await expectAnnounced('Second message.');
+  });
+
+  /*
+   * Position chatter is the one thing that must NOT queue. Holding an arrow
+   * key announces per repeat, and reading every one of them would leave a
+   * screen-reader user hearing where the node used to be for seconds after it
+   * stopped. Superseded messages are dropped; the final position is not.
+   */
+  it('collapses superseded movement chatter to the last position', async () => {
+    renderCanvas();
+
+    act(() => {
+      const { announce } = useCanvasStore.getState();
+      announce('Moved to 8, 0.', 'canvas-move');
+      announce('Moved to 16, 0.', 'canvas-move');
+      announce('Moved to 24, 0.', 'canvas-move');
+    });
+
+    await expectAnnounced('Moved to 24, 0.');
+    expect(announcer()).not.toHaveTextContent('Moved to 8, 0.');
+  });
+
+  /*
+   * A live region handed identical text is silent, because identical text is
+   * not a DOM change. Pressing undo twice on an empty history is two real
+   * events and has to be announced twice, so the message is a keyed child
+   * that gets replaced rather than the region's own text.
+   */
+  it('re-announces the same message when it happens twice', async () => {
+    renderCanvas();
+
+    act(() => {
+      useCanvasStore.getState().announce('Nothing to undo.');
+    });
+    await expectAnnounced('Nothing to undo.');
+    const first = announcer().firstElementChild;
+
+    act(() => {
+      useCanvasStore.getState().announce('Nothing to undo.');
+    });
+    await waitFor(() => {
+      expect(announcer().firstElementChild).not.toBe(first);
+    });
+    expect(announcer()).toHaveTextContent('Nothing to undo.');
   });
 });

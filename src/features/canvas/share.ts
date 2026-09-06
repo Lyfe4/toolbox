@@ -4,6 +4,7 @@ import { decodeBase64, encodeBase64 } from '@/lib/base64';
 import { setOwnProperty } from '@/lib/safeObject';
 import { z } from '@/lib/zod';
 
+import { safeNextId } from './commands';
 import { snapToGrid } from './geometry';
 import { isRetiredToolId, migrateRetiredOptions, REPLACEMENT_TOOL_ID } from './retiredTools';
 import { MAX_SHARE_PARAM_LENGTH, SHARE_PARAM } from './shareSearch';
@@ -325,7 +326,10 @@ export function fromSharePayload(payload: SharePayload): GraphData {
     nodeOrder,
     edges,
     edgeOrder,
-    nextId: nodeOrder.length + edgeOrder.length + 1,
+    // Derived from the ids actually present, never from how many there are.
+    // See `safeNextId` - counting was wrong for any link whose ids were
+    // sparse, which is every link made after deleting anything.
+    nextId: safeNextId(nodeOrder, edgeOrder),
   };
 }
 

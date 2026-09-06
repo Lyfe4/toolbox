@@ -72,6 +72,20 @@ export interface RunTiming {
   readonly runMs: number;
 }
 
+/**
+ * "I have the tool, I am starting the work now."
+ *
+ * Sent between the import and the tool's first instruction. The engine uses it
+ * to re-arm the timeout, so a tool's deadline measures ITS OWN work rather
+ * than the time its request spent queued behind other requests in the one
+ * shared worker. Without this a 2s regex queued behind a 40s image conversion
+ * reports a timeout it never had - the clock ran while it was not running.
+ */
+export interface StartedResponse {
+  readonly kind: 'started';
+  readonly requestId: string;
+}
+
 export interface SettledResponse {
   readonly kind: 'settled';
   readonly requestId: string;
@@ -84,7 +98,7 @@ export interface ReadyResponse {
   readonly kind: 'ready';
 }
 
-export type WorkerResponse = ProgressResponse | SettledResponse | ReadyResponse;
+export type WorkerResponse = ProgressResponse | StartedResponse | SettledResponse | ReadyResponse;
 
 /**
  * Collects the ArrayBuffers inside a set of values so they can be TRANSFERRED

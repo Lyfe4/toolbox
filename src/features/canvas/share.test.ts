@@ -231,6 +231,40 @@ describe('round trip', () => {
     expect(encodeURIComponent(param)).toBe(param);
   });
 
+  /*
+   * THE ID COUNTER AFTER A RESTORE.
+   *
+   * `nextId` used to be `nodes.length + edges.length + 1`, which is only right
+   * while the ids are dense - and they stop being dense the moment anyone
+   * deletes a node. A pipeline whose survivors are n3 and n7 restored with a
+   * counter of 3, so the next node the recipient added was ALSO n3: it landed
+   * on top of the existing one, silently changing that node's tool while its
+   * wires stayed pointing at ports the new tool does not have.
+   *
+   * Sparse ids are not an edge case. They are what a share link looks like
+   * after any editing at all.
+   */
+  it('restores a counter past every id in a sparse link', async () => {
+    const sparse: GraphData = {
+      nodes: {
+        n3: { id: 'n3', toolId: 'base64', position: { x: 0, y: 0 }, options: {}, inputs: {} },
+        n7: { id: 'n7', toolId: 'hash', position: { x: 320, y: 0 }, options: {}, inputs: {} },
+      },
+      nodeOrder: ['n3', 'n7'],
+      edges: {},
+      edgeOrder: [],
+      nextId: 8,
+    };
+
+    const result = await decodeParamToGraph(await encodeGraphToParam(sparse));
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+
+    expect(result.graph.nextId).toBeGreaterThan(7);
+    // The concrete consequence: the id the canvas would issue next is free.
+    expect(`n${result.graph.nextId.toString()}` in result.graph.nodes).toBe(false);
+  });
+
   it('round-trips an empty canvas', async () => {
     const empty: GraphData = {
       nodes: {},

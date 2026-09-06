@@ -161,6 +161,33 @@ function numericSuffix(id: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+/**
+ * The smallest counter value that cannot collide with an id already in use.
+ *
+ * `withNode` and `withEdge` keep `nextId` ahead of everything they insert, so
+ * a graph built in this session is always safe. A graph that arrives from
+ * OUTSIDE is not: a share link and a saved document both carry ids issued by
+ * some other session, and their counter has to be rebuilt from them rather
+ * than guessed.
+ *
+ * It was guessed. `fromSharePayload` used `nodes.length + edges.length + 1`,
+ * which is right only if the ids were never sparse - and they are sparse the
+ * moment anybody deletes a node. A pipeline whose surviving nodes are n3 and
+ * n7 restored with a counter of 3, so the next node the recipient added was
+ * ALSO n3: it landed on top of the existing one, silently changing that node's
+ * tool and leaving its wires pointing at a tool that never had those ports.
+ */
+export function safeNextId(
+  nodeIds: Iterable<string>,
+  edgeIds: Iterable<string>,
+  floor = 1,
+): number {
+  let next = Math.max(1, floor);
+  for (const id of nodeIds) next = Math.max(next, numericSuffix(id) + 1);
+  for (const id of edgeIds) next = Math.max(next, numericSuffix(id) + 1);
+  return next;
+}
+
 function movedNodes(
   graph: GraphData,
   ids: readonly NodeId[],

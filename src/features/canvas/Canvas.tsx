@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import { Button } from '@/components/Button';
 import { CopyIcon, PlusIcon, SearchIcon, SignalIcon } from '@/components/Icon';
+import { LiveRegion } from '@/components/LiveRegion';
 import { useToast } from '@/components/Toast';
 import { VisuallyHidden } from '@/components/VisuallyHidden';
 import { idleState } from '@/features/execution/graph';
@@ -214,7 +215,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
 
   const graph = useCanvasStore((state) => state.graph);
   const selection = useCanvasStore((state) => state.selection);
-  const announcement = useCanvasStore((state) => state.announcement);
+  const announcementLog = useCanvasStore((state) => state.announcementLog);
   const store = useCanvasStore;
 
   const viewport = useViewportStore((state) => state.viewport);
@@ -254,6 +255,12 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       void decodeParamToGraph(shareParam).then((result) => {
         if (cancelled) return;
         if (result.status === 'ok') {
+          // Results belong to the graph that produced them. Node ids are
+          // reused across documents - every canvas starts at n1 - so leaving
+          // the old run's states in place shows the previous pipeline's output
+          // on the new pipeline's nodes until the first run of the new one
+          // finishes, which is a wrong answer rather than a missing one.
+          usePipelineStore.getState().reset();
           store.getState().replaceGraph(result.graph);
           store
             .getState()
@@ -271,6 +278,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
 
     const result = loadGraph();
     if (result.status === 'loaded') {
+      usePipelineStore.getState().reset();
       store.getState().replaceGraph(result.graph);
     } else if (result.status === 'rejected') {
       // A corrupt save produces an empty canvas and an explanation, never a
@@ -297,7 +305,16 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
 
   const runStates = usePipelineStore((state) => state.states);
   const pipelineRunning = usePipelineStore((state) => state.running);
-  const pipelineAnnouncement = usePipelineStore((state) => state.announcement);
+  /*
+   * Derived from the live per-node states rather than from the last summary:
+   * a summary is a snapshot of a finished run and goes stale the moment the
+   * next one starts, which would leave the readout contradicting the nodes.
+   */
+  const failedCount = useMemo(
+    () => Object.values(runStates).filter((state) => state.status === 'error').length,
+    [runStates],
+  );
+  const pipelineLog = usePipelineStore((state) => state.announcementLog);
 
   /*
    * Re-run whenever the document changes. `schedule` is debounced, so typing
@@ -351,14 +368,24 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     [],
   );
 
-  // Pipeline messages go to the canvas's single live region rather than a
-  // second one, so nothing competes to be read out.
+  /*
+   * Pipeline messages go to the canvas's single live region rather than a
+   * second one, so nothing competes to be read out.
+   *
+   * Every unbridged entry is forwarded, not just the newest. Reading only the
+   * latest was the same last-writer-wins bug one layer further out: a run that
+   * announced its start and its summary inside one React batch delivered only
+   * the summary, and a cancelled-then-restarted run could deliver neither.
+   */
   const lastPipelineSeq = useRef(0);
   useEffect(() => {
-    if (pipelineAnnouncement.seq === lastPipelineSeq.current) return;
-    lastPipelineSeq.current = pipelineAnnouncement.seq;
-    if (pipelineAnnouncement.text !== '') store.getState().announce(pipelineAnnouncement.text);
-  }, [pipelineAnnouncement, store]);
+    const { announce } = store.getState();
+    for (const entry of pipelineLog) {
+      if (entry.seq <= lastPipelineSeq.current) continue;
+      lastPipelineSeq.current = entry.seq;
+      if (entry.text !== '') announce(entry.text, entry.channel);
+    }
+  }, [pipelineLog, store]);
 
   /* ---------------------------------------------------------------------- *
    * Viewport: pan and zoom, throttled to animation frames
@@ -1464,12 +1491,13 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
         The canvas's own live region. Movement and selection chatter goes here
         rather than to the toast system, which is reserved for things worth
         interrupting for - a refused connection, a reset save.
+
+        It drains a LOG rather than rendering one string. Several unrelated
+        sources announce into this one region - the graph store, the pipeline,
+        the viewport - and none of them can be asked to take turns, so the
+        region takes turns on their behalf. See `@/lib/announce`.
       */}
-      <VisuallyHidden as="div">
-        <span role="status" aria-live="polite" data-testid="canvas-announcer">
-          {announcement.text}
-        </span>
-      </VisuallyHidden>
+      <LiveRegion log={announcementLog} testId="canvas-announcer" />
 
       <div
         className={styles.grid}
@@ -1652,6 +1680,24 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
         </span>
         <span className={styles.readoutItem}>{counted(graph.edgeOrder.length, 'wire')}</span>
         <span className={styles.readoutItem}>{pipelineRunning ? 'running' : 'idle'}</span>
+        {/*
+          HOW SEVERAL FAILURES AT ONCE ARE SURFACED.
+          ─────────────────────────────────────────
+          Each failing node shows its own message, which is right - the message
+          belongs beside the thing it is about - but on a graph big enough to
+          need scrolling that is a message you cannot see. This is a COUNT, not
+          a copy of the messages: enough to know something broke and to go
+          looking, without a second place where errors are worded.
+
+          Errors only. Blocked nodes are the normal state of a pipeline you are
+          still wiring up, and a chrome that shouts about them is a chrome
+          people learn to ignore.
+        */}
+        {failedCount > 0 ? (
+          <span className={cx(styles.readoutItem, styles.readoutFailed)}>
+            {failedCount.toString()} failed
+          </span>
+        ) : null}
         {/*
           A real control, not a label that looks like one. It sat in a
           bordered, raised box with the rest of the readout and did nothing;

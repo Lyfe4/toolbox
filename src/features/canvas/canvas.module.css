@@ -1029,6 +1029,18 @@
   white-space: nowrap;
 }
 
+/*
+ * The failure count.
+ *
+ * Coloured, but never ONLY coloured: the item exists at all when something
+ * failed and is absent when nothing did, and it reads "2 failed" in words. The
+ * colour is emphasis on a fact the text already carries.
+ */
+.readoutFailed {
+  color: var(--pb-signal-error);
+  font-variant-numeric: tabular-nums;
+}
+
 /* The zoom reset. A real button, styled to sit in the readout. */
 .readoutZoom {
   display: inline-flex;

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { getManifestEntry } from '@/features/registry';
+import { EMPTY_ANNOUNCEMENTS } from '@/lib/announce';
 
 import { applyCommand, describeCommand, revertCommand, type Command } from './commands';
 import { checkConnection, connectionCount, edgeInto, validTargetsFor } from './connections';
@@ -372,6 +373,10 @@ describe('canvas store', () => {
       past: [],
       future: [],
       pendingMove: null,
+      // The log too. Resetting only `announcement` left messages from the
+      // previous test waiting in the queue, which is a leak between tests and
+      // exactly the shape of leak the log was introduced to make visible.
+      ...EMPTY_ANNOUNCEMENTS,
     });
   });
 

@@ -19,7 +19,7 @@
  * Deliberately NOT part of the CI gate: it needs ~165 MB of browser binaries.
  * Run it with `pnpm check:browsers` after `pnpm build`.
  */
-import { deflateSync } from 'node:zlib';
+import { deflateRawSync, deflateSync } from 'node:zlib';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -334,6 +334,22 @@ const failures = [];
  */
 function skip(browser, name, reason) {
   console.log(`  skip ${name} - ${reason}`);
+}
+
+/**
+ * A share payload, encoded exactly as the app encodes one.
+ *
+ * Installing a graph by driving the palette would be forty interactions per
+ * check; a link is the app's own supported way to be handed a whole pipeline,
+ * and using it exercises the decoder into the bargain. `deflate-raw` matches
+ * the CompressionStream the encoder uses - see share.ts.
+ */
+function shareParam(payload) {
+  return deflateRawSync(Buffer.from(JSON.stringify(payload), 'utf8'))
+    .toString('base64')
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replaceAll('=', '');
 }
 
 function check(browser, name, passed, detail = '') {
@@ -3030,10 +3046,164 @@ async function runChecks(engine, label) {
     await checkTouch(browser, label);
     await checkTruncation(browser, label);
     await checkPreviewSandbox(browser, label);
+    await checkPipeline(browser, label);
     await checkImageConvert(browser, label);
     await checkThemeEditor(browser, label);
   } finally {
     await browser.close();
+  }
+}
+
+/**
+ * A WHOLE PIPELINE, IN A REAL WORKER.
+ *
+ * Every pipeline test in the unit suite injects `strategy: 'main'`, because
+ * jsdom has no Worker at all. So the thing the canvas actually does - post
+ * several nodes' work to one shared worker, clone buffers across the boundary,
+ * hold a deadline per node, and destroy the worker when a tool wedges it - has
+ * been asserted only against a main-thread stand-in.
+ *
+ * Two properties are worth the round trip.
+ *
+ * 1. A CHAIN CARRIES ITS VALUE ACROSS THE BOUNDARY. The canvas draws statuses
+ *    rather than values, so the assertion is that the far end reaches `ok` -
+ *    which is not a weak claim here. Base64 decode produces real bytes; if
+ *    those bytes were detached or lost in the hand-off, the tool below it
+ *    would report a parse failure on an empty document, not a wrong answer.
+ *    Reaching `ok` at the end of the chain means the bytes arrived.
+ *
+ * 2. ONE NODE TIMING OUT DOES NOT DAMAGE AN UNRELATED ONE. The regex tester is
+ *    given a pattern that backtracks catastrophically. It runs `exec`
+ *    synchronously and checks no signal, so it wedges the worker thread
+ *    outright and the engine's only remedy is to destroy the worker - taking
+ *    every other in-flight request with it. A base64 node beside it used to
+ *    sit there until its own 15s deadline and then report a timeout it never
+ *    had. This is the only place that can be shown: it needs a real worker, a
+ *    real terminate, and a tool that genuinely does not yield.
+ */
+async function checkPipeline(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  /** A graph as a link, which is the app's own way to be handed a whole one. */
+  const link = (nodes, edges) => `${ORIGIN}/?p=${shareParam({ v: 2, n: nodes, e: edges })}`;
+
+  /** The status word a node prints in its footer. */
+  const statusOf = (id) =>
+    page.evaluate(
+      (nodeId) =>
+        document.querySelector(`[data-testid="node-${nodeId}"] [class*="nodeFooter"] span`)
+          ?.textContent ?? null,
+      id,
+    );
+
+  const untilStatus = async (id, wanted, timeout) => {
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      const status = await statusOf(id);
+      if (status === wanted || Date.now() > deadline) return status;
+      await page.waitForTimeout(100);
+    }
+  };
+
+  try {
+    /* -- A chain, carried across the worker boundary ---------------------- */
+    await page.goto(
+      link(
+        [
+          ['n1', 'base64', 0, 0, { mode: 'decode' }],
+          ['n2', 'structured-data', 320, 0, { source: 'auto', target: 'yaml', indent: 2 }],
+          ['n3', 'hash', 640, 0, { algorithm: 'sha-256', encoding: 'hex' }],
+        ],
+        [
+          ['n1', 'output', 'n2', 'input'],
+          ['n2', 'output', 'n3', 'input'],
+        ],
+      ),
+      { waitUntil: 'networkidle' },
+    );
+    await page.locator('[data-testid="node-n3"]').waitFor({ timeout: 15_000 });
+
+    // {"name":"ada"} in base64. Real bytes really cross into the worker.
+    await page.locator('[data-testid="node-n1"] textarea').fill('eyJuYW1lIjoiYWRhIn0=');
+
+    const chained = await untilStatus('n3', 'ok', 30_000);
+    check(
+      label,
+      'a three-tool chain runs end to end through the real worker',
+      chained === 'ok',
+      String(chained),
+    );
+
+    /* -- One node's timeout, and the nodes beside it ---------------------- */
+    await page.goto(
+      link(
+        [
+          /*
+           * WHY THIS PATTERN AND NOT (a+)+$.
+           *
+           * The two engines disagree about catastrophic backtracking, and the
+           * disagreement decides whether this check tests anything at all.
+           * SpiderMonkey runs the backtracking until it exhausts its stack -
+           * about seven seconds here - and then throws. JavaScriptCore instead
+           * bounds the backtracking count and gives up quietly, which for
+           * (a+)+$ over 32 characters lands at roughly 0.9s: comfortably
+           * inside the tool's 2s deadline, so the worker was never wedged and
+           * the check passed while proving nothing.
+           *
+           * (a*)*(b*)*c over 40 characters costs JSC about 2.4s before it
+           * gives up, which is past the deadline in both engines. The margin
+           * over WebKit is real but modest - if this ever starts reporting
+           * `ok` here, JSC has got faster rather than the engine having
+           * regressed, and the pattern needs to grow.
+           */
+          ['n1', 'regex-tester', 0, 0, { pattern: '(a*)*(b*)*c', mode: 'match' }],
+          ['n2', 'base64', 0, 320, { mode: 'decode' }],
+          ['n3', 'structured-data', 320, 320, { source: 'auto', target: 'yaml', indent: 2 }],
+        ],
+        [['n2', 'output', 'n3', 'input']],
+      ),
+      { waitUntil: 'networkidle' },
+    );
+    await page.locator('[data-testid="node-n3"]').waitFor({ timeout: 15_000 });
+
+    await page.locator('[data-testid="node-n1"] textarea').fill(`${'a'.repeat(40)}!`);
+    await page.locator('[data-testid="node-n2"] textarea').fill('eyJuYW1lIjoiYWRhIn0=');
+
+    const startedAt = Date.now();
+    const runaway = await untilStatus('n1', 'error', 25_000);
+    const bystander = await untilStatus('n2', 'ok', 25_000);
+    const bystanderMs = Date.now() - startedAt;
+    const downstream = await untilStatus('n3', 'ok', 25_000);
+
+    check(
+      label,
+      'a pattern that wedges the worker is stopped by its own deadline',
+      runaway === 'error',
+      String(runaway),
+    );
+    check(
+      label,
+      'the node beside it succeeds instead of reporting a timeout it never had',
+      bystander === 'ok',
+      String(bystander),
+    );
+    check(
+      label,
+      'and it does not sit out its own 15s deadline first',
+      bystanderMs < 12_000,
+      `${String(bystanderMs)}ms`,
+    );
+    check(
+      label,
+      'the bytes it produced survived the replay onto a new worker',
+      // Not a formality: an empty or detached buffer here parses as an empty
+      // document, and this node would report a parse error rather than `ok`.
+      downstream === 'ok',
+      String(downstream),
+    );
+  } finally {
+    await context.close();
   }
 }
 

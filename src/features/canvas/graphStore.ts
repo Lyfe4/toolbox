@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 
 import { getManifestEntry, type ToolId } from '@/features/registry';
+import {
+  appendAnnouncement,
+  EMPTY_ANNOUNCEMENTS,
+  type Announcement,
+  type AnnouncementSlice,
+} from '@/lib/announce';
 import { counted } from '@/lib/plural';
 
 import { applyCommand, describeCommand, revertCommand, type Command } from './commands';
@@ -26,31 +32,30 @@ export interface Selection {
 
 const NO_SELECTION: Selection = { nodes: [], edges: [] };
 
-/**
- * A message for the canvas live region.
- *
- * `seq` increments on every announcement so that saying the same thing twice
- * in a row still re-renders and is therefore re-announced - a live region that
- * receives identical text is silent.
- */
-export interface Announcement {
-  readonly text: string;
-  readonly seq: number;
-}
+export type { Announcement };
 
-export interface CanvasStore {
+/**
+ * Groups the position chatter a held arrow key produces.
+ *
+ * Every repeat announces, and reading all of them would leave a screen-reader
+ * user hearing where the node used to be for seconds after it stopped. Queued
+ * messages on this channel supersede one another; anything already spoken is
+ * left alone. See `@/lib/announce`.
+ */
+const MOVE_CHANNEL = 'canvas-move';
+
+export interface CanvasStore extends AnnouncementSlice {
   readonly graph: GraphData;
   readonly selection: Selection;
   readonly past: readonly Command[];
   readonly future: readonly Command[];
-  readonly announcement: Announcement;
   /** Set while a pointer drag is in flight, so it becomes one undo step. */
   readonly pendingMove: {
     readonly ids: readonly NodeId[];
     readonly from: Record<NodeId, Point>;
   } | null;
 
-  readonly announce: (text: string) => void;
+  readonly announce: (text: string, channel?: string) => void;
   readonly addNode: (toolId: ToolId, position: Point) => NodeId;
   readonly duplicateSelection: () => void;
   readonly applyPreset: (presetId: string, origin: Point) => void;
@@ -112,8 +117,17 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
     });
   };
 
-  const announce = (text: string): void => {
-    set((state) => ({ announcement: { text, seq: state.announcement.seq + 1 } }));
+  /*
+   * Appends to a LOG rather than overwriting a single value.
+   *
+   * Two announcements in one React batch used to produce one render carrying
+   * only the second, so the first was gone before any element had held it.
+   * The log is what `LiveRegion` drains, one message at a time - see
+   * `@/lib/announce` for why this is one problem rather than the several
+   * unrelated-looking ones it kept being mistaken for.
+   */
+  const announce = (text: string, channel?: string): void => {
+    set((state) => appendAnnouncement(state, text, channel));
   };
 
   return {
@@ -121,7 +135,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
     selection: NO_SELECTION,
     past: [],
     future: [],
-    announcement: { text: '', seq: 0 },
+    ...EMPTY_ANNOUNCEMENTS,
     pendingMove: null,
 
     announce,
@@ -265,6 +279,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
         moved.length === 1 && position
           ? `Moved to ${position.x.toString()}, ${position.y.toString()}.`
           : `Moved ${moved.length.toString()} nodes.`,
+        MOVE_CHANNEL,
       );
     },
 
@@ -338,6 +353,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
         pendingMove.ids.length === 1
           ? 'Moved node.'
           : `Moved ${pendingMove.ids.length.toString()} nodes.`,
+        MOVE_CHANNEL,
       );
     },
 

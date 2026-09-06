@@ -12,6 +12,7 @@ import { span } from '@/lib/perf';
 import {
   collectTransferables,
   measureInputs,
+  type ExecuteRequest,
   type WorkerRequest,
   type WorkerResponse,
 } from './protocol';
@@ -104,10 +105,27 @@ export interface EngineDependencies {
 interface Pending {
   readonly settle: (result: ToolResult<ToolOutputs>) => void;
   readonly onProgress: ((fraction: number, label: string | null) => void) | undefined;
-  readonly timer: number;
+  timer: number;
   /** Main-thread time the request was posted, for placing the spans. */
-  readonly postedAt: number;
+  postedAt: number;
   readonly toolId: ToolId;
+  /**
+   * The exact message, kept so the request can be re-posted onto a fresh
+   * worker after an unrelated request destroyed the old one.
+   */
+  readonly request: ExecuteRequest;
+  /** Buffers handed over on post. Empty under 'borrow', which is the default. */
+  readonly transfer: Transferable[];
+  /**
+   * False when this request's buffers were TRANSFERRED. The caller's views are
+   * detached, so re-posting would send zero-length data and produce a
+   * confidently wrong answer - much worse than the error it was avoiding.
+   */
+  readonly replayable: boolean;
+  /** At most one replay per request, so a wedging tool cannot loop forever. */
+  retried: boolean;
+  readonly timeoutMs: number;
+  readonly timeoutMessage: string | undefined;
 }
 
 /** Guarded because the perf timeline is instrumentation, never a dependency. */
@@ -182,6 +200,27 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
         return;
       }
 
+      if (response.kind === 'started') {
+        /*
+         * RE-ARMING, NOT EXTENDING.
+         *
+         * There is one worker and one thread behind it, so several requests
+         * posted "concurrently" are really a queue. Timing them from the post
+         * meant a node's deadline was spent waiting for its turn: a 2s regex
+         * queued behind a 40s image conversion reported a timeout for work it
+         * had not started. The clock is restarted here, when the tool actually
+         * begins, so a deadline measures the tool's own work.
+         *
+         * The original timer is not simply cancelled: a request that never
+         * gets a `started` at all - because the worker wedged before reaching
+         * it - still has to fail rather than hang.
+         */
+        dependencies.clearTimer(entry.timer);
+        entry.postedAt = now();
+        entry.timer = armTimeout(response.requestId, entry.timeoutMs);
+        return;
+      }
+
       dependencies.clearTimer(entry.timer);
       pending.delete(response.requestId);
 
@@ -200,18 +239,111 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
     });
 
     created.onError((error) => {
-      // The worker itself died. Fail everything in flight and start clean.
+      // The worker itself died, taking everything in flight with it.
       const message = error instanceof Error ? error.message : 'The worker stopped unexpectedly.';
-      for (const [id, entry] of pending) {
-        dependencies.clearTimer(entry.timer);
-        pending.delete(id);
-        entry.settle(fail('internal', 'Execution failed.', { detail: message }));
-      }
+      const casualties = [...pending.entries()];
+      pending.clear();
       replaceWorker();
+      /*
+       * Not replayed. A timeout tells us exactly which tool misbehaved and
+       * that the others were innocent; an `error` event says the worker itself
+       * is broken - a module that will not load, an uncaught failure in the
+       * harness - and a fresh worker built from the same code would almost
+       * certainly break the same way. Replaying here trades a clear failure
+       * for a slower identical one.
+       */
+      recover(casualties, message, { replay: false });
     });
 
     worker = created;
     return created;
+  }
+
+  function armTimeout(requestId: string, ms: number): number {
+    return dependencies.setTimer(() => {
+      onTimeout(requestId);
+    }, ms);
+  }
+
+  /**
+   * One request ran over. Its worker has to be destroyed, and destroying it
+   * takes down every OTHER request that happened to be in flight.
+   *
+   * This is the whole reason this function exists. Before it, a timeout
+   * terminated the worker and settled only the request that caused it; the
+   * others were left in `pending` with their own timers still running, and
+   * each eventually reported a timeout it had never had - a base64 node beside
+   * a runaway regex would hang for its full 15s and then blame itself. Every
+   * casualty is dealt with here, at the moment the worker dies.
+   */
+  function onTimeout(requestId: string): void {
+    const entry = pending.get(requestId);
+    if (!entry) return;
+
+    pending.delete(requestId);
+    const casualties = [...pending.entries()];
+    pending.clear();
+
+    // A wedged synchronous tool cannot be interrupted from inside, so the only
+    // reliable remedy is to destroy the worker and build a new one.
+    replaceWorker();
+
+    entry.settle(
+      fail(
+        'timeout',
+        // A tool that knows WHY it is likely to run over says so itself.
+        // "This pattern is too slow" is actionable; "the tool took too long"
+        // invites the user to blame the app and try again.
+        entry.timeoutMessage ?? 'The tool took too long and was stopped.',
+        { detail: `Exceeded ${(entry.timeoutMs / 1000).toString()}s.` },
+      ),
+    );
+
+    recover(casualties, 'Another tool on this canvas ran over its time limit.', { replay: true });
+  }
+
+  /**
+   * Puts the bystanders of a dead worker back on a live one.
+   *
+   * They are REPLAYED rather than failed, because a tool is a pure function of
+   * its inputs and options: running it again on a fresh worker produces the
+   * same answer it would have produced, and reporting a failure the user's
+   * node did not cause is the thing worth avoiding. Replay is refused in
+   * exactly two cases - a request whose buffers were transferred (they are
+   * detached, so a replay would silently compute over nothing) and one that
+   * has already been replayed once (or a genuinely poisonous input would loop).
+   */
+  function recover(
+    casualties: readonly (readonly [string, Pending])[],
+    cause: string,
+    { replay }: { readonly replay: boolean },
+  ): void {
+    for (const [id, entry] of casualties) {
+      dependencies.clearTimer(entry.timer);
+
+      if (!replay || !entry.replayable || entry.retried) {
+        entry.settle(
+          fail('internal', 'This run was interrupted before it could finish.', { detail: cause }),
+        );
+        continue;
+      }
+
+      try {
+        entry.retried = true;
+        entry.postedAt = now();
+        entry.timer = armTimeout(id, entry.timeoutMs);
+        pending.set(id, entry);
+        attachWorker().post(entry.request, entry.transfer);
+      } catch (error) {
+        dependencies.clearTimer(entry.timer);
+        pending.delete(id);
+        entry.settle(
+          fail('internal', 'This run was interrupted before it could finish.', {
+            detail: error instanceof Error ? error.message : cause,
+          }),
+        );
+      }
+    }
   }
 
   function replaceWorker(): void {
@@ -281,6 +413,19 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
     const requestId = `run-${nextRequestId.toString()}`;
     const handle = attachWorker();
 
+    const request: ExecuteRequest = {
+      kind: 'execute',
+      requestId,
+      toolId: options.toolId,
+      inputs: options.inputs,
+      options: options.options,
+    };
+    // Empty transfer list under 'borrow': structured clone copies the bytes and
+    // leaves the caller's buffer usable. Outputs are still transferred the
+    // other way (see worker.ts), where nothing reuses them.
+    const transfer =
+      options.ownership === 'transfer' ? collectTransferables(Object.values(options.inputs)) : [];
+
     return new Promise<ToolResult<ToolOutputs>>((resolve) => {
       let settled = false;
 
@@ -299,49 +444,26 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
         }
         // Tell the worker so a cooperative tool can stop early, then settle
         // immediately rather than waiting on a tool that may never check.
-        handle.post({ kind: 'cancel', requestId }, []);
+        worker?.post({ kind: 'cancel', requestId }, []);
         settle(fail('cancelled', 'Cancelled.'));
       }
-
-      const timer = dependencies.setTimer(() => {
-        pending.delete(requestId);
-        // A wedged synchronous tool cannot be interrupted from inside, so the
-        // only reliable remedy is to destroy the worker and build a new one.
-        replaceWorker();
-        settle(
-          fail(
-            'timeout',
-            // A tool that knows WHY it is likely to run over says so itself.
-            // "This pattern is too slow" is actionable; "the tool took too
-            // long" invites the user to blame the app and try again.
-            meta.timeoutMessage ?? 'The tool took too long and was stopped.',
-            { detail: `Exceeded ${(meta.timeoutMs / 1000).toString()}s.` },
-          ),
-        );
-      }, meta.timeoutMs);
 
       pending.set(requestId, {
         settle,
         onProgress: options.onProgress,
-        timer,
+        timer: armTimeout(requestId, meta.timeoutMs),
         postedAt: now(),
         toolId: options.toolId,
+        request,
+        transfer,
+        replayable: transfer.length === 0,
+        retried: false,
+        timeoutMs: meta.timeoutMs,
+        timeoutMessage: meta.timeoutMessage,
       });
       options.signal?.addEventListener('abort', onAbort, { once: true });
 
-      handle.post(
-        {
-          kind: 'execute',
-          requestId,
-          toolId: options.toolId,
-          inputs: options.inputs,
-          options: options.options,
-        },
-        // Empty transfer list under 'borrow': structured clone copies the
-        // bytes and leaves the caller's buffer usable. Outputs are still
-        // transferred the other way (see worker.ts), where nothing reuses them.
-        options.ownership === 'transfer' ? collectTransferables(Object.values(options.inputs)) : [],
-      );
+      handle.post(request, transfer);
     });
   }
 
@@ -379,10 +501,19 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
     warmUp,
     prefetch,
     dispose: () => {
-      for (const [, entry] of pending) dependencies.clearTimer(entry.timer);
+      /*
+       * Settled, not merely forgotten. Dropping the entries left every awaiting
+       * caller with a promise that could never resolve, so a pipeline torn down
+       * mid-run would sit at `running` for the life of the tab.
+       */
+      const abandoned = [...pending.values()];
       pending.clear();
       prefetched.clear();
       replaceWorker();
+      for (const entry of abandoned) {
+        dependencies.clearTimer(entry.timer);
+        entry.settle(fail('cancelled', 'Cancelled.'));
+      }
     },
   };
 }

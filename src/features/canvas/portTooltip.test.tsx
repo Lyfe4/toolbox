@@ -4,6 +4,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { ToastProvider } from '@/components/Toast';
 import { TooltipProvider } from '@/components/Tooltip';
+import { usePipelineStore } from '@/features/execution/pipelineStore';
+import { EMPTY_ANNOUNCEMENTS } from '@/lib/announce';
 import { expectNoAxeViolations } from '@/lib/testing/axe';
 
 import { Canvas } from './Canvas';
@@ -63,6 +65,13 @@ function node(id: string, toolId: CanvasNode['toolId'], x: number, y: number): C
 }
 
 function seed(nodes: readonly CanvasNode[]): void {
+  /*
+   * The pipeline store keeps a result cache keyed by node id, and every test
+   * here builds a canvas whose first node is n1. Without this, one test's
+   * result can be served to the next as a cache hit - state leaking between
+   * tests in exactly the shape it leaks between documents.
+   */
+  usePipelineStore.getState().reset();
   useCanvasStore.setState({
     graph: {
       nodes: Object.fromEntries(nodes.map((n) => [n.id, n])),
@@ -75,7 +84,7 @@ function seed(nodes: readonly CanvasNode[]): void {
     past: [],
     future: [],
     pendingMove: null,
-    announcement: { text: '', seq: 0 },
+    ...EMPTY_ANNOUNCEMENTS,
   });
 }
 

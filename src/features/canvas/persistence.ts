@@ -1,6 +1,7 @@
 import { getManifestEntry, isToolId } from '@/features/registry';
 import { z } from '@/lib/zod';
 
+import { safeNextId } from './commands';
 import {
   isRetiredToolId,
   migrateRetiredOptions,
@@ -241,7 +242,17 @@ function toGraphData(persisted: PersistedGraph): GraphData {
     nodeOrder: persisted.nodes.map((node) => node.id),
     edges: Object.fromEntries(liveEdges.map((edge) => [edge.id, edge])),
     edgeOrder: liveEdges.map((edge) => edge.id),
-    nextId: persisted.nextId,
+    /*
+     * The stored counter is a floor, not the answer. It comes out of
+     * localStorage, which is neither signed nor beyond a user's reach, and a
+     * counter that has fallen behind the ids beside it reissues an id that is
+     * already taken - which overwrites a node in place rather than failing.
+     */
+    nextId: safeNextId(
+      nodeIds,
+      liveEdges.map((edge) => edge.id),
+      persisted.nextId,
+    ),
   };
 }
 

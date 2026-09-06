@@ -404,6 +404,14 @@ interface Refinement {
  * `diffWords` reports common runs using the NEW side's whitespace, so
  * concatenating the parts of a removed row does not give back the removed row.
  * A property test asserts parts.join('') === text, and `diffWords` fails it.
+ *
+ * The text of every part is then taken from the SOURCE LINE rather than from
+ * the value jsdiff reports, and that is the same bug in its other costume.
+ * Under `ignoreCase` a common run is reported once, in whichever side's
+ * casing jsdiff happened to keep, and it is pushed into both rows - so
+ * comparing "Y" with "y " rendered the removed line as "y". The panel showed
+ * text the user never wrote, only when the option whose entire purpose is to
+ * look past case was on, which is the last place anyone would look.
  */
 function refine(oldLine: string, newLine: string, settings: DiffSettings): Refinement | null {
   if (oldLine.length > MAX_REFINE_LINE_LENGTH || newLine.length > MAX_REFINE_LINE_LENGTH) {
@@ -421,6 +429,10 @@ function refine(oldLine: string, newLine: string, settings: DiffSettings): Refin
   const removed: RowPart[] = [];
   const added: RowPart[] = [];
   let kept = 0;
+  // Cursors into the two source lines. Part VALUES describe the comparison;
+  // these describe what was actually written.
+  let oldAt = 0;
+  let newAt = 0;
 
   for (const part of parts) {
     /*
@@ -438,17 +450,36 @@ function refine(oldLine: string, newLine: string, settings: DiffSettings): Refin
      * parts.join('') equal to the row's text.
      */
     const ignorable = settings.whitespace === 'all' && part.value.trim() === '';
+    const length = part.value.length;
 
-    if (part.added) added.push({ text: part.value, changed: !ignorable });
-    else if (part.removed) removed.push({ text: part.value, changed: !ignorable });
-    else {
-      removed.push({ text: part.value, changed: false });
-      added.push({ text: part.value, changed: false });
+    if (part.added) {
+      added.push({ text: newLine.slice(newAt, newAt + length), changed: !ignorable });
+      newAt += length;
+    } else if (part.removed) {
+      removed.push({ text: oldLine.slice(oldAt, oldAt + length), changed: !ignorable });
+      oldAt += length;
+    } else {
+      removed.push({ text: oldLine.slice(oldAt, oldAt + length), changed: false });
+      added.push({ text: newLine.slice(newAt, newAt + length), changed: false });
+      oldAt += length;
+      newAt += length;
       // Whitespace that happens to line up is not evidence that these are the
       // same line: two unrelated sentences share their spaces.
-      if (part.value.trim() !== '') kept += part.value.length;
+      if (part.value.trim() !== '') kept += length;
     }
   }
+
+  /*
+   * Both cursors must have landed exactly at the end of their line.
+   *
+   * They will for any case folding that preserves length, which is every one
+   * jsdiff can produce from these inputs - but a fold that did not (U+0130
+   * lowercases to two code units) would leave the slices drifting, and a
+   * drifted slice is a row rendered as text nobody wrote. Refinement is an
+   * enhancement, so the honest answer to "I cannot line these up" is to
+   * decline rather than to guess.
+   */
+  if (oldAt !== oldLine.length || newAt !== newLine.length) return null;
 
   const span = Math.max(oldLine.length, newLine.length);
   if (span === 0 || kept / span < MIN_REFINEMENT_YIELD) return null;
