@@ -2,34 +2,41 @@ import { useEffect } from 'react';
 
 import { mediaMatches } from '@/lib/useMediaQuery';
 
-import type { Point } from './types';
 import type { RefObject } from 'react';
 
 /**
- * KEEPING A FOCUSED NODE FIELD OUT FROM BEHIND THE ON-SCREEN KEYBOARD.
+ * KEEPING THE INSPECTOR OUT FROM BEHIND THE ON-SCREEN KEYBOARD.
  *
  * Everywhere else in the application this is the browser's job and the browser
  * does it: a tool page is an ordinary scrolling document, so when the keyboard
  * opens the engine scrolls the focused field back into view.
  *
- * The canvas has nothing to scroll. Its root is `overflow: hidden` and its
- * plane is a 0x0 box with a transform - the transform IS the coordinate system,
- * so nodes contribute no scrollable overflow at all and `scrollHeight` equals
- * `clientHeight` however far the graph extends. Measured: with a node's
- * textarea at y=491 and the visible area cut to 444px, `scrollTop` stays 0 in
- * both engines and the field simply sits behind the keyboard. There is no
- * browser behaviour to fix, because there is nothing for the browser to move.
+ * The canvas route is the exception, and the shape of the exception changed
+ * with the inspector. It used to be that node fields sat on the canvas plane -
+ * a 0x0 transformed box inside an `overflow: hidden` root, contributing no
+ * scrollable overflow at all - so there was nothing for a browser to scroll
+ * and the canvas panned the viewport itself to reveal them.
  *
- * So the canvas moves it, using the one thing that does move: the viewport pan.
+ * There are no fields on the plane any more. Input is entered in the
+ * inspector, which IS an ordinary scroll container, so the engine's own
+ * scroll-into-view works inside it exactly as it does on a tool page. What the
+ * engine cannot do is move the sheet: on a phone the inspector is anchored to
+ * the bottom of the LAYOUT viewport, and a keyboard shrinks the VISUAL one and
+ * leaves the layout viewport alone. The sheet ends up underneath the keyboard
+ * whole, and no amount of scrolling inside it helps.
+ *
+ * So the one number this file computes is how much of the layout viewport the
+ * keyboard is covering, and the sheet sits that far up. Everything else -
+ * revealing the focused field within the sheet - is the browser's again.
  *
  * WHAT THIS IS AND IS NOT TESTED AGAINST. Playwright has no soft keyboard, in
  * either engine - it cannot open one and cannot shrink the visual viewport
  * independently of the layout viewport, which is precisely what a keyboard
  * does on iOS. `check:browsers` therefore drives this by shrinking the window,
- * which runs the same code down the same branch with the same numbers, and is
- * NOT the same event. The reveal maths is unit-tested on its own; the wiring is
- * proved to fire; the actual keyboard is not, and saying so is more useful than
- * a green check that means less than it looks like.
+ * which runs the same code down the same branch with the same arithmetic, and
+ * is NOT the same event. The arithmetic is unit-tested on its own; the wiring
+ * is proved to fire; the actual keyboard is not, and saying so is more useful
+ * than a green check that means less than it looks like.
  */
 
 export interface Band {
@@ -37,48 +44,16 @@ export interface Band {
   readonly bottom: number;
 }
 
-export interface FieldBox {
-  readonly top: number;
-  readonly bottom: number;
-}
-
-/** Breathing room between a field and the edge of the visible band. */
-const MARGIN = 12;
-
-/**
- * How far to move the content so `field` sits inside `band`, in screen pixels.
- * Positive moves it down, negative up, zero leaves it alone.
- *
- * A field taller than the band cannot be shown whole, and the choice there is
- * deliberate: its TOP is what gets revealed, because that is where the caret
- * starts and where the label above it is.
- */
-export function panToReveal(field: FieldBox, band: Band, margin = MARGIN): number {
-  const top = band.top + margin;
-  const bottom = band.bottom - margin;
-
-  // A band with no usable room - a keyboard covering nearly everything - is
-  // better left alone than filled with a pan to an arbitrary position.
-  if (bottom <= top) return 0;
-
-  if (field.top < top) return top - field.top;
-
-  if (field.bottom > bottom) {
-    // Never so far up that the top of the field leaves the band: for a field
-    // taller than the band the second term is the one that wins.
-    return Math.max(bottom - field.bottom, top - field.top);
-  }
-
-  return 0;
-}
+/** The custom property the sheet reads. See inspector.module.css. */
+export const KEYBOARD_INSET_PROPERTY = '--keyboard-inset';
 
 /**
  * The part of the layout viewport the user can actually see.
  *
  * `visualViewport` is the API that knows about the keyboard: iOS Safari shrinks
  * it and leaves the layout viewport alone, which is why `innerHeight` is no use
- * here. `offsetTop` matters too - a pinch-zoomed page has a visual viewport
- * that starts partway down the layout one.
+ * on its own. `offsetTop` matters too - a pinch-zoomed page has a visual
+ * viewport that starts partway down the layout one.
  */
 export function visibleBand(): Band {
   const view = window.visualViewport;
@@ -87,45 +62,61 @@ export function visibleBand(): Band {
 }
 
 /**
- * Binds the reveal to focus and to the viewport shrinking.
+ * How far the bottom of the layout viewport is obscured, in CSS pixels.
  *
- * Both, because they happen in that order and only the second one knows the
- * answer: focus arrives while the keyboard is still opening, so the band is
- * still full height and nothing needs to move yet. The `resize` that follows is
- * where the pan actually happens. Focus is still worth listening to for the
- * case where the keyboard is already up and the user moves between fields.
+ * Clamped at both ends and deliberately so. Below zero is a visual viewport
+ * that extends past the layout one, which happens transiently during an
+ * overscroll on iOS and is not a keyboard; above the viewport's own height is
+ * a measurement taken while the two are being resized in different frames, and
+ * pushing the sheet off the top of the screen is worse than leaving it behind
+ * a keyboard for one frame.
+ */
+export function keyboardInset(band: Band, layoutHeight: number): number {
+  if (!Number.isFinite(layoutHeight) || layoutHeight <= 0) return 0;
+  const covered = layoutHeight - band.bottom;
+  if (!Number.isFinite(covered)) return 0;
+  return Math.min(layoutHeight, Math.max(0, Math.round(covered)));
+}
+
+/**
+ * Writes the inset onto an element as a custom property.
  *
  * COARSE POINTERS ONLY, and checked when the handler runs rather than when it
- * is bound. With a mouse there is no keyboard to hide behind and no reason for
- * the canvas to move under a click; this must be invisible on a desktop.
+ * is bound. With a mouse there is no keyboard to hide behind, and a panel that
+ * jumped whenever a browser resized would be worse than the bug being fixed. A
+ * tablet with a keyboard folded onto it changes its answer between one focus
+ * and the next, so the question is asked each time.
  */
-export function useRevealFocusedField(
-  rootRef: RefObject<HTMLDivElement | null>,
-  panBy: (delta: Point) => void,
-): void {
+export function useKeyboardInset(elementRef: RefObject<HTMLElement | null>): void {
   useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return undefined;
+    const element = elementRef.current;
+    if (!element) return undefined;
 
-    const reveal = (): void => {
-      if (!mediaMatches('(pointer: coarse)')) return;
-
-      const active = document.activeElement;
-      // Only the fields inside nodes. The canvas root itself is focusable, and
-      // panning because somebody tapped the background would be alarming.
-      if (!(active instanceof HTMLElement) || !active.matches('[data-node-input]')) return;
-      if (!root.contains(active)) return;
-
-      const delta = panToReveal(active.getBoundingClientRect(), visibleBand());
-      if (delta !== 0) panBy({ x: 0, y: delta });
+    const apply = (): void => {
+      const inset = mediaMatches('(pointer: coarse)')
+        ? keyboardInset(visibleBand(), window.innerHeight)
+        : 0;
+      element.style.setProperty(KEYBOARD_INSET_PROPERTY, `${inset.toString()}px`);
     };
 
-    root.addEventListener('focusin', reveal);
-    window.visualViewport?.addEventListener('resize', reveal);
+    apply();
+
+    const view = window.visualViewport;
+    view?.addEventListener('resize', apply);
+    /*
+     * `scroll` as well as `resize`: on iOS the visual viewport SLIDES rather
+     * than resizing when the page is scrolled with the keyboard already open,
+     * and `offsetTop` is what changes. Listening only for resize leaves the
+     * sheet correct at the moment the keyboard opened and wrong afterwards.
+     */
+    view?.addEventListener('scroll', apply);
+    window.addEventListener('resize', apply);
 
     return () => {
-      root.removeEventListener('focusin', reveal);
-      window.visualViewport?.removeEventListener('resize', reveal);
+      view?.removeEventListener('resize', apply);
+      view?.removeEventListener('scroll', apply);
+      window.removeEventListener('resize', apply);
+      element.style.removeProperty(KEYBOARD_INSET_PROPERTY);
     };
-  }, [rootRef, panBy]);
+  }, [elementRef]);
 }

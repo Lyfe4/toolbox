@@ -19,6 +19,7 @@ import {
 } from './geometry';
 import { PortButton } from './PortButton';
 import { PORT_GLYPH_SIZE } from './PortGlyph';
+import { summariseOutputs } from './resultSummary';
 
 import type { CanvasNode, PortRef } from './types';
 
@@ -86,7 +87,13 @@ export interface CanvasNodeViewProps {
   readonly selected: boolean;
   readonly connections: number;
   readonly run: NodeRunState;
-  /** Input ports with no wire; each gets its own small editor. */
+  /**
+   * Input ports with no wire.
+   *
+   * The node no longer draws an editor for them - that moved to the inspector
+   * - but it still has to know which ports are waiting on the user in order to
+   * say so. See `hintFor`.
+   */
   readonly typedInputPorts: readonly string[];
   /** Whether a wire is being dragged anywhere on the canvas. */
   readonly linking: boolean;
@@ -100,7 +107,6 @@ export interface CanvasNodeViewProps {
   readonly refusedPort: string | null;
   readonly connectedPorts: ReadonlySet<string>;
   readonly onPortPointerDown: (ref: PortRef, side: PortSide) => void;
-  readonly onInputChange: (nodeId: string, portId: string, value: string) => void;
 }
 
 /**
@@ -122,11 +128,10 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   refusedPort,
   connectedPorts,
   onPortPointerDown,
-  onInputChange,
 }: CanvasNodeViewProps) {
   const entry: ToolManifestEntry = getManifestEntry(node.toolId);
   const Glyph = CATEGORY_GLYPHS[entry.category] ?? SignalIcon;
-  const height = nodeHeight(entry, typedInputPorts.length);
+  const height = nodeHeight(entry);
   /** The space the two port stacks reserve, so the footer sits below them. */
   const bodyHeight = portRowCount(entry) * PORT_ROW_HEIGHT + portStackGap(entry) + BODY_PADDING * 2;
 
@@ -150,8 +155,33 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   const blockedHint = run.status === 'blocked' ? hintFor(entry, node, typedInputPorts) : null;
 
   /*
+   * WHAT A NODE SAYS ABOUT ITS RESULT.
+   *
+   * A SUMMARY, NOT A PREVIEW - "47 matches", "2.1 MB PNG image" - so a chain
+   * can be read at a glance without opening anything. It goes in the summary
+   * box rather than beside the footer because the box is already the "what is
+   * the situation with this node" line, and once a node has run, its result IS
+   * its situation: the tool's own description is only useful up to the moment
+   * there is an answer to describe instead.
+   *
+   * Every branch here is mutually exclusive with the others, so nothing has to
+   * decide what wins - a node is failed, or blocked, or it has run.
+   */
+  const resultSummary = run.status === 'ok' ? summariseOutputs(entry, run.outputs) : null;
+
+  const summaryText =
+    run.status === 'error' && run.error
+      ? run.error.message
+      : (blockedHint ?? resultSummary ?? run.blockedReason ?? entry.summary);
+
+  /*
    * The accessible name carries everything a sighted user reads off the node
    * plus everything they read off its position on the plane.
+   *
+   * The result summary is in here for the same reason it is on screen: a chain
+   * that can be scanned by eye and not by ear is not a chain a keyboard user
+   * can follow. It is `summariseValue`'s job to keep it short enough to be
+   * read aloud - see SUMMARY_LIMIT.
    */
   const label = [
     entry.name,
@@ -159,6 +189,7 @@ export const CanvasNodeView = memo(function CanvasNodeView({
     counted(connections, 'connection'),
     STATUS_TEXT[run.status],
     run.blockedReason,
+    resultSummary,
     run.status === 'error' ? run.error?.message : null,
     selected ? 'selected' : null,
   ]
@@ -199,10 +230,8 @@ export const CanvasNodeView = memo(function CanvasNodeView({
 
       <p className={styles.nodeSummary}>
         {/* The inner span is what gets clamped to two lines; see the CSS. */}
-        <span className={styles.nodeSummaryText}>
-          {run.status === 'error' && run.error
-            ? run.error.message
-            : (blockedHint ?? run.blockedReason ?? entry.summary)}
+        <span className={cx(styles.nodeSummaryText, resultSummary !== null && styles.nodeResult)}>
+          {summaryText}
         </span>
       </p>
 
@@ -264,43 +293,6 @@ export const CanvasNodeView = memo(function CanvasNodeView({
         }),
       )}
 
-      {/*
-        One editor per input port that has no wire. A tool with two required
-        inputs - diff - gets two, so neither is left permanently blocked just
-        because it is not the first port.
-      */}
-      {typedInputPorts.map((portId) => {
-        const port = entry.inputs.find((candidate) => candidate.id === portId);
-        return (
-          <textarea
-            key={portId}
-            className={styles.nodeInput}
-            /*
-             * Not a tab stop: Tab walks NODES, as documented. Enter on the
-             * focused node moves focus in here, Escape moves it back out.
-             */
-            tabIndex={-1}
-            data-node-input={portId}
-            aria-label={
-              entry.inputs.length > 1
-                ? `${entry.name} ${port?.label ?? portId} input`
-                : `${entry.name} input`
-            }
-            placeholder={entry.inputs.length > 1 ? (port?.label ?? portId) : 'Type or paste input'}
-            value={node.inputs[portId] ?? ''}
-            spellCheck={false}
-            // The canvas listens for pointerdown to start a drag; a textarea
-            // has to keep its own selection behaviour.
-            onPointerDown={(event) => {
-              event.stopPropagation();
-            }}
-            onChange={(event) => {
-              onInputChange(node.id, portId, event.target.value);
-            }}
-          />
-        );
-      })}
-
       <div className={styles.nodeFooter}>
         <span>{STATUS_LABEL[run.status]}</span>
         <span>{counted(connections, 'wire')}</span>
@@ -334,8 +326,17 @@ function hintFor(
    * Direction is not spelled out here; the shortcuts overlay's ports-and-wires
    * key covers it once, properly, instead of every node repeating it.
    */
+  /*
+   * The two sentences differ because the two ports differ, and that
+   * distinction is the whole reason this branch exists: `image-convert`'s only
+   * input takes bytes, so telling anyone to type into it describes behaviour
+   * that does not exist. The node used to draw an editor for that port anyway
+   * - every keystroke in it changed a value the engine then refused to look
+   * at, leaving the node blocked forever with a text box under it inviting
+   * another go. See the runner's own version of this fix in architecture.md.
+   */
   return waiting.types.includes('text')
-    ? `Type below, or wire an output into ${waiting.label}.`
+    ? `Type in the inspector, or wire an output into ${waiting.label}.`
     : `Wire an output into ${waiting.label}.`;
 }
 

@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { JsonValue } from '@/features/registry/types';
 import { encodeBase64, textToBytes } from '@/lib/base64';
@@ -22,6 +22,29 @@ import { JwtView } from './JwtView';
  */
 
 const NOW = Date.UTC(2026, 8, 6, 12, 0, 0);
+
+/*
+ * THE VIEW'S CLOCK AND THE TOOL'S CLOCK HAVE TO BE THE SAME CLOCK.
+ *
+ * `JwtView` takes `now` as a prop, so the rendering was already pinned. The
+ * `decode` helper below runs the REAL tool, which reads `Date.now()` to decide
+ * whether a token has expired - so the two disagreed by however long it had
+ * been since this file was written, and every `exp`/`nbf` case written
+ * relative to NOW quietly went stale. Two of them started failing when the
+ * real date walked past 2026-09-06: a token whose `nbf` was "NOW + 2 hours"
+ * became usable, and one expiring "in 1 hour" became expired.
+ *
+ * Pinning `Date.now` rather than the whole timer system: nothing here needs
+ * fake timers, and swapping them in under an async suite is a much larger
+ * change than the one fact this needs.
+ */
+beforeEach(() => {
+  vi.spyOn(Date, 'now').mockReturnValue(NOW);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function b64url(text: string): string {
   return encodeBase64(textToBytes(text), { urlSafe: true, padding: false, wrapAt: 0 });

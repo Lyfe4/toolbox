@@ -116,18 +116,37 @@ describe('what a blocked node says', () => {
     renderCanvas();
 
     await waitFor(() => {
-      expect(summaryOf('a')).toMatch(/Type below, or wire an output into Document\./);
+      expect(summaryOf('a')).toMatch(/Type in the inspector, or wire an output into Document\./);
     });
   });
 
+  /*
+   * `image-convert` declares `types: ['bytes']` on its only input, and the
+   * canvas used to draw a textarea for it anyway - one per unwired input port,
+   * with no question asked about what the port accepts. Nothing typed into it
+   * could ever be used: the engine's preflight sees a required bytes port with
+   * no wire and reports `blocked` whatever the box contains, so the node stayed
+   * blocked forever with an editor under it inviting another go. This asserts
+   * both halves of the fix - the sentence does not say "type", and there is no
+   * editor anywhere on the canvas to contradict it.
+   */
   it('tells a bytes-only input to wire, since typing cannot satisfy it', async () => {
     seed([node('a', 'image-convert')]);
     renderCanvas();
 
     await waitFor(() => {
-      // No "type below": the port takes bytes, and there is no editor for it.
       expect(summaryOf('a')).toBe('Wire an output into Image.');
     });
+  });
+
+  it('draws no editor on any node, whatever its ports accept', async () => {
+    seed([node('a', 'image-convert'), node('b', 'base64', 400, 0)]);
+    const { container } = renderCanvas();
+
+    await untilBlocked('a');
+    // Input is entered in the inspector. Two boxes holding one value is worse
+    // than one extra press, and it is what made a bytes-only port typeable.
+    expect(container.querySelectorAll('[data-node-id] textarea')).toHaveLength(0);
   });
 
   it('names the specific port on a tool with more than one input', async () => {
@@ -190,7 +209,7 @@ describe('the same state says the same thing', () => {
 
     await waitFor(() => {
       for (const id of ['a', 'b', 'c']) {
-        expect(summaryOf(id)).toMatch(/^Type below, or wire an output into .+\.$/);
+        expect(summaryOf(id)).toMatch(/^Type in the inspector, or wire an output into .+\.$/);
       }
     });
   });
@@ -222,7 +241,7 @@ describe('guidance fits the node', () => {
       '',
     );
 
-    expect(`Type below, or wire an output into ${longest}.`.length).toBeLessThanOrEqual(
+    expect(`Type in the inspector, or wire an output into ${longest}.`.length).toBeLessThanOrEqual(
       SUMMARY_MAX_CHARS,
     );
   });

@@ -66,7 +66,16 @@ export interface CanvasStore extends AnnouncementSlice {
   readonly endMove: () => void;
   readonly connect: (from: PortRef, to: PortRef) => ConnectionCheck;
   readonly removeEdges: (ids: readonly EdgeId[]) => void;
-  readonly setNodeOptions: (nodeId: NodeId, options: Readonly<Record<string, unknown>>) => void;
+  /**
+   * `coalesce` merges this into the previous options change on the same node,
+   * so typing into an option field is one undo step rather than one per
+   * keystroke. See `setNodeOptions` below.
+   */
+  readonly setNodeOptions: (
+    nodeId: NodeId,
+    options: Readonly<Record<string, unknown>>,
+    coalesce?: boolean,
+  ) => void;
   readonly setNodeInput: (nodeId: NodeId, portId: string, value: string) => void;
   readonly select: (selection: Partial<Selection>) => void;
   readonly toggleNode: (id: NodeId) => void;
@@ -98,6 +107,36 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
       command.kind === 'move-nodes' &&
       top?.kind === 'move-nodes' &&
       sameIds(top.ids, command.ids)
+    ) {
+      const merged: Command = { ...command, from: top.from };
+      set({
+        graph: applyCommand(state.graph, command),
+        past: [...state.past.slice(0, -1), merged],
+        future: [],
+      });
+      return;
+    }
+
+    /*
+     * The same merge for options, and for the same reason.
+     *
+     * Options are a graph edit on the canvas - they are part of the document,
+     * they travel in a share link, and they belong in the undo history. That
+     * makes typing a regex pattern into the inspector one history entry per
+     * KEYSTROKE, which buries whatever the user actually wants to undo under
+     * forty steps of their own typing.
+     *
+     * Merging keeps the OLDER `from`, so one undo returns to the value before
+     * the run of edits began - the same inverse a coalesced drag has. The
+     * caller decides when to ask: the inspector merges text and number fields
+     * and never merges a toggle or a select, because a discrete choice is a
+     * deliberate act worth its own step.
+     */
+    if (
+      coalesce &&
+      command.kind === 'set-options' &&
+      top?.kind === 'set-options' &&
+      top.nodeId === command.nodeId
     ) {
       const merged: Command = { ...command, from: top.from };
       set({
@@ -393,10 +432,10 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
       announce(`Removed ${counted(edges.length, 'wire')}.`);
     },
 
-    setNodeOptions: (nodeId, options) => {
+    setNodeOptions: (nodeId, options, coalesce = false) => {
       const node = get().graph.nodes[nodeId];
       if (!node) return;
-      push({ kind: 'set-options', nodeId, from: node.options, to: options });
+      push({ kind: 'set-options', nodeId, from: node.options, to: options }, coalesce);
     },
 
     setNodeInput: (nodeId, portId, value) => {

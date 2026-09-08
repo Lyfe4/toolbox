@@ -9,6 +9,7 @@ way they are.
 - [The worker boundary](#the-worker-boundary)
 - [Incremental caching](#incremental-caching)
 - [The canvas](#the-canvas)
+- [The node inspector](#the-node-inspector)
 - [The tool runner page](#the-tool-runner-page)
 - [Between tools](#between-tools)
 - [State](#state)
@@ -284,11 +285,21 @@ viewport.
 **Input.** Wheel handling is a single non-passive listener on the canvas root,
 batched into `requestAnimationFrame`. It is _not bound at all_ while an overlay
 is open — overlays render inside that root, so a bound-and-guarded listener
-would still cancel the dialog's own scrolling.
+would still cancel the dialog's own scrolling. The inspector is not an overlay
+and is not inside that root; see
+[the note on why](#it-is-a-sibling-of-the-canvas-not-a-child-of-it).
+
+A pointerdown on the toolbar or the status readout no longer clears the
+selection. Both render inside the canvas root, so a press on either arrived as
+"not a node" and threw the selection away as a silent side effect — survivable
+while nothing on screen depended on the selection, and not survivable the moment
+one of those buttons was the inspector toggle, which deselected the node and
+then opened a panel reporting that no node was selected.
 
 **Undo/redo** is a command history, not a stack of snapshots. Each mutation is
 a small object holding just enough to do and to undo it. Memory is proportional
-to the change rather than to the graph, a drag coalesces into one step, and
+to the change rather than to the graph, a drag coalesces into one step — and so
+does a run of typing into an option, for [the same reason](#typing-an-option-is-one-undo-step) — and
 each entry can describe itself for the live region ("Undid move 3 nodes").
 The price is that every command needs a correct inverse, which `graph.test.ts`
 checks by applying and reverting each kind and asserting deep equality.
@@ -296,9 +307,12 @@ checks by applying and reverting each kind and asserting deep equality.
 **Accessibility** is structural rather than added: the canvas is a
 `role="application"` region so single letters reach it, each node is a
 focusable `role="group"` whose accessible name states tool, position,
-connection count, status and selection, and the tab order is the DOM order,
-computed spatially. See the [keyboard map](../README.md#the-canvas) in the
-README and [the connect flow](#) below.
+connection count, status, result summary and selection, and the tab order is
+the DOM order, computed spatially. The
+[inspector](#the-node-inspector) is a landmark outside that region, so a text
+field in it never has to compete with the canvas for a keystroke. See the
+[keyboard map](../README.md#the-canvas) in the README and
+[the connect flow](#) below.
 
 ### Announcements are a log, not a variable
 
@@ -355,6 +369,239 @@ Only real failures are counted. A node that never ran because something
 upstream broke did not fail, and counting it would turn one broken node into
 "5 failed" and send someone looking for five bugs. The run summary reports the
 two separately (`failed` and `skipped`) for the same reason.
+
+## The node inspector
+
+Select a node and one panel shows its **input, its options and its output**.
+Before it, the canvas could build a pipeline and run it correctly and show you
+none of it — a defect that had been true since the canvas was written, because
+data flowing between nodes was tested thoroughly and nobody asked whether a
+person could see or control any of it.
+
+It is the **only** place input is entered. Two boxes holding one value is worse
+than one extra press: it doubles the surface that has to stay in step, and it
+made every node tall enough that you could not see two of them at once, which
+is the point of a canvas.
+
+### It is a sibling of the canvas, not a child of it
+
+Every overlay the canvas draws — the palette, the two connect dialogs, the
+shortcuts reference — renders inside the canvas root, and the canvas detaches
+its wheel, pointer and key listeners for as long as one is open, because those
+listeners would otherwise pan the canvas underneath a dialog and swallow the
+dialog's own scrolling.
+
+That machinery is right for a dialog and exactly wrong for this panel. A docked
+inspector has to coexist with a live canvas: you change an option and watch the
+chain behind it re-run, you pan to see the node it feeds, you press Tab and land
+on a node. So the route renders a workspace holding the canvas root and the
+inspector as siblings — and two problems stop existing rather than being
+guarded against. No canvas listener ever sees a keystroke meant for a text
+field, so a `role="application"` region cannot claim the "k" out of somebody's
+regex; and nothing is fighting a wheel handler for the panel's scrolling.
+
+### Two shapes, one component
+
+|             |                                                                                                                |
+| ----------- | -------------------------------------------------------------------------------------------------------------- |
+| `>= 1000px` | A docked rail in the workspace grid. It does **not** overlay the canvas — the canvas narrows. Open by default. |
+| `< 1000px`  | A sheet along the bottom, overlaying the canvas, with a usable strip of canvas above it. Closed by default.    |
+
+**The breakpoint is arithmetic**, the same arithmetic as the tool runner's. The
+rail is 320px at its narrowest and a canvas wants three node widths to still
+read as a canvas: `224 × 3 = 672`, plus the rail's border, is 993. 1000 is the
+next round number clear of it.
+
+**Open by default where it costs nothing, closed where it covers the graph.**
+`I` toggles it at both sizes and a toolbar button carries the same toggle with
+an `aria-pressed` that says which state it is in. Selection never opens or
+closes it — on a phone that would bury the canvas on every tap while arranging
+nodes, and on a desktop it would be a panel that reopens itself faster than it
+can be dismissed. Closing does not clear the selection either: what you are
+working on and whether the panel showing it is on screen are two facts, and
+collapsing them would mean the only way to get the canvas's width back was to
+deselect the node you were about to move.
+
+**Nothing selected and several selected are different questions.** "Select a
+node" answers the first and insults the second, so a multi-selection is listed
+by name and one of them can be picked — which is also the only way a keyboard
+user reaches one node of a group without clearing the whole thing.
+
+### The height chain, which was wrong in a way only a browser could show
+
+`1fr` inside an auto-height grid container is max-content, not free space. The
+shell's `min-block-size: 100dvh` sets a floor, and a row whose content exceeds
+it still grows — so the canvas route was a fixed-height viewport only for as
+long as nothing inside it had intrinsic height. The inspector broke that on its
+first result: measured in both engines, **a rail holding a long match table was
+1,828px tall inside a 900px window**, and its own scroll region never scrolled
+because it had all the room it wanted.
+
+`<main>` is now a containing block and the workspace is `position: absolute;
+inset: 0` against it, so the workspace contributes no height and its inset
+resolves against a row that is genuinely the free space. Every other route is
+untouched: `position: relative` changes nothing about a static child, and
+`sticky` cares about scroll containers rather than containing blocks.
+
+### A very large output
+
+The panel is the one scroll region this adds. It does not need a second: every
+output view already caps its own height, so a 30 MB decoded document cannot
+push the sections below it off the panel however large the value is. What the
+scroller does is let several already-bounded blocks stack — which is exactly
+what the document does for the same views on a tool page below its breakpoint.
+
+### While the pipeline is running
+
+**The controls stay enabled.** The tool page disables them because Run there is
+an explicit act; on the canvas the run is continuous and already debounced, and
+a field that goes dead for 300ms at a time while you type in it is worse than
+anything it would prevent.
+
+**A running node says "Running", it does not show its last answer.** Keeping the
+previous result on screen means showing the answer to a question the user has
+already changed, and the only case where it lasts long enough to notice — a slow
+tool — is the case where saying so is the truth. `NodeRunState` clears `outputs`
+when a node starts, so this is also the shape the engine already has rather than
+a second copy of it.
+
+**Changing an option re-runs nothing directly.** It is an ordinary graph edit:
+the store updates the document, the effect watching `graph` schedules a run, and
+that schedule is the existing 300ms debounce. Options are part of the node's
+cache key, so only that node and its descendants execute. A second trigger
+beside the existing one would be a second thing to keep in step with the
+debounce.
+
+### Typing an option is one undo step
+
+Options are part of the document on the canvas — they travel in a share link and
+they belong in the undo history — where on the tool page they are component
+state. Without care, typing a regex pattern would put one entry in the history
+per keystroke and bury whatever the user actually wants to undo under forty
+steps of their own typing.
+
+Consecutive `set-options` commands on the same node are therefore merged, the
+same way a held arrow key's moves already are, keeping the older `from` so one
+undo returns to the value before the run of edits began. **The line is drawn on
+the control, not on timing**: text and number fields merge, a toggle or a select
+never does, because a discrete choice is a deliberate act worth its own step —
+and a control is a fact where a pause is a guess.
+
+### The node it is showing is deleted
+
+Deleting from the canvas already returns focus to the canvas root, because the
+key that did it was handled there. Every other route out — undo, a share link
+replacing the graph, a redo that removes the node again — runs while focus is
+_inside_ the panel, and an element that unmounts under focus drops it to
+`<body>`, where none of the canvas's keys work and nothing says why.
+
+Whether focus was in the panel has to be known **before** the unmount, because
+afterwards `contains(document.activeElement)` always answers no. It is tracked
+on `focusin`/`focusout`, and a `focusout` with a null `relatedTarget` is
+deliberately not treated as leaving: focus went nowhere, because the thing that
+had it stopped existing.
+
+### A node keeps a summary, not a preview
+
+A node is 224px wide with two clamped lines. Its summary box already switched
+between the tool's description, the reason it is blocked and the error that
+broke it; once a node has run, its **result** is its situation, so that is the
+fourth case. Only the first declared output is summarised — six of the nine
+tools have more than one, and the manifest's order is not arbitrary: the first
+port is the tool's answer and the rest are its working.
+
+| Output                   | Summary                              | Why that and not something else                                                                                                                                                               |
+| ------------------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| regex report             | `47 matches`, `No matches`           | `count`, never `listed` — they differ exactly when the listing was truncated, and this tool has already once reported a count for a cut-short listing.                                        |
+| diff                     | `+12 −3`, `Identical`                | Additions and removals are what a diff is. `identical` gets its own word: `+0 −0` reads as the tool having failed to run.                                                                     |
+| decoded JWT              | `NOT VERIFIED · HS256`               | The one summary that is a warning rather than a measurement. A node mid-chain is where nobody opens the panel, and a decoded token that reads as ordinary makes a forgery look authoritative. |
+| conversion report        | its own `summary` line               | The report already carries a sentence written for a person. A second wording would be a second thing to keep in step.                                                                         |
+| bytes                    | `2.1 MB PNG image`                   | Size and the **sniffed** label, never the declared one — the same rule the rest of the app follows.                                                                                           |
+| text (and rendered HTML) | its first non-empty line, or `Empty` | Plain text is already the answer. An empty result drawn as an empty summary is indistinguishable from no summary, and it is usually the surprise.                                             |
+| bare JSON                | `12 keys`, `12 items`                | Nothing in an arbitrary JSON value can be relied on to be short, so nothing is quoted from it. Shape is what tells you the thing you expected came out.                                       |
+| colour                   | `#3366ff`, `#000000 at 50%`          | The notation everybody recognises. Alpha is named because the hex alone would not say it.                                                                                                     |
+
+Every one is truncated to 60 characters, because the summary is also in the
+node's accessible name — a chain scannable by eye and not by ear is not a chain
+a keyboard user can follow — and that string is read from end to end.
+
+### An input port that cannot take text gets no text box, here too
+
+`image-convert` declares `types: ['bytes']` on its only input. The canvas drew
+an editor for every unwired input port without asking what the port accepted, so
+that one got a textarea whose every keystroke was ignored: the engine's
+preflight blocks a required bytes port with no wire whatever the box contains,
+so the node sat blocked forever with an editor under it inviting another
+attempt. The tool runner had the same bug and at least reported a type error;
+this one said nothing at all. The port's own description is the instruction now,
+which is the same fix [the runner made](#an-input-port-that-cannot-take-text-gets-no-text-box).
+
+A **wired** port gets no editor either, and says what is feeding it instead. A
+wire wins over typed text everywhere else in the engine, so drawing a box whose
+contents the run would ignore is the same defect in a different costume.
+
+### The keyboard
+
+`Enter` on a focused node used to step into that node's input editor. The editor
+moved, so `Enter` followed it: it selects the node, opens the inspector and puts
+focus inside. Same key, same intent — which is why the panel needs no separate
+"open on this node" affordance for the keyboard at all. `Escape` steps back out
+to the node, which is the wording the shortcuts map has always carried.
+
+The rail's size handle is the ARIA window-splitter pattern: a **focusable**
+separator with a value, arrow keys that resize by one grid step, and Home/End
+for the extremes. A handle only a pointer can move is a preference only a
+pointer user has, and the reason the rail is resizable at all is that a diff
+wants more width than a colour swatch does. It is built on a real `<button>` so
+that focus, activation and the tab order are the browser's rather than
+hand-rolled; the width is session state, because it is one drag to restore and a
+stored value would be another key to validate and migrate.
+
+### A phone, where a side panel and a canvas cannot both have the screen
+
+The sheet takes the axis that is not scarce. The canvas keeps its full size
+underneath it and stays pannable in the strip above, because the sheet is a
+sibling rather than a child — no canvas gesture is intercepted and none of the
+overlay-detaching machinery is involved.
+
+The on-screen keyboard changed shape with this. There used to be a textarea on
+every node — on the transformed plane, inside an `overflow: hidden` root, with
+nothing for a browser to scroll — so the canvas panned its own viewport to lift a
+focused field clear of the keyboard. Input is entered in the inspector now, and
+**the inspector is an ordinary scroll container**: the engine's own
+scroll-into-view has somewhere to put a focused field, exactly as on a tool
+page, and no application code is involved in that half any more.
+
+What no engine can do is move the sheet. It is anchored to the bottom of the
+_layout_ viewport and a keyboard shrinks the _visual_ one, so the whole panel
+would sit behind the keyboard and its internal scrolling could not help.
+[`keyboardInset.ts`](../src/features/canvas/keyboardInset.ts) measures the
+difference from `visualViewport` and the sheet sits that far up — on a coarse
+pointer only, because a panel that jumped whenever a window resized would be
+worse than the bug being fixed. The arithmetic is unit-tested, the wiring is
+driven in both engines by shrinking the window, and **the keyboard itself is
+still not tested anywhere**, for the reason in the limitations below.
+
+### What was rejected
+
+- **Opening on selection.** Buries the canvas on every tap on a phone; on a
+  desktop, a panel that reopens itself cannot be closed.
+- **Keeping the input box on the node as well.** Two places to type one value,
+  and it is what made every node tall enough to lose the graph.
+- **Showing the last result while a new one computes.** An answer to a question
+  the user has already changed.
+- **Disabling the controls during a run.** The run is continuous here; the field
+  would go dead while you typed in it.
+- **The image before-and-after.** Two images side by side at 320px are two
+  images too small to judge anything by — ImageView's own argument.
+- **Rich-text copy in the panel.** It needs the clipboard document builder,
+  which pulls the whole markup pipeline in behind it, for a button that is one
+  click away on the tool page. The panel says where to find it.
+- **Deferring the output views behind a second dynamic import.** A canvas exists
+  to produce output, so the deferral would last seconds and buy a loading state
+  in a 320px panel.
+- **Persisting the rail width.** One drag to restore, against another storage
+  key to validate and migrate.
 
 ## The tool runner page
 
@@ -510,16 +757,34 @@ Download and the sniffed facts are on screen in every state instead of behind a
 switch. That is a stronger form of the same guarantee rather than an exemption
 from it, and the consistency test asserts the absence so it reads as a decision.
 
-### What a node shows instead
+### The same views on the canvas
 
-**The canvas renders no output values at all**, and did not before this either.
-A node is a fixed 224px box carrying a title, a status LED, a timing, its ports
-and either the tool's summary or the reason it is blocked; `NodeRunState` holds
-`outputs`, and nothing on the canvas reads them. So a view cannot fail to work
-on a node — there is nowhere for one to go — and the tool page is where a result
-is read. Wiring output values into nodes is a canvas design question (what does
-a 30 MB decoded image look like at 224px, and what happens to node geometry when
-it changes size) rather than a gap in these views.
+The canvas used to render no output values at all, and no options either: a
+node carried a title, a status LED, a timing, its ports and a text box. The
+consequence was not cosmetic. **Every node in every chain ran on default
+settings**, because there was nowhere to change them, and **no result was
+visible anywhere** — including the last node's, which is the thing a chain is
+built for. `NodeRunState` had held `outputs` all along and nothing read them.
+
+The [node inspector](#the-node-inspector) is where they are read now, and it
+uses `OptionsPanel` and `OutputView` unmodified. Two things made that possible
+rather than a rewrite:
+
+- The options panel is already driven entirely by the tool's typed
+  `optionFields`, including the `when` predicates. It filters internally, so
+  text-convert's conditional panel — and the stability property asserted by
+  `conditionalOptions.test.tsx` — holds in the inspector for free.
+- Every output view already caps its own height (the diff scroller at 520px,
+  the regex tables at 320 and 380, an image at 420) and is already measured at
+  320–430px by `checkMobileLayout`, because that is what a tool page looks like
+  on a phone. **The rail's 320px minimum is inside a range those views are
+  already held to**, which is why a full-width panel's components fit in a
+  narrow one without a second implementation.
+
+One prop is deliberately not passed through: `comparison`, the image
+before-and-after. ImageView's own reasoning is that two images side by side at
+320px are two images too small to judge anything by, and the rail is 320px at
+its narrowest by construction.
 
 ### An input port that cannot take text gets no text box
 
@@ -623,18 +888,24 @@ the layout viewport — which is exactly what a keyboard does on iOS. So the one
 claim everybody wants, "the keyboard does not cover the field you are typing
 into", is not proved anywhere in this repo.
 
-What is established instead, and stated as such in `check:browsers`: every route
-except the canvas is an ordinary scrolling document, so the engine's own
-scroll-into-view has somewhere to put a focused field and no application code is
-involved. The canvas is the exception and has to do it itself — its root is
-`overflow: hidden` over a 0×0 transformed plane, so `scrollHeight` equals
-`clientHeight` however far the graph extends and there is nothing for a browser
-to scroll. Measured before the fix: a node's textarea at y=491, the visible area
-cut to 444px, `scrollTop` still 0 in both engines, field still behind the
-keyboard. [`keyboardInset.ts`](../src/features/canvas/keyboardInset.ts) pans the
-viewport instead, on `visualViewport`'s resize and on a coarse pointer only. The
-arithmetic is unit-tested, the wiring is driven in both engines by shrinking the
-window, and the keyboard itself is not tested.
+What is established instead, and stated as such in `check:browsers`: every field
+in the app now lives in an ordinary scrolling box — the routes are documents,
+and the canvas's fields are in the inspector, which is a scroll container — so
+the engine's own scroll-into-view has somewhere to put a focused field. The one
+thing left to application code is the inspector SHEET's position: it is anchored
+to the bottom of the layout viewport, and a keyboard shrinks the visual one, so
+the whole panel would sit behind it.
+[`keyboardInset.ts`](../src/features/canvas/keyboardInset.ts) measures the
+covered height from `visualViewport` and the sheet sits that far up, on a coarse
+pointer only. The arithmetic is unit-tested, the wiring is driven in both engines
+by shrinking the window, and the keyboard itself is not tested.
+
+(This replaced a viewport pan. Node fields sat on the 0×0 transformed plane
+inside an `overflow: hidden` root, so `scrollHeight` equalled `clientHeight`
+however far the graph extended and there was nothing for a browser to scroll:
+measured at the time, a node's textarea at y=491 with the visible area cut to
+444px left `scrollTop` at 0 in both engines. Moving input into the inspector
+removed the condition rather than the symptom.)
 
 **Progress is not reported through a pipeline.** `runPipeline` passes no
 `onProgress`, so a tool that reports progress shows none on the canvas. No

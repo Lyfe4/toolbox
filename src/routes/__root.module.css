@@ -109,6 +109,25 @@
   min-inline-size: 0;
   min-block-size: 0;
   /*
+   * A CONTAINING BLOCK, so the canvas workspace can take itself out of flow.
+   *
+   * `1fr` inside an auto-height grid container is max-content, not free space:
+   * the shell's `min-block-size: 100dvh` sets a floor, and a row whose content
+   * exceeds it still grows. So the canvas route was a fixed-height viewport
+   * only for as long as nothing inside it had intrinsic height - which stopped
+   * being true the moment the inspector held a result. Measured: a rail with a
+   * long match table in it was 1,828px tall inside a 900px window, and its own
+   * scroll region never scrolled because it had all the room it wanted.
+   *
+   * The workspace is `position: absolute; inset: 0` against this box instead,
+   * so it contributes no height at all and its `inset` resolves against a row
+   * that is now genuinely the free space. Every other route is unaffected:
+   * `position: relative` changes nothing about a static child, and `sticky`
+   * cares about scroll containers rather than containing blocks - the runner
+   * rail is measured in check:browsers either way.
+   */
+  position: relative;
+  /*
    * `clip`, not `hidden`, and the difference is load-bearing rather than
    * stylistic: `hidden` makes this element a SCROLL CONTAINER - one that
    * happens never to scroll - and `position: sticky` inside a scroll container

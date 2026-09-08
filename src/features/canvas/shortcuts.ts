@@ -28,8 +28,12 @@ export const SHORTCUTS: readonly Shortcut[] = [
 
   { keys: ['Arrows'], action: 'Move the selected nodes by 8px', group: 'Editing' },
   { keys: ['Shift', 'Arrows'], action: 'Move the selected nodes by 64px', group: 'Editing' },
-  { keys: ['Enter'], action: "Edit the focused node's input", group: 'Editing' },
-  { keys: ['Escape'], action: 'Leave the input and return to the node', group: 'Editing' },
+  {
+    keys: ['Enter'],
+    action: 'Open the inspector on the focused node and move into it',
+    group: 'Editing',
+  },
+  { keys: ['Escape'], action: 'Leave the inspector and return to the node', group: 'Editing' },
   { keys: ['Shift', 'Enter'], action: 'Add the focused node to the selection', group: 'Editing' },
   { keys: ['Ctrl', 'A'], action: 'Select every node', group: 'Editing' },
   { keys: ['Ctrl', 'D'], action: 'Duplicate the selection', group: 'Editing' },
@@ -38,6 +42,11 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: ['Ctrl', 'Shift', 'Z'], action: 'Redo', group: 'Editing' },
 
   { keys: ['K'], action: 'Open the tool palette', group: 'Building' },
+  {
+    keys: ['I'],
+    action: "Show or hide the inspector - a node's input, options and output",
+    group: 'Building',
+  },
   { keys: ['C'], action: 'Connect from the focused node, without dragging', group: 'Building' },
   { keys: ['Escape'], action: 'Cancel the current dialog, drag or connection', group: 'Building' },
   { keys: ['?'], action: 'Show this list', group: 'Building' },
@@ -55,5 +64,6 @@ export const SHORTCUT_GROUPS = ['Moving around', 'Editing', 'Building'] as const
 /** One-line summary used as the canvas's accessible description. */
 export const CANVAS_DESCRIPTION =
   'Node canvas. Press K to add a tool, Tab to move between nodes, C to connect from the focused node, ' +
+  'Enter or I to open the inspector where a node’s input, options and output live, ' +
   'arrow keys to move it, Delete to remove it, and question mark for the full list of shortcuts. ' +
   'Every action here is also available on the Tools page.';

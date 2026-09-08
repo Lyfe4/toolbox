@@ -301,6 +301,23 @@
 }
 
 /*
+ * A node's RESULT, in the same box that otherwise holds the tool's own
+ * description.
+ *
+ * Set apart from it in weight and ink rather than in colour alone: the two
+ * strings sit in the same place and mean opposite things - one is what this
+ * tool does in general, the other is what this node just produced - and a
+ * reader scanning a chain has to be able to tell at a glance which they are
+ * looking at without reading either. The status LED beside it says the same
+ * thing a second way.
+ */
+.nodeResult {
+  color: var(--pb-ink-primary);
+  font-weight: var(--pb-value-weight);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
  * A spacer, not a container.
  *
  * The ports are positioned against the NODE now - the same coordinate space

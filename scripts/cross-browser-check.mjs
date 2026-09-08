@@ -506,6 +506,265 @@ async function checkChromeWidths(browser, label) {
   }
 }
 
+/**
+ * Opens or closes the node inspector, whatever state it is already in.
+ *
+ * The toggle's state depends on the viewport - the panel is a docked rail
+ * above 1000px and open by default there, a sheet below it and closed - so a
+ * blind click means "open" at one width and "close" at another. Every caller
+ * wants a STATE rather than a press.
+ *
+ * `exact: true` on the name because "Close the inspector" contains "Inspector"
+ * and Playwright's accessible-name matching is a substring by default.
+ */
+/**
+ * Selects the first node and opens the inspector on it, from the KEYBOARD.
+ *
+ * Deliberately not a click on the node. Below the breakpoint the inspector is
+ * a sheet over the canvas, so a node can be behind it - Playwright correctly
+ * refuses to click through an intercepting element, and it is right to: a user
+ * cannot click it either. Enter on a focused node is the documented route and
+ * it works at every width.
+ */
+async function inspectFirstNode(page) {
+  await page.locator('[data-node-id]').first().focus();
+  await page.keyboard.press('Enter');
+  await page.getByTestId('node-inspector').waitFor({ timeout: 10_000 });
+  await page.waitForTimeout(300);
+}
+
+async function setInspector(page, open) {
+  const panel = page.getByTestId('node-inspector');
+  const showing = (await panel.count()) > 0;
+  if (showing === open) return;
+
+  await page.getByRole('button', { name: 'Inspector', exact: true }).click();
+  if (open) await panel.waitFor({ timeout: 10_000 });
+  await page.waitForTimeout(250);
+}
+
+/* ========================================================================== *
+ * THE NODE INSPECTOR
+ * ========================================================================== */
+
+/**
+ * WHERE THE INSPECTOR SITS, MEASURED RATHER THAN DESCRIBED.
+ *
+ * The panel makes two geometric claims and jsdom can check neither, because
+ * every box there is zero by zero:
+ *
+ *   1. ABOVE 1000px IT DOES NOT COVER THE CANVAS. It is a grid track, so the
+ *      canvas gets narrower rather than being obscured - which is the whole
+ *      reason it is allowed to be open by default at that width. A panel that
+ *      overlapped would be one people close, and a closed inspector is the bug
+ *      this feature exists to fix.
+ *
+ *   2. BELOW IT, IT IS A SHEET AND THE CANVAS KEEPS ITS FULL SIZE UNDERNEATH.
+ *      At 390px a rail and a canvas cannot both have the screen, so the panel
+ *      takes the other axis - and the canvas has to stay pannable in the strip
+ *      above it rather than being shrunk to a sliver.
+ *
+ * The resize handle is measured too, because "the rail can be resized" is only
+ * true if moving it actually moves the boundary between the two.
+ */
+async function checkInspector(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+
+  const geometry = () =>
+    page.evaluate(() => {
+      const box = (selector) => {
+        const el = document.querySelector(selector);
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return {
+          left: Math.round(r.left),
+          right: Math.round(r.right),
+          top: Math.round(r.top),
+          bottom: Math.round(r.bottom),
+          width: Math.round(r.width),
+          height: Math.round(r.height),
+        };
+      };
+      const body = document.querySelector('[data-testid="inspector-body"]');
+      return {
+        canvas: box('[data-testid="canvas-root"]'),
+        panel: box('[data-testid="node-inspector"]'),
+        handle: box('[data-testid="inspector-handle"]'),
+        scrolls: body ? body.scrollHeight > body.clientHeight + 1 : null,
+        overflowY: body ? getComputedStyle(body).overflowY : null,
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        docScrollsSideways:
+          document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      };
+    });
+
+  try {
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: 'Add tool' }).click();
+    await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+    await page.getByTestId('dialog-option-regex-tester').click();
+    await page.waitForTimeout(500);
+
+    // Open by default at this width, because it costs the canvas nothing but
+    // width it can spare.
+    const docked = await geometry();
+    check(
+      label,
+      'the inspector is a docked rail above the breakpoint',
+      docked.panel !== null && docked.handle !== null,
+      docked.panel === null ? 'no panel' : 'panel and handle present',
+    );
+    check(
+      label,
+      'the rail does not overlap the canvas: the canvas narrows instead',
+      docked.panel.left >= docked.canvas.right - 1,
+      `canvas ends ${String(docked.canvas.right)}, panel starts ${String(docked.panel.left)}`,
+    );
+    check(
+      label,
+      'the rail and the canvas together fill the viewport without a sideways scroll',
+      docked.panel.right <= docked.innerWidth + 1 && !docked.docScrollsSideways,
+      `panel right ${String(docked.panel.right)} in ${String(docked.innerWidth)}px`,
+    );
+
+    /* -- The handle really moves the boundary ---------------------------- */
+    const before = docked.canvas.width;
+    await page.getByTestId('inspector-handle').focus();
+    for (let press = 0; press < 5; press += 1) await page.keyboard.press('ArrowLeft');
+    await page.waitForTimeout(200);
+    const widened = await geometry();
+    check(
+      label,
+      'resizing the rail takes width from the canvas rather than from the window',
+      widened.panel.width > docked.panel.width &&
+        widened.canvas.width < before &&
+        !widened.docScrollsSideways,
+      `panel ${String(docked.panel.width)} -> ${String(widened.panel.width)}, canvas ${String(before)} -> ${String(widened.canvas.width)}`,
+    );
+
+    /* -- A long output scrolls the panel, not the page -------------------- */
+    /*
+     * Each output view caps its own height, so what is asserted here is the
+     * stacking case: three sections plus a capped result is taller than the
+     * rail, and the PANEL is what scrolls. A canvas route that grew a document
+     * scrollbar would be a different bug entirely - the route is a fixed
+     * 100dvh shell and has nothing to scroll.
+     */
+    await inspectFirstNode(page);
+    /*
+     * A pattern AND a subject, so the node really produces a match table
+     * rather than an empty result. Filled through the DOM setter React
+     * listens to, because `locator.fill` on a controlled field is slow at this
+     * size and this is a geometry check rather than an input one.
+     */
+    await page.evaluate(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+      const field = document.querySelector('[data-inspector-input]');
+      setter.call(field, 'lorem ipsum dolor sit amet 42\n'.repeat(400));
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.evaluate(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      const pattern = [...document.querySelectorAll('[data-testid="node-inspector"] input')].find(
+        (el) => el.type === 'text',
+      );
+      if (pattern) {
+        setter.call(pattern, '\\w+');
+        pattern.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+    await page.waitForTimeout(1500);
+
+    const long = await geometry();
+    check(
+      label,
+      'a very large output scrolls inside the panel, not the document',
+      long.overflowY === 'auto' && long.scrolls === true && !long.docScrollsSideways,
+      `overflow-y ${String(long.overflowY)}, scrolls ${String(long.scrolls)}`,
+    );
+    check(
+      label,
+      'the panel never grows past the viewport, however large the result',
+      long.panel.bottom <= long.innerHeight + 1 && long.panel.top >= -1,
+      `${String(long.panel.top)}..${String(long.panel.bottom)} in ${String(long.innerHeight)}px`,
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+
+  /* -- And the sheet, where a rail and a canvas cannot share the screen --- */
+  const narrow = await browser.newContext({ viewport: { width: 390, height: 780 } });
+  const narrowPage = await narrow.newPage();
+
+  try {
+    await narrowPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await narrowPage.getByRole('button', { name: 'Add tool' }).click();
+    await narrowPage.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+    await narrowPage.getByTestId('dialog-option-base64').click();
+    await narrowPage.waitForTimeout(400);
+
+    // Closed by default here, because it covers the thing it is describing.
+    check(
+      label,
+      'the inspector is closed by default where it would cover the canvas',
+      (await narrowPage.getByTestId('node-inspector').count()) === 0,
+      '',
+    );
+
+    await setInspector(narrowPage, true);
+
+    const sheet = await narrowPage.evaluate(() => {
+      const panel = document.querySelector('[data-testid="node-inspector"]');
+      const canvas = document.querySelector('[data-testid="canvas-root"]');
+      const p = panel.getBoundingClientRect();
+      const c = canvas.getBoundingClientRect();
+      return {
+        panelTop: Math.round(p.top),
+        panelBottom: Math.round(p.bottom),
+        panelLeft: Math.round(p.left),
+        panelRight: Math.round(p.right),
+        canvasHeight: Math.round(c.height),
+        canvasWidth: Math.round(c.width),
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        // The strip of canvas still visible above the sheet.
+        visibleCanvas: Math.round(p.top - c.top),
+      };
+    });
+
+    check(
+      label,
+      'the sheet spans the width and sits on the bottom edge',
+      sheet.panelLeft <= 0.5 &&
+        sheet.panelRight >= sheet.innerWidth - 0.5 &&
+        Math.abs(sheet.panelBottom - sheet.innerHeight) <= 1,
+      `${String(sheet.panelLeft)}..${String(sheet.panelRight)} of ${String(sheet.innerWidth)}, bottom ${String(sheet.panelBottom)} vs ${String(sheet.innerHeight)}`,
+    );
+    check(
+      label,
+      'the canvas keeps its full size behind the sheet',
+      sheet.canvasHeight >= sheet.innerHeight - 60 && sheet.canvasWidth >= sheet.innerWidth - 1,
+      `canvas ${String(sheet.canvasWidth)}x${String(sheet.canvasHeight)} in ${String(sheet.innerWidth)}x${String(sheet.innerHeight)}`,
+    );
+    check(
+      label,
+      'the sheet leaves a usable strip of canvas above it',
+      sheet.visibleCanvas >= 200,
+      `${String(sheet.visibleCanvas)}px of canvas above the sheet`,
+    );
+    check(
+      label,
+      'there is no size handle where there is no rail to size',
+      (await narrowPage.getByTestId('inspector-handle').count()) === 0,
+      '',
+    );
+  } finally {
+    await narrow.close().catch(() => {});
+  }
+}
+
 /* ========================================================================== *
  * THE TOOL RUNNER'S LAYOUT
  * ========================================================================== */
@@ -1665,6 +1924,23 @@ async function checkAxe(browser, label) {
     const populated = await scan();
     check(label, 'the populated canvas is clean', populated.length === 0, describe(populated));
 
+    /*
+     * And with the inspector open on a node, which is a landmark, three
+     * headings, a form and an output view that none of the scans above reach.
+     * Opened by the toolbar toggle rather than by pressing I, so the pointer
+     * route is the one being scanned.
+     */
+    await inspectFirstNode(page);
+    await page.waitForTimeout(400);
+    const withInspector = await scan();
+    check(
+      label,
+      'the canvas with the inspector open is clean',
+      withInspector.length === 0,
+      describe(withInspector),
+    );
+    await setInspector(page, false);
+
     // And with an overlay open, since a dialog changes what is exposed.
     await page.keyboard.press('?');
     await page.locator('[role="dialog"]').first().waitFor({ timeout: 5_000 });
@@ -2406,12 +2682,18 @@ async function checkTouch(engine, label) {
       `${String(port)}px`,
     );
 
+    /*
+     * The field moved from the node to the inspector, and the 16px floor moved
+     * with it - it is the only typeable thing on this route now, so it is the
+     * only one that can trigger the zoom.
+     */
+    await inspectFirstNode(page);
     const field = await page.evaluate(() => {
-      const element = document.querySelector('[role="group"] textarea');
+      const element = document.querySelector('[data-inspector-input]');
       return element ? parseFloat(getComputedStyle(element).fontSize) : 0;
     });
     // Below 16px, iOS Safari zooms the viewport on focus and never zooms back.
-    check(label, 'a node field will not make iOS zoom in', field >= 16, `${String(field)}px`);
+    check(label, 'an inspector field will not make iOS zoom in', field >= 16, `${String(field)}px`);
   } finally {
     await context.close().catch(() => {});
     // This function owns its browser: it needs Gecko prefs the shared one does
@@ -2801,6 +3083,18 @@ async function checkMobileLayout(engine, label) {
         assess(width, 'the canvas with a node', await page.evaluate(MOBILE_PROBE));
 
         /*
+         * THE INSPECTOR SHEET, which is the one region of this app that
+         * deliberately covers another. Every measurement `assess` makes still
+         * has to hold: a panel that overflows the viewport sideways, clips a
+         * control, or puts a 30px tap target on a phone is a defect whether it
+         * is a sheet or not - and this one holds a whole options form and an
+         * output view inside 65% of a 780px screen.
+         */
+        await inspectFirstNode(page);
+        assess(width, 'the inspector sheet', await page.evaluate(MOBILE_PROBE));
+        await setInspector(page, false);
+
+        /*
          * The connect dialog, which is the one overlay a phone cannot open by
          * itself: it is reached by pressing C on a focused node, and a
          * touchscreen has no C. That is a gap in the touch model rather than a
@@ -3025,33 +3319,73 @@ async function checkSoftKeyboard(engine, label) {
       `root=${String(canvasScroll.rootScrollable)}, document=${String(canvasScroll.docScrollable)}`,
     );
 
-    /* -- And does reveal them -------------------------------------------- */
-    const before = await page.evaluate(() => {
-      const field = document.querySelector('[data-node-input]');
-      field.focus();
-      const box = field.getBoundingClientRect();
-      return { top: Math.round(box.top), bottom: Math.round(box.bottom) };
-    });
+    /* -- The inspector is a scroller, which is what the plane never was --- */
+    /*
+     * THE SHAPE OF THIS CHANGED WITH THE INSPECTOR, and the change is the
+     * point. There used to be a textarea on every node - on the transformed
+     * plane, inside an `overflow: hidden` root, with nothing for a browser to
+     * scroll - so the canvas panned its own viewport to lift a focused field
+     * clear of the keyboard.
+     *
+     * Input is entered in the inspector now, and the inspector is an ordinary
+     * scroll container: the engine's own scroll-into-view has somewhere to put
+     * a focused field, exactly as on a tool page, and no application code is
+     * involved in that half any more.
+     */
+    await inspectFirstNode(page);
 
-    // 336px is roughly an iPhone keyboard. The window rather than the visual
-    // viewport, because nothing here can move the two independently.
+    const panel = await page.evaluate(() => {
+      const body = document.querySelector('[data-testid="inspector-body"]');
+      return {
+        overflowY: getComputedStyle(body).overflowY,
+        field: document.querySelector('[data-inspector-input]') !== null,
+      };
+    });
+    check(
+      label,
+      'the inspector is a scroll container, so the engine can reveal a field inside it',
+      panel.overflowY === 'auto' && panel.field,
+      `overflow-y ${panel.overflowY}, field present ${String(panel.field)}`,
+    );
+
+    /* -- And the sheet itself stays above a shrunken viewport -------------- */
+    /*
+     * The half no browser can do for us. The sheet is anchored to the bottom
+     * of the LAYOUT viewport and a keyboard shrinks the VISUAL one, so the
+     * whole panel would sit behind the keyboard and its internal scrolling
+     * could not help. `useKeyboardInset` measures the difference and the sheet
+     * sits that far up.
+     *
+     * Driven by shrinking the WINDOW, which runs the same arithmetic on a
+     * different event - see the skip at the top of this function.
+     */
+    await page.evaluate(() => {
+      document.querySelector('[data-inspector-input]')?.focus();
+    });
     await page.setViewportSize({ width: 390, height: 780 - 336 });
     await page.waitForTimeout(400);
 
-    const after = await page.evaluate(() => {
-      const box = document.activeElement.getBoundingClientRect();
+    const sheet = await page.evaluate(() => {
+      const box = document.querySelector('[data-testid="node-inspector"]').getBoundingClientRect();
+      const active = document.activeElement.getBoundingClientRect();
       return {
-        tag: document.activeElement.tagName,
         top: Math.round(box.top),
         bottom: Math.round(box.bottom),
+        tag: document.activeElement.tagName,
+        activeTop: Math.round(active.top),
+        activeBottom: Math.round(active.bottom),
         height: window.innerHeight,
       };
     });
     check(
       label,
-      'the canvas pans a focused node field back above a shrunken viewport',
-      after.tag === 'TEXTAREA' && after.top >= 0 && after.bottom <= after.height,
-      `${String(before.top)}..${String(before.bottom)} -> ${String(after.top)}..${String(after.bottom)} in ${String(after.height)}px`,
+      'the inspector sheet stays inside a shrunken viewport, field and all',
+      sheet.bottom <= sheet.height + 1 &&
+        sheet.top >= -1 &&
+        sheet.tag === 'TEXTAREA' &&
+        sheet.activeTop >= -1 &&
+        sheet.activeBottom <= sheet.height + 1,
+      `sheet ${String(sheet.top)}..${String(sheet.bottom)}, field ${String(sheet.activeTop)}..${String(sheet.activeBottom)} in ${String(sheet.height)}px`,
     );
 
     /* -- A tool page needs none of this ---------------------------------- */
@@ -3098,18 +3432,39 @@ async function checkSoftKeyboard(engine, label) {
         () => document.querySelector('[data-testid="canvas-plane"]')?.style.transform ?? '',
       );
 
+    await inspectFirstNode(finePage);
+
     const settled = await plane();
     await finePage.evaluate(() => {
-      document.querySelector('[data-node-input]')?.focus();
+      document.querySelector('[data-inspector-input]')?.focus();
     });
     await finePage.setViewportSize({ width: 390, height: 780 - 336 });
     await finePage.waitForTimeout(400);
+
+    /*
+     * THE HALF MOST LIKELY TO REGRESS INTO AN ANNOYANCE. With a mouse there is
+     * no keyboard to hide behind, so neither the canvas nor the sheet may move
+     * because a field was clicked or a window was resized. Both are asserted:
+     * the plane's transform, and the inset property the sheet is positioned by.
+     */
+    const inset = await finePage.evaluate(
+      () =>
+        document
+          .querySelector('[data-testid="canvas-workspace"]')
+          ?.style.getPropertyValue('--keyboard-inset') ?? '',
+    );
 
     check(
       label,
       'a fine pointer never has the canvas move under a focused field',
       (await plane()) === settled,
       `${settled} -> ${await plane()}`,
+    );
+    check(
+      label,
+      'a fine pointer never has the inspector lift off the bottom of the screen',
+      inset === '0px',
+      `--keyboard-inset ${inset || '(unset)'}`,
     );
   } finally {
     await fineContext.close().catch(() => {});
@@ -4292,7 +4647,15 @@ async function runChecks(engine, label) {
     );
 
     /* -- A tool actually executes, in a real worker ---------------------- */
-    const editor = page.locator('textarea[data-node-input]').first();
+    /*
+     * Input is typed in the inspector, which is where it now lives. That makes
+     * this the end-to-end proof of the whole route as well as of the worker:
+     * open the panel, type into the node's only text port, and the node's own
+     * `data-status` goes to ok because a real tool ran in a real worker.
+     */
+    await inspectFirstNode(page);
+    const editor = page.locator('textarea[data-inspector-input]').first();
+    await editor.waitFor({ timeout: 15_000 });
     await editor.fill('hello patchbay');
 
     // `data-status` on the node is the same value the run store holds, so this
@@ -4480,6 +4843,7 @@ async function runChecks(engine, label) {
   try {
     await checkChromeWidths(browser, label);
     await checkRunnerLayout(browser, label);
+    await checkInspector(browser, label);
     await checkDialogScroll(browser, label);
     await checkRouteFeedback(browser, label);
     await checkOffline(browser, label);
@@ -4547,6 +4911,24 @@ async function checkPipeline(browser, label) {
       id,
     );
 
+  /**
+   * Types into a node's input, through the inspector, which is where input
+   * lives.
+   *
+   * Selecting the node from the KEYBOARD rather than clicking it: these graphs
+   * are laid out at fixed coordinates and the docked rail covers the right of
+   * the canvas, so a node can genuinely be underneath the panel. Enter on a
+   * focused node is the documented route and reaches every node at every
+   * width.
+   */
+  const typeInto = async (id, value) => {
+    await page.locator(`[data-testid="node-${id}"]`).focus();
+    await page.keyboard.press('Enter');
+    const field = page.locator('[data-inspector-input]').first();
+    await field.waitFor({ timeout: 15_000 });
+    await field.fill(value);
+  };
+
   const untilStatus = async (id, wanted, timeout) => {
     const deadline = Date.now() + timeout;
     for (;;) {
@@ -4575,7 +4957,7 @@ async function checkPipeline(browser, label) {
     await page.locator('[data-testid="node-n3"]').waitFor({ timeout: 15_000 });
 
     // {"name":"ada"} in base64. Real bytes really cross into the worker.
-    await page.locator('[data-testid="node-n1"] textarea').fill('eyJuYW1lIjoiYWRhIn0=');
+    await typeInto('n1', 'eyJuYW1lIjoiYWRhIn0=');
 
     const chained = await untilStatus('n3', 'ok', 30_000);
     check(
@@ -4640,8 +5022,8 @@ async function checkPipeline(browser, label) {
     );
     await page.locator('[data-testid="node-n3"]').waitFor({ timeout: 15_000 });
 
-    await page.locator('[data-testid="node-n1"] textarea').fill(`${'a'.repeat(40)}!`);
-    await page.locator('[data-testid="node-n2"] textarea').fill('eyJuYW1lIjoiYWRhIn0=');
+    await typeInto('n1', `${'a'.repeat(40)}!`);
+    await typeInto('n2', 'eyJuYW1lIjoiYWRhIn0=');
 
     const startedAt = Date.now();
     const runaway = await untilStatus('n1', 'error', 25_000);

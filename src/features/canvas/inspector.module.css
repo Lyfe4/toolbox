@@ -1,0 +1,327 @@
+/*
+ * THE NODE INSPECTOR
+ *
+ * Two shapes, one component, and the difference between them is the only thing
+ * in this file that is really a decision:
+ *
+ *   >= 1000px   a docked rail in the workspace grid. It does NOT overlay the
+ *               canvas - the canvas gets narrower - because a panel that
+ *               covers the graph you are editing is a panel you keep closing,
+ *               and the whole point is to edit a node while watching the chain
+ *               behind it re-run.
+ *
+ *   <  1000px   a sheet along the bottom, overlaying the canvas, because at
+ *               320px a rail and a canvas cannot both have the screen and
+ *               splitting it gives neither enough to be usable. It is the
+ *               narrow dimension that is scarce on a phone, so the panel takes
+ *               the other one.
+ *
+ * THE BREAKPOINT IS ARITHMETIC, the same arithmetic as the tool runner's. The
+ * rail is 320px at its narrowest and the canvas wants three node widths to
+ * still read as a canvas: 224 * 3 = 672, plus the rail's own border, is 993.
+ * 1000 is the next round number clear of it. Below that the rail would be
+ * taking width from the graph in order to show four select boxes.
+ */
+
+/*
+ * OUT OF FLOW, DELIBERATELY. See the note on `.main` in __root.module.css: an
+ * in-flow workspace makes its row grow with the inspector's content, and a
+ * panel with unlimited room never scrolls. Absolute against `main` gives it a
+ * definite size to divide between the canvas and the rail.
+ */
+.workspace {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  /*
+   * One row, one column by default: the canvas fills it and the sheet is
+   * positioned over it. `minmax(0, 1fr)` rather than `1fr` because a grid item
+   * defaults to `min-inline-size: auto` and the canvas must be allowed to
+   * shrink past its contents - the same reason `.main` in __root.module.css
+   * carries the pair.
+   */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+
+/*
+ * The canvas is a grid item and must be allowed to shrink.
+ *
+ * Without this the 0x0 plane's absolutely positioned children still leave the
+ * item at `auto`, and the rail's width comes out of the viewport rather than
+ * out of the canvas - which is how a docked panel silently produces a document
+ * wider than the window.
+ */
+.surface {
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+
+.inspector {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  block-size: 100%;
+  min-block-size: 0;
+  background-color: var(--pb-surface-raised);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+}
+
+/*
+ * `min-block-size`, not `block-size`.
+ *
+ * A fixed 32px bar is right for a mouse and wrong for a finger: on a coarse
+ * pointer the Button component correctly grows to WCAG's 44px, and a child
+ * taller than a fixed-height parent overflows it - measured at 7px past the
+ * bar's own border at every phone width, drawing the close control across the
+ * panel's edge. The bar takes its height from what is in it instead.
+ */
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-sm);
+  min-block-size: var(--pb-control-height-md);
+  padding-inline: var(--pb-space-sm);
+  border-block-end: var(--pb-border-width) solid var(--pb-border-hairline);
+  background-color: var(--pb-surface-overlay);
+}
+
+.heading {
+  flex: 1;
+  min-inline-size: 0;
+  margin: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.headMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pb-space-sm);
+  flex-shrink: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  color: var(--pb-ink-muted);
+}
+
+/*
+ * THE PANEL IS THE SCROLL REGION, and it is the only one this file adds.
+ *
+ * Each output view already caps its own height - the diff scroller at 520px,
+ * the regex tables at 320 and 380, an image at 420 - so a 30 MB decoded
+ * document cannot push the sections below it off the panel however large the
+ * value is. What this scroller does is let several already-bounded blocks
+ * stack, which is exactly what the document does for the same views on the
+ * tool page below its breakpoint.
+ *
+ * `overscroll-behavior: contain` stops a flick at the end of the panel
+ * chaining outward - onto the canvas on a phone, where the sheet sits over it.
+ */
+.body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-block-size: 0;
+  padding: var(--pb-space-md);
+  display: grid;
+  gap: var(--pb-space-lg);
+  align-content: start;
+}
+
+.section {
+  display: grid;
+  gap: var(--pb-space-sm);
+  min-inline-size: 0;
+}
+
+.sectionTitle {
+  margin: 0;
+  padding-block-end: var(--pb-space-2xs);
+  border-block-end: var(--pb-border-width) solid var(--pb-border-subtle);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-secondary);
+}
+
+.stack {
+  display: grid;
+  gap: var(--pb-space-sm);
+  min-inline-size: 0;
+}
+
+.hint {
+  margin: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  color: var(--pb-ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  color: var(--pb-ink-muted);
+}
+
+.outputLabel {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pb-space-sm);
+  margin: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-secondary);
+}
+
+/*
+ * Shorter than the tool page's 200px editor: this panel holds three sections
+ * and the options below have to be reachable without scrolling past the input
+ * on every visit. It stays user-resizable, so a long paste is one drag away
+ * from having the room it wants.
+ */
+.editor {
+  inline-size: 100%;
+  min-block-size: 120px;
+  resize: vertical;
+  font-variant-ligatures: none;
+}
+
+.pickList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--pb-space-2xs);
+}
+
+.pick {
+  inline-size: 100%;
+  min-block-size: var(--pb-control-height-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pb-space-sm);
+  padding-inline: var(--pb-space-sm);
+  background-color: var(--pb-control-surface);
+  border: var(--pb-border-width) solid var(--pb-control-border);
+  border-radius: var(--pb-radius-control);
+  color: var(--pb-ink-primary);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  cursor: pointer;
+  text-align: start;
+}
+
+.pick:hover {
+  background-color: var(--pb-control-surface-hover);
+  border-color: var(--pb-control-border-hover);
+}
+
+.pick:focus-visible {
+  outline: var(--pb-focus-width) solid var(--pb-focus-ring);
+  outline-offset: var(--pb-focus-offset);
+}
+
+/* --- The rail, and the handle that sizes it ------------------------------ */
+
+@media (min-width: 1000px) {
+  /*
+   * The rail's width comes from a custom property set on the workspace by the
+   * drag handle.
+   *
+   * DELIBERATELY NOT `--pb-`. That prefix is the semantic token namespace and
+   * `token-layering.test.ts` holds it to names that actually exist in
+   * semantic.css - correctly, because layer 3 exists to re-answer layer 2's
+   * questions and a theme has no business answering "how wide has the user
+   * dragged this". These two are live measurements written by JavaScript, so
+   * they take a plain local name and stay outside the token system.
+   *
+   * The attribute selector is load-bearing rather than defensive: a closed
+   * inspector must not reserve its track, or the canvas loses 340px to nothing.
+   * It says only whether the panel is OPEN - rail against sheet is decided by
+   * this media query and by nothing else, so the two cannot disagree. They did:
+   * driving the grid from a JavaScript copy of the same breakpoint meant a
+   * momentarily stale media-query subscription laid the panel out as a
+   * full-width implicit row across the canvas.
+   */
+  .workspace[data-inspector='open'] {
+    grid-template-columns: minmax(0, 1fr) auto var(--inspector-width, 340px);
+  }
+
+  .handle {
+    inline-size: var(--pb-space-xs);
+    background-color: var(--pb-surface-sunken);
+    border-inline: var(--pb-border-width) solid var(--pb-border-hairline);
+    cursor: col-resize;
+    /* Never squashed by the two columns beside it. */
+    flex-shrink: 0;
+  }
+
+  .handle:hover,
+  .handle:focus-visible {
+    background-color: var(--pb-accent-subtle);
+  }
+
+  .handle:focus-visible {
+    outline: var(--pb-focus-width) solid var(--pb-focus-ring);
+    outline-offset: calc(var(--pb-focus-offset) * -1);
+  }
+
+  .inspector {
+    border-block: none;
+    border-inline-end: none;
+  }
+}
+
+/* --- The sheet ----------------------------------------------------------- */
+
+/*
+ * Below the breakpoint the panel leaves the grid flow and covers the bottom of
+ * the workspace. The canvas keeps its full size underneath, so panning and
+ * pinching still work on the strip above the sheet - the sheet is a SIBLING of
+ * the canvas root rather than a child, so a touch on it never reaches the
+ * canvas's own pointer handlers and none of the overlay-detaching machinery is
+ * involved.
+ */
+@media (max-width: 999px) {
+  .handle {
+    display: none;
+  }
+
+  .inspector {
+    position: absolute;
+    inset-inline: 0;
+    /*
+     * ABOVE THE ON-SCREEN KEYBOARD.
+     *
+     * A sheet anchored to the bottom of the LAYOUT viewport is behind the
+     * keyboard the moment a field in it is focused, and no amount of internal
+     * scrolling helps because the whole sheet is off-screen. The inset is
+     * measured from `visualViewport` - the one API that knows about the
+     * keyboard - and written onto the workspace by `useKeyboardInset`. It is
+     * 0 on every desktop and in every browser without the API, and it is not
+     * a `--pb-` token for the reason given at the rail's own property above.
+     */
+    inset-block-end: var(--keyboard-inset, 0px);
+    z-index: var(--pb-z-sticky);
+    max-block-size: 65%;
+    border-inline: none;
+    border-block-end: none;
+  }
+}

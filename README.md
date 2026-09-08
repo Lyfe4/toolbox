@@ -59,6 +59,14 @@ formatting rather than carrying it.
 `/` is the node canvas; `/tools` is the same set as a plain list. Neither is a
 fallback for the other.
 
+**On the canvas, a node's input, options and output are one panel.** Select a
+node and the inspector shows all three, using the same options panel and the
+same five output views the tool page uses — so a chain runs on the settings you
+chose and you can read what it produced, including the last node's. The node
+itself keeps a short summary of its result — `47 matches`, `2.1 MB PNG image`,
+`+12 −3` — so a pipeline can be scanned without opening anything. See
+[architecture.md](docs/architecture.md#the-node-inspector).
+
 ## The zero-network guarantee
 
 A developer toolbox is a thing you paste secrets into: a JWT you are debugging,
@@ -141,8 +149,10 @@ is no "use the list instead" — `/tools` is a different affordance for the same
 tools, not an accessible alternative to an inaccessible thing.
 
 Press `?` on the canvas for the full map; it is generated from the same array
-the canvas binds, so it cannot drift. `K` opens the palette, arrows move the
-selection by 8px, `Ctrl/Cmd+Z` undoes, `F` fits, `0` resets zoom.
+the canvas binds, so it cannot drift. `K` opens the palette, `I` shows and
+hides the inspector, `Enter` opens it on the focused node and moves into it,
+`Escape` steps back out to the node, arrows move the selection by 8px,
+`Ctrl/Cmd+Z` undoes, `F` fits, `0` resets zoom.
 
 ### Connecting two tools without a pointer
 
@@ -161,8 +171,12 @@ This is the least common thing here, so it is worth spelling out.
    happened.
 
 Each node is a focusable `role="group"` whose accessible name states its tool,
-position, connection count, status and selection: _"Base64, at 608, 368,
-1 connection, blocked, Needs input, selected"_. Announcements are split
+position, connection count, status, what it produced and selection: _"Base64,
+at 608, 368, 1 connection, blocked, Needs input, selected"_, and once it has run
+_"Hash, at 832, 368, 1 connection, succeeded, 5d41402abc4b2a76b9719d911017c592"_.
+The result is in the name for the same reason it is on the node: a chain you can
+scan by eye and not by ear is not a chain a keyboard user can follow.
+Announcements are split
 deliberately — movement and selection go to a polite live region, while a
 refused connection also raises a toast, so the reason reaches sighted users as
 well as screen-reader users rather than only one of them.
@@ -196,7 +210,7 @@ about.
 
 ## Testing
 
-2,113 tests across 83 files. The count is not the interesting part; what the
+2,265 tests across 90 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Conformance, measured against the specifications
@@ -344,6 +358,50 @@ The same pass found the tool reporting `count: 5000` for a truncated listing
 two rows indistinguishable from two matches, and a sticky-without-global listing
 that disagreed with the replacement it sat next to.
 
+### What building the node inspector found
+
+The panel itself was the easy part. Four of these are bugs it uncovered rather
+than bugs it introduced, and the first two had been shipping.
+
+**A bytes-only port had a text box on the canvas too.** `image-convert`
+declares `types: ['bytes']` on its only input, and the canvas drew an editor for
+every unwired input port without asking what the port accepted. The tool page
+had the same defect and was fixed; the canvas's version was worse. Typing into
+it could not even produce an error — the engine's preflight blocks a required
+bytes port with no wire whatever the box contains — so the node sat blocked
+forever with an editor under it inviting another attempt. That is the fifth time
+this codebase has drawn an affordance for behaviour that does not exist, which
+is why CONTRIBUTING names the pattern explicitly.
+
+**Pressing anything in the toolbar cleared the node selection.** The toolbar and
+the status readout render inside the canvas root, so a pointerdown on Fit, Undo,
+Share or Shortcuts arrived at the canvas's own handler as "not a node" and threw
+the selection away, silently, at every width. Survivable while nothing on screen
+depended on the selection. Not survivable the moment one of those buttons was
+the inspector toggle, which deselected the node and then opened a panel
+reporting that no node was selected.
+
+**`1fr` is max-content in an auto-height grid container.** The shell's
+`min-block-size: 100dvh` is a floor, not a cap, so a row whose content exceeds
+it still grows — which meant the canvas route was a fixed-height viewport only
+for as long as nothing inside it had intrinsic height. Measured in both engines
+the moment the inspector held a result: **a rail with a long match table in it
+was 1,828px tall inside a 900px window**, and its own scroll region never
+scrolled because it had all the room it wanted. jsdom cannot see it; every box
+there is zero.
+
+**A 32px title bar with a 44px button in it.** On a coarse pointer the Button
+component correctly grows to WCAG's 44px, and a child taller than a
+fixed-height parent overflows it — 7px past the panel's own border, at every
+phone width, found by the mobile sweep that measures every box against its
+clipping ancestor.
+
+**And a test that had quietly gone stale.** `JwtView.test.tsx` pinned the
+_view's_ clock with a prop and let the `decode` helper run the real tool, which
+reads `Date.now()`. The two agreed on the day the file was written and drifted
+apart afterwards: a token whose `nbf` was "now + 2 hours" became usable, and one
+expiring "in 1 hour" became expired. `Date.now` is pinned alongside the prop now.
+
 ### Three findings that were only ever going to be found by looking
 
 None of them is visible to a unit test, because jsdom has no layout engine. The
@@ -406,11 +464,28 @@ in this file have numbers behind them.
 
 |                                          | Raw      | Gzipped  |
 | ---------------------------------------- | -------- | -------- |
-| Initial JavaScript                       | 328.0 kB | 106.2 kB |
+| Initial JavaScript                       | 328.0 kB | 106.1 kB |
 | Budget (enforced by `pnpm bundle:check`) | 380.0 kB | —        |
 
 Every tool, the canvas, the styleguide and the tool pages are lazy chunks and
 none of them are in that figure.
+
+The node inspector reuses the tool runner's options panel and output views, so
+those moved into a chunk both routes share rather than being duplicated:
+
+|                             | Before                 | After                  |
+| --------------------------- | ---------------------- | ---------------------- |
+| Initial payload             | 328.0 kB / 106.2 kB gz | 328.0 kB / 106.1 kB gz |
+| Canvas route, first load    | ~135 kB                | ~214 kB                |
+| Tool page route, first load | ~191 kB                | ~194 kB                |
+| Shared `toolrunner` chunk   | —                      | 64.8 kB / 20.9 kB gz   |
+
+The canvas pays about 79 kB raw (~24 kB gzipped) more on first load, all of it
+the five output views and the options panel, and a visitor who opens both
+routes now downloads them once instead of once per route. Deferring the views
+behind a second dynamic import was considered and rejected: a canvas exists to
+produce output, so the deferral would last seconds and buy a loading state
+nobody wants in a 320px panel.
 
 ### Cold start
 
