@@ -50,6 +50,7 @@ import {
 } from './geometry';
 import { useCanvasStore } from './graphStore';
 import inspectorStyles from './inspector.module.css';
+import { loadInspectorOpen, saveInspectorOpen } from './inspectorPreference';
 import { useKeyboardInset } from './keyboardInset';
 import { NodeInspector, type InspectorNode } from './NodeInspector';
 import { OverflowMenu, type OverflowItem } from './OverflowMenu';
@@ -177,6 +178,31 @@ const RAIL_DEFAULT = 340;
 const RAIL_STEP = GRID * 2;
 
 /**
+ * The inspector's four states, of which two are resting and two are the slide.
+ *
+ * `entering` and `closing` exist because the panel has to be on screen while it
+ * moves: a panel that unmounts the moment it is closed cannot slide out, and
+ * one that mounts already in place cannot slide in. `animationend` is what
+ * retires each of them - see `inspector.module.css`, and note that reduced
+ * motion collapses the duration to 1ms rather than to 0 precisely so that
+ * event still arrives.
+ */
+type InspectorPhase = 'closed' | 'entering' | 'open' | 'closing';
+
+/**
+ * How long to wait for `animationend` before giving up on it.
+ *
+ * NOT THE DURATION, and it must not be read as one - the duration lives in CSS,
+ * in `--pb-motion-base`, and is the only thing that decides how long the slide
+ * takes. This is a deadline for a signal: an animation that is never composited
+ * (a `display: none` ancestor, an engine that refuses to interpolate the
+ * property, a tab backgrounded mid-slide) fires no event, and a panel stranded
+ * in `closing` would be a panel that never leaves. Generous on purpose, because
+ * being late here costs nothing and being early would cut a slide short.
+ */
+const INSPECTOR_SETTLE_MS = 600;
+
+/**
  * True for a pointer that touches the screen directly.
  *
  * A POSITIVE test, not `pointerType !== 'mouse'`, and the difference is not
@@ -275,12 +301,40 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
    * costs nothing because the canvas simply narrows, a panel that reopens
    * itself is a panel you cannot close.
    *
-   * So it defaults to open where it is free and closed where it is not, `I`
-   * toggles it at both sizes, and the toolbar carries the same toggle with an
-   * `aria-pressed` that says which it currently is.
+   * WHAT CHANGED IS ONLY THE STARTING POINT. It used to default to open
+   * wherever the rail fitted, which meant the first thing a first-time visitor
+   * saw on a desktop was an empty panel whose entire message was that there was
+   * nothing to inspect - the canvas explaining its own furniture before the user
+   * had done anything. It starts CLOSED now, and stays wherever the user last
+   * put it: see `inspectorPreference`. `I` toggles it at both sizes and the
+   * toolbar carries the same toggle with an `aria-pressed` that says which it
+   * currently is.
+   *
+   * THE PHASE, NOT A BOOLEAN, because the panel has to outlive the decision to
+   * close it: a slide-out needs the element on screen while it slides. `open`
+   * and `closed` are the resting states and the two others are the animation.
+   *
+   * Read from storage in the INITIALISER rather than in an effect, for the
+   * reason `themeStore` reads the theme at module load: an effect would paint
+   * one frame of the wrong state, and here that frame would also start the
+   * enter animation on a panel that was supposed to be simply present.
    */
   const railFits = useMediaQuery(INSPECTOR_RAIL);
-  const [inspectorOpen, setInspectorOpen] = useState(railFits);
+  const [inspectorPhase, setInspectorPhase] = useState<InspectorPhase>(() =>
+    loadInspectorOpen() ? 'open' : 'closed',
+  );
+  /** Whether the user wants it: `aria-pressed`, and what gets remembered. */
+  const inspectorOpen = inspectorPhase === 'open' || inspectorPhase === 'entering';
+  /**
+   * Whether it is in the DOM, which includes sliding out.
+   *
+   * This also NARROWS the phase where the panel is rendered: TypeScript infers
+   * a type predicate for a `const` boolean holding a comparison, so guarding on
+   * it is what lets `NodeInspector` take the three live states rather than all
+   * four and still compile without a cast. Worth saying out loud, because the
+   * alternative to knowing that is someone adding one.
+   */
+  const inspectorMounted = inspectorPhase !== 'closed';
   const [railWidth, setRailWidth] = useState(RAIL_DEFAULT);
   /**
    * The wire being dragged.
@@ -869,6 +923,31 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     );
   }, [store, notify]);
 
+  /**
+   * SHOW, HIDE AND TOGGLE, in one place, because there are four ways in.
+   *
+   * `I`, the toolbar button, `Enter` on a node, a file dropped on a node with
+   * more than one input, and the panel's own close button all move the panel
+   * between the same states, and every one of them has to go through the phase
+   * rather than setting a boolean - otherwise a close skips its slide, or an
+   * open interrupts one and leaves the panel animating out of a state it is no
+   * longer in.
+   *
+   * Opening from `closing` goes straight to `open` rather than to `entering`.
+   * The panel is already on screen and mid-slide; restarting the enter from
+   * off-screen would make a fast toggle jump backwards before coming in again.
+   */
+  const showInspector = useCallback(() => {
+    setInspectorPhase((phase) => {
+      if (phase === 'open' || phase === 'entering') return phase;
+      return phase === 'closing' ? 'open' : 'entering';
+    });
+  }, []);
+
+  const hideInspector = useCallback(() => {
+    setInspectorPhase((phase) => (phase === 'closed' ? 'closed' : 'closing'));
+  }, []);
+
   const onInputChange = useCallback(
     (nodeId: string, portId: string, value: string) => {
       store.getState().setNodeInput(nodeId, portId, value);
@@ -972,7 +1051,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
 
       if (candidates.length > 1) {
         store.getState().select({ nodes: [nodeId], edges: [] });
-        setInspectorOpen(true);
+        showInspector();
         const names = candidates.map((port) => port.label).join(' and ');
         notify({
           title: `${entry.name} has more than one input`,
@@ -1000,7 +1079,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
 
       onFileChange(nodeId, port.id, result.loaded);
     },
-    [notify, onFileChange, store],
+    [notify, onFileChange, showInspector, store],
   );
 
   /**
@@ -1156,9 +1235,67 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     // to be pure - React may call it twice, and in StrictMode does - and
     // announcing from inside one is a store write during another component's
     // render, which React refuses out loud.
-    setInspectorOpen((open) => !open);
+    if (inspectorOpen) hideInspector();
+    else showInspector();
     store.getState().announce(inspectorOpen ? 'Inspector hidden.' : 'Inspector shown.');
-  }, [store, inspectorOpen]);
+  }, [hideInspector, inspectorOpen, showInspector, store]);
+
+  /**
+   * RETIRING A SLIDE WHEN IT FINISHES.
+   *
+   * `animationend` on the panel is the signal, and it is the right one rather
+   * than a timer: it is what the browser says when the animation it actually
+   * ran is over, at whatever duration the stylesheet asked for - including the
+   * 1ms reduced-motion collapse, which `global.css` chose over 0 for exactly
+   * this reason.
+   *
+   * `INSPECTOR_SETTLE_MS` is a deadline behind it, not a second opinion about
+   * the duration. Both paths land on the same phase, so arriving twice is
+   * harmless.
+   */
+  useEffect(() => {
+    if (inspectorPhase !== 'entering' && inspectorPhase !== 'closing') return undefined;
+
+    const settle = (): void => {
+      setInspectorPhase((phase) => {
+        if (phase === 'entering') return 'open';
+        if (phase === 'closing') return 'closed';
+        return phase;
+      });
+    };
+
+    const panel = workspaceRef.current?.querySelector<HTMLElement>(
+      '[data-testid="node-inspector"]',
+    );
+    /*
+     * ONLY THE PANEL'S OWN ANIMATION COUNTS. `animationend` bubbles, so any
+     * keyframe finishing anywhere inside the panel arrives here too - and the
+     * panel renders the tool runner's own components, which is a surface this
+     * file does not control and should not have to audit for animations every
+     * time one is added to a view.
+     */
+    const onEnd = (event: AnimationEvent): void => {
+      if (event.target === panel) settle();
+    };
+
+    panel?.addEventListener('animationend', onEnd);
+    const deadline = window.setTimeout(settle, INSPECTOR_SETTLE_MS);
+
+    return () => {
+      panel?.removeEventListener('animationend', onEnd);
+      window.clearTimeout(deadline);
+    };
+  }, [inspectorPhase]);
+
+  /*
+   * Remembered on every change of the user's intent, and never for the two
+   * animation phases - `entering` and `closing` are already covered by the
+   * resting state each of them is heading for, and writing during a slide would
+   * store the same value twice.
+   */
+  useEffect(() => {
+    saveInspectorOpen(inspectorOpen);
+  }, [inspectorOpen]);
 
   /**
    * Where focus goes when the node being inspected stops existing.
@@ -1417,7 +1554,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
          */
         event.preventDefault();
         state.select({ nodes: [focused], edges: [] });
-        setInspectorOpen(true);
+        showInspector();
         focusInspector();
         return;
       }
@@ -2046,7 +2183,20 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
        * the canvas, with the rail's CSS still applying. One source of truth for
        * the shape removes the disagreement rather than papering over it.
        */
-      data-inspector={inspectorOpen ? 'open' : 'none'}
+      /*
+       * THE PHASE, AND NOTHING LAYS OUT FROM IT ANY MORE.
+       *
+       * It used to carry `open`/`none` and the stylesheet sized the rail's grid
+       * track off it, because a track declared at 340px would have taken 340px
+       * from the canvas with no panel in it. The track is `auto` now and sizes
+       * itself to whatever is actually there, so the guarantee comes from the
+       * sizing instead - see the note in inspector.module.css.
+       *
+       * It stays because it is the one place the phase is legible from outside:
+       * `check:browsers` measures the slide against it, and a state machine
+       * whose state cannot be observed is one nothing can hold to its own rules.
+       */
+      data-inspector={inspectorPhase}
       data-testid="canvas-workspace"
     >
       <div
@@ -2434,8 +2584,15 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
         />
       ) : null}
 
-      {inspectorOpen ? (
+      {inspectorMounted ? (
         <NodeInspector
+          /*
+           * `closing` means on screen and on its way out, which is exactly the
+           * state nothing should be able to Tab into or read out - so the panel
+           * is inert for the length of its own slide rather than being a live
+           * region that happens to be moving.
+           */
+          phase={inspectorPhase}
           target={inspectorTarget}
           selectedIds={selection.nodes}
           selectedLabels={selectedLabels}
@@ -2454,7 +2611,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
              * only way to get the canvas's full width back was to deselect
              * the node you were about to move.
              */
-            setInspectorOpen(false);
+            hideInspector();
             rootRef.current?.focus();
           }}
           onOrphaned={onInspectorOrphaned}

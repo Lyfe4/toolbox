@@ -67,6 +67,14 @@ itself keeps a short summary of its result — `47 matches`, `2.1 MB PNG image`,
 `+12 −3` — so a pipeline can be scanned without opening anything. See
 [architecture.md](docs/architecture.md#the-node-inspector).
 
+It **starts closed** and slides in when you open it, and it comes back however
+you last left it. Open by default was the wrong first screen: an empty canvas
+beside an empty panel saying there was nothing to inspect. Whether it is open
+is still your state and selection only decides what is in it — but where the
+rail's width is deliberately forgotten between sessions, whether the panel is
+showing is not, because it is the difference between seeing what you were
+working on and having to ask for it again on every reload.
+
 **A node's input can be a file.** Drop one on a node, or choose one in the
 inspector — every unwired input port has its own control, so `diff` can compare
 two files and `image-convert` can be started at all. It could not be, before:
@@ -175,6 +183,12 @@ the canvas binds, so it cannot drift. `K` opens the palette, `I` shows and
 hides the inspector, `Enter` opens it on the focused node and moves into it,
 `Escape` steps back out to the node, arrows move the selection by 8px,
 `Ctrl/Cmd+Z` undoes, `F` fits, `0` resets zoom.
+
+The rail's divider is a **focusable separator** with arrow keys that resize by
+one grid step and Home/End for the extremes — a handle only a pointer can move
+is a preference only a pointer user has. It draws a one-pixel rule and is
+grabbed by a target much larger than that, which are two separate boxes: 44px
+under a finger, and the rule stays a hairline at every size.
 
 `Enter` steps into whichever control the node's first free input actually has —
 its text editor, or its file chooser on a port that takes bytes only. The

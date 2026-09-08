@@ -67,7 +67,19 @@ export interface InspectorNode {
   readonly wiredFrom: Readonly<Record<string, string>>;
 }
 
+/** Mirrors `InspectorPhase` in Canvas.tsx; only the two live states arrive. */
+export type InspectorPanelPhase = 'entering' | 'open' | 'closing';
+
 export interface NodeInspectorProps {
+  /**
+   * Where the panel is in its own slide.
+   *
+   * Drawn as `data-state`, which is what the stylesheet animates from - and it
+   * is also what makes `closing` inert: a panel on its way off screen must not
+   * be somewhere Tab can land or a screen reader can read, and the alternative
+   * to saying so is a live region that happens to be moving.
+   */
+  readonly phase: InspectorPanelPhase;
   /** The single selected node, or null when none or several are selected. */
   readonly target: InspectorNode | null;
   /** Every selected node, for the several-selected state. */
@@ -99,6 +111,7 @@ export interface NodeInspectorProps {
 }
 
 export function NodeInspector({
+  phase,
   target,
   selectedIds,
   selectedLabels,
@@ -257,6 +270,14 @@ export function NodeInspector({
     <aside
       ref={rootRef}
       className={styles.inspector}
+      data-state={phase}
+      /*
+       * `inert` rather than `aria-hidden`: it removes the subtree from the
+       * accessibility tree AND from the tab order, which is both halves of what
+       * a panel mid-exit needs. `aria-hidden` alone would leave a focusable
+       * close button inside something screen readers had been told to ignore.
+       */
+      inert={phase === 'closing'}
       /*
        * A landmark, so the panel is reachable by landmark navigation as well
        * as by Tab - it is a region of the page rather than a dialog, and it

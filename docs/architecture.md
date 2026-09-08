@@ -813,7 +813,7 @@ rail is 320px at its narrowest and a canvas wants three node widths to still
 read as a canvas: `224 × 3 = 672`, plus the rail's border, is 993. 1000 is the
 next round number clear of it.
 
-**Open by default where it costs nothing, closed where it covers the graph.**
+**Closed on a first visit, and wherever the user last left it after that.**
 `I` toggles it at both sizes and a toolbar button carries the same toggle with
 an `aria-pressed` that says which state it is in. Selection never opens or
 closes it — on a phone that would bury the canvas on every tap while arranging
@@ -822,6 +822,41 @@ can be dismissed. Closing does not clear the selection either: what you are
 working on and whether the panel showing it is on screen are two facts, and
 collapsing them would mean the only way to get the canvas's width back was to
 deselect the node you were about to move.
+
+It used to default to open wherever the rail fitted, on the grounds that the
+canvas merely narrowed and so it cost nothing. What it cost was the first
+screen: a first-time visitor on a desktop arrived at an empty canvas beside an
+empty panel whose entire message was that there was nothing to inspect — the
+application explaining its own furniture before the user had done anything. The
+reasoning about open/closed being the USER's state and selection deciding only
+the contents is untouched; the starting point is the only thing that moved.
+
+**And it is remembered, where the rail's width is not.** The two look like the
+same kind of preference and are not. A width is a preference inside an open
+panel and one drag restores it, which is why it stays in session state; open
+against closed is the difference between seeing the thing you were working on
+and not, and since this panel became the only place a node's input is entered
+and its output read, closing it on every reload would charge that to exactly the
+people who use the canvas most, on a page load they did not ask for.
+
+That buys a second storage key, `patchbay:inspector:v1`, and it is affordable
+because it needs neither a schema nor a migration: it is one boolean, and the
+only thing an unreadable value can mean is closed — which is also the
+first-visit default. A value from a future build, a hand-edited one, a blocked
+`localStorage` and a first visit all land on the same answer, and it is the
+conservative one. Compare `graphStore`, where the same question needed Zod and
+five versions of migration chain.
+
+**Discoverability needed nothing new, and that is a conclusion rather than an
+omission.** The panel is where a node's input is set, so a closed panel had to
+be findable from a standing start — and the node itself already does it: a
+freshly added tool is blocked for want of an input, and what it says about that
+is `Type or add a file in the inspector, or wire Input.` The toolbar's toggle
+sits beside Add tool with an `aria-pressed`, and the canvas's own
+`aria-describedby` names `Enter or I to open the inspector`. Three routes, all
+of which predate this change, and the first of them appears in the state a new
+user is guaranteed to reach on their first action. A fourth affordance
+advertising the panel would be furniture explaining furniture again.
 
 **Nothing selected and several selected are different questions.** "Select a
 node" answers the first and insults the second, so a multi-selection is listed
@@ -989,6 +1024,116 @@ that focus, activation and the tab order are the browser's rather than
 hand-rolled; the width is session state, because it is one drag to restore and a
 stored value would be another key to validate and migrate.
 
+**What it draws is a hairline; what it can be grabbed by is not.** The two are
+separate concerns and were one box: a 4px sunken column with a border down each
+side, which is three visible edges where an instrument wants one, and heavier
+than any other divider in the app. The visible rule is a `::before` at
+`--pb-border-width` — one pixel, the same as every other boundary — and the grab
+area is an `::after` that overhangs it and paints nothing.
+
+A pseudo-element rather than a wider button, because width here is width taken
+from the graph: the handle is a grid track, so every pixel it occupies is a
+pixel the canvas does not get. An absolutely positioned overhang costs no
+layout at all, and a pseudo-element is hit tested as part of the element that
+originated it — so the target grows and the column does not.
+
+|                | Rule | Target                                  |
+| -------------- | ---- | --------------------------------------- |
+| Fine pointer   | 1px  | ~16px, an 8px column plus 4px each side |
+| Coarse pointer | 1px  | 44px, WCAG 2.5.5                        |
+
+Only the reach changes between them. `checkMobileLayout` measures every target
+against 44px at 320–430px and never sees this one, because below the breakpoint
+the panel is a sheet and there is nothing to resize — so a touchscreen at 1000px
+or more is the one place this control exists under a finger, and it was 4px
+there.
+
+**Painting the rule as a background has one cost, and it is paid back
+explicitly.** In forced-colors mode the OS replaces every author background with
+its own Canvas, so a one-pixel strip of `--pb-border-hairline` becomes a
+one-pixel strip of the surface behind it and the divider vanishes. The version
+this replaced used `border-inline`, which the UA repaints in `CanvasText` for
+free — so the regression would have been silent, and silent for exactly the
+users who need a boundary most. One media query using system colour keywords
+answers it, the same escape hatch `canvas.module.css` uses for the selected
+node's border, and `check:browsers` asserts it because the failure is invisible
+in every other mode. On hover and on focus the **rule** responds rather than a box appearing:
+it thickens to `--pb-border-width-strong` and takes the accent, and the focus
+ring goes on the rule rather than around the whole grab column, where it would
+have drawn a box four times the width of the thing it was describing.
+
+### Opening and closing is a slide
+
+`--pb-motion-base` and `--pb-ease` — 150ms on the sharp curve, the same pair
+every other transition in the app uses. Reduced motion needs no media query
+here: `global.css` collapses every duration to 1ms wholesale, and its own
+comment says 1ms rather than 0 precisely so `animationend` still fires and a
+state machine cannot stall. This is that state machine.
+
+**The panel has four states, of which two are the animation.** `closed` and
+`open` are the resting pair; `entering` and `closing` exist because the element
+has to be on screen while it moves — a panel that unmounts the moment it is
+closed has nothing left to slide, and one that mounts already in place has
+nowhere to slide from. `animationend` on the panel retires each of them, with a
+deadline behind it that is a guard against a signal that never arrives rather
+than a second opinion about the duration. A `closing` panel is `inert`, which is
+both halves of what a panel on its way out needs: out of the tab order and out
+of the accessibility tree, where `aria-hidden` alone would have left a focusable
+close button inside a subtree screen readers had been told to ignore.
+
+**The rail animates its WIDTH and the sheet animates a TRANSLATE**, because the
+rail is a grid track the canvas is meant to narrow with, and the sheet is
+absolutely positioned over a canvas that nothing has to move out of the way for.
+
+#### Animating the width does not stutter, and the reason is structural
+
+The obvious objection is that the rail narrows the canvas rather than covering
+it, so animating its width relays out the canvas sixty times a second. Measured
+on a 48-node, 47-wire canvas with a real match table in the panel, against an
+idle baseline sampled in the same page — because the raw frame timings are not
+comparable between variants, headless Gecko ticking `requestAnimationFrame` at
+about 160Hz while a main-thread animation is pending and headless JavaScriptCore
+sitting near 33Hz throughout:
+
+| Variant                       | Gecko, worst frame | JavaScriptCore, worst frame |
+| ----------------------------- | ------------------ | --------------------------- |
+| Idle, nothing happening       | 16.5ms             | 32–46ms                     |
+| **Width, content pinned**     | **30ms**           | **36–68ms**                 |
+| Transform instead of width    | 30.3ms             | 48–52ms                     |
+| No animation at all           | 30–31.5ms          | 45–47ms                     |
+| Width, content **not** pinned | 31.8–32.6ms        | 72–75ms                     |
+
+The first thing those numbers say is that **the toggle costs about 14ms of worst
+frame whatever it animates**, including when it animates nothing — that is React
+mounting and unmounting the panel, not the slide. Against that, the shipped
+width animation is within about 2ms of no animation at all in Gecko and
+indistinguishable from it in JavaScriptCore.
+
+It is cheap because nothing inside the canvas depends on the root's width. The
+nodes and the wire layer sit on a 0×0 absolutely positioned transformed plane,
+and the grid is a repeating background image on the static root — so narrowing
+the root changes three boxes and repaints a gradient, and does not reflow or
+re-render a single node. There is no `ResizeObserver` on the canvas either, so
+React is not woken at all.
+
+**What is not free is letting the panel's contents re-wrap.** The last row is
+the naive version of the same animation, and it is the one that stutters: every
+label, select and table row re-laying out at every intermediate width doubled
+the worst frame in JavaScriptCore, 72ms against 36ms, and halved the number of
+frames actually painted — 5 or 6 against 10, which is a visible judder. So the
+panel's content column is pinned at its resting width with
+`grid-template-columns`, the subtree is laid out once, and while the box is
+narrower the content overhangs to the right and the workspace clips it. The
+panel's left edge and the canvas's right edge move together while its contents
+sit still relative to that edge, which is what a slide is. `check:browsers`
+asserts the pin as a computed style rather than asserting a frame timing, which
+in that harness would be flaky.
+
+The workspace carries `overflow: clip` for that clipping — `clip` rather than
+`hidden`, for the reason the tool runner has a paragraph about: `hidden` makes
+an element a scroll container, and a sticky element inside a scroller that never
+scrolls never moves.
+
 ### A phone, where a side panel and a canvas cannot both have the screen
 
 The sheet takes the axis that is not scarce. The canvas keeps its full size
@@ -1036,7 +1181,24 @@ still not tested anywhere**, for the reason in the limitations below.
   to produce output, so the deferral would last seconds and buy a loading state
   in a 320px panel.
 - **Persisting the rail width.** One drag to restore, against another storage
-  key to validate and migrate.
+  key to validate and migrate. Whether the panel is OPEN is persisted, and the
+  difference is argued above.
+- **A transform for the rail instead of its width.** Cheaper by nothing
+  measurable, and it slides the panel over a canvas that has already snapped to
+  its new size — the narrowing is the half of the animation that says where the
+  space came from.
+- **Animating the width without pinning the content column.** The same animation
+  and the naive version of it: the panel's contents re-wrap at every
+  intermediate width, which doubled the worst frame in one engine and halved the
+  frames painted.
+- **A `transitionend` on the grid track as the completion signal.** It would
+  have made the unmount depend on an engine interpolating
+  `grid-template-columns`, and on being able to tell that transition apart from
+  every hover inside the panel that bubbles one.
+- **A fourth affordance advertising the panel now it starts closed.** The node's
+  own blocked guidance already names the inspector in the state a new user
+  reaches on their first action, which is earlier than anything a banner could
+  manage.
 
 ## A file as an input
 
@@ -1710,6 +1872,13 @@ Five Zustand stores, split by what invalidates them:
 | `pipelineStore`   | per-node run status and results          | no                                        |
 | `attachmentStore` | the bytes behind each node's file inputs | no                                        |
 | `themeStore`      | selection, authored themes, draft        | `patchbay:theme:v1`, `patchbay:themes:v1` |
+
+One more key belongs to no store: `patchbay:inspector:v1`, a single boolean for
+whether the inspector is showing. It is read in a `useState` initialiser rather
+than through a store because it is needed for the first render — an effect would
+paint one frame of the wrong state, and here that frame would also start the
+enter animation on a panel that was supposed to be simply present. See
+[the node inspector](#the-node-inspector) for why it persists at all.
 
 `attachmentStore` is not persisted for the same reason `pipelineStore` is not
 part of the document — plus one of its own: a `File` cannot be serialised into

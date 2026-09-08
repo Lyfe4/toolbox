@@ -539,8 +539,14 @@ async function setInspector(page, open) {
   if (showing === open) return;
 
   await page.getByRole('button', { name: 'Inspector', exact: true }).click();
-  if (open) await panel.waitFor({ timeout: 10_000 });
-  await page.waitForTimeout(250);
+  /*
+   * Waited for in BOTH directions now, because closing is a slide: the panel
+   * stays on screen for the length of its own animation and leaves when that
+   * finishes. A fixed pause would be a race against a duration this file does
+   * not own.
+   */
+  await panel.waitFor({ state: open ? 'attached' : 'detached', timeout: 10_000 });
+  await page.waitForTimeout(200);
 }
 
 /* ========================================================================== *
@@ -607,8 +613,21 @@ async function checkInspector(browser, label) {
     await page.getByTestId('dialog-option-regex-tester').click();
     await page.waitForTimeout(500);
 
-    // Open by default at this width, because it costs the canvas nothing but
-    // width it can spare.
+    /*
+     * OPENED, RATHER THAN FOUND OPEN. The panel used to default to open at this
+     * width; it starts closed on a first visit now, because an empty panel
+     * explaining that there is nothing to inspect is not a useful first screen.
+     * `checkInspectorState` below asserts that starting point and the memory
+     * behind it; everything here is about the rail once it is showing.
+     */
+    check(
+      label,
+      'the inspector is closed on a first load, even where the rail would fit',
+      (await page.getByTestId('node-inspector').count()) === 0,
+      '',
+    );
+
+    await setInspector(page, true);
     const docked = await geometry();
     check(
       label,
@@ -669,6 +688,78 @@ async function checkInspector(browser, label) {
       JSON.stringify(typed),
     );
     await page.locator('[data-inspector-input]').first().fill('');
+
+    /* -- The divider is a hairline, and its target is not ----------------- */
+
+    /*
+     * A 1px RULE INSIDE A GENEROUS HIT AREA, WHICH ARE TWO SEPARATE BOXES.
+     *
+     * The handle used to paint its own hit area: a 4px sunken box with a border
+     * down each side, three visible edges where the instrument wants one. It is
+     * a transparent 8px column now with a `::before` that is the rule and an
+     * `::after` that is the target.
+     *
+     * jsdom can see neither half. `::before`'s used width is a computed style,
+     * which needs a layout engine; the hit area is only knowable by asking what
+     * is actually under a point, which needs one too.
+     */
+    const divider = await page.evaluate(() => {
+      const handle = document.querySelector('[data-testid="inspector-handle"]');
+      if (!handle) return null;
+      const box = handle.getBoundingClientRect();
+      const rule = getComputedStyle(handle, '::before');
+      const own = getComputedStyle(handle);
+
+      /*
+       * Probed rather than read: the grab area is a pseudo-element, so there is
+       * no box to measure through the DOM. Walking outwards from the centre and
+       * asking `elementFromPoint` what is there is what a pointer would find.
+       */
+      const midY = Math.round(box.top + box.height / 2);
+      const centre = Math.round(box.left + box.width / 2);
+      let left = centre;
+      while (document.elementFromPoint(left - 1, midY) === handle && centre - left < 120) left -= 1;
+      let right = centre;
+      while (document.elementFromPoint(right + 1, midY) === handle && right - centre < 120)
+        right += 1;
+
+      return {
+        box: Math.round(box.width),
+        rule: rule.inlineSize || rule.width,
+        ruleColour: rule.backgroundColor,
+        background: own.backgroundColor,
+        borders: `${own.borderLeftWidth}/${own.borderRightWidth}`,
+        hit: right - left + 1,
+      };
+    });
+
+    check(
+      label,
+      'the divider paints a one-pixel rule and nothing else',
+      divider !== null && divider.rule === '1px',
+      divider === null ? 'no handle' : `rule ${divider.rule} of a ${String(divider.box)}px column`,
+    );
+    check(
+      label,
+      'the divider paints no background and no border of its own',
+      divider !== null &&
+        /rgba\(0, 0, 0, 0\)|transparent/.test(divider.background) &&
+        divider.borders === '0px/0px',
+      divider === null
+        ? 'no handle'
+        : `background ${divider.background}, borders ${divider.borders}`,
+    );
+    /*
+     * The hit area has to be BIGGER than the rule, which is the whole point of
+     * separating them - and bigger than the column too, since the overhang is
+     * what costs the canvas nothing.
+     */
+    check(
+      label,
+      'the divider is easier to grab than a one-pixel line',
+      divider !== null && divider.hit > divider.box,
+      divider === null ? 'no handle' : `${String(divider.hit)}px target around a 1px rule`,
+    );
 
     /* -- The handle really moves the boundary ---------------------------- */
     const before = docked.canvas.width;
@@ -746,7 +837,8 @@ async function checkInspector(browser, label) {
     await narrowPage.getByTestId('dialog-option-base64').click();
     await narrowPage.waitForTimeout(400);
 
-    // Closed by default here, because it covers the thing it is describing.
+    // Closed on arrival here too, and here it always was: the sheet covers the
+    // thing it is describing.
     check(
       label,
       'the inspector is closed by default where it would cover the canvas',
@@ -1258,6 +1350,325 @@ async function checkRunnerLayout(browser, label) {
     );
   } finally {
     await shortContext.close().catch(() => {});
+  }
+}
+
+/* ========================================================================== *
+ * THE INSPECTOR'S DIVIDER, ITS MOTION AND ITS STARTING STATE
+ * ========================================================================== */
+
+/**
+ * A DIVIDER UNDER A FINGER.
+ *
+ * Takes the ENGINE rather than a browser, because a coarse pointer needs
+ * `launchTouchBrowser` - Gecko only reports one when the prefs were set at
+ * launch, for the cross-origin-isolation reason written down above it.
+ *
+ * `checkMobileLayout` measures every target against WCAG 2.5.5 at 320-430px and
+ * never sees this one: below the breakpoint the panel is a sheet and there is
+ * nothing to resize. A touchscreen at 1000px or more is the one place this
+ * control exists under a finger, and it was a 4px column there.
+ */
+async function checkInspectorTouch(engine, label) {
+  const browser = await launchTouchBrowser(engine);
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 900 },
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: 'Add tool' }).click();
+    await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+    await page.getByTestId('dialog-option-hash').click();
+    await page.waitForTimeout(400);
+    await setInspector(page, true);
+    await page.getByTestId('inspector-handle').waitFor({ timeout: 10_000 });
+
+    const coarse = await page.evaluate(() => {
+      const handle = document.querySelector('[data-testid="inspector-handle"]');
+      const box = handle.getBoundingClientRect();
+      const midY = Math.round(box.top + box.height / 2);
+      const centre = Math.round(box.left + box.width / 2);
+      let left = centre;
+      while (document.elementFromPoint(left - 1, midY) === handle && centre - left < 120) left -= 1;
+      let right = centre;
+      while (document.elementFromPoint(right + 1, midY) === handle && right - centre < 120)
+        right += 1;
+      return {
+        coarsePointer: window.matchMedia('(pointer: coarse)').matches,
+        rule: getComputedStyle(handle, '::before').inlineSize,
+        hit: right - left + 1,
+        box: Math.round(box.width),
+      };
+    });
+
+    check(
+      label,
+      'the emulated pointer really is coarse, so the 44px rule applies',
+      coarse.coarsePointer,
+      `pointer: coarse is ${String(coarse.coarsePointer)}`,
+    );
+    /*
+     * 44px is WCAG 2.5.5, and the tolerance is one pixel because the grid track
+     * boundary the probe walks out from is not always on a whole pixel.
+     */
+    check(
+      label,
+      'the divider meets the 44px touch minimum on a coarse pointer',
+      coarse.hit >= 43,
+      `${String(coarse.hit)}px target`,
+    );
+    /* And the rule itself does NOT grow with the target - that is the point. */
+    check(
+      label,
+      'and the visible rule is still a hairline under a finger',
+      coarse.rule === '1px',
+      `rule ${coarse.rule} inside a ${String(coarse.hit)}px target`,
+    );
+
+    /* -- And it survives forced colours ---------------------------------- */
+
+    /*
+     * THE COST OF PAINTING THE RULE AS A BACKGROUND, PAID BACK EXPLICITLY.
+     *
+     * In forced-colors mode the OS replaces every author background with its
+     * own Canvas, so a one-pixel strip of `--pb-border-hairline` would become a
+     * one-pixel strip of the surface behind it and the divider would vanish.
+     * The version this replaced used `border-inline`, which the UA repaints in
+     * `CanvasText` for free - so the regression would have been silent, and
+     * silent for exactly the users who need a boundary most.
+     *
+     * Asserted rather than trusted, because the fix is one media query and the
+     * failure is invisible in every other mode.
+     */
+    const forced = await browser.newContext({
+      viewport: { width: 1280, height: 900 },
+      forcedColors: 'active',
+    });
+    const forcedPage = await forced.newPage();
+    try {
+      await forcedPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+      await forcedPage.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
+      await setInspector(forcedPage, true);
+      await forcedPage.getByTestId('inspector-handle').waitFor({ timeout: 10_000 });
+
+      const painted = await forcedPage.evaluate(() => {
+        const handle = document.querySelector('[data-testid="inspector-handle"]');
+        const rule = getComputedStyle(handle, '::before');
+        const surface = getComputedStyle(
+          document.querySelector('[data-testid="node-inspector"]'),
+        ).backgroundColor;
+        return { rule: rule.backgroundColor, width: rule.inlineSize, surface };
+      });
+
+      check(
+        label,
+        'the divider is still visible under forced colours',
+        painted.rule !== painted.surface && painted.width === '1px',
+        `rule ${painted.rule} against a ${painted.surface} panel`,
+      );
+    } finally {
+      await forced.close().catch(() => {});
+    }
+  } finally {
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
+  }
+}
+
+/**
+ * THE SLIDE, AND THE STATE THE PANEL STARTS IN.
+ *
+ * Both are things jsdom cannot see. It runs no animations at all - so the unit
+ * suite can assert the state machine and not one pixel of movement - and it has
+ * no layout, so "the canvas narrowed with the panel" is not a question it can
+ * answer.
+ *
+ * WHY THE WIDTH IS WHAT ANIMATES. The rail is a grid track and the canvas is
+ * meant to narrow with it, so a transform would slide the panel over a canvas
+ * that had already snapped to its new size. Measured on a 48-node canvas with a
+ * match table in the panel, against an idle baseline in the same page: the
+ * width animation's worst frame is within about 2ms of no animation at all in
+ * Gecko and indistinguishable from it in JavaScriptCore, because nothing inside
+ * the canvas depends on the root's width - the nodes and wires sit on a 0x0
+ * transformed plane and the grid is a repeating background image. What is NOT
+ * free is letting the panel's contents re-wrap at every intermediate width:
+ * that doubled the worst frame in JavaScriptCore (72ms against 36ms) and halved
+ * the number of frames actually painted, which is why the content column is
+ * pinned at the resting width. This asserts the pin is in place.
+ */
+async function checkInspectorMotion(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: 'Add tool' }).click();
+    await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+    await page.getByTestId('dialog-option-hash').click();
+    await page.waitForTimeout(400);
+
+    /* -- It starts closed, and remembers ---------------------------------- */
+    check(
+      label,
+      'the inspector is closed on a first load rather than explaining itself',
+      (await page.getByTestId('node-inspector').count()) === 0,
+      '',
+    );
+
+    await setInspector(page, true);
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
+    /*
+     * A REAL RELOAD, which is the only way to test this: the panel is closed on
+     * a FIRST visit and remembered after that, so "closed on first load" and
+     * "the user's choice survives" are two claims and this is the second one.
+     */
+    check(
+      label,
+      'and it comes back open after a reload once the user has opened it',
+      (await page.getByTestId('node-inspector').count()) === 1,
+      '',
+    );
+
+    /* -- The slide -------------------------------------------------------- */
+
+    /*
+     * Sampled per frame across one close and one open. What is asserted is that
+     * the panel passed through intermediate widths rather than jumping, and
+     * that the canvas's right edge tracked the panel's left edge the whole way
+     * - which is the difference between animating the width and animating a
+     * transform over a canvas that has already resized.
+     */
+    const slide = await page.evaluate(async () => {
+      const canvas = document.querySelector('[data-testid="canvas-root"]');
+      const samples = [];
+      let stop = false;
+
+      const tick = () => {
+        const panel = document.querySelector('[data-testid="node-inspector"]');
+        samples.push({
+          panel: panel ? panel.getBoundingClientRect() : null,
+          canvasRight: canvas.getBoundingClientRect().right,
+        });
+        if (!stop) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+
+      const root = document.querySelector('[data-testid="canvas-root"]');
+      const press = () => {
+        root.focus();
+        root.dispatchEvent(new KeyboardEvent('keydown', { key: 'i', bubbles: true }));
+      };
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      press();
+      await wait(400);
+      press();
+      await wait(400);
+      stop = true;
+      await wait(50);
+
+      const withPanel = samples.filter((sample) => sample.panel !== null);
+      const widths = withPanel.map((sample) => Math.round(sample.panel.width));
+      /* Intermediate: on screen, but not yet at rest. */
+      const partial = new Set(widths.filter((width) => width > 0 && width < 335));
+      /*
+       * The gap between the canvas's right edge and the panel's left edge. It
+       * is the resize handle's own column and must stay that width throughout,
+       * which is what "they moved together" means.
+       */
+      const gaps = withPanel
+        .filter((sample) => sample.panel.width > 0)
+        .map((sample) => Math.round(sample.panel.left - sample.canvasRight));
+
+      return {
+        frames: samples.length,
+        steps: partial.size,
+        worstGap: gaps.length > 0 ? Math.max(...gaps) : null,
+        bestGap: gaps.length > 0 ? Math.min(...gaps) : null,
+      };
+    });
+
+    check(
+      label,
+      'the panel slides through intermediate widths rather than appearing',
+      slide.steps >= 3,
+      `${String(slide.steps)} intermediate widths painted over ${String(slide.frames)} frames`,
+    );
+    check(
+      label,
+      'the canvas narrows in step with it, never overlapping and never gapping',
+      slide.worstGap !== null && slide.worstGap <= 9 && slide.bestGap >= -1,
+      `gap between canvas and panel stayed ${String(slide.bestGap)}..${String(slide.worstGap)}px`,
+    );
+
+    /*
+     * THE CONTENT COLUMN IS PINNED, which is the measured half of the design:
+     * an unpinned panel re-wraps every label and table row at every
+     * intermediate width, and that is what turns a free animation into a
+     * stutter. Asserted as a computed style rather than as a frame timing,
+     * because a timing assertion in this harness would be flaky and this is the
+     * thing that actually has to stay true.
+     */
+    const pinned = await page.evaluate(() => {
+      const panel = document.querySelector('[data-testid="node-inspector"]');
+      return {
+        columns: getComputedStyle(panel).gridTemplateColumns,
+        width: Math.round(panel.getBoundingClientRect().width),
+      };
+    });
+    check(
+      label,
+      "the panel's content column is pinned to its resting width, so nothing re-wraps mid-slide",
+      Math.abs(Number.parseFloat(pinned.columns) - pinned.width) <= 1,
+      `column ${pinned.columns} against a ${String(pinned.width)}px panel`,
+    );
+
+    /* -- Reduced motion ends it rather than shortening it ----------------- */
+
+    /*
+     * `global.css` collapses every duration to 1ms rather than to 0, precisely
+     * so `animationend` still fires and the phase machine cannot stall. This
+     * asserts the outcome a user of that preference gets: the panel arrives
+     * without a slide, and it does arrive.
+     */
+    const reduced = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      reducedMotion: 'reduce',
+    });
+    const reducedPage = await reduced.newPage();
+    try {
+      await reducedPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+      await reducedPage.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
+      await setInspector(reducedPage, false);
+
+      const instant = await reducedPage.evaluate(async () => {
+        const root = document.querySelector('[data-testid="canvas-root"]');
+        root.focus();
+        root.dispatchEvent(new KeyboardEvent('keydown', { key: 'i', bubbles: true }));
+        // Two frames: enough for the panel to be laid out, far less than a slide.
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const panel = document.querySelector('[data-testid="node-inspector"]');
+        return {
+          duration: panel ? getComputedStyle(panel).animationDuration : null,
+          width: panel ? Math.round(panel.getBoundingClientRect().width) : null,
+        };
+      });
+
+      check(
+        label,
+        'reduced motion ends the slide rather than merely shortening it',
+        instant.duration === '0.001s' && instant.width >= 335,
+        `duration ${String(instant.duration)}, panel ${String(instant.width)}px two frames in`,
+      );
+    } finally {
+      await reduced.close().catch(() => {});
+    }
+  } finally {
+    await context.close().catch(() => {});
   }
 }
 
@@ -1968,8 +2379,12 @@ async function checkAxe(browser, label) {
     /*
      * And with the inspector open on a node, which is a landmark, three
      * headings, a form and an output view that none of the scans above reach.
-     * Opened by the toolbar toggle rather than by pressing I, so the pointer
-     * route is the one being scanned.
+     *
+     * Opened EXPLICITLY, which matters more than it used to: the panel starts
+     * closed now, so a scan that assumed it was open by default would silently
+     * stop covering it. `inspectFirstNode` presses Enter on a node, which is
+     * the route that both selects and opens - the comment here used to claim
+     * the toolbar toggle, which is not what the line below does.
      */
     await inspectFirstNode(page);
     await page.waitForTimeout(400);
@@ -4891,6 +5306,8 @@ async function runChecks(engine, label) {
     await checkChromeWidths(browser, label);
     await checkRunnerLayout(browser, label);
     await checkInspector(browser, label);
+    await checkInspectorMotion(browser, label);
+    await checkInspectorTouch(engine, label);
     await checkDialogScroll(browser, label);
     await checkRouteFeedback(browser, label);
     await checkOffline(browser, label);
@@ -5521,11 +5938,27 @@ async function checkCanvasFileInput(browser, label) {
      * guess the user gets wrong on overlapping nodes. Colour alone would not
      * do - the border STYLE changes too, which is the rule every state in this
      * app is held to - and a computed style is something only an engine has.
+     *
+     * POLLED, NOT READ ONCE, and that is a fix rather than a precaution. The
+     * dragover above sets React state, and this used to read the computed style
+     * one round trip later on the assumption that a render had happened in
+     * between. It usually had: this passed in both engines three runs in a row
+     * and then failed in WebKit alone, reporting the resting `solid 1px` -
+     * which is not a defect in the highlight, it is a check racing a commit it
+     * never waited for. The state stays set until a drop or a real dragleave,
+     * so there is nothing to re-dispatch; there is only something to wait for.
      */
-    const highlight = await node.evaluate((el) => {
-      const style = getComputedStyle(el);
-      return { style: style.borderTopStyle, width: style.borderTopWidth };
-    });
+    const highlight = await (async () => {
+      const deadline = Date.now() + 5_000;
+      for (;;) {
+        const style = await node.evaluate((el) => {
+          const computed = getComputedStyle(el);
+          return { style: computed.borderTopStyle, width: computed.borderTopWidth };
+        });
+        if (style.style === 'dashed' || Date.now() > deadline) return style;
+        await dropPage.waitForTimeout(50);
+      }
+    })();
     check(
       label,
       'the node a file is dragged over is marked by more than its colour',
