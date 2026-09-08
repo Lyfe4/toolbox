@@ -300,6 +300,7 @@ describe('nodes', () => {
             position: { x: 400, y: 0 },
             options: {},
             inputs: {},
+            fileInputs: {},
           },
           left: {
             id: 'left',
@@ -307,6 +308,7 @@ describe('nodes', () => {
             position: { x: 0, y: 0 },
             options: {},
             inputs: {},
+            fileInputs: {},
           },
           below: {
             id: 'below',
@@ -314,6 +316,7 @@ describe('nodes', () => {
             position: { x: 200, y: 400 },
             options: {},
             inputs: {},
+            fileInputs: {},
           },
         },
         // Insertion order deliberately does NOT match spatial order.

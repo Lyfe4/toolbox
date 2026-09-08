@@ -33,8 +33,16 @@ function makeEngine() {
   return (options: ExecuteOptions): Promise<ToolResult<ToolOutputs>> => engine.execute(options);
 }
 
+/**
+ * `fileInputs` is filled in here rather than on every literal below.
+ *
+ * Every node in this file is fed by typed text or by a wire, so none of them
+ * has a file - and spelling `fileInputs: {}` out twenty times would say
+ * nothing except that the field exists. The tests that are ABOUT a file input
+ * set it deliberately; see `attachments.test.ts`.
+ */
 function graphFrom(
-  nodes: readonly CanvasNode[],
+  nodes: readonly (Omit<CanvasNode, 'fileInputs'> & Partial<Pick<CanvasNode, 'fileInputs'>>)[],
   wires: readonly (readonly [string, string, string, string])[],
 ): GraphData {
   const edges: GraphData['edges'] = {};
@@ -53,7 +61,7 @@ function graphFrom(
   });
 
   return {
-    nodes: Object.fromEntries(nodes.map((n) => [n.id, n])),
+    nodes: Object.fromEntries(nodes.map((n) => [n.id, { fileInputs: {}, ...n }])),
     nodeOrder: nodes.map((n) => n.id),
     edges,
     edgeOrder,
@@ -213,7 +221,7 @@ describe('a real pipeline', () => {
       return engine(options);
     };
 
-    const nodes: CanvasNode[] = [
+    const nodes: (Omit<CanvasNode, 'fileInputs'> & Partial<Pick<CanvasNode, 'fileInputs'>>)[] = [
       {
         id: 'a',
         toolId: 'base64',

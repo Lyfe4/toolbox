@@ -68,7 +68,7 @@ export function currentInputPortId(toolId: unknown, portId: unknown): unknown {
 }
 
 /**
- * Rewrites the keys of a node's typed-in inputs onto their current ports.
+ * Rewrites the keys of a record keyed by input port onto their current ports.
  *
  * Untrusted input, like everything else read back from storage: a key that is
  * not a string, or a value that is not one, is passed through for the schema
@@ -76,6 +76,13 @@ export function currentInputPortId(toolId: unknown, portId: unknown): unknown {
  * port keeps the FIRST, because a migration that silently picks the last of
  * two conflicting values is a migration nobody can reason about - and the pair
  * cannot arise from any table this module has ever held.
+ *
+ * THERE ARE TWO SUCH RECORDS ON A NODE NOW, not one: `inputs` holds typed text
+ * per input port and `fileInputs` holds the name of a file chosen for one. This
+ * function is generic over the shape rather than tied to either, so the next
+ * port rename has to run it over BOTH - a `fileInputs` key left naming a
+ * retired port is a file the engine silently ignores while the node goes on
+ * claiming it. `retiredPorts.test.ts` pins that it works on either.
  */
 export function migrateInputKeys(toolId: unknown, inputs: unknown): unknown {
   if (typeof inputs !== 'object' || inputs === null || Array.isArray(inputs)) return inputs;

@@ -163,8 +163,9 @@ export function instantiatePreset(
       toolId: spec.toolId,
       position: { x: origin.x + spec.offset.x, y: origin.y + spec.offset.y },
       options: { ...spec.options },
-      // No bundled data, ever.
+      // No bundled data, ever - neither typed text nor a file.
       inputs: {},
+      fileInputs: {},
     };
   });
 

@@ -18,7 +18,7 @@ import type { ExecuteOptions } from './engine';
  * Fixtures
  * -------------------------------------------------------------------------- */
 
-type ToolName = 'base64' | 'structured-data' | 'hash' | 'diff';
+type ToolName = 'base64' | 'structured-data' | 'hash' | 'diff' | 'image-convert';
 
 function node(
   id: string,
@@ -26,12 +26,12 @@ function node(
   input = '',
   options: Record<string, unknown> = {},
 ): CanvasNode {
-  return { id, toolId, position: { x: 0, y: 0 }, options, inputs: { input } };
+  return { id, toolId, position: { x: 0, y: 0 }, options, inputs: { input }, fileInputs: {} };
 }
 
 /** A diff node, which is the one tool with two required input ports. */
 function diffNode(id: string, inputs: Record<string, string> = {}): CanvasNode {
-  return { id, toolId: 'diff', position: { x: 0, y: 0 }, options: {}, inputs };
+  return { id, toolId: 'diff', position: { x: 0, y: 0 }, options: {}, inputs, fileInputs: {} };
 }
 
 function graphOf(
@@ -615,5 +615,236 @@ describe('scheduling', () => {
     });
 
     expect(summary.states.a?.durationMs).toBeGreaterThan(0);
+  });
+});
+
+/* ========================================================================== *
+ * A file on an input port
+ * ========================================================================== */
+
+/**
+ * WIRE, THEN FILE, THEN TEXT.
+ *
+ * A node's input can now come from three places, and the engine has to pick
+ * one. The order is by how deliberate the act was, and it is asserted here
+ * rather than only through the UI because it is an engine rule: `preflight`
+ * decides whether a node can run at all from it, and `buildInputs` decides what
+ * the tool is handed.
+ *
+ * The bytes are injected through `deps.fileInput`, which is why these tests
+ * need no `File`, no `FileReader` and no canvas - the document says a port HAS
+ * a file, and only the session can say whether the bytes are still there.
+ */
+function fileNode(id: string, toolId: ToolName, portId = 'input', name = 'notes.txt'): CanvasNode {
+  return {
+    id,
+    toolId,
+    position: { x: 0, y: 0 },
+    options: {},
+    inputs: {},
+    fileInputs: { [portId]: { name, size: 4, token: 7 } },
+  };
+}
+
+const FILE_BYTES = Uint8Array.from([1, 2, 3, 4]);
+
+function fileValue(filename = 'notes.txt') {
+  return { type: 'bytes', bytes: FILE_BYTES, mediaType: null, filename } as const;
+}
+
+describe('a file as a node input', () => {
+  it('satisfies a required port with no wire and nothing typed into it', async () => {
+    const { execute, calls } = recordingExecutor();
+
+    const summary = await runPipeline(graphOf([fileNode('a', 'hash')]), {
+      execute,
+      fileInput: () => fileValue(),
+    });
+
+    expect(summary.states.a?.status).toBe('ok');
+    expect(calls[0]?.inputs.input).toEqual(fileValue());
+  });
+
+  it('beats typed text on the same port', async () => {
+    const { execute, calls } = recordingExecutor();
+    const typed: CanvasNode = { ...fileNode('a', 'hash'), inputs: { input: 'typed earlier' } };
+
+    await runPipeline(graphOf([typed]), { execute, fileInput: () => fileValue() });
+
+    expect(calls[0]?.inputs.input?.type).toBe('bytes');
+  });
+
+  /*
+   * A wire wins over a file, because a wire wins over everything: it is the
+   * only input whose value the user cannot see until the run happens, and the
+   * inspector draws neither control for a wired port precisely so that nothing
+   * suggests otherwise.
+   */
+  it('loses to a wire on the same port', async () => {
+    const { execute, calls } = recordingExecutor();
+    const source = node('src', 'base64', 'x');
+    const target = fileNode('a', 'hash');
+
+    await runPipeline(graphOf([source, target], [['src', 'a']]), {
+      execute,
+      fileInput: () => fileValue(),
+    });
+
+    const call = calls.find((entry) => entry.toolId === 'hash');
+    expect(call?.inputs.input).toEqual({ type: 'text', text: 'out' });
+  });
+
+  /*
+   * THE RELOAD CASE, AT THE ENGINE LEVEL. The document names a file and the
+   * session cannot produce it, which is what a page load leaves behind. It is
+   * its own blocked reason: "Needs input" would be true and would send the user
+   * to a text box for a port they fed a photograph.
+   */
+  it('blocks and names the file when the document remembers one the session lacks', async () => {
+    const { execute } = recordingExecutor();
+
+    const summary = await runPipeline(graphOf([fileNode('a', 'hash', 'input', 'holiday.png')]), {
+      execute,
+      // No `fileInput` at all: exactly the state after a reload.
+    });
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(summary.states.a?.status).toBe('blocked');
+    expect(summary.states.a?.blockedReason).toBe('"holiday.png" needs choosing again');
+  });
+
+  it('names which port on a tool with two of them', async () => {
+    const { execute } = recordingExecutor();
+    const withOne: CanvasNode = {
+      ...diffNode('a', { original: 'left' }),
+      fileInputs: { changed: { name: 'right.txt', size: 4, token: 1 } },
+    };
+
+    const summary = await runPipeline(graphOf([withOne]), { execute });
+
+    expect(summary.states.a?.blockedReason).toBe('Changed: "right.txt" needs choosing again');
+  });
+
+  /*
+   * A bytes-only port's blocked reason used to read `Needs a wire into Image`,
+   * which described half of what would work - and the half it left out was the
+   * only way to start an image conversion on the canvas at all.
+   */
+  it('offers a file, not only a wire, when a bytes-only port is empty', async () => {
+    const { execute } = recordingExecutor();
+    const bytesOnly: CanvasNode = {
+      id: 'a',
+      toolId: 'image-convert',
+      position: { x: 0, y: 0 },
+      options: {},
+      inputs: {},
+      fileInputs: {},
+    };
+
+    const summary = await runPipeline(graphOf([bytesOnly]), { execute });
+
+    expect(summary.states.a?.blockedReason).toBe('Needs a file or a wire into Image');
+  });
+
+  /*
+   * ONE FILE, TWO CONSUMERS. Binary payload ownership has bitten before:
+   * buffers are borrowed by default and transferred only on an explicit opt-in,
+   * because a fan-out detaches the second consumer's view. A file is a second
+   * source of one buffer reaching several tools, so it is asserted here too.
+   */
+  it('feeds two nodes from one file without detaching either', async () => {
+    const seen: number[][] = [];
+    const { execute } = recordingExecutor((options) => {
+      const value = options.inputs.input;
+      if (value?.type === 'bytes') seen.push(Array.from(value.bytes));
+      return ok({ output: { type: 'text', text: 'out' } });
+    });
+
+    const summary = await runPipeline(graphOf([fileNode('a', 'hash'), fileNode('b', 'hash')]), {
+      execute,
+      fileInput: () => fileValue(),
+    });
+
+    expect(summary.failed).toBe(0);
+    expect(seen).toEqual([
+      [1, 2, 3, 4],
+      [1, 2, 3, 4],
+    ]);
+  });
+
+  it('is borrowed rather than transferred, so nothing can detach it', async () => {
+    const { execute, calls } = recordingExecutor();
+
+    await runPipeline(graphOf([fileNode('a', 'hash')]), { execute, fileInput: () => fileValue() });
+
+    expect(calls[0]?.ownership).toBe('borrow');
+  });
+});
+
+describe('a file in the cache key', () => {
+  const NO_UPSTREAM: readonly UpstreamRef[] = [];
+
+  /*
+   * Two different files can share a name and a size. The token is what tells
+   * them apart, and serving the first one's answer for the second is the worst
+   * failure this cache can have: nobody reports it, because nothing looks
+   * wrong.
+   */
+  it('changes when the file changes but its name and size do not', () => {
+    const first = fileNode('a', 'hash');
+    const second: CanvasNode = {
+      ...first,
+      fileInputs: { input: { name: 'notes.txt', size: 4, token: 8 } },
+    };
+
+    expect(nodeCacheKey(first, NO_UPSTREAM)).not.toBe(nodeCacheKey(second, NO_UPSTREAM));
+  });
+
+  it('is unchanged when the same file is still on the same port', () => {
+    expect(nodeCacheKey(fileNode('a', 'hash'), NO_UPSTREAM)).toBe(
+      nodeCacheKey(fileNode('a', 'hash'), NO_UPSTREAM),
+    );
+  });
+
+  /*
+   * The same file on a DIFFERENT port is a different node, for the reason the
+   * upstream refs are sorted by receiving port: which port a value arrives at
+   * is part of what the node is.
+   */
+  it('changes when a file moves between ports', () => {
+    const onOriginal: CanvasNode = {
+      ...diffNode('a'),
+      fileInputs: { original: { name: 'x.txt', size: 1, token: 2 } },
+    };
+    const onChanged: CanvasNode = {
+      ...diffNode('a'),
+      fileInputs: { changed: { name: 'x.txt', size: 1, token: 2 } },
+    };
+
+    expect(nodeCacheKey(onOriginal, NO_UPSTREAM)).not.toBe(nodeCacheKey(onChanged, NO_UPSTREAM));
+  });
+
+  /*
+   * A TOKEN RESTORED FROM STORAGE POINTS AT NOTHING, and cannot collide its way
+   * into a wrong answer. The counter is session-scoped, so a reloaded reference
+   * can carry a token a new attachment later reuses - but the cache only holds
+   * entries for keys computed while a file was actually attached, and a node
+   * with a remembered-but-missing file is `blocked`, which is never cached.
+   */
+  it('cannot serve a cached answer for a file that was never loaded', async () => {
+    const cache: PipelineCache = new Map();
+    const { execute } = recordingExecutor();
+    const graph = graphOf([fileNode('a', 'hash', 'input', 'holiday.png')]);
+
+    // The reload: blocked, and nothing cached.
+    const blocked = await runPipeline(graph, { execute, cache });
+    expect(blocked.states.a?.status).toBe('blocked');
+    expect(cache.has('a')).toBe(false);
+
+    // Choosing the file again runs it for real rather than hitting anything.
+    const chosen = await runPipeline(graph, { execute, cache, fileInput: () => fileValue() });
+    expect(chosen.states.a?.status).toBe('ok');
+    expect(chosen.cached).toBe(0);
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 });

@@ -68,7 +68,7 @@ function node(
   options: Record<string, unknown> = {},
   inputs: Record<string, string> = {},
 ): CanvasNode {
-  return { id, toolId, position: { x: 0, y: 0 }, options, inputs };
+  return { id, toolId, position: { x: 0, y: 0 }, options, inputs, fileInputs: {} };
 }
 
 function textAt(states: PipelineState, id: string, port: string): string {

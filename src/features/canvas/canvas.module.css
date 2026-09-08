@@ -542,6 +542,34 @@
   opacity: 0.45;
 }
 
+/*
+ * THE NODE A FILE IS ABOUT TO LAND ON.
+ *
+ * A dashed accent border at the strong width, matching `.dropZoneActive` in the
+ * runner's stylesheet so the two drop affordances read as the same gesture, and
+ * lifted above its neighbours - because on a canvas of overlapping nodes a
+ * border can be behind the node in front of it.
+ *
+ * NOT COLOUR ALONE: the border STYLE changes from solid to dashed as well, so
+ * the target is identifiable in greyscale and in forced-colors mode, which is
+ * the platform rule this repo holds every state to.
+ *
+ * AND NO FILL, WHICH WAS THE FIRST VERSION. `--pb-accent-subtle` tinted the
+ * whole node, which puts every string on it - the title, the summary, the
+ * status - over a token that is NOT in `CONTRAST_PAIRS` and is a light colour
+ * in two of the four themes. Nothing would have caught that: the state exists
+ * only while a pointer is dragging, so neither `themes.contrast.test.ts`, which
+ * iterates a known list of pairs, nor axe in `check:browsers`, which sees a
+ * resting page, can reach it. A 2px dashed accent border on a raised node
+ * identifies the target without asking a question no test can answer.
+ */
+.nodeDropTarget {
+  border-style: dashed;
+  border-color: var(--pb-border-accent);
+  border-width: var(--pb-border-width-strong);
+  z-index: var(--pb-z-raised);
+}
+
 /* --- Overlays ----------------------------------------------------------- */
 
 /*
@@ -886,6 +914,11 @@
   }
 
   .nodeSelected {
+    border-color: Highlight;
+  }
+
+  /* The dashed style survives forced colours; the accent does not. */
+  .nodeDropTarget {
     border-color: Highlight;
   }
 

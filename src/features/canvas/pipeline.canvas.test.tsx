@@ -31,7 +31,7 @@ function renderCanvas() {
 }
 
 function node(id: string, toolId: CanvasNode['toolId'], x = 0, y = 0): CanvasNode {
-  return { id, toolId, position: { x, y }, options: {}, inputs: { input: 'seed' } };
+  return { id, toolId, position: { x, y }, options: {}, inputs: { input: 'seed' }, fileInputs: {} };
 }
 
 function seed(nodes: readonly CanvasNode[], edges: readonly CanvasEdge[] = []): void {

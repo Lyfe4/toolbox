@@ -414,3 +414,54 @@ describe('an input port that only accepts bytes', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('a file the port cannot use, on the tool page', () => {
+  /*
+   * REFUSED WHEN IT IS CHOSEN, NOT WHEN RUN IS PRESSED.
+   *
+   * The control is handed the PORT its file will feed, so it can answer this
+   * from the sniff before the file has even been read. It used to be answered
+   * inside `buildInputValue` at run time instead: the file was accepted, named
+   * back to the user as though it were fine, and the refusal arrived only when
+   * they pressed a button that was never going to work.
+   *
+   * `jwt-decode`'s Token is the text-only port in the set - a compact literal
+   * rather than a document - so a PNG has nothing to become there.
+   */
+  it('is refused at the moment of selection, naming what it looked like', async () => {
+    const user = userEvent.setup();
+    renderRunner(getManifestEntry('jwt-decode'));
+
+    const png = new File(
+      [Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+      'token.txt',
+      // The DECLARED type says text, and it is ignored: the bytes decide.
+      { type: 'text/plain' },
+    );
+    await user.upload(screen.getByLabelText('Choose file'), png);
+
+    expect(
+      await screen.findByText(/That file looks like png image, and Token needs text\./),
+    ).toBeInTheDocument();
+    // And it is not named back as though it had been accepted.
+    expect(screen.queryByText('token.txt')).not.toBeInTheDocument();
+  });
+
+  /*
+   * And a size limit likewise. `color-convert` takes a 4 kB colour literal,
+   * which makes it the cheapest tool in the set to overshoot.
+   */
+  it('refuses an oversized file by name, size and limit', async () => {
+    const user = userEvent.setup();
+    renderRunner(getManifestEntry('color-convert'));
+
+    await user.upload(
+      screen.getByLabelText('Choose file'),
+      new File(['x'.repeat(8192)], 'huge.txt', { type: 'text/plain' }),
+    );
+
+    expect(
+      await screen.findByText(/"huge\.txt" is 8\.0 kB, over this tool's 4\.0 kB limit\./),
+    ).toBeInTheDocument();
+  });
+});

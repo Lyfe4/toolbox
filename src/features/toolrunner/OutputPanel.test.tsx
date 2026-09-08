@@ -131,12 +131,11 @@ describe('comparisonFor', () => {
   const loaded = (name: string, mediaType: string | null, label: string): LoadedFile => ({
     file: new File([new Uint8Array(4)], name),
     sniff: { mediaType, label, isProbablyText: mediaType === 'text/plain' },
+    value: { type: 'bytes', bytes: Uint8Array.from([1, 2, 3, 4]), mediaType, filename: name },
   });
 
-  const bytes = Uint8Array.from([1, 2, 3, 4]);
-
   it('offers the source when the run was given an image', () => {
-    expect(comparisonFor(loaded('a.png', 'image/png', 'PNG image'), bytes)).toEqual({
+    expect(comparisonFor(loaded('a.png', 'image/png', 'PNG image'))).toEqual({
       blob: expect.any(File) as File,
       label: 'PNG image',
       byteLength: 4,
@@ -144,7 +143,7 @@ describe('comparisonFor', () => {
   });
 
   it('offers nothing for a file that is not an image', () => {
-    expect(comparisonFor(loaded('a.csv', 'text/plain', 'Text'), bytes)).toBeNull();
+    expect(comparisonFor(loaded('a.csv', 'text/plain', 'Text'))).toBeNull();
   });
 
   /*
@@ -152,14 +151,10 @@ describe('comparisonFor', () => {
    * system will cheerfully report an image; nothing here believes it.
    */
   it('offers nothing for a file whose bytes are not an image', () => {
-    expect(comparisonFor(loaded('photo.png', null, 'Binary data'), bytes)).toBeNull();
-  });
-
-  it('offers nothing when the run read no bytes from the file', () => {
-    expect(comparisonFor(loaded('a.png', 'image/png', 'PNG image'), null)).toBeNull();
+    expect(comparisonFor(loaded('photo.png', null, 'Binary data'))).toBeNull();
   });
 
   it('offers nothing when there was no file', () => {
-    expect(comparisonFor(null, bytes)).toBeNull();
+    expect(comparisonFor(null)).toBeNull();
   });
 });

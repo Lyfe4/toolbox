@@ -27,6 +27,7 @@ function node(
     position: { x: 0, y: 0 },
     options: { mode: 'decode' },
     inputs: { input },
+    fileInputs: {},
   };
 }
 
@@ -125,6 +126,50 @@ describe('user data never enters a share link', () => {
     }
   });
 
+  /*
+   * A FILENAME NEVER TRAVELS EITHER, AND IT IS NOT MERELY THE SAME RULE AGAIN.
+   *
+   * A file's bytes could not go in a URL at any size, so the only question was
+   * its NAME - and a filename is frequently the most revealing single string in
+   * a document: `Q3-layoffs.xlsx` says something a pipeline's SHAPE does not.
+   * The recipient has no file and would gain nothing but the name.
+   *
+   * Driven through the real encoder rather than through `toSharePayload`, so
+   * the compressed bytes are checked as well as the structure they came from.
+   */
+  it('never encodes the name of a chosen file into the URL', async () => {
+    const graph = pipeline();
+    const first = graph.nodeOrder[0];
+    expect(first).toBeDefined();
+    if (first === undefined) return;
+    const target = graph.nodes[first];
+    expect(target).toBeDefined();
+    if (!target) return;
+
+    const withFile: GraphData = {
+      ...graph,
+      nodes: {
+        ...graph.nodes,
+        [first]: {
+          ...target,
+          fileInputs: { input: { name: 'Q3-layoffs.xlsx', size: 4096, token: 3 } },
+        },
+      },
+    };
+
+    const param = await encodeGraphToParam(withFile);
+    expect(param).not.toContain('Q3-layoffs');
+
+    const decoded = await decodeParamToGraph(param);
+    expect(decoded.status).toBe('ok');
+    if (decoded.status !== 'ok') return;
+    expect(JSON.stringify(decoded.graph)).not.toContain('Q3-layoffs');
+    // And every node comes back asking for a file rather than claiming one.
+    for (const id of decoded.graph.nodeOrder) {
+      expect(decoded.graph.nodes[id]?.fileInputs).toEqual({});
+    }
+  });
+
   it('has no field for input in the payload schema at all', () => {
     // Belt and braces: even a hand-crafted payload cannot carry input.
     const withInput = sharePayloadSchema.safeParse({
@@ -154,6 +199,7 @@ describe('secret options never enter a share link', () => {
         position: { x: 0, y: 0 },
         options: { key: 'super-secret-signing-key', keyEncoding: 'utf8', clockToleranceSec: 30 },
         inputs: {},
+        fileInputs: {},
       },
     },
     nodeOrder: ['n1'],
@@ -248,8 +294,22 @@ describe('round trip', () => {
   it('restores a counter past every id in a sparse link', async () => {
     const sparse: GraphData = {
       nodes: {
-        n3: { id: 'n3', toolId: 'base64', position: { x: 0, y: 0 }, options: {}, inputs: {} },
-        n7: { id: 'n7', toolId: 'hash', position: { x: 320, y: 0 }, options: {}, inputs: {} },
+        n3: {
+          id: 'n3',
+          toolId: 'base64',
+          position: { x: 0, y: 0 },
+          options: {},
+          inputs: {},
+          fileInputs: {},
+        },
+        n7: {
+          id: 'n7',
+          toolId: 'hash',
+          position: { x: 320, y: 0 },
+          options: {},
+          inputs: {},
+          fileInputs: {},
+        },
       },
       nodeOrder: ['n3', 'n7'],
       edges: {},

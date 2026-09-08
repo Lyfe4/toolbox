@@ -4908,6 +4908,8 @@ async function runChecks(engine, label) {
     await checkTruncation(browser, label);
     await checkPreviewSandbox(browser, label);
     await checkPipeline(browser, label);
+    await checkCanvasFileInput(browser, label);
+    await checkFileInputTouch(engine, label);
     await checkImageConvert(browser, label);
     await checkThemeEditor(browser, label);
   } finally {
@@ -5274,6 +5276,539 @@ async function checkPipeline(browser, label) {
     );
   } finally {
     await context.close();
+  }
+}
+
+/* ========================================================================== *
+ * A FILE AS A NODE'S INPUT
+ * ========================================================================== */
+
+/**
+ * PUTTING A FILE ON THE CANVAS, IN A REAL ENGINE.
+ *
+ * The unit suite drives the whole feature and cannot see the three things that
+ * decide whether it works for a person:
+ *
+ *   1. A REAL FILE PICKER. jsdom's `upload` fakes the change event; only
+ *      `setInputFiles` against a real `<input type="file">` proves the control
+ *      an engine actually renders is the one the app wired up. And the bytes
+ *      then have to survive the worker boundary, which jsdom has no worker for.
+ *
+ *   2. A REAL DRAG AND DROP. jsdom has no `DataTransfer` carrying files, so the
+ *      unit test dispatches an event with a hand-built one. What that cannot
+ *      check is the thing the gesture is dangerous for: without a prevented
+ *      `dragover` the BROWSER navigates to the dropped file and the app is
+ *      gone. That is asserted here by watching the URL.
+ *
+ *   3. GEOMETRY AND A COARSE POINTER. The mobile audit found file controls
+ *      under the 44px minimum, and the inspector is a new home for one - in a
+ *      320px rail, which is the narrowest box in the app.
+ *
+ * The journey at the end is the one the feature exists for and could not be
+ * started before it: drop a photo, convert it to WebP, hash the result.
+ */
+async function checkCanvasFileInput(browser, label) {
+  const png = makePng(16);
+
+  /** A wired graph with no data in it, which is all a link may carry. */
+  const link = (nodes, edges) => `${ORIGIN}/?p=${shareParam({ v: 3, n: nodes, e: edges })}`;
+
+  const statusOf = (page, id) =>
+    page.evaluate(
+      (nodeId) =>
+        document.querySelector(`[data-testid="node-${nodeId}"] [class*="nodeFooter"] span`)
+          ?.textContent ?? null,
+      id,
+    );
+
+  const untilStatus = async (page, id, wanted, timeout) => {
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      const status = await statusOf(page, id);
+      if (status === wanted || Date.now() > deadline) return status;
+      await page.waitForTimeout(100);
+    }
+  };
+
+  /* -- The picker, end to end through the real worker -------------------- */
+
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(link([['n1', 'image-convert', 0, 0, { format: 'image/webp' }]], []), {
+      waitUntil: 'networkidle',
+    });
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+
+    /*
+     * BLOCKED, AND THE SENTENCE OFFERS A FILE. This node's port takes bytes
+     * only, so before there was a file control the summary read "Wire an
+     * output into Image." - describing the half of the answer that could not
+     * be reached, on the one tool where there was nothing else to try.
+     */
+    const guidance = await page.evaluate(
+      () =>
+        document.querySelector('[data-testid="node-n1"] [class*="nodeSummaryText"]')?.textContent ??
+        '',
+    );
+    check(
+      label,
+      'a bytes-only node tells the user a file will do, not only a wire',
+      guidance.includes('Add a file in the inspector'),
+      JSON.stringify(guidance),
+    );
+
+    /*
+     * ENTER ON THE NODE LANDS ON THE FILE CHOOSER. There is no editor to step
+     * into here, so the key that means "step into this node's input" has to
+     * mean the chooser instead - otherwise it silently does nothing on exactly
+     * the node this feature exists for. Same task as the keystroke, which is
+     * the property only a real engine can be held to.
+     */
+    await page.locator('[data-testid="node-n1"]').focus();
+    await page.keyboard.press('Enter');
+    const landed = await page.evaluate(() => {
+      const active = document.activeElement;
+      return {
+        onFile: active?.hasAttribute('data-file-input') ?? false,
+        what: active?.getAttribute('aria-label') ?? active?.tagName ?? 'nothing',
+      };
+    });
+    check(
+      label,
+      'Enter on a node with no text editor puts focus on its file chooser',
+      landed.onFile,
+      landed.what,
+    );
+
+    await page.locator('[data-testid="node-inspector"] input[type="file"]').setInputFiles({
+      name: 'holiday.png',
+      mimeType: 'image/png',
+      buffer: png,
+    });
+
+    const converted = await untilStatus(page, 'n1', 'ok', 45_000);
+    check(
+      label,
+      'a file chosen in the inspector runs the node through the real worker',
+      converted === 'ok',
+      String(converted),
+    );
+
+    /*
+     * THE SNIFF, NOT THE EXTENSION. The file is named `.png` and declared
+     * `image/png`, and what the node reports has to come from the bytes - so
+     * this is checked against a file whose name LIES further down.
+     */
+    const summary = await page.evaluate(
+      () =>
+        document.querySelector('[data-testid="node-n1"] [class*="nodeSummaryText"]')?.textContent ??
+        '',
+    );
+    /*
+     * THE SNIFFED SUMMARY OF THE BYTES THE TOOL PRODUCED.
+     *
+     * A node summarises only its FIRST declared output, and `image-convert`'s
+     * first output is the converted image rather than its report - so the
+     * sentence is `584 B WebP image`: a size, and the label the SNIFF gives the
+     * result. That is a better thing to assert than the report's prose, because
+     * it proves the conversion happened AND that the label came from sniffing
+     * the output rather than from the PNG that went in.
+     *
+     * The size is matched by shape rather than by value: WebP encoders
+     * legitimately differ between engines - 102 B in Gecko against 584 B in
+     * JavaScriptCore, measured.
+     *
+     * It replaces a NEGATIVE assertion ("the summary is not the guidance"),
+     * which passed perfectly happily against `Those options are not valid for
+     * this tool.` while the fixture above was passing a bare `webp` for a
+     * media-type option. A negative assertion cannot tell a result from a
+     * different failure.
+     */
+    check(
+      label,
+      'a converted node reports the sniffed summary of the bytes it produced',
+      /^\d+(\.\d+)? (B|kB|MB) WebP image$/.test(summary.trim()),
+      JSON.stringify(summary),
+    );
+
+    /* -- Reload: the name survives, the bytes do not ------------------- */
+
+    /*
+     * THE PERSISTENCE ANSWER, DRIVEN THROUGH A REAL PAGE LOAD. A file is
+     * session state by design, so the document keeps its name and the node
+     * says which file to go and find. jsdom can simulate this by clearing a
+     * store; only a real reload proves the saved graph really carries the name
+     * and really does not carry the bytes.
+     */
+    await page.waitForTimeout(900); // the graph save is debounced by 500ms
+    const savedGraph = await page.evaluate(() => window.localStorage.getItem('patchbay:graph:v3'));
+    check(
+      label,
+      'the saved canvas records the file name and not its contents',
+      savedGraph !== null &&
+        savedGraph.includes('holiday.png') &&
+        !savedGraph.includes('iVBOR') &&
+        !savedGraph.includes('IHDR'),
+      savedGraph === null ? 'nothing saved' : `${String(savedGraph.length)} bytes saved`,
+    );
+
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+    const afterReload = await untilStatus(page, 'n1', 'blocked', 20_000);
+    const reloadSummary = await page.evaluate(
+      () =>
+        document.querySelector('[data-testid="node-n1"] [class*="nodeSummaryText"]')?.textContent ??
+        '',
+    );
+    check(
+      label,
+      'a reloaded node names the file it needs again rather than looking empty',
+      afterReload === 'blocked' && reloadSummary.includes('"holiday.png" needs choosing again'),
+      `${String(afterReload)} - ${JSON.stringify(reloadSummary)}`,
+    );
+
+    /* -- The share link carries no filename ---------------------------- */
+
+    /*
+     * A filename is often the most revealing single string in a document, and
+     * a link is something people paste into chat. Checked against the REAL URL
+     * the app builds, because that is the artefact that leaves the machine.
+     */
+    await page.evaluate(() => {
+      navigator.clipboard.writeText = () => Promise.resolve();
+    });
+    await page.getByRole('button', { name: /Share/i }).click();
+    await page.waitForTimeout(500);
+    const shareUrl = await page.evaluate(() => window.location.href);
+    check(
+      label,
+      'a share link built from a canvas with a file carries no filename',
+      !shareUrl.includes('holiday'),
+      shareUrl.slice(0, 80),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+
+  /* -- A real drop, and the navigation it must not cause ----------------- */
+
+  const dropContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const dropPage = await dropContext.newPage();
+
+  try {
+    await dropPage.goto(link([['n1', 'image-convert', 0, 0, {}]], []), {
+      waitUntil: 'networkidle',
+    });
+    await dropPage.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+    const before = dropPage.url();
+
+    const transfer = await dropPage.evaluateHandle(
+      (bytes) => {
+        const data = new DataTransfer();
+        data.items.add(new File([new Uint8Array(bytes)], 'dropped.png', { type: 'image/png' }));
+        return data;
+      },
+      [...png],
+    );
+
+    const node = dropPage.locator('[data-testid="node-n1"]');
+    await node.dispatchEvent('dragover', { dataTransfer: transfer });
+
+    /*
+     * THE DROP HIGHLIGHT. A drop target nothing marks is a guess, and it is a
+     * guess the user gets wrong on overlapping nodes. Colour alone would not
+     * do - the border STYLE changes too, which is the rule every state in this
+     * app is held to - and a computed style is something only an engine has.
+     */
+    const highlight = await node.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return { style: style.borderTopStyle, width: style.borderTopWidth };
+    });
+    check(
+      label,
+      'the node a file is dragged over is marked by more than its colour',
+      highlight.style === 'dashed',
+      `border ${highlight.style} ${highlight.width}`,
+    );
+
+    await node.dispatchEvent('drop', { dataTransfer: transfer });
+
+    const dropped = await untilStatus(dropPage, 'n1', 'ok', 45_000);
+    check(
+      label,
+      'a file dropped on a node with one free input runs it',
+      dropped === 'ok',
+      String(dropped),
+    );
+
+    /*
+     * AND THE PAGE IS STILL THE APP. With no prevented `dragover` anywhere on
+     * the route, a drop hands the file to the browser and the canvas is
+     * replaced by a picture. That is what this route did before there was a
+     * handler, and it is the one failure here that loses the user's work.
+     */
+    check(
+      label,
+      'dropping a file never navigates the browser away from the canvas',
+      dropPage.url() === before &&
+        (await dropPage.locator('[data-testid="node-n1"]').count()) === 1,
+      dropPage.url() === before ? '' : `navigated to ${dropPage.url().slice(0, 60)}`,
+    );
+
+    /* -- Two ports, and the refusal to guess between them --------------- */
+    await dropPage.goto(link([['n1', 'diff', 0, 0, {}]], []), { waitUntil: 'networkidle' });
+    await dropPage.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+
+    const textTransfer = await dropPage.evaluateHandle(() => {
+      const data = new DataTransfer();
+      data.items.add(new File(['alpha'], 'left.txt', { type: 'text/plain' }));
+      return data;
+    });
+    await dropPage
+      .locator('[data-testid="node-n1"]')
+      .dispatchEvent('drop', { dataTransfer: textTransfer });
+
+    await dropPage.getByTestId('node-inspector').waitFor({ timeout: 10_000 });
+    const named = await dropPage.evaluate(() =>
+      [...document.querySelectorAll('[data-testid="node-inspector"] input[type="file"]')].map(
+        (el) =>
+          el.getAttribute('aria-label') ??
+          document.querySelector(`label[for="${el.id}"]`)?.textContent ??
+          '',
+      ),
+    );
+    check(
+      label,
+      'a drop on a two-input node opens the inspector with both ports named',
+      named.some((name) => name.includes('Original')) &&
+        named.some((name) => name.includes('Changed')),
+      JSON.stringify(named),
+    );
+  } finally {
+    await dropContext.close().catch(() => {});
+  }
+
+  /* -- The whole journey the feature exists for -------------------------- */
+
+  const journeyContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const journeyPage = await journeyContext.newPage();
+
+  try {
+    /*
+     * DROP A PHOTO, CONVERT IT TO WEBP, HASH THE RESULT.
+     *
+     * The sentence this change was measured against, and it could not be
+     * started at all before: `image-convert`'s only input takes bytes, so with
+     * no file control there was nothing to type into and no wire that could
+     * have come from anywhere.
+     */
+    await journeyPage.goto(
+      link(
+        [
+          ['n1', 'image-convert', 0, 0, { format: 'image/webp' }],
+          /*
+           * MD5 rather than SHA-256, and the reason is the assertion below
+           * rather than the algorithm: a node's summary is truncated to 60
+           * characters, because it is also the node's accessible name and that
+           * string is read from end to end. A SHA-256 in hex is 64. So a check
+           * reading a digest off the NODE has to pick one that fits, or read it
+           * from the inspector instead.
+           */
+          ['n2', 'hash', 360, 0, { algorithm: 'md5', encoding: 'hex' }],
+        ],
+        [['n1', 'output', 'n2', 'input']],
+      ),
+      { waitUntil: 'networkidle' },
+    );
+    await journeyPage.locator('[data-testid="node-n2"]').waitFor({ timeout: 15_000 });
+
+    await journeyPage.locator('[data-testid="node-n1"]').focus();
+    await journeyPage.keyboard.press('Enter');
+    await journeyPage
+      .locator('[data-testid="node-inspector"] input[type="file"]')
+      .setInputFiles({ name: 'photo.png', mimeType: 'image/png', buffer: png });
+
+    const hashed = await untilStatus(journeyPage, 'n2', 'ok', 60_000);
+    const digest = await journeyPage.evaluate(
+      () =>
+        document.querySelector('[data-testid="node-n2"] [class*="nodeSummaryText"]')?.textContent ??
+        '',
+    );
+    /*
+     * The digest's SHAPE, not its value: WebP encoders differ between engines,
+     * so the bytes being hashed are legitimately not the same in Gecko and
+     * JavaScriptCore. What is asserted is that the chain carried real bytes all
+     * the way through - an md5 of nothing at all has its own well-known value,
+     * which is checked against explicitly.
+     */
+    check(
+      label,
+      'drop a photo, convert it to WebP, hash the result - the whole journey runs',
+      hashed === 'ok' &&
+        /^[0-9a-f]{32}$/.test(digest.trim()) &&
+        digest.trim() !== 'd41d8cd98f00b204e9800998ecf8427e',
+      `${String(hashed)} - ${JSON.stringify(digest.slice(0, 40))}`,
+    );
+
+    /*
+     * ONE FILE, TWO CONSUMERS, THROUGH THE REAL BOUNDARY. Buffers are borrowed
+     * rather than transferred precisely because a fan-out detaches the second
+     * consumer, and a file is a second source of one buffer reaching several
+     * tools. `fanout.test.ts` holds this for a wired output in jsdom; only here
+     * does it cross a real `postMessage`.
+     */
+    await journeyPage.goto(
+      link(
+        [
+          ['n1', 'hash', 0, 0, { algorithm: 'sha-1', encoding: 'hex' }],
+          ['n2', 'hash', 360, 0, { algorithm: 'md5', encoding: 'hex' }],
+        ],
+        [],
+      ),
+      { waitUntil: 'networkidle' },
+    );
+    await journeyPage.locator('[data-testid="node-n2"]').waitFor({ timeout: 15_000 });
+
+    for (const id of ['n1', 'n2']) {
+      await journeyPage.locator(`[data-testid="node-${id}"]`).focus();
+      await journeyPage.keyboard.press('Enter');
+      await journeyPage
+        .locator('[data-testid="node-inspector"] input[type="file"]')
+        .setInputFiles({ name: 'shared.txt', mimeType: 'text/plain', buffer: Buffer.from('hi') });
+      await journeyPage.waitForTimeout(300);
+    }
+
+    const both = await Promise.all([
+      untilStatus(journeyPage, 'n1', 'ok', 30_000),
+      untilStatus(journeyPage, 'n2', 'ok', 30_000),
+    ]);
+    const digests = await journeyPage.evaluate(() =>
+      ['n1', 'n2'].map(
+        (id) =>
+          document
+            .querySelector(`[data-testid="node-${id}"] [class*="nodeSummaryText"]`)
+            ?.textContent?.trim() ?? '',
+      ),
+    );
+    /*
+     * The two digests of "hi" under two algorithms. Compared to the KNOWN
+     * values rather than to each other: two algorithms make equality prove
+     * nothing, and a detached buffer hashes as the empty input, which has its
+     * own well-known digest and would sail past a "both ran" assertion.
+     */
+    check(
+      label,
+      'one file feeding two nodes reaches both with intact bytes',
+      both.every((status) => status === 'ok') &&
+        digests[0] === 'c22b5f9178342609428d6f51b2c5af4c0bde6a42' &&
+        digests[1] === '49f68a5c8493ec2c0bf489821c21fc3b',
+      JSON.stringify(digests),
+    );
+  } finally {
+    await journeyContext.close().catch(() => {});
+  }
+}
+
+/**
+ * A FILE CONTROL UNDER A FINGER, IN THE NARROWEST BOX IN THE APP.
+ *
+ * Takes the ENGINE rather than a browser, because a coarse pointer needs
+ * `launchTouchBrowser` - Gecko only reports one when the prefs were set at
+ * launch, for the cross-origin-isolation reason written down above.
+ *
+ * The mobile audit found file controls under the 44px minimum once already, and
+ * the inspector is a new home for one: a 320px rail on a desktop, a sheet on a
+ * phone, and the file summary is the widest single line this control draws.
+ */
+async function checkFileInputTouch(engine, label) {
+  const browser = await launchTouchBrowser(engine);
+  const link = (nodes, edges) => `${ORIGIN}/?p=${shareParam({ v: 3, n: nodes, e: edges })}`;
+
+  const phone = await browser.newContext({
+    viewport: { width: 390, height: 780 },
+    hasTouch: true,
+  });
+  const phonePage = await phone.newPage();
+
+  try {
+    await phonePage.goto(link([['n1', 'diff', 0, 0, {}]], []), { waitUntil: 'networkidle' });
+    await phonePage.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+
+    await phonePage.locator('[data-testid="node-n1"]').focus();
+    await phonePage.keyboard.press('Enter');
+    await phonePage.getByTestId('node-inspector').waitFor({ timeout: 10_000 });
+    await phonePage.waitForTimeout(300);
+
+    /*
+     * 44px, WCAG 2.5.5, AND THE MOBILE AUDIT ALREADY FOUND FILE CONTROLS UNDER
+     * IT. The <label> rather than the <input>: the input is the control but it
+     * is visually hidden, so the label is the whole of what a finger can aim
+     * at. Measured on a COARSE pointer, because that is what the rule is about
+     * - a narrow window on a laptop keeps the dense layout.
+     */
+    const targets = await phonePage.evaluate(() => {
+      const panel = document.querySelector('[data-testid="node-inspector"]');
+      if (!panel) return null;
+      return [...panel.querySelectorAll('input[type="file"]')].map((input) => {
+        const label = panel.querySelector(`label[for="${input.id}"]`);
+        const box = label?.getBoundingClientRect();
+        return {
+          text: label?.textContent?.trim() ?? '(no label)',
+          height: box ? Math.round(box.height) : 0,
+          right: box ? Math.round(box.right) : 0,
+        };
+      });
+    });
+    check(
+      label,
+      'every file control in the inspector meets the 44px touch minimum',
+      targets !== null && targets.length === 2 && targets.every((target) => target.height >= 44),
+      JSON.stringify(targets),
+    );
+
+    /*
+     * AND FITS. The rail is 320px at its narrowest and the sheet is 390px
+     * here; a file summary is a filename, a sniffed label and a size on one
+     * line, which is the widest thing this control ever draws.
+     */
+    await phonePage
+      .locator('[data-testid="node-inspector"] input[type="file"]')
+      .first()
+      .setInputFiles({
+        name: 'a-rather-long-file-name-from-a-camera-20260908.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.from('alpha\nbeta\n'),
+      });
+    await phonePage.waitForTimeout(600);
+
+    const overflow = await phonePage.evaluate(() => {
+      const panel = document.querySelector('[data-testid="node-inspector"]');
+      const boxes = [...panel.querySelectorAll('[class*="dropZone"], [class*="fileSummary"]')].map(
+        (el) => {
+          const r = el.getBoundingClientRect();
+          return { right: Math.round(r.right), overflows: el.scrollWidth > el.clientWidth + 1 };
+        },
+      );
+      return {
+        boxes,
+        width: window.innerWidth,
+        docScrollsSideways:
+          document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      };
+    });
+    check(
+      label,
+      'a long filename stays inside the panel rather than widening the page',
+      !overflow.docScrollsSideways &&
+        overflow.boxes.length > 0 &&
+        overflow.boxes.every((box) => box.right <= overflow.width + 1 && !box.overflows),
+      JSON.stringify(overflow),
+    );
+  } finally {
+    await phone.close().catch(() => {});
+    await browser.close().catch(() => {});
   }
 }
 

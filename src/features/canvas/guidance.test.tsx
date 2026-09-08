@@ -36,7 +36,7 @@ const SUMMARY_CHARS_PER_LINE = Math.floor((224 - 2 - 8) / 6);
 const SUMMARY_MAX_CHARS = SUMMARY_CHARS_PER_LINE * 2;
 
 function node(id: string, toolId: CanvasNode['toolId'], x = 0, y = 0): CanvasNode {
-  return { id, toolId, position: { x, y }, options: {}, inputs: {} };
+  return { id, toolId, position: { x, y }, options: {}, inputs: {}, fileInputs: {} };
 }
 
 function seed(nodes: readonly CanvasNode[], edges: readonly CanvasEdge[] = []): void {
@@ -116,7 +116,7 @@ describe('what a blocked node says', () => {
     renderCanvas();
 
     await waitFor(() => {
-      expect(summaryOf('a')).toMatch(/Type in the inspector, or wire an output into Document\./);
+      expect(summaryOf('a')).toMatch(/Type or add a file in the inspector, or wire Document\./);
     });
   });
 
@@ -129,13 +129,20 @@ describe('what a blocked node says', () => {
    * blocked forever with an editor under it inviting another go. This asserts
    * both halves of the fix - the sentence does not say "type", and there is no
    * editor anywhere on the canvas to contradict it.
+   *
+   * IT DOES SAY "FILE", AND THAT IS THE OTHER HALF. The sentence used to read
+   * `Wire an output into Image.`, which described half of what would work: a
+   * bytes port can be fed a file, so naming only the wire left the only way to
+   * start an image conversion on the canvas undiscoverable. Advertising a
+   * missing affordance is the mirror image of the defect above and just as
+   * wrong.
    */
-  it('tells a bytes-only input to wire, since typing cannot satisfy it', async () => {
+  it('tells a bytes-only input it can take a file as well as a wire', async () => {
     seed([node('a', 'image-convert')]);
     renderCanvas();
 
     await waitFor(() => {
-      expect(summaryOf('a')).toBe('Wire an output into Image.');
+      expect(summaryOf('a')).toBe('Add a file in the inspector, or wire Image.');
     });
   });
 
@@ -193,8 +200,8 @@ describe('the same state says the same thing', () => {
     // Waited on individually: the pipeline settles each node as it gets to
     // it, so asserting on `c` off the back of `a` racing ahead is flaky.
     await waitFor(() => {
-      expect(summaryOf('a')).toContain('wire an output into');
-      expect(summaryOf('c')).toContain('wire an output into');
+      expect(summaryOf('a')).toContain('or wire Document.');
+      expect(summaryOf('c')).toContain('or wire Document.');
     });
     expect(summaryOf('c')).toBe(summaryOf('a'));
   });
@@ -209,7 +216,7 @@ describe('the same state says the same thing', () => {
 
     await waitFor(() => {
       for (const id of ['a', 'b', 'c']) {
-        expect(summaryOf(id)).toMatch(/^Type in the inspector, or wire an output into .+\.$/);
+        expect(summaryOf(id)).toMatch(/^Type or add a file in the inspector, or wire .+\.$/);
       }
     });
   });
@@ -241,7 +248,7 @@ describe('guidance fits the node', () => {
       '',
     );
 
-    expect(`Type in the inspector, or wire an output into ${longest}.`.length).toBeLessThanOrEqual(
+    expect(`Type or add a file in the inspector, or wire ${longest}.`.length).toBeLessThanOrEqual(
       SUMMARY_MAX_CHARS,
     );
   });
@@ -254,13 +261,13 @@ describe('the node summary when nothing is wrong', () => {
 
     // base64 takes text and has an editor, so it is blocked and guided...
     await waitFor(() => {
-      expect(summaryOf('a')).toContain('wire an output into');
+      expect(summaryOf('a')).toContain('or wire Input.');
     });
 
     // ...but once it has input, the summary is the tool's own description.
     useCanvasStore.getState().setNodeInput('a', 'input', 'aGk=');
     await waitFor(() => {
-      expect(summaryOf('a')).not.toContain('wire an output into');
+      expect(summaryOf('a')).not.toContain('or wire Input.');
     });
   });
 
@@ -273,6 +280,6 @@ describe('the node summary when nothing is wrong', () => {
     // The blocked reason is part of the name; the guidance is the visible
     // elaboration of it. Both must be present, neither may contradict.
     expect(group).toHaveAccessibleName(/blocked/);
-    expect(within(group).getByText(/wire an output into/)).toBeInTheDocument();
+    expect(within(group).getByText(/or wire Document\./)).toBeInTheDocument();
   });
 });

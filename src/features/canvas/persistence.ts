@@ -31,7 +31,7 @@ import { EMPTY_GRAPH, type GraphData } from './types';
 export const GRAPH_STORAGE_KEY = 'patchbay:graph:v3';
 
 /** Bump when the persisted shape changes, and add a migration below. */
-export const CURRENT_GRAPH_VERSION = 5;
+export const CURRENT_GRAPH_VERSION = 6;
 
 const pointSchema = z.object({
   // z.number() already rejects NaN and Infinity in Zod 4.
@@ -44,6 +44,24 @@ const portRefSchema = z.object({
   portId: z.string().min(1),
 });
 
+/**
+ * A file chosen for an input port: what it was called and how big it was.
+ *
+ * NO BYTES, AND THAT IS THE WHOLE DESIGN. A file is session state - see
+ * `attachmentStore` - so what survives a reload is the smallest true statement
+ * about it, which is enough for the node to say `"photo.png" needs choosing
+ * again` instead of coming back looking as though nobody ever fed it.
+ *
+ * `size` is bounded so a hand-edited save cannot claim a negative or fractional
+ * one; it is only ever printed, but a value that is only ever printed is
+ * exactly the kind that stops being checked.
+ */
+const fileInputSchema = z.object({
+  name: z.string().min(1).max(512),
+  size: z.number().int().nonnegative(),
+  token: z.number().int().nonnegative(),
+});
+
 const nodeSchema = z.object({
   id: z.string().min(1),
   // Checked against the registry as well as the type, so a graph referring to
@@ -53,6 +71,8 @@ const nodeSchema = z.object({
   options: z.record(z.string(), z.unknown()),
   /** User data, per input port. Saved locally; never in a share URL. */
   inputs: z.record(z.string(), z.string()),
+  /** Names of files chosen per input port. Saved locally; never in a URL. */
+  fileInputs: z.record(z.string(), fileInputSchema),
 });
 
 const edgeSchema = z.object({
@@ -81,7 +101,9 @@ export function toPersisted(graph: GraphData): PersistedGraph {
     version: CURRENT_GRAPH_VERSION,
     nodes: graph.nodeOrder.flatMap((id) => {
       const node = graph.nodes[id];
-      return node ? [{ ...node, options: { ...node.options } }] : [];
+      return node
+        ? [{ ...node, options: { ...node.options }, fileInputs: { ...node.fileInputs } }]
+        : [];
     }),
     edges: graph.edgeOrder.flatMap((id) => {
       const edge = graph.edges[id];
@@ -111,7 +133,9 @@ function migrate(raw: unknown): unknown {
     case 3:
       return migrate(migrateV3ToV4(raw as Record<string, unknown>));
     case 4:
-      return migrateV4ToV5(raw as Record<string, unknown>);
+      return migrate(migrateV4ToV5(raw as Record<string, unknown>));
+    case 5:
+      return migrateV5ToV6(raw as Record<string, unknown>);
     case CURRENT_GRAPH_VERSION:
       return raw;
     default:
@@ -254,7 +278,14 @@ function migrateV3ToV4(raw: Record<string, unknown>): unknown {
  * is what decides, so this needs the node list before it can touch the edges.
  */
 function migrateV4ToV5(raw: Record<string, unknown>): unknown {
-  const version = CURRENT_GRAPH_VERSION;
+  /*
+   * The literal 5, not `CURRENT_GRAPH_VERSION`. Each step in the chain hands
+   * its output back to `migrate`, which dispatches on the version it finds - so
+   * a step that stamps "current" claims to have done every later step too. This
+   * read `CURRENT_GRAPH_VERSION` while it WAS the last step, which made adding
+   * v6 the moment a v4 save would have skipped the v5 -> v6 step entirely.
+   */
+  const version = 5;
   if (!Array.isArray(raw.nodes)) return { ...raw, version };
   const nodes: readonly unknown[] = raw.nodes;
 
@@ -306,6 +337,32 @@ function migrateV4ToV5(raw: Record<string, unknown>): unknown {
   });
 
   return { ...raw, version, nodes: migratedNodes, edges: migratedEdges };
+}
+
+/**
+ * v5 -> v6.
+ *
+ * v6 added `fileInputs`: a node can now be fed a file through the inspector,
+ * and the document records the name and size of one. A v5 node was never fed
+ * one, so the map is empty - and it has to be PRESENT rather than absent,
+ * because every reader downstream of here treats it as a record it can index.
+ *
+ * Nothing else is touched. A migration that rebuilt fields it had no reason to
+ * read would be a chance to break something for nothing.
+ */
+function migrateV5ToV6(raw: Record<string, unknown>): unknown {
+  const version = CURRENT_GRAPH_VERSION;
+  if (!Array.isArray(raw.nodes)) return { ...raw, version };
+  const nodes: readonly unknown[] = raw.nodes;
+
+  return {
+    ...raw,
+    version,
+    nodes: nodes.map((node): unknown => {
+      if (typeof node !== 'object' || node === null) return node;
+      return { ...(node as Record<string, unknown>), fileInputs: {} };
+    }),
+  };
 }
 
 /**

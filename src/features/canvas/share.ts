@@ -24,6 +24,14 @@ import { EMPTY_GRAPH, type CanvasEdge, type CanvasNode, type GraphData } from '.
  * whole premise of Patchbay is that pasted data does not leave the machine.
  * A URL is the one place it could accidentally escape, so the omission is
  * enforced by `toSharePayload` and asserted by share.test.ts.
+ *
+ * NOR `fileInputs`, AND THAT IS NOT MERELY THE SAME RULE AGAIN. A file's bytes
+ * could not travel here at any size, so the only question was whether its NAME
+ * should - and a filename is often the most revealing single string in a
+ * document: `Q3-layoffs.xlsx` says something a pipeline's shape does not. The
+ * recipient does not have the file and would gain nothing but the name, so
+ * they are told what the port needs by the port itself, exactly as they are
+ * for a text input nobody typed into.
  */
 
 export const SHARE_FORMAT_VERSION = 3;
@@ -96,10 +104,11 @@ function shareableOptions(node: CanvasNode): Record<string, unknown> {
 }
 
 /**
- * Structure only. Note what is NOT read from the node: `inputs`.
+ * Structure only. Note what is NOT read from the node: `inputs`, `fileInputs`.
  *
  * Written as an explicit field list rather than a spread-and-delete, so adding
- * a field to CanvasNode cannot silently start leaking it into share links.
+ * a field to CanvasNode cannot silently start leaking it into share links -
+ * which is exactly what this bought when `fileInputs` was added.
  */
 export function toSharePayload(graph: GraphData): SharePayload {
   return {
@@ -392,6 +401,9 @@ export function fromSharePayload(payload: SharePayload): GraphData {
       options,
       // Always empty: input never travels in a link, so it never comes back.
       inputs: {},
+      // Nor does a filename. A node fed a file by the sender arrives at the
+      // recipient as an ordinary empty node asking for one.
+      fileInputs: {},
     };
     nodeOrder.push(id);
   }

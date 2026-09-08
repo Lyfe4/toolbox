@@ -217,6 +217,14 @@ export function nodeCacheKey(node: CanvasNode, upstream: readonly UpstreamRef[])
       stableStringify(node.options),
       // Every typed port, in a stable order.
       JSON.stringify(Object.entries(node.inputs).sort(([a], [b]) => (a < b ? -1 : 1))),
+      /*
+       * Every FILE port, likewise. Name, size and token: the token is the
+       * load-bearing part, because two different files can share a name and a
+       * size and swapping one for the other has to re-run the node rather than
+       * serve the previous answer. The bytes themselves are never hashed - for
+       * a 64 MB image that would cost more than the conversion.
+       */
+      JSON.stringify(Object.entries(node.fileInputs).sort(([a], [b]) => (a < b ? -1 : 1))),
       // Sorted by the RECEIVING port, so the order edges happen to sit in the
       // document cannot change the key while the wiring is the same.
       [...upstream]
@@ -241,6 +249,18 @@ export interface RunPipelineDeps {
   readonly cache?: PipelineCache;
   readonly onUpdate?: (nodeId: NodeId, state: NodeRunState) => void;
   readonly now?: () => number;
+  /**
+   * The value of a file chosen for one of a node's input ports, if there is
+   * one in this session.
+   *
+   * Injected rather than read from a store, so the engine stays a pure
+   * function of a graph plus its dependencies and a test can drive a file
+   * input without a `File`, a `FileReader` or the canvas. The document says a
+   * port HAS a file (`node.fileInputs`); only this can say whether the bytes
+   * are still here, which is exactly the difference between a node the user
+   * just fed and a node reloaded from storage.
+   */
+  readonly fileInput?: (nodeId: NodeId, portId: string) => ToolValue | undefined;
 }
 
 export const DEFAULT_CONCURRENCY = 4;
@@ -344,8 +364,36 @@ export async function runPipeline(
       const feed = feeds.find((candidate) => candidate.portId === port.id);
 
       if (!feed) {
-        // No wire. The port takes the node's typed-in text instead, provided
-        // it can carry text and the user has actually typed something.
+        /*
+         * No wire. WIRE, THEN FILE, THEN TEXT - each a more deliberate act
+         * than the one after it, and the same precedence the inspector draws.
+         */
+        if (deps.fileInput?.(node.id, port.id) !== undefined) continue;
+
+        /*
+         * A FILE THE DOCUMENT REMEMBERS AND THIS SESSION DOES NOT HAVE.
+         *
+         * The only way to reach this is a canvas that was saved with a file on
+         * this port and then reloaded, because the bytes are session state by
+         * design - see `attachmentStore`. Reported as its own reason rather
+         * than falling through to "Needs input": the two look identical on a
+         * node and are not the same problem, and telling somebody to type into
+         * a port they fed a photograph is how a fixable state reads as a bug.
+         */
+        const remembered = node.fileInputs[port.id];
+        if (remembered) {
+          return settle({
+            status: 'blocked',
+            key,
+            blockedReason:
+              entry.inputs.length === 1
+                ? `"${remembered.name}" needs choosing again`
+                : `${port.label}: "${remembered.name}" needs choosing again`,
+          });
+        }
+
+        // The port takes the node's typed-in text instead, provided it can
+        // carry text and the user has actually typed something.
         const acceptsText = port.types.includes('text');
         const typed = node.inputs[port.id] ?? '';
         if (acceptsText && typed !== '') continue;
@@ -357,7 +405,13 @@ export async function runPipeline(
             ? entry.inputs.length === 1
               ? 'Needs input'
               : `Needs ${port.label}`
-            : `Needs a wire into ${port.label}`,
+            : /*
+               * NOT "Needs a wire" any more. This port takes bytes and a file
+               * is now a way to supply them, so naming only the wire described
+               * half of what would work - the same class of defect as drawing
+               * a control for behaviour that does not exist, in reverse.
+               */
+              `Needs a file or a wire into ${port.label}`,
         });
       }
 
@@ -417,6 +471,22 @@ export async function runPipeline(
         const upstream = states.get(feed.edge.from.nodeId);
         const value = upstream?.outputs?.[feed.edge.from.portId];
         if (value) inputs[port.id] = value;
+        continue;
+      }
+
+      /*
+       * A file beats typed text, matching `preflight` above and the inspector.
+       * The value was built and validated against this port at the moment it
+       * was chosen, so there is nothing to decode or refuse here.
+       *
+       * It is handed over BY REFERENCE and the executor is called with
+       * `ownership: 'borrow'`, so every consumer gets a structured clone. One
+       * file feeding two nodes is the same fan-out as one output feeding two
+       * inputs, and it is safe for the same reason.
+       */
+      const file = deps.fileInput?.(node.id, port.id);
+      if (file) {
+        inputs[port.id] = file;
         continue;
       }
 

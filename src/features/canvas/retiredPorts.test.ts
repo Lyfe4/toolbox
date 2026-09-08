@@ -225,4 +225,30 @@ describe('the rename table itself', () => {
     expect(migrateInputKeys('hash', null)).toBeNull();
     expect(migrateInputKeys(undefined, { input: 'a' })).toEqual({ input: 'a' });
   });
+
+  /*
+   * THERE ARE TWO RECORDS KEYED BY INPUT PORT ON A NODE NOW, NOT ONE.
+   *
+   * `inputs` holds typed text per port and `fileInputs` holds the name of a
+   * file chosen for one. `migrateInputKeys` is generic over the shape, which is
+   * what makes running it over both a one-line job for whoever renames the
+   * next input port - and this pins that it really is generic rather than
+   * quietly assuming its values are strings.
+   *
+   * The stakes are the reason it is worth a test with no rename to exercise: a
+   * `fileInputs` key left naming a retired port is a file the engine silently
+   * ignores while the node goes on claiming it, which is the same shape of
+   * quiet wrongness the v4 -> v5 output rename produced.
+   */
+  it('rewrites a record of file references the same way it rewrites typed text', () => {
+    const files = { input: { name: 'holiday.png', size: 2048, token: 1 } };
+
+    // No input id has been renamed, so this is the identity today - and it has
+    // to stay structurally correct rather than merely returning its argument.
+    expect(migrateInputKeys('hash', files)).toEqual(files);
+    expect(migrateInputKeys('image-convert', files)).toEqual(files);
+    expect(migrateInputKeys('diff', { original: files.input })).toEqual({
+      original: files.input,
+    });
+  });
 });

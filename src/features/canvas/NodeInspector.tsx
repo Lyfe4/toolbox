@@ -7,11 +7,14 @@ import { useToast } from '@/components/Toast';
 import type { NodeRunState } from '@/features/execution/graph';
 import { getManifestEntry, loadTool } from '@/features/registry';
 import type { ErasedTool, InputPort } from '@/features/registry/types';
-import { ErrorReport, OptionsPanel, OutputView } from '@/features/toolrunner';
+import { ErrorReport, FileDrop, OptionsPanel, OutputView } from '@/features/toolrunner';
+import type { LoadedFile } from '@/lib/fileInput';
 import { counted } from '@/lib/plural';
 import { formatBytes } from '@/lib/sniff';
 
+import { useAttachmentStore } from './attachmentStore';
 import { formatDuration } from './CanvasNodeView';
+import { otherInputBytes } from './fileInputs';
 import styles from './inspector.module.css';
 import { summariseValue } from './resultSummary';
 
@@ -74,6 +77,14 @@ export interface NodeInspectorProps {
   readonly onSelectOnly: (id: NodeId) => void;
   readonly onInputChange: (nodeId: NodeId, portId: string, value: string) => void;
   /**
+   * A file chosen for, or cleared from, an input port.
+   *
+   * Null covers both "remove this file" and "forget the one this canvas was
+   * saved with", because from here they are the same act: the port stops
+   * claiming a file it cannot produce.
+   */
+  readonly onFileChange: (nodeId: NodeId, portId: string, loaded: LoadedFile | null) => void;
+  /**
    * `coalesce` merges this change into the previous one in the undo history.
    * True while typing, false for a deliberate discrete choice - see the note
    * at the call sites below.
@@ -93,6 +104,7 @@ export function NodeInspector({
   selectedLabels,
   onSelectOnly,
   onInputChange,
+  onFileChange,
   onOptionChange,
   onClose,
   onEscape,
@@ -287,6 +299,10 @@ export function NodeInspector({
                 typedInputPorts={target.typedInputPorts}
                 wiredFrom={target.wiredFrom}
                 onInputChange={onInputChange}
+                onFileChange={onFileChange}
+                onReject={(message) => {
+                  notify({ title: 'File rejected', description: message, tone: 'error' });
+                }}
               />
             </Section>
 
@@ -376,11 +392,15 @@ function InputSection({
   typedInputPorts,
   wiredFrom,
   onInputChange,
+  onFileChange,
+  onReject,
 }: {
   readonly node: CanvasNode;
   readonly typedInputPorts: readonly string[];
   readonly wiredFrom: Readonly<Record<string, string>>;
   readonly onInputChange: (nodeId: NodeId, portId: string, value: string) => void;
+  readonly onFileChange: (nodeId: NodeId, portId: string, loaded: LoadedFile | null) => void;
+  readonly onReject: (message: string) => void;
 }) {
   const entry = getManifestEntry(node.toolId);
   const named = entry.inputs.length > 1;
@@ -395,9 +415,10 @@ function InputSection({
         const wired = wiredFrom[port.id];
         if (wired !== undefined) {
           /*
-           * A wired port has no editor, because a wire wins over typed text
-           * everywhere else in the engine too - drawing a box whose contents
-           * the run would ignore is the same defect in a different costume.
+           * A wired port has no editor and no file control, because a wire
+           * wins over both everywhere else in the engine too - drawing a
+           * control whose contents the run would ignore is the same defect in
+           * a different costume.
            */
           return (
             <p key={port.id} className={styles.hint}>
@@ -408,13 +429,14 @@ function InputSection({
 
         if (!typedInputPorts.includes(port.id)) return null;
         return (
-          <PortEditor
+          <PortInput
             key={port.id}
             node={node}
             port={port}
             named={named}
-            toolName={entry.name}
             onInputChange={onInputChange}
+            onFileChange={onFileChange}
+            onReject={onReject}
           />
         );
       })}
@@ -423,60 +445,137 @@ function InputSection({
 }
 
 /**
- * ONE EDITOR PER PORT THAT CAN ACTUALLY TAKE TEXT.
+ * ONE PORT'S INPUT: A TEXT BOX WHERE THE PORT TAKES TEXT, AND A FILE CONTROL.
  *
- * `image-convert` declares `types: ['bytes']`, and the canvas drew it a
+ * A file control on EVERY unwired port, rather than one per node, and that is
+ * the decision this component exists to record. The tool runner sends its
+ * single file to "the first port that takes bytes", which is the only thing it
+ * can do with one control - and it makes `diff`'s second document port
+ * unreachable by file, so comparing two files is possible on neither route.
+ * Per-port is the shape the inspector already has for text; a file is input
+ * like any other and gets the same treatment.
+ *
+ * A PORT THAT CANNOT TAKE TEXT GETS NO TEXT BOX, and that is unchanged.
+ * `image-convert` declares `types: ['bytes']`, and the canvas used to draw it a
  * textarea anyway - one per unwired input port, with no question asked about
  * what the port accepts. Typing into it could not fail loudly either: the
  * engine's preflight sees a required bytes port with no wire and reports
  * `blocked` whatever is in the box, so the node sat there permanently blocked
- * with an editor under it inviting another attempt. The tool runner had the
- * same bug and reported a type error at least; this one said nothing at all.
+ * with an editor under it inviting another attempt. What is different now is
+ * that the port's description is no longer the whole answer: there is a control
+ * under it that actually does the thing it describes.
  *
- * A port that cannot take text now gets its own description as the
- * instruction, which is exactly the fix architecture.md records for the runner.
+ * A FILE OUTRANKS TYPED TEXT, so setting one replaces the box with the file's
+ * summary rather than leaving a box the run would ignore. The text is not
+ * destroyed - it stays in `node.inputs` and the box comes back with it when the
+ * file is removed. The tool runner disables its textarea instead; the
+ * difference is deliberate, because the inspector already states the winner for
+ * a wired port and a 320px rail cannot afford to draw both.
  */
-function PortEditor({
+function PortInput({
   node,
   port,
   named,
-  toolName,
   onInputChange,
+  onFileChange,
+  onReject,
 }: {
   readonly node: CanvasNode;
   readonly port: InputPort;
   readonly named: boolean;
-  readonly toolName: string;
   readonly onInputChange: (nodeId: NodeId, portId: string, value: string) => void;
+  readonly onFileChange: (nodeId: NodeId, portId: string, loaded: LoadedFile | null) => void;
+  readonly onReject: (message: string) => void;
 }) {
-  if (!port.types.includes('text')) {
-    return (
-      <p className={styles.hint}>
-        {named ? `${port.label}: ` : ''}
-        {port.description ??
-          `${port.label} takes ${port.types.join(' or ')} rather than typed text. Wire an output into it.`}
-      </p>
-    );
-  }
+  /*
+   * The manifest entry is read here rather than passed down, because the size
+   * budget below already needs the whole port LIST and not just this port -
+   * so handing the name and the limit in as well would be three props derived
+   * from one lookup this component has to do anyway.
+   */
+  const entry = getManifestEntry(node.toolId);
+  const attachments = useAttachmentStore((state) => state.files[node.id]);
+  const attached = attachments?.[port.id] ?? null;
 
+  /*
+   * The document remembers a file this session cannot produce. Only reachable
+   * through a reload - see `attachmentStore` - and shown rather than ignored,
+   * because a node that was fed a photograph and comes back asking to be typed
+   * into reads as the canvas having lost something silently.
+   */
+  const remembered = node.fileInputs[port.id];
+  const pending = attached === null && remembered !== undefined ? remembered : null;
+
+  const acceptsText = port.types.includes('text');
   const value = node.inputs[port.id] ?? '';
-  const label = named ? `${toolName} ${port.label} input` : `${toolName} input`;
+  const label = named ? `${entry.name} ${port.label} input` : `${entry.name} input`;
 
   return (
     <div className={styles.stack}>
       {named ? <p className={styles.hint}>{port.label}</p> : null}
-      <TextArea
-        className={styles.editor}
-        aria-label={label}
-        data-inspector-input={port.id}
-        placeholder={port.description ?? 'Type or paste input'}
-        value={value}
-        spellCheck={false}
-        onChange={(event) => {
-          onInputChange(node.id, port.id, event.target.value);
+
+      {attached !== null ? null : acceptsText ? (
+        <>
+          <TextArea
+            className={styles.editor}
+            aria-label={label}
+            data-inspector-input={port.id}
+            placeholder={port.description ?? 'Type or paste input'}
+            value={value}
+            spellCheck={false}
+            onChange={(event) => {
+              onInputChange(node.id, port.id, event.target.value);
+            }}
+          />
+          <p className={styles.hint}>
+            {value === '' ? 'Empty' : counted(value.length, 'character')}
+          </p>
+        </>
+      ) : (
+        <p className={styles.hint}>
+          {port.description ??
+            `${port.label} takes ${port.types.join(' or ')} rather than typed text.`}
+        </p>
+      )}
+
+      <FileDrop
+        port={port}
+        loaded={attached}
+        pending={pending}
+        maxBytes={entry.execution.maxInputBytes}
+        otherBytes={otherInputBytes(node, entry.inputs, port.id, attachments ?? {})}
+        label={named ? `Choose file for ${port.label}` : 'Choose file'}
+        onReject={onReject}
+        onFile={(loaded) => {
+          onFileChange(node.id, port.id, loaded);
         }}
       />
-      <p className={styles.hint}>{value === '' ? 'Empty' : counted(value.length, 'character')}</p>
+
+      {/*
+        THE TYPED TEXT IS STILL THERE, AND ONLY SAID WHERE IT IS TRUE.
+
+        A file takes the box away, which is right - a box the run would ignore
+        is the defect a wired port already avoids - but it leaves somebody who
+        typed a paragraph and then chose a file with no way to know their
+        paragraph survived, and nothing to suggest that removing the file is how
+        to get it back. It does survive: it is in `node.inputs` and the box
+        returns with it.
+
+        Rendered only when there IS text, so a port nobody typed into does not
+        carry a sentence about text. That condition is the whole reason this is
+        worth one line in a 320px rail rather than being noise on every port.
+
+        NO COUNT IN IT. The first version read `The {counted(n, 'character')}
+        you typed is kept`, which is "The 13 characters you typed IS kept" for
+        every value but one - `counted` pluralises the noun and the verb was
+        fixed. The box shows the count again the moment it comes back, so the
+        number was never the point.
+      */}
+      {attached !== null && value !== '' ? (
+        <p className={styles.hint}>
+          Using the file. The text you typed is kept, and comes back if you remove it.
+        </p>
+      ) : null}
     </div>
   );
 }

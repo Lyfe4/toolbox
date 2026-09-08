@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 
+import { useAttachmentStore } from '@/features/canvas/attachmentStore';
 import type { GraphData, NodeId } from '@/features/canvas/types';
 import type { ToolOutputs, ToolResult } from '@/features/registry/types';
 import { appendAnnouncement, EMPTY_ANNOUNCEMENTS, type AnnouncementSlice } from '@/lib/announce';
@@ -116,6 +117,13 @@ export const usePipelineStore = create<PipelineStore>()((set, get) => {
           maxNodes: DEFAULT_MAX_NODES,
           signal,
           cache,
+          /*
+           * Read through the store rather than captured, so the run sees the
+           * files as they are when each node executes. The store is the
+           * canvas's, and this is the one place execution reaches into it -
+           * `runPipeline` itself only ever sees this function.
+           */
+          fileInput: (nodeId, portId) => useAttachmentStore.getState().valueFor(nodeId, portId),
           onUpdate: (nodeId, state) => {
             // A superseded run must not paint over the newer one's results.
             if (runToken !== token) return;

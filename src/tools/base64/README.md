@@ -7,7 +7,9 @@ Encode text or files to base64, and decode base64 back to bytes.
 It stresses two parts of the type system that nothing else would:
 
 - **The binary path.** Decoding produces real `Uint8Array` bytes, not a string
-  pretending to be bytes. A file can go in and a file can come out.
+  pretending to be bytes. A file can go in and a file can come out — on the
+  canvas as well as on the tool page, since
+  [a node's input can be a file](../../../docs/architecture.md#a-file-as-an-input).
 - **The multi-type input port.** One port accepts `text` **or** `bytes`, so the
   run function has to narrow on the value's tag before it can touch a payload.
   If the narrowing is removed, the tool stops compiling.

@@ -11,6 +11,7 @@ way they are.
 - [Incremental caching](#incremental-caching)
 - [The canvas](#the-canvas)
 - [The node inspector](#the-node-inspector)
+- [A file as an input](#a-file-as-an-input)
 - [The tool runner page](#the-tool-runner-page)
 - [Between tools](#between-tools)
 - [State](#state)
@@ -191,6 +192,11 @@ restrictive. A tool page has always accepted a dropped text file on either
 tool, because the runner decodes a text-sniffed file before handing it over; it
 was only the canvas, where the same bytes arrive on a wire, that refused. One
 tool that accepts a file in one place and refuses it in the other is drift.
+
+That was half the drift, and the other half was the affordance: the canvas could
+not be handed a file at any port, whatever its types said. Both routes take one
+now, through one implementation — see
+[a file as an input](#a-file-as-an-input).
 
 The two ports that still refuse bytes take a short LITERAL rather than a
 document: a compact token and a colour. Their size limits say the same thing —
@@ -938,6 +944,11 @@ A **wired** port gets no editor either, and says what is feeding it instead. A
 wire wins over typed text everywhere else in the engine, so drawing a box whose
 contents the run would ignore is the same defect in a different costume.
 
+What the description is no longer doing is standing in for the affordance. That
+port takes a file, and there is now [a file control](#a-file-as-an-input) under
+the sentence that does the thing the sentence describes — which is what made
+`image-convert` reachable on the canvas at all.
+
 ### The keyboard
 
 `Enter` on a focused node used to step into that node's input editor. The editor
@@ -1009,6 +1020,9 @@ still not tested anywhere**, for the reason in the limitations below.
   desktop, a panel that reopens itself cannot be closed.
 - **Keeping the input box on the node as well.** Two places to type one value,
   and it is what made every node tall enough to lose the graph.
+- **A file control on the node.** Same argument: the node is 224px with two
+  clamped lines and a summary already doing four jobs. The whole node is a drop
+  target instead — see [a file as an input](#a-file-as-an-input).
 - **Showing the last result while a new one computes.** An answer to a question
   the user has already changed.
 - **Disabling the controls during a run.** The run is continuous here; the field
@@ -1023,6 +1037,267 @@ still not tested anywhere**, for the reason in the limitations below.
   in a 320px panel.
 - **Persisting the rail width.** One drag to restore, against another storage
   key to validate and migrate.
+
+## A file as an input
+
+You could not put a file on the canvas. No node had a file control, so the only
+way to get bytes into a pipeline was to type base64 into a text box and decode
+it — which means **"hash this file" and "convert this image", the two things
+those tools exist for, could not be started on the canvas at all.**
+`image-convert`'s only input takes `bytes`, so there was nothing to type into
+it and no wire that could have come from anywhere.
+
+The [port audit](#the-port-set) found this and concluded the ports were right
+and the affordance was missing. The [inspector](#the-node-inspector) is where
+it goes, for the reason input goes there at all: it is the one place a node's
+input is entered.
+
+### One control per port, not one per node
+
+The tool page sends its single file to "the first port that accepts `bytes`,
+falling back to the first port". That is all one control can do, and it makes
+`diff`'s second document port unreachable by file — so comparing two files is
+possible on neither route. The inspector already draws one editor per unwired
+input port; a file is input like any other and gets the same treatment.
+
+Every input port in the set declares `text` or `bytes`, and both can come from
+a file, so **every unwired port gets a file control** — including the two that
+take a short literal. A JWT saved to a `.txt` file is a real thing, and
+inventing a canvas-only rule about which ports deserve a file would be new
+drift between the two routes, which is what the port audit was about.
+
+**A wire wins, then a file, then typed text**, in that order — each a more
+deliberate act than the one after it. A wired port draws neither control and
+says what is feeding it, which is the rule it already followed for text; a port
+with a file shows the file's summary in place of the box. That is the same rule
+again rather than a new one: nothing draws a control whose contents the run
+would ignore. The typed text is not destroyed — it is still in `node.inputs`
+and the box comes back with it when the file is removed.
+
+The tool page disables its textarea instead of removing it, and the difference
+is deliberate: the inspector already states the winner for a wired port, and a
+320px rail cannot afford to draw both.
+
+### Where the bytes live, and why not in the document
+
+A `File` is not serialisable. The graph is a single `localStorage` key and it is
+also shared by URL, so neither could carry one — and a filename could travel in
+a URL, which is worse than useless.
+
+|                         |                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------- |
+| `CanvasNode.fileInputs` | Per port: **name, size and a token**. Persisted locally. Never in a share link. |
+| `attachmentStore`       | The built `ToolValue`, keyed by node and port. **Session only.**                |
+
+The split is what turns a reload into a sentence. The document remembers that
+this port was fed `holiday.png` and that it was 2.1 MB; the session no longer
+has the bytes; so the node says **`"holiday.png" needs choosing again`** and the
+inspector explains that a file is never saved with a canvas. Without the stub
+the node would be indistinguishable from one nobody had ever fed, which is a
+silently empty node rather than an answer.
+
+**What is stored is the built value, not the `File`.** It was validated against
+its port at the moment it was chosen — see below — so nothing downstream can be
+handed a file its port cannot use, and no run has to read or decode anything.
+The alternative, holding the `File` and reading it per run, would mean reading a
+64 MB image on every 300ms debounced re-run of an unrelated node.
+
+`token` distinguishes two files with the same name and the same size, which name
+and size alone cannot. It is part of the node's cache key, so replacing a file
+always re-runs the node instead of serving the previous answer — the failure
+this cache has already had once, and the worst kind it can have, because nobody
+reports an answer that looks completely plausible.
+
+### What happens on a reload, and on a shared link
+
+|                |                                                                                                                                                                                                    |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Reload**     | The name and size come back; the bytes do not. The node is `blocked` naming the file, and the inspector offers the chooser with the same name beside it, so the user knows which file to look for. |
+| **Share link** | Nothing at all. The recipient gets an ordinary empty port asking for a file, exactly as they get an empty text box for an input nobody typed into.                                                 |
+
+A share link carries no filename **and that is not merely the same rule as
+`inputs` again.** The bytes could not travel at any size, so the only question
+was the name — and a filename is often the most revealing single string in a
+document: `Q3-layoffs.xlsx` says something a pipeline's shape does not. The
+recipient does not have the file and would gain nothing but the name. It is
+enforced by `toSharePayload`'s explicit field list, which is written as a field
+list precisely so that adding a field to `CanvasNode` cannot start leaking it,
+and asserted by `share.test.ts`.
+
+**Duplicating a node copies its file**, bytes included. `...source` copies
+`fileInputs`, so without that the copy would claim a file it could not produce
+and look exactly like a reloaded node.
+
+**Deleting a node does not drop its file**, and that is a trade. Undo restores a
+deleted node whole — options, wires and typed text all come back — and a file
+that did not would make undo a partial repair of the user's own data. The cost
+is that a deleted node's bytes are retained until the graph is replaced or the
+tab closes, bounded by the tool's own `maxInputBytes`.
+
+**Replacing the graph drops every file.** Node ids repeat across documents —
+every canvas starts at `n1` — so an attachment that survived would hand the
+previous canvas's file to whatever the new one happens to call `n1`. That is the
+rule `pipelineStore.reset` already follows for results, and here it would be
+worse than a stale answer: it is one person's data appearing inside a pipeline
+somebody else shared with them.
+
+### Refused where the user is standing
+
+Every refusal happens at the moment of selection, and each one names the file
+and what to do about it. A limit reported afterwards is a limit the user
+discovers by waiting; a type error reported at run time is one they discover by
+pressing a button that was never going to work.
+
+[`lib/fileInput.ts`](../src/lib/fileInput.ts) is the one implementation, used by
+both routes, and its order is deliberate — each step is cheaper than the one
+below it:
+
+1. **Size**, before a single byte is read.
+2. **The sniff window**, to refuse a binary file on a text-only port. Only the
+   first 4 kB is read: `sniffBytes` matches signatures in the first twelve bytes
+   and examines 4 kB for its is-this-text heuristic, so a slice gives a
+   byte-identical verdict. This used to read the whole file to sniff it, so a
+   64 MB binary dropped on a text-only port was pulled into memory in full and
+   then refused.
+3. **The whole file**, and a strict decode where the port needs text.
+
+**The size limit is the tool's whole input, not one file.** `diff`'s is 8 MB
+across both ports, so two 5 MB files would each pass a per-file check and be
+refused together by the engine at run time. What a file is weighed against is
+computed with `measureInputs` — the very function `engine.execute` weighs a run
+with — so a file accepted at selection cannot be refused later for its size. The
+one exception is a port fed by a wire, whose value is not known until the node
+above it has run; counting nothing is the only honest answer there, and it is
+the one case where a size refusal could not have landed any earlier.
+
+**The declared MIME type is never read.** `file.type` comes from the operating
+system's extension mapping: rename `payload.exe` to `notes.json` and the browser
+reports `application/json`. Every decision here comes from the bytes, which is
+the rule the rest of the app follows.
+
+**And it decodes strictly, which fixed an inconsistency rather than adding one.**
+The file path used a lenient `TextDecoder` gated on the sniff while bytes on a
+wire went through [`lib/text.ts`](../src/lib/text.ts) — strict UTF-8, with a
+UTF-16 byte order mark as the one exception. So a Latin-1 file dropped on a tool
+page was processed as replacement characters and produced an answer, while the
+identical bytes arriving from a base64 node were refused: one tool, two answers,
+decided by which route the bytes took. Both go through `decodeDocument` now.
+
+### Dragging a file onto a node
+
+Dragging is the gesture people try first, and this route was doing the worst
+possible thing with it: **with no handler anywhere, dropping a file on the
+canvas made the browser navigate to it**, replacing the app with a picture.
+`dragover` is prevented across the whole workspace now, which is true whatever
+the drop then means.
+
+| Dropped on                        | What happens                                                               |
+| --------------------------------- | -------------------------------------------------------------------------- |
+| A node with **one** free input    | The file lands on it.                                                      |
+| A node with **several**           | The node is selected, the inspector opens, and a message names both ports. |
+| A node whose inputs are all wired | Refused, saying to remove a wire.                                          |
+| The background                    | Refused, saying to drop on a node or use the inspector.                    |
+
+**Two ports do not get a guess.** `diff` is the only tool in the set with two
+inputs and neither of them is "the" one, so picking the first would silently
+make one of the two comparisons unreachable by drag — and the wrong one half the
+time. Handing over to the inspector puts the user in front of the two named
+controls that can answer the question.
+
+**A drop on the background is refused rather than turned into a node.** Choosing
+which tool a file wants means reading its bytes and picking on the user's
+behalf — a hash for an archive, a converter for a PNG — and a gesture that
+silently chooses a tool is a worse surprise than one that does nothing and says
+what would have worked.
+
+The node under the pointer is marked while a file is over it, with a **dashed**
+accent border at the strong width and lifted above its neighbours — the border
+STYLE changes as well as its colour, because nothing here may rely on colour
+alone, and a drop target nothing marks is a guess the user gets wrong on
+overlapping nodes.
+
+It deliberately does not tint the node. The first version filled it with
+`--pb-accent-subtle`, which puts the title, the summary and the status over a
+token that is not in `CONTRAST_PAIRS` and is a light colour in two of the four
+themes — and nothing could have caught it, because the state exists only while
+a pointer is dragging: `themes.contrast.test.ts` iterates a known list of pairs
+and axe in `check:browsers` sees a resting page. A border answers the question
+without asking one nothing can answer.
+
+### Keyboard and touch
+
+**There is no separate keyboard path to maintain, because the real
+`<input type="file">` is the control.** It is visually hidden but focusable and
+labelled by the button beside it, so Tab then Enter opens the picker and
+dragging is the extra. That is `FileDrop`'s own design and it came for free with
+reusing it.
+
+`Enter` on a node means "step into that node's input". A bytes-only port has no
+editor to step into, so **the key lands on its file chooser** — otherwise it
+would silently do nothing on exactly the node this feature exists for. The
+lookup asks for the text editor first and the file control second, in that
+order, rather than as one `querySelector` over a selector list: that form
+returns the first match in document order, which is the bug that once put focus
+on "Close the inspector".
+
+The label carries the 44px minimum on a coarse pointer — the label rather than
+the input, because the input is the control and is visually hidden, so the label
+is the whole of what a finger can aim at. The mobile audit had already had to
+add that once for the tool page, where picking a file was the only way to get
+data into `image-convert` at all; reuse means the canvas inherits it rather than
+repeating the finding. `check:browsers` measures it in both engines with a real
+coarse pointer, on the two-port tool, so it is two controls that are measured.
+
+### What a node shows
+
+`photo.png · 2.1 MB` in the summary box, **while there is no result yet**. Once
+a node has run, its answer is its situation — the rule the summary box already
+follows for the tool's description — and a file that pushed the result out of
+the box would cost the node the thing it exists to show. The filename is in the
+node's accessible name unconditionally, so it does not stop being available when
+the answer arrives, and "which node has the photograph" is a question a file
+input creates.
+
+Rejected: a permanent chip in the footer, which has 224px for `blocked` and
+`3 wires` already; and a paperclip badge, which is an unlabelled glyph carrying
+information — the one thing the accessibility rules here refuse outright — and
+labelling it needs room the node does not have.
+
+### One file feeding two nodes
+
+Binary payload ownership has bitten before, which is why inputs are **borrowed**
+(structured cloned) by default and transferred only on an explicit opt-in: a
+fan-out to two consumers detaches the second. A file is a second source of one
+buffer reaching several tools, so the same guarantee is asserted for it —
+`fanout.test.ts` holds the line for a wired output, `attachments.test.ts` and
+`graph.test.ts` hold it for a file, and `check:browsers` crosses a real
+`postMessage` with two hashes of one file and compares both digests against
+known values. An empty input has its own well-known digest, so a detached buffer
+would sail past a "both ran" assertion.
+
+### What was rejected
+
+- **Persisting the file in IndexedDB.** It would mean a canvas silently carrying
+  somebody's 60 MB photograph across sessions, plus a second store to validate,
+  migrate and garbage-collect, for a value the user still has on disk.
+- **Putting the filename in a share link.** The recipient has no file and gains
+  only the name — and a filename is frequently the most revealing string in a
+  document.
+- **A single file per node**, as the tool page has. It leaves `diff`'s second
+  port unreachable by file on both routes.
+- **Choosing a file as an undo step.** Input is not in the history — typing is
+  not either — and it would be an entry undo could not always honour, since the
+  reference would come back pointing at bytes nothing holds.
+- **Guessing a port for a two-input drop.** One of the two comparisons becomes
+  unreachable by drag, and it is the wrong one half the time.
+- **Creating a node from a drop on the background.** A gesture that silently
+  picks a tool from a file's bytes is a worse surprise than one that does
+  nothing.
+- **A drop zone on the node itself.** The node is 224px with two clamped lines
+  and a summary that is already doing four jobs; the whole node is the target
+  instead.
+- **Reading the file per run rather than holding the value.** A 64 MB image
+  re-read on every 300ms debounce, triggered by typing in an unrelated node.
 
 ## The tool runner page
 
@@ -1217,6 +1492,16 @@ renders its own description as the instruction for the file control instead,
 and running with nothing chosen says "Image takes a file. Choose or drop one
 first." rather than reporting a type error.
 
+The file control itself is [shared with the canvas](#a-file-as-an-input) now,
+and two things about this page changed with that. It is handed the PORT its file
+will feed rather than only a size limit, so a PNG chosen for a text-only port is
+refused at the moment of selection instead of at the moment of Run. And it no
+longer re-reads the file on every press: the whole `File` was pulled into memory
+twice per run — once to sniff it and again to use it — which also meant the
+sniff came from one read and the bytes from another, so a file edited on disk
+between the two would have been processed under the previous file's verdict
+about what it was.
+
 ## Between tools
 
 Every tool is sound on its own. This section is about the seams — the places
@@ -1337,6 +1622,14 @@ measured at the time, a node's textarea at y=491 with the visible area cut to
 444px left `scrollTop` at 0 in both engines. Moving input into the inspector
 removed the condition rather than the symptom.)
 
+**A file lasts as long as the tab.** This is the deliberate answer rather than
+a defect — see [a file as an input](#a-file-as-an-input) — but the consequence
+is worth stating as a limitation: a canvas whose sources are files is not a
+canvas you can close and come back to without re-choosing them, and a graph you
+share is not one the recipient can run without supplying their own. A node
+deleted and undone keeps its file; a graph replaced by a load or a link loses
+every one, and a deleted node's bytes are retained until then.
+
 **Progress is not reported through a pipeline.** `runPipeline` passes no
 `onProgress`, so a tool that reports progress shows none on the canvas. No
 shipped tool declares `reportsProgress: true`, so nothing is currently lost;
@@ -1379,7 +1672,9 @@ list of things it found:
 - **Fan-out and buffer ownership.** Twelve consumers on one binary output, more
   than the concurrency bound, all receive intact bytes — including on a run
   where the source is served from cache. Inputs are borrowed (structured
-  cloned), never transferred, from every call site in the app.
+  cloned), never transferred, from every call site in the app. A file is the
+  second source of one buffer reaching several tools and is held to the same
+  line, in both engines.
 - **Every legal pair of tools.** Each output/input pair whose declared types
   overlap was run with real data. Every one either produces a correct value or
   fails with a message about the actual input; none crashes, hangs, or produces
@@ -1406,14 +1701,22 @@ list of things it found:
 
 ## State
 
-Four Zustand stores, split by what invalidates them:
+Five Zustand stores, split by what invalidates them:
 
-| Store           | Holds                                 | Persisted                                 |
-| --------------- | ------------------------------------- | ----------------------------------------- |
-| `graphStore`    | nodes, edges, selection, undo history | `patchbay:graph:v3`                       |
-| `viewportStore` | pan and zoom                          | no                                        |
-| `pipelineStore` | per-node run status and results       | no                                        |
-| `themeStore`    | selection, authored themes, draft     | `patchbay:theme:v1`, `patchbay:themes:v1` |
+| Store             | Holds                                    | Persisted                                 |
+| ----------------- | ---------------------------------------- | ----------------------------------------- |
+| `graphStore`      | nodes, edges, selection, undo history    | `patchbay:graph:v3`                       |
+| `viewportStore`   | pan and zoom                             | no                                        |
+| `pipelineStore`   | per-node run status and results          | no                                        |
+| `attachmentStore` | the bytes behind each node's file inputs | no                                        |
+| `themeStore`      | selection, authored themes, draft        | `patchbay:theme:v1`, `patchbay:themes:v1` |
+
+`attachmentStore` is not persisted for the same reason `pipelineStore` is not
+part of the document — plus one of its own: a `File` cannot be serialised into
+the key the graph lives in, and a filename must never travel in a share link.
+The document keeps a name, a size and a token per port; the bytes live here for
+the session. See [a file as an input](#a-file-as-an-input) for what that means
+on a reload.
 
 `graphStore` and `pipelineStore` both also hold an announcement log — see
 [announcements](#announcements-are-a-log-not-a-variable). It is state rather

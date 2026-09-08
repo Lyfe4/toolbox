@@ -49,7 +49,7 @@ function node(
   y = 0,
   extra: Partial<CanvasNode> = {},
 ): CanvasNode {
-  return { id, toolId, position: { x, y }, options: {}, inputs: {}, ...extra };
+  return { id, toolId, position: { x, y }, options: {}, inputs: {}, fileInputs: {}, ...extra };
 }
 
 function seed(nodes: readonly CanvasNode[], edges: readonly CanvasEdge[] = []): void {

@@ -135,7 +135,8 @@ each is in
   as "the tool's answer", and that only means anything if the set agrees.
 - **One input is called `input`; several are each named.**
 - **Every port carries a description.** It is the only documentation of a port
-  that reaches a person: an input's is its editor's placeholder, and an
+  that reaches a person: an input's is its editor's placeholder — or, on a port
+  that cannot take text, the instruction above its file control — and an
   output's is shown in the Ports panel on the tool page.
 - **A label fits in about eleven characters.** The label box on a node is 84px
   at 10px uppercase. Go past thirteen and it is mostly ellipsis.
@@ -269,9 +270,15 @@ having been edited.
 
 - Register a route. `/tools/:toolId` is generic.
 - Write any UI. `OptionField[]` is rendered by the shared runner and by the
-  node body.
+  node inspector.
+- Accept a file. Every unwired input port gets a file control on both routes,
+  built from the port's own types and the tool's `maxInputBytes` — a `bytes`
+  port takes any file, a text port takes a text-sniffed one and refuses the
+  rest, and both refusals happen at the moment of selection. See
+  [a file as an input](architecture.md#a-file-as-an-input).
 - Write a worker message type. The protocol is generic over the tool.
 - Handle cancellation, timeouts, size limits or progress. `execution` declares
   them and the engine enforces them.
 - Think about caching. The cache key is derived from the tool id, the options,
-  the typed input and the upstream keys.
+  the typed input, the identity of any file chosen for a port, and the upstream
+  keys.

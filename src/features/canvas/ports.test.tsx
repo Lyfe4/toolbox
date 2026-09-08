@@ -29,7 +29,7 @@ import { DEFAULT_VIEWPORT, useViewportStore } from './viewportStore';
  */
 
 function node(id: string, toolId: CanvasNode['toolId'], x: number, y: number): CanvasNode {
-  return { id, toolId, position: { x, y }, options: {}, inputs: {} };
+  return { id, toolId, position: { x, y }, options: {}, inputs: {}, fileInputs: {} };
 }
 
 function graphOf(nodes: readonly CanvasNode[]): GraphData {

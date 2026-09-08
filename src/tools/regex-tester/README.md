@@ -398,6 +398,12 @@ all. One tool that accepts a file in one place and refuses it in the other is
 drift rather than a decision. See the
 [port audit](../../../docs/architecture.md#the-port-set).
 
+Nothing on the canvas could be handed a log file DIRECTLY either, whatever the
+port's types said, so the canonical use went through a base64 decode by hand.
+A node's input can be a file now — drop one on the node or choose one in the
+inspector — and the decode below is the same one either route takes. See
+[a file as an input](../../../docs/architecture.md#a-file-as-an-input).
+
 Bytes are decoded **strictly**, through [`lib/text.ts`](../../lib/text.ts), so
 a PNG on that port says it is not text rather than being searched as mojibake
 and reporting matches at offsets into characters nobody wrote. That is the

@@ -299,7 +299,14 @@ describe('placement', () => {
   it('pushes an origin below whatever is already there', () => {
     const graph: GraphData = {
       nodes: {
-        n1: { id: 'n1', toolId: 'base64', position: { x: 0, y: 0 }, options: {}, inputs: {} },
+        n1: {
+          id: 'n1',
+          toolId: 'base64',
+          position: { x: 0, y: 0 },
+          options: {},
+          inputs: {},
+          fileInputs: {},
+        },
       },
       nodeOrder: ['n1'],
       edges: {},
@@ -315,7 +322,14 @@ describe('placement', () => {
   it('leaves an origin that is already well below alone', () => {
     const graph: GraphData = {
       nodes: {
-        n1: { id: 'n1', toolId: 'base64', position: { x: 0, y: 0 }, options: {}, inputs: {} },
+        n1: {
+          id: 'n1',
+          toolId: 'base64',
+          position: { x: 0, y: 0 },
+          options: {},
+          inputs: {},
+          fileInputs: {},
+        },
       },
       nodeOrder: ['n1'],
       edges: {},

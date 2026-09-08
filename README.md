@@ -67,6 +67,24 @@ itself keeps a short summary of its result — `47 matches`, `2.1 MB PNG image`,
 `+12 −3` — so a pipeline can be scanned without opening anything. See
 [architecture.md](docs/architecture.md#the-node-inspector).
 
+**A node's input can be a file.** Drop one on a node, or choose one in the
+inspector — every unwired input port has its own control, so `diff` can compare
+two files and `image-convert` can be started at all. It could not be, before:
+its only input takes `bytes`, so on the canvas there was nothing to type into it
+and no wire that could have come from anywhere. Size limits and the "this port
+needs text" refusal both land at the moment you choose the file rather than when
+you run, the format comes from the bytes and never from the extension, and the
+same control drives both routes.
+
+**A file lasts as long as the tab, deliberately.** A graph is saved to
+`localStorage` and shared by URL, and a `File` belongs in neither — so the
+document keeps the name and size and the bytes do not persist. Reload and the
+node says `"holiday.png" needs choosing again` rather than coming back looking
+as though nobody had ever fed it; a link you share carries no filename at all,
+because a filename is often the most revealing string in a document. The whole
+answer, and what was rejected, is in
+[architecture.md](docs/architecture.md#a-file-as-an-input).
+
 ## The zero-network guarantee
 
 A developer toolbox is a thing you paste secrets into: a JWT you are debugging,
@@ -133,8 +151,8 @@ never throws across the boundary: a tool returns a result describing success or
 failure, and bad input is a result, not an exception.
 
 **Incremental caching keyed on upstream cache keys, not values.** Each node's
-key is built from its tool, its options, its typed input, and the _keys_ of the
-nodes feeding it.
+key is built from its tool, its options, its typed input, the identity of any
+file chosen for it, and the _keys_ of the nodes feeding it.
 
 > Why it matters: comparing upstream keys is O(1) whatever the data is, so a
 > 30 MB decoded file never has to be hashed to know whether it changed. Keying
@@ -157,6 +175,12 @@ the canvas binds, so it cannot drift. `K` opens the palette, `I` shows and
 hides the inspector, `Enter` opens it on the focused node and moves into it,
 `Escape` steps back out to the node, arrows move the selection by 8px,
 `Ctrl/Cmd+Z` undoes, `F` fits, `0` resets zoom.
+
+`Enter` steps into whichever control the node's first free input actually has —
+its text editor, or its file chooser on a port that takes bytes only. The
+chooser is a real `<input type="file">`, visually hidden and labelled, so Tab
+then Enter opens the picker: dragging a file onto a node is the extra rather
+than the route.
 
 ### Connecting two tools without a pointer
 
@@ -568,6 +592,70 @@ kind that only ever show up as a wait:
 The reasoning, the measurements and what was looked at and found sound are in
 [architecture.md](docs/architecture.md#what-the-intermittent-worker-wedge-failure-actually-was).
 
+### What adding a file input found
+
+The starting point was not a bug report, it was a sentence nobody could carry
+out: **drop a photo, convert it to WebP, hash the result.** Every piece of that
+existed and worked. `image-convert`'s only input declares `bytes`, so on the
+canvas there was nothing to type into it and no wire that could have come from
+anywhere — the pipeline could not be _started_, which is a different kind of
+missing from a pipeline that runs wrong.
+
+Four things came out of building the way in.
+
+**Dropping a file on the canvas navigated the browser to it.** No handler
+existed anywhere on the route, so the default action ran: the app was replaced
+by a picture of the file, and whatever was on the canvas went with it. The graph
+is saved, so nothing was permanently lost — but the gesture people try first
+took them out of the application, and nothing in the app had ever said no to it.
+`dragover` is prevented across the whole workspace now, which is true whatever a
+drop then means.
+
+**One tool was giving two answers, decided by which route the bytes took.** A
+file dropped on a tool page was decoded with a lenient `TextDecoder` gated on
+the content sniff; the identical bytes arriving on a wire went through the
+strict UTF-8 decoder the [port audit](docs/architecture.md#the-port-set) had
+introduced. So a Latin-1 file was processed as replacement characters on one
+route and refused on the other. That is the same class of drift the audit
+existed to remove, one level down: not which types a port accepts, but what
+happens to the bytes once they are accepted. Both routes go through
+`decodeDocument` now, and putting the file rules in one module is what made the
+disagreement visible at all.
+
+**The tool page read every file twice, and mixed the two reads.** It read the
+whole file to sniff it, threw the bytes away, and read it again on every press
+of Run — so a 60 MB image was pulled into memory twice per run. Worse than the
+cost: the sniff came from the first read and the bytes from the second, so a
+file edited on disk between them would have been processed under the previous
+file's verdict about what it was. One read now, and the value it produces is
+built and validated against its port at that moment, which is what lets both
+routes hand it straight to the engine without re-checking anything.
+
+**A migration was stamping the wrong version.** Migrations chain: each step
+rewrites the payload and hands it back to the dispatcher, which reads the
+`version` it finds. The v4 → v5 step wrote `CURRENT_GRAPH_VERSION` rather than
+the literal 5 — correct for exactly as long as it was the last step in the
+chain, and wrong the moment a v6 was added, because a v4 save would have claimed
+to have had the v5 → v6 step run over it and skipped it. Nothing was broken
+when it was written; adding a step to the chain is what would have broken it,
+which is the kind of latent defect only turns up when somebody reads the chain
+because they are about to extend it.
+
+And one thing that was measured rather than reasoned about: **a 64 MB binary
+dropped on a text-only port was read into memory in full and then refused.** The
+sniff needs the first 4 kB — twelve bytes for the signatures and 4 kB for the
+is-this-text heuristic — so the verdict was available from a slice all along.
+`fileInput.test.ts` asserts that the slice and the whole file give a
+byte-identical verdict, and that the whole file is never read when the sniff has
+already refused it, because "it reads less now" is not something a test of the
+answer can see.
+
+The persistence and share-link answers are decisions rather than findings, and
+both are written down with what was rejected in
+[architecture.md](docs/architecture.md#a-file-as-an-input): a file lasts as long
+as the tab, a reload names the file it needs again, and a link carries no
+filename at any size.
+
 ### Where each kind of test lives
 
 jsdom has no layout engine, no Worker, no `OffscreenCanvas` and no pointer
@@ -575,8 +663,20 @@ events. Anything about geometry, overflow, computed colour, or whether
 something actually scrolls is asserted in
 [`scripts/cross-browser-check.mjs`](scripts/cross-browser-check.mjs) against
 Firefox and WebKit instead — where it drags a node with real pointer events,
-runs a tool in a real worker, converts a real PNG, scans every route with axe,
-goes offline and reloads, and asserts nothing left the origin.
+runs a tool in a real worker, converts a real PNG, drops a real file on a node
+through a real `DataTransfer`, scans every route with axe, goes offline and
+reloads, and asserts nothing left the origin.
+
+The file input is a good example of the split earning its keep, and of the
+harness's own fixtures needing the same scrutiny as the code. Three of its
+checks failed on their first run, all three for reasons in the check rather than
+in the app: two share links were passing `webp` for an option that takes a media
+type, so the node failed on its options and the file never came into it, and one
+compared a SHA-256 against a node summary that is deliberately truncated to 60
+characters because it is also the node's accessible name. The check that noticed
+none of this was a negative assertion — "the summary is not the guidance" —
+which `Those options are not valid for this tool.` satisfies perfectly well. It
+asks for the report's own arrow now.
 
 That split is not tidiness. A serious accessibility bug — the shortcuts dialog
 scrolled but nothing could focus it, so a keyboard user could not read past the
@@ -593,7 +693,7 @@ in this file have numbers behind them.
 
 |                                          | Raw      | Gzipped  |
 | ---------------------------------------- | -------- | -------- |
-| Initial JavaScript                       | 328.0 kB | 106.1 kB |
+| Initial JavaScript                       | 328.5 kB | 106.3 kB |
 | Budget (enforced by `pnpm bundle:check`) | 380.0 kB | —        |
 
 Every tool, the canvas, the styleguide and the tool pages are lazy chunks and
@@ -615,6 +715,12 @@ routes now downloads them once instead of once per route. Deferring the views
 behind a second dynamic import was considered and rejected: a canvas exists to
 produce output, so the deferral would last seconds and buy a loading state
 nobody wants in a 320px panel.
+
+The file input cost the initial payload nothing at all, and that is a property
+of where the code sits rather than of how small it is: the shared file rules are
+in the `toolrunner` chunk both routes already load, the canvas's half is in the
+canvas chunk, and the document field is a type. Checked rather than assumed —
+neither initial chunk contains a byte of either.
 
 ### Cold start
 

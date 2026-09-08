@@ -2,6 +2,14 @@
 
 Convert and resize images between PNG, JPEG and WebP.
 
+**Its only input takes `bytes`, which for a long time meant it could not be
+started on the canvas at all.** There was nothing to type into the port, and the
+only wire that could have fed it would have had to come from a node with the
+same problem — so the two things this tool is for, opening a photograph and
+converting it, were reachable on the tool page and nowhere else. A node's input
+can be a file now: drop one on the node or choose one in the inspector. See
+[a file as an input](../../../docs/architecture.md#a-file-as-an-input).
+
 This is the tool where a passing test proves the least. Dimensions and a
 non-zero byte count are easy to assert and are satisfied by an image that is
 upside down, grey, black where it should be white, or one frame of twelve — so

@@ -29,7 +29,7 @@ import { DEFAULT_VIEWPORT, useViewportStore } from './viewportStore';
  */
 
 function node(id: string, toolId: CanvasNode['toolId'], x = 0, y = 0): CanvasNode {
-  return { id, toolId, position: { x, y }, options: {}, inputs: {} };
+  return { id, toolId, position: { x, y }, options: {}, inputs: {}, fileInputs: {} };
 }
 
 function renderCanvas() {

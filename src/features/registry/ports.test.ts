@@ -191,8 +191,22 @@ describe('the data types', () => {
 function twoNodeGraph(fromTool: string, toTool: string): GraphData {
   return {
     nodes: {
-      a: { id: 'a', toolId: fromTool as never, position: { x: 0, y: 0 }, options: {}, inputs: {} },
-      b: { id: 'b', toolId: toTool as never, position: { x: 400, y: 0 }, options: {}, inputs: {} },
+      a: {
+        id: 'a',
+        toolId: fromTool as never,
+        position: { x: 0, y: 0 },
+        options: {},
+        inputs: {},
+        fileInputs: {},
+      },
+      b: {
+        id: 'b',
+        toolId: toTool as never,
+        position: { x: 400, y: 0 },
+        options: {},
+        inputs: {},
+        fileInputs: {},
+      },
     },
     nodeOrder: ['a', 'b'],
     edges: {},

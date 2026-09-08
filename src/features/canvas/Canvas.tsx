@@ -16,9 +16,11 @@ import {
   type ToolId,
 } from '@/features/registry';
 import { cx } from '@/lib/cx';
+import { describeFile, loadFileForPort, type LoadedFile } from '@/lib/fileInput';
 import { counted } from '@/lib/plural';
 import { useMediaQuery } from '@/lib/useMediaQuery';
 
+import { useAttachmentStore } from './attachmentStore';
 import styles from './canvas.module.css';
 import { CanvasNodeView, portKey } from './CanvasNodeView';
 import { CommandDialog, type DialogGroup, type DialogOption } from './CommandDialog';
@@ -31,6 +33,7 @@ import {
   validPartnersFor,
   type PortEnd,
 } from './connections';
+import { fileTargetPorts, otherInputBytes } from './fileInputs';
 import {
   clamp,
   clearOfExistingNodes,
@@ -873,6 +876,193 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     [store],
   );
 
+  /**
+   * A FILE CHOSEN FOR, OR CLEARED FROM, AN INPUT PORT.
+   *
+   * Two writes, and the order matters. The bytes go into the attachment store
+   * FIRST, so there is no render in which the document names a file the store
+   * cannot produce - which is exactly what a reloaded canvas looks like, and it
+   * would be wrong to show it for a frame to somebody who just chose one.
+   *
+   * The document write is what schedules the run: it changes `graph`, the
+   * effect watching `graph` calls `schedule`, and that is the existing 300ms
+   * debounce. Nothing here runs the pipeline directly, for the reason the
+   * options handler gives - a second trigger is a second thing to keep in step.
+   */
+  const onFileChange = useCallback(
+    (nodeId: NodeId, portId: string, loaded: LoadedFile | null) => {
+      const attachments = useAttachmentStore.getState();
+
+      /*
+       * ANNOUNCED BY THE PORT'S LABEL, NOT ITS ID. "A port id is an identity;
+       * a label is a word for a person" is the port audit's own rule, and this
+       * is read aloud - `Removed the file from original.` is the id leaking
+       * into a sentence. The node is looked up rather than passed in because
+       * the caller already knows which port it means and should not have to
+       * know what it is called.
+       */
+      const node = store.getState().graph.nodes[nodeId];
+      const label =
+        node === undefined
+          ? portId
+          : (getManifestEntry(node.toolId).inputs.find((port) => port.id === portId)?.label ??
+            portId);
+
+      if (loaded === null) {
+        attachments.detach(nodeId, portId);
+        store.getState().setNodeFile(nodeId, portId, null);
+        store.getState().announce(`Removed the file from ${label}.`);
+        return;
+      }
+
+      const ref = attachments.attach(nodeId, portId, loaded);
+      store.getState().setNodeFile(nodeId, portId, ref);
+      store
+        .getState()
+        .announce(`Loaded ${describeFile(ref.name, ref.size)} into ${label}. Nothing is uploaded.`);
+    },
+    [store],
+  );
+
+  /**
+   * A FILE DROPPED ON A NODE.
+   *
+   * The gesture people try first, and it was doing the worst possible thing:
+   * with no handler anywhere on this route, dropping a file on the canvas made
+   * the BROWSER navigate to it, replacing the app with a picture. That is fixed
+   * whatever else happens here - `dragover` is prevented across the whole
+   * workspace - and the drop itself now lands where it looks like it should.
+   *
+   * WHICH PORT, when a node has two. `diff` is the only tool in the set with
+   * two inputs and neither of them is "the" one, so a drop with two candidate
+   * ports does not guess: it selects the node, opens the inspector and says so,
+   * which puts the user in front of the two named controls that can answer the
+   * question. Guessing "the first port" would silently make one of the two
+   * comparisons impossible to reach by drag, and the wrong one half the time.
+   *
+   * A DROP ON THE BACKGROUND IS REFUSED, not turned into a new node. Deciding
+   * which tool a file wants means reading its bytes and picking on the user's
+   * behalf - a hash for an archive, a converter for a PNG - and a gesture that
+   * silently chooses a tool is a worse surprise than one that does nothing and
+   * says what would have worked.
+   */
+  const onNodeDrop = useCallback(
+    async (nodeId: NodeId | null, file: File): Promise<void> => {
+      const refuse = (message: string): void => {
+        notify({ title: 'Nothing to drop that on', description: message, tone: 'warn' });
+        store.getState().announce(message);
+      };
+
+      if (nodeId === null) {
+        refuse('Drop a file onto a node, or choose one in the inspector.');
+        return;
+      }
+
+      const { graph: current } = store.getState();
+      const node = current.nodes[nodeId];
+      if (!node) return;
+
+      const entry = getManifestEntry(node.toolId);
+      const candidates = fileTargetPorts(current, node);
+
+      if (candidates.length === 0) {
+        refuse(`Every input on ${entry.name} is wired. Remove a wire to feed it a file.`);
+        return;
+      }
+
+      if (candidates.length > 1) {
+        store.getState().select({ nodes: [nodeId], edges: [] });
+        setInspectorOpen(true);
+        const names = candidates.map((port) => port.label).join(' and ');
+        notify({
+          title: `${entry.name} has more than one input`,
+          description: `Choose a file for ${names} in the inspector.`,
+          tone: 'warn',
+        });
+        store.getState().announce(`${entry.name} takes ${names}. Choose which in the inspector.`);
+        return;
+      }
+
+      const port = candidates[0];
+      if (!port) return;
+
+      const attachments = useAttachmentStore.getState().files[nodeId] ?? {};
+      const result = await loadFileForPort(port, file, {
+        maxBytes: entry.execution.maxInputBytes,
+        otherBytes: otherInputBytes(node, entry.inputs, port.id, attachments),
+      });
+
+      if ('error' in result) {
+        notify({ title: 'File rejected', description: result.error, tone: 'error' });
+        store.getState().announce(result.error);
+        return;
+      }
+
+      onFileChange(nodeId, port.id, result.loaded);
+    },
+    [notify, onFileChange, store],
+  );
+
+  /**
+   * The node a file is currently being dragged over, for the drop highlight.
+   *
+   * A drop target nothing marks is a guess, and on a canvas of overlapping
+   * nodes it is a guess the user gets wrong. Held here rather than on the node
+   * because only one node can be the target.
+   */
+  const [dropTarget, setDropTarget] = useState<NodeId | null>(null);
+
+  /*
+   * The drag listeners are attached to the WORKSPACE, imperatively.
+   *
+   * The workspace rather than the canvas root, because `dragover` has to be
+   * prevented everywhere on the route - including the inspector's own
+   * surroundings - or the browser navigates away from the app on any drop that
+   * misses a drop zone. The inspector's own `FileDrop` stops propagation, so a
+   * drop that has already named its port never reaches this.
+   *
+   * Imperatively, for the reason `FileDrop` gives about the same handlers: a
+   * `<div>` carrying interaction props is a genuine accessibility smell, and
+   * silencing that rule here would blunt it where it really catches something.
+   */
+  useEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return undefined;
+
+    const nodeUnder = (target: EventTarget | null): NodeId | null => {
+      if (!(target instanceof Element)) return null;
+      return target.closest('[data-node-id]')?.getAttribute('data-node-id') ?? null;
+    };
+
+    const onDragOver = (event: DragEvent): void => {
+      // Without this the browser opens the file and the canvas is gone.
+      event.preventDefault();
+      setDropTarget(nodeUnder(event.target));
+    };
+    const onDragLeave = (event: DragEvent): void => {
+      // Only when the pointer has actually left the workspace: `dragleave`
+      // fires for every child boundary crossed on the way in, and clearing on
+      // those makes the highlight flicker off under the cursor.
+      if (event.relatedTarget === null) setDropTarget(null);
+    };
+    const onDrop = (event: DragEvent): void => {
+      event.preventDefault();
+      setDropTarget(null);
+      const file = event.dataTransfer?.files.item(0);
+      if (file) void onNodeDrop(nodeUnder(event.target), file);
+    };
+
+    workspace.addEventListener('dragover', onDragOver);
+    workspace.addEventListener('dragleave', onDragLeave);
+    workspace.addEventListener('drop', onDrop);
+
+    return () => {
+      workspace.removeEventListener('dragover', onDragOver);
+      workspace.removeEventListener('dragleave', onDragLeave);
+      workspace.removeEventListener('drop', onDrop);
+    };
+  }, [onNodeDrop]);
+
   /*
    * An option change is an ordinary graph edit, so it goes through the same
    * path everything else does: the store updates the document, the effect that
@@ -937,8 +1127,25 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     const panel = workspaceRef.current?.querySelector('[data-testid="node-inspector"]');
     if (!panel) return;
 
+    /*
+     * ASKED FOR BY NAME, IN PRIORITY ORDER, ONE SELECTOR AT A TIME.
+     *
+     * The text editor, then the file chooser, then anything focusable. Three
+     * separate calls rather than one selector list, because a list returns the
+     * first element matching ANY of them in DOCUMENT order - which is the bug
+     * that put focus on "Close the inspector", the panel's header coming before
+     * its body.
+     *
+     * The file chooser is the second entry rather than a happy accident of
+     * document order: a port that takes bytes only has no editor to step into,
+     * so its chooser is what "step into this node's input" has to mean there.
+     * Without it, `Enter` fell through to the generic selector and happened to
+     * find the same element - and would have stopped doing so the first time
+     * anything else in the panel came before it.
+     */
     const target =
       panel.querySelector<HTMLElement>('[data-inspector-input]') ??
+      panel.querySelector<HTMLElement>('[data-file-input]') ??
       panel.querySelector<HTMLElement>('textarea, input, select') ??
       panel.querySelector<HTMLElement>('button, [tabindex]:not([tabindex="-1"])');
     target?.focus();
@@ -1459,6 +1666,22 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     return map;
   }, [graph]);
 
+  /**
+   * Which ports on each node have a file whose bytes this session still has.
+   *
+   * The node draws its own summary from the DOCUMENT (`node.fileInputs`), which
+   * cannot tell a file just chosen from one a reload left behind - and those two
+   * states say opposite things. This is the other half of the answer.
+   */
+  const attachedFiles = useAttachmentStore((state) => state.files);
+  const fileInputFor = useMemo(() => {
+    const map = new Map<NodeId, readonly string[]>();
+    for (const [nodeId, ports] of Object.entries(attachedFiles)) {
+      map.set(nodeId, Object.keys(ports));
+    }
+    return map;
+  }, [attachedFiles]);
+
   /*
    * WHAT THE INSPECTOR IS LOOKING AT.
    *
@@ -1908,6 +2131,8 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
                 connections={connectionCount(graph, id)}
                 run={runStates[id] ?? idleState()}
                 typedInputPorts={typedInputFor.get(id) ?? EMPTY_PORTS}
+                fileInputPorts={fileInputFor.get(id) ?? EMPTY_PORTS}
+                dropTarget={dropTarget === id}
                 linking={draft !== null}
                 validPorts={valid ?? emptySet}
                 heldPort={
@@ -2219,6 +2444,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
             store.getState().select({ nodes: [id], edges: [] });
           }}
           onInputChange={onInputChange}
+          onFileChange={onFileChange}
           onOptionChange={onOptionChange}
           onClose={() => {
             /*

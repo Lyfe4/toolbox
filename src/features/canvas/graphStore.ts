@@ -9,6 +9,7 @@ import {
 } from '@/lib/announce';
 import { counted } from '@/lib/plural';
 
+import { useAttachmentStore } from './attachmentStore';
 import { applyCommand, describeCommand, revertCommand, type Command } from './commands';
 import { checkConnection, edgesTouching } from './connections';
 import { GRID, snapPoint, snapToGrid } from './geometry';
@@ -18,6 +19,7 @@ import {
   type CanvasEdge,
   type ConnectionCheck,
   type EdgeId,
+  type FileInputRef,
   type GraphData,
   type NodeId,
   type Point,
@@ -77,6 +79,14 @@ export interface CanvasStore extends AnnouncementSlice {
     coalesce?: boolean,
   ) => void;
   readonly setNodeInput: (nodeId: NodeId, portId: string, value: string) => void;
+  /**
+   * Records or clears the file on an input port.
+   *
+   * The BYTES are not here - they are in `attachmentStore`, and the caller has
+   * already put them there. This writes only what the document may keep: a
+   * name, a size and a token.
+   */
+  readonly setNodeFile: (nodeId: NodeId, portId: string, ref: FileInputRef | null) => void;
   readonly select: (selection: Partial<Selection>) => void;
   readonly toggleNode: (id: NodeId) => void;
   readonly clearSelection: () => void;
@@ -192,6 +202,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
           position: snapPoint(position),
           options: {},
           inputs: {},
+          fileInputs: {},
         },
       });
 
@@ -228,6 +239,26 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
         const id: NodeId = `n${counter.toString()}`;
         counter += 1;
         created.push(id);
+
+        /*
+         * A DUPLICATE GETS THE ORIGINAL'S FILES TOO.
+         *
+         * `...source` copies `fileInputs`, which names files the attachment
+         * store holds under the SOURCE node's id - so without this the copy
+         * would claim a file it could not produce and sit there as though the
+         * canvas had been reloaded. The value is immutable and handed to the
+         * engine by borrow, so two nodes sharing one is not a hazard; it is the
+         * same fan-out a wire into two inputs already is.
+         *
+         * The token `attach` issues is deliberately discarded: the copy carries
+         * the SOURCE's reference, and it is the same file, so it should hash to
+         * the same cache key rather than to a new one.
+         */
+        const attachments = useAttachmentStore.getState();
+        for (const portId of Object.keys(source.fileInputs)) {
+          const loaded = attachments.attachmentFor(sourceId, portId);
+          if (loaded) attachments.attach(id, portId, loaded);
+        }
 
         push({
           kind: 'add-node',
@@ -455,6 +486,33 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
       }));
     },
 
+    /*
+     * CHOOSING A FILE IS NOT AN UNDO STEP, for the reason typing is not: it is
+     * input data rather than a change to the pipeline's shape, and `inputs`
+     * established that input stays out of the history. It would also be an
+     * entry undo could not honour once the session ended - the reference would
+     * come back pointing at bytes nothing holds - so the one thing an undoable
+     * version would add is a step that sometimes cannot be taken.
+     */
+    setNodeFile: (nodeId, portId, ref) => {
+      const node = get().graph.nodes[nodeId];
+      if (!node) return;
+
+      // Filtered rather than deleted: a computed `delete` is what the lint
+      // rules refuse, and rebuilding says exactly which key is going.
+      const fileInputs: Record<string, FileInputRef> = Object.fromEntries(
+        Object.entries(node.fileInputs).filter(([id]) => id !== portId),
+      );
+      if (ref !== null) fileInputs[portId] = ref;
+
+      set((state) => ({
+        graph: {
+          ...state.graph,
+          nodes: { ...state.graph.nodes, [nodeId]: { ...node, fileInputs } },
+        },
+      }));
+    },
+
     select: (selection) => {
       set((state) => ({
         selection: {
@@ -517,6 +575,18 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
     },
 
     replaceGraph: (graph) => {
+      /*
+       * EVERY FILE GOES WITH THE GRAPH THAT WAS HOLDING IT.
+       *
+       * Node ids are reused across documents - every canvas starts at `n1` -
+       * so an attachment surviving a replacement would silently hand the
+       * previous canvas's file to whatever the new one happens to call `n1`.
+       * That is the same reasoning `pipelineStore.reset` already follows for
+       * results, and here it would be worse than a stale answer: it is one
+       * user's data appearing in a pipeline somebody else shared with them.
+       */
+      useAttachmentStore.getState().resetAttachments();
+
       // Loading a saved graph is not an undoable step: there is nothing
       // sensible to go back to, and keeping the history would let undo
       // "delete" a graph the user never created in this session.

@@ -15,11 +15,27 @@ Compare two texts line by line, with word-level highlighting.
 ## Two required inputs
 
 This is the only tool with more than one required input, and it is the reason
-the node model gained per-port typed input. On the canvas both `original` and
-`changed` must be satisfied — by a wire or by typing into the node — before the
-node runs; in the runner each port gets its own editor. Half-wired, the node
-says **which** port is missing ("Needs Changed"), because "Needs input" is no
-help when one of the two is already satisfied.
+the node model gained per-port typed input — and, later, per-port FILE input.
+On the canvas both `original` and `changed` must be satisfied — by a wire, by a
+file, or by typing into the node — before the node runs; in the runner each port
+gets its own editor. Half-wired, the node says **which** port is missing
+("Needs Changed"), because "Needs input" is no help when one of the two is
+already satisfied.
+
+**Comparing two files is this tool's obvious use and was possible on neither
+route.** The tool page has one file control and sends its file to "the first
+port that accepts bytes", so the second port could never be given one; the
+canvas had no file control at all. The inspector draws one per unwired port, so
+`Choose file for Original` and `Choose file for Changed` are two distinct
+controls. A file dropped onto a `diff` node deliberately does NOT guess between
+them: it selects the node and opens the inspector, because neither port is "the"
+one and picking the first would make one of the two comparisons unreachable by
+drag. See [a file as an input](../../../docs/architecture.md#a-file-as-an-input).
+
+The 8 MB limit is across both ports, and it is checked when you choose the
+second file rather than when you run — so two 5 MB files are refused at the
+control, naming what the other port already holds, instead of by the engine
+after the fact.
 
 Before that change a node held a single `input` string, which would have made
 the second port permanently blocked. The migration lives in
@@ -348,11 +364,12 @@ led to the terminated comparison text above.
 ## Known limitations
 
 - **A textarea eats carriage returns.** The browser normalises a textarea's
-  value to LF, so text _typed or pasted_ into the runner never contains a CR
+  value to LF, so text _typed or pasted_ into either route never contains a CR
   whatever the clipboard held. Line-ending differences therefore only arrive via
-  a dropped file (read as raw bytes) or a wired upstream node — which is where
-  comparing a Windows checkout against a Unix one actually happens. Not
-  something this tool can change.
+  a file (read as raw bytes) or a wired upstream node — which is where comparing
+  a Windows checkout against a Unix one actually happens, and it is now
+  reachable on the canvas as well as on the tool page. Not something this tool
+  can change.
 - **A trailing-newline-only change has no patch.** The rows are identical, so
   there is no hunk to hang `\ No newline at end of file` on. It is reported in
   `notes.finalNewline` and stated in the view; the patch is empty.
@@ -369,8 +386,10 @@ led to the terminated comparison text above.
   than one that is consistently a little conservative.
 - **Comparing against nothing is not possible on the canvas.** A required port
   treats empty typed text as "not yet filled", so "what did I add to an empty
-  file" leaves the node blocked. That is a platform-wide rule about required
-  ports, not a decision this tool makes.
+  file" leaves the node blocked. A zero-byte file does not get round it either:
+  the port is satisfied, but the comparison is then between two empty documents
+  rather than between something and nothing. That is a platform-wide rule about
+  required ports, not a decision this tool makes.
 - **Two binary files are refused rather than compared.** Both ports accept
   `bytes`, which is what lets two decoded text files be compared — and until
   the [port audit](../../../docs/architecture.md#the-port-set) the bytes were

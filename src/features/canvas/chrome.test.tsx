@@ -50,7 +50,7 @@ function renderCanvas() {
 }
 
 function node(id: string, toolId: CanvasNode['toolId'], x: number, y: number): CanvasNode {
-  return { id, toolId, position: { x, y }, options: {}, inputs: {} };
+  return { id, toolId, position: { x, y }, options: {}, inputs: {}, fileInputs: {} };
 }
 
 function seed(nodes: readonly CanvasNode[], edges: GraphData['edges'] = {}): void {

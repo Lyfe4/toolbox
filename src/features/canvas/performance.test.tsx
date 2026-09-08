@@ -35,6 +35,7 @@ function bigGraph(): GraphData {
       position: { x: (index % 10) * 280, y: Math.floor(index / 10) * 240 },
       options: {},
       inputs: {},
+      fileInputs: {},
     };
   }
 

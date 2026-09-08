@@ -13,13 +13,21 @@ import { EMPTY_GRAPH, type GraphData } from './types';
 
 const graph: GraphData = {
   nodes: {
-    n1: { id: 'n1', toolId: 'base64', position: { x: 8, y: 16 }, options: {}, inputs: {} },
+    n1: {
+      id: 'n1',
+      toolId: 'base64',
+      position: { x: 8, y: 16 },
+      options: {},
+      inputs: {},
+      fileInputs: {},
+    },
     n2: {
       id: 'n2',
       toolId: 'structured-data',
       position: { x: 400, y: 16 },
       options: { target: 'yaml' },
       inputs: {},
+      fileInputs: {},
     },
   },
   nodeOrder: ['n1', 'n2'],
@@ -301,6 +309,9 @@ describe('a v4 save whose wires name the old port ids', () => {
       JSON.stringify({
         ...v4,
         version: CURRENT_GRAPH_VERSION,
+        // Stamped as current, so no migration runs and the nodes have to
+        // already be in the current shape.
+        nodes: v4.nodes.map((node) => ({ ...node, fileInputs: {} })),
         edges: [
           {
             id: 'e1',
@@ -359,6 +370,117 @@ describe('a v4 save whose wires name the old port ids', () => {
   });
 });
 
+describe('a v5 save, from before a node could be fed a file', () => {
+  const v5 = {
+    version: 5,
+    nextId: 3,
+    nodes: [
+      {
+        id: 'n1',
+        toolId: 'hash',
+        position: { x: 0, y: 0 },
+        options: { algorithm: 'md5' },
+        inputs: { input: 'abc' },
+      },
+      { id: 'n2', toolId: 'image-convert', position: { x: 320, y: 0 }, options: {}, inputs: {} },
+    ],
+    edges: [],
+  };
+
+  /*
+   * v6 added `fileInputs`, and it has to be PRESENT rather than absent: every
+   * reader downstream of the schema indexes it as a record. A v5 node was never
+   * fed a file, so the map is empty - the structure is preserved and the user
+   * loses nothing that was ever saved.
+   */
+  it('loads, with an empty file map on every node', () => {
+    window.localStorage.setItem(GRAPH_STORAGE_KEY, JSON.stringify(v5));
+
+    const result = loadGraph();
+    expect(result.status).toBe('loaded');
+    if (result.status !== 'loaded') return;
+
+    expect(result.graph.nodes.n1?.fileInputs).toEqual({});
+    expect(result.graph.nodes.n2?.fileInputs).toEqual({});
+    // And nothing else moved.
+    expect(result.graph.nodes.n1?.inputs).toEqual({ input: 'abc' });
+    expect(result.graph.nodes.n1?.options).toEqual({ algorithm: 'md5' });
+  });
+
+  /*
+   * THE STEP BEFORE IT HAS TO STAMP 5, NOT "CURRENT".
+   *
+   * Migrations chain: each step rewrites the payload and hands it back to the
+   * dispatcher, which reads the `version` it finds. `migrateV4ToV5` wrote
+   * `CURRENT_GRAPH_VERSION`, which was correct for exactly as long as it was
+   * the last step - and wrong the moment v6 existed, because a v4 save would
+   * then have arrived claiming to have had the v5 -> v6 step run over it and
+   * skipped it. It is only observable from a v4 save, which is why it is
+   * asserted here rather than beside the v6 schema.
+   */
+  it('does not let an older save skip the step, however long the chain gets', () => {
+    const v4 = {
+      ...v5,
+      version: 4,
+      nodes: v5.nodes.map((node) => ({ ...node })),
+    };
+    window.localStorage.setItem(GRAPH_STORAGE_KEY, JSON.stringify(v4));
+
+    const result = loadGraph();
+    expect(result.status).toBe('loaded');
+    if (result.status !== 'loaded') return;
+    expect(result.graph.nodes.n1?.fileInputs).toEqual({});
+  });
+
+  /*
+   * A save that names a file is read back with the name and the size and
+   * nothing that could be the file itself. This is the round trip the whole
+   * persistence answer rests on.
+   */
+  it('round-trips a file reference without its contents', () => {
+    const withFile = {
+      ...v5,
+      version: CURRENT_GRAPH_VERSION,
+      nodes: v5.nodes.map((node) => ({
+        ...node,
+        fileInputs:
+          node.id === 'n2' ? { input: { name: 'holiday.png', size: 2048, token: 4 } } : {},
+      })),
+    };
+    window.localStorage.setItem(GRAPH_STORAGE_KEY, JSON.stringify(withFile));
+
+    const result = loadGraph();
+    expect(result.status).toBe('loaded');
+    if (result.status !== 'loaded') return;
+
+    expect(result.graph.nodes.n2?.fileInputs.input).toEqual({
+      name: 'holiday.png',
+      size: 2048,
+      token: 4,
+    });
+  });
+
+  /*
+   * And a hand-edited one is refused rather than trusted. `localStorage` is
+   * neither signed nor beyond a user's reach, and a `size` that is negative or
+   * fractional is only ever printed - which is exactly the kind of value that
+   * stops being checked.
+   */
+  it('refuses a file reference whose size is not a whole count of bytes', () => {
+    const broken = {
+      ...v5,
+      version: CURRENT_GRAPH_VERSION,
+      nodes: v5.nodes.map((node) => ({
+        ...node,
+        fileInputs: node.id === 'n2' ? { input: { name: 'x', size: -1, token: 0 } } : {},
+      })),
+    };
+    window.localStorage.setItem(GRAPH_STORAGE_KEY, JSON.stringify(broken));
+
+    expect(loadGraph().status).toBe('rejected');
+  });
+});
+
 describe('the id counter on load', () => {
   /*
    * The stored counter is a floor rather than the answer.
@@ -376,8 +498,22 @@ describe('the id counter on load', () => {
         version: CURRENT_GRAPH_VERSION,
         nextId: 1,
         nodes: [
-          { id: 'n1', toolId: 'base64', position: { x: 0, y: 0 }, options: {}, inputs: {} },
-          { id: 'n9', toolId: 'hash', position: { x: 320, y: 0 }, options: {}, inputs: {} },
+          {
+            id: 'n1',
+            toolId: 'base64',
+            position: { x: 0, y: 0 },
+            options: {},
+            inputs: {},
+            fileInputs: {},
+          },
+          {
+            id: 'n9',
+            toolId: 'hash',
+            position: { x: 320, y: 0 },
+            options: {},
+            inputs: {},
+            fileInputs: {},
+          },
         ],
         edges: [],
       }),

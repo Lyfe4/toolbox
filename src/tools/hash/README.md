@@ -7,8 +7,12 @@ MD5, SHA-1, SHA-256, SHA-384 and SHA-512 digests of text or files.
 It is what makes the canvas genuinely useful rather than a demonstration. It
 turns two tools into a real workflow:
 
-- **file → base64 decode → hash** — check a payload against a published checksum
-  without saving it anywhere.
+- **file → hash** — check a file against a published checksum without saving it
+  anywhere. On the canvas that used to mean base64-decoding the file by hand,
+  because a node had no way to be handed one; a node's input can be a file now,
+  on either route. See [a file as an input](../../../docs/architecture.md#a-file-as-an-input).
+- **file → base64 decode → hash** — the same check where what you have is the
+  base64 rather than the file.
 - **CSV → structured-data → hash** — fingerprint content so you can tell whether
   two exports are the same data in a different order.
 
