@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/Button';
 import { CopyIcon, PlusIcon, SearchIcon, SignalIcon, SlidersIcon } from '@/components/Icon';
@@ -894,18 +894,55 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     [store],
   );
 
-  /** Moves focus to the first thing in the inspector that takes it. */
+  /**
+   * MOVING FOCUS INTO THE INSPECTOR: WHICH ELEMENT, AND WHEN.
+   *
+   * Both halves of this were wrong, and each was wrong in a way the other hid.
+   *
+   * WHICH. The panel's first focusable element in DOCUMENT order is the close
+   * button in its header, not the editor - `querySelector` takes the first
+   * node that matches ANY of a selector list, not the first selector that
+   * matches anything. So Enter, whose whole stated purpose is to step into the
+   * node's input, landed on "Close the inspector": a user who pressed Enter
+   * and typed got nothing, and their next Space or Enter shut the panel. The
+   * editor is asked for by name now, and the generic list is only the fallback
+   * for a node that has no text editor at all - a port that takes bytes gets a
+   * sentence rather than a box.
+   *
+   * WHEN. The move was deferred to `requestAnimationFrame`, which meant it
+   * happened at some point AFTER the keystroke that asked for it, with nothing
+   * to say what had happened to focus in between. Under load that frame can be
+   * tens of milliseconds late, and it then lands in the middle of somebody
+   * else's interaction and takes focus off whatever they had just put it on -
+   * text typed into the editor in that window goes to the close button and is
+   * silently discarded, because a button is not an editable element and there
+   * is no error for text that lands nowhere. That is a real defect for anyone
+   * who types quickly, and it is also what made the worker-wedge check in
+   * `check:browsers` fail roughly one run in three: Playwright focuses the
+   * field and then inserts the text as a second step, and the stolen frame fell
+   * between them.
+   *
+   * A layout effect runs synchronously after the commit that mounted the panel,
+   * in the same task as the keystroke, so there is no window to lose and no
+   * frame to guess at. The counter is the request: two Enters in a row are two
+   * requests, where a boolean would be one.
+   */
+  const [focusRequest, setFocusRequest] = useState(0);
   const focusInspector = useCallback(() => {
-    // Two frames: one for the panel to mount, and `requestAnimationFrame`
-    // inside it because a panel that has just appeared has no layout yet.
-    requestAnimationFrame(() => {
-      const panel = workspaceRef.current?.querySelector('[data-testid="node-inspector"]');
-      const first = panel?.querySelector<HTMLElement>(
-        'textarea, input, select, button, [tabindex]:not([tabindex="-1"])',
-      );
-      first?.focus();
-    });
+    setFocusRequest((request) => request + 1);
   }, []);
+
+  useLayoutEffect(() => {
+    if (focusRequest === 0) return;
+    const panel = workspaceRef.current?.querySelector('[data-testid="node-inspector"]');
+    if (!panel) return;
+
+    const target =
+      panel.querySelector<HTMLElement>('[data-inspector-input]') ??
+      panel.querySelector<HTMLElement>('textarea, input, select') ??
+      panel.querySelector<HTMLElement>('button, [tabindex]:not([tabindex="-1"])');
+    target?.focus();
+  }, [focusRequest]);
 
   const toggleInspector = useCallback(() => {
     // The announcement is made OUTSIDE the updater. A `setState` callback has

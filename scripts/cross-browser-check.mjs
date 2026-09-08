@@ -629,6 +629,47 @@ async function checkInspector(browser, label) {
       `panel right ${String(docked.panel.right)} in ${String(docked.innerWidth)}px`,
     );
 
+    /* -- Enter lands in the editor, in a real engine ---------------------- */
+
+    /*
+     * WHERE FOCUS ACTUALLY IS, WHICH JSDOM CANNOT SETTLE ON ITS OWN.
+     *
+     * The unit suite asserts the same thing, and has to: this is the key's
+     * entire purpose, and it was landing on the close button because
+     * `querySelector` with a list returns the first match in DOCUMENT order
+     * and the header comes before the body. What only a real engine adds is
+     * that the move happens in the same task as the keystroke - there is no
+     * frame in between for anything else's focus to be taken away in, which is
+     * what made this an intermittent failure in checkPipeline rather than a
+     * permanent one here.
+     */
+    await page.locator('[data-node-id]').first().focus();
+    await page.keyboard.press('Enter');
+    const landed = await page.evaluate(() => {
+      const active = document.activeElement;
+      return {
+        editor: active?.hasAttribute('data-inspector-input') ?? false,
+        label: active?.getAttribute('aria-label') ?? active?.tagName ?? 'nothing',
+      };
+    });
+    check(
+      label,
+      'Enter on a node puts focus in its input editor, not on the button that closes the panel',
+      landed.editor,
+      landed.label,
+    );
+
+    // And typing straight away arrives, which is the thing the user notices.
+    await page.keyboard.type('abc');
+    const typed = await page.locator('[data-inspector-input]').first().inputValue();
+    check(
+      label,
+      'and typing immediately afterwards reaches the editor',
+      typed === 'abc',
+      JSON.stringify(typed),
+    );
+    await page.locator('[data-inspector-input]').first().fill('');
+
     /* -- The handle really moves the boundary ---------------------------- */
     const before = docked.canvas.width;
     await page.getByTestId('inspector-handle').focus();
@@ -4905,6 +4946,41 @@ async function checkPipeline(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   const page = await context.newPage();
 
+  /*
+   * HOW MANY TIMES EACH REQUEST ACTUALLY RAN.
+   *
+   * Every assertion in this file was about the ANSWER, and a tool is a pure
+   * function - so running one twice produces the same answer twice and no
+   * assertion about answers can see it. JavaScriptCore evaluated the worker's
+   * entry module a second time when a tool chunk imported it back (it is a
+   * shared chunk as well as the entry), which gave `message` two listeners and
+   * ran every tool in the worker TWICE. Twice the CPU and twice the peak
+   * memory of every worker tool in Safari, invisible in Firefox, and invisible
+   * in the unit suite because jsdom has no worker to evaluate anything in.
+   *
+   * The worker announces `started` once per execution, so counting those
+   * against the `execute` messages that were posted is the whole check.
+   */
+  await page.addInitScript(() => {
+    const posted = [];
+    const started = [];
+    Object.assign(window, { __execution: { posted, started } });
+
+    const Native = window.Worker;
+    window.Worker = class extends Native {
+      constructor(url, options) {
+        super(url, options);
+        this.addEventListener('message', (event) => {
+          if (event.data?.kind === 'started') started.push(event.data.requestId);
+        });
+      }
+      postMessage(message, transfer) {
+        if (message?.kind === 'execute') posted.push(message.requestId);
+        return super.postMessage(message, transfer);
+      }
+    };
+  });
+
   /**
    * A graph as a link, which is the app's own way to be handed a whole one.
    *
@@ -4935,6 +5011,24 @@ async function checkPipeline(browser, label) {
    * the canvas, so a node can genuinely be underneath the panel. Enter on a
    * focused node is the documented route and reaches every node at every
    * width.
+   *
+   * AND THE VALUE IS CHECKED TO HAVE LANDED, WHICH IS NOT A FORMALITY.
+   *
+   * `fill` puts the text in the box and fires the events; it does not know
+   * whether anything took it. The editor is a CONTROLLED React field, so it
+   * renders its state and nothing else - the box still holding what we typed,
+   * a moment later, is therefore proof that the value reached the graph, and
+   * an empty box is proof that it did not.
+   *
+   * This is what this check was missing, and it cost a season of re-runs. The
+   * canvas deferred moving focus into the panel to an animation frame, and a
+   * late frame landed BETWEEN Playwright focusing the field and inserting the
+   * text - so the text went to the close button, silently, because text that
+   * lands on a button is not an error anywhere. `fill` reported success, the
+   * node stayed `blocked` for want of an input it appeared to have, and the
+   * check failed twenty-five seconds later against the scheduler, which had
+   * done nothing wrong. A precondition that can fail quietly is a check that
+   * blames the wrong thing.
    */
   const typeInto = async (id, value) => {
     await page.locator(`[data-testid="node-${id}"]`).focus();
@@ -4942,6 +5036,22 @@ async function checkPipeline(browser, label) {
     const field = page.locator('[data-inspector-input]').first();
     await field.waitFor({ timeout: 15_000 });
     await field.fill(value);
+
+    const deadline = Date.now() + 5_000;
+    let held = '';
+    for (;;) {
+      held = await field.inputValue().catch(() => '');
+      if (held === value || Date.now() > deadline) break;
+      await page.waitForTimeout(50);
+    }
+    check(
+      label,
+      `what is typed into ${id} reaches the node it was typed into`,
+      held === value,
+      held === value
+        ? ''
+        : `the editor holds ${String(held.length)} of ${String(value.length)} characters`,
+    );
   };
 
   const untilStatus = async (id, wanted, timeout) => {
@@ -4980,6 +5090,19 @@ async function checkPipeline(browser, label) {
       'a three-tool chain runs end to end through the real worker',
       chained === 'ok',
       String(chained),
+    );
+
+    const execution = await page.evaluate(() => window.__execution);
+    const ranTwice = execution.posted.filter(
+      (id) => execution.started.filter((other) => other === id).length > 1,
+    );
+    check(
+      label,
+      'each request runs its tool once, not once per copy of the worker entry',
+      execution.posted.length > 0 && ranTwice.length === 0,
+      execution.posted.length === 0
+        ? 'nothing was posted to a worker at all'
+        : `${String(execution.started.length)} starts for ${String(execution.posted.length)} requests`,
     );
 
     /* -- One node's timeout, and the nodes beside it ---------------------- */
@@ -5071,6 +5194,83 @@ async function checkPipeline(browser, label) {
       // document, and this node would report a parse error rather than `ok`.
       downstream === 'ok',
       String(downstream),
+    );
+
+    /* -- Editing while a runaway node is in flight ------------------------ */
+
+    /*
+     * WHAT A USER DOES THAT THE TWO CHECKS ABOVE DO NOT: CHANGE THEIR MIND.
+     *
+     * Both of those let the runaway node run to its own deadline, which is the
+     * only path the engine had ever been driven down. Editing the document
+     * while it is in flight takes a different one: the run is superseded, so
+     * the in-flight request is CANCELLED - and cancelling settles the caller
+     * without stopping the tool, because a synchronous tool cannot be stopped
+     * from the outside.
+     *
+     * That used to strand the worker. The request was forgotten, deadline and
+     * all, so nothing was left that could ever destroy a thread still spinning
+     * inside `RegExp.exec`, and the next run sat in a queue that would not move
+     * until the pattern happened to give up by itself - with the main thread
+     * idle and the node saying `Running`. Measured on the version without the
+     * fix: 10.8s in WebKit and 4.1s in Gecko, against 2.1s in both with it. The
+     * bound for a tool that never returns at all is the waiting node's own
+     * timeout, which is 15s here.
+     *
+     * The runaway node is DELETED rather than edited so that the next run has
+     * no short deadline of its own to rescue it - that is the difference
+     * between measuring the engine and measuring the regex tool's two seconds.
+     * The threshold is 10s for the same reason it is not 3s: it has to sit
+     * clear of the 2.1s the fix produces and clear of the replacement worker's
+     * boot, while still failing the 10.8s that the defect produced in the
+     * slower of the two engines.
+     */
+    await page.goto(
+      link(
+        [
+          [
+            'n1',
+            'regex-tester',
+            0,
+            0,
+            {
+              pattern: '((a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z)*)*!!',
+              mode: 'match',
+            },
+          ],
+          ['n2', 'base64', 0, 320, { mode: 'decode' }],
+        ],
+        [],
+      ),
+      { waitUntil: 'networkidle' },
+    );
+    await page.locator('[data-testid="node-n2"]').waitFor({ timeout: 15_000 });
+
+    await typeInto('n1', `${'a'.repeat(40)}!`);
+    const wedging = await untilStatus('n1', 'run', 10_000);
+    check(
+      label,
+      'a runaway node reaches the worker before anything else happens to it',
+      wedging === 'run',
+      String(wedging),
+    );
+
+    // Escape leaves the editor and puts focus back on the node, which is where
+    // Delete is handled - the canvas root never sees a key typed in the panel.
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Delete');
+    await page.locator('[data-testid="node-n1"]').waitFor({ state: 'detached', timeout: 10_000 });
+
+    const editedAt = Date.now();
+    await typeInto('n2', 'eyJuYW1lIjoiYWRhIn0=');
+    const afterEdit = await untilStatus('n2', 'ok', 25_000);
+    const afterEditMs = Date.now() - editedAt;
+
+    check(
+      label,
+      'the run after a cancelled one is not left queued behind the worker it wedged',
+      afterEdit === 'ok' && afterEditMs < 10_000,
+      `${String(afterEdit)} after ${String(afterEditMs)}ms`,
     );
   } finally {
     await context.close();

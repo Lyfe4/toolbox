@@ -836,6 +836,104 @@ describe('a timeout with other requests in flight', () => {
 
     await expect(promise).resolves.toMatchObject({ ok: false, error: { code: 'timeout' } });
   });
+
+  /*
+   * A CANCELLED REQUEST THAT WEDGED THE WORKER STILL HAS TO KILL IT.
+   *
+   * Cancelling settles the caller; it does not stop a synchronous tool, which
+   * cannot be interrupted from inside. The only thing in the system that ever
+   * destroys a wedged worker is a request's deadline expiring - so forgetting
+   * the request on abort, timer and all, removed the last reference to a
+   * thread still spinning, and nothing was left that could kill it.
+   *
+   * What that costs is not an abstraction. The next run is posted to the same
+   * worker, joins a queue that will never move, and waits out ITS OWN timeout
+   * before anything notices: 15 seconds for a base64 node, 60 for an image
+   * conversion, with the main thread idle and every node saying "Running". It
+   * is one keystroke away on the canvas - editing a node while a runaway regex
+   * is in flight supersedes the run, and a superseded run is cancelled exactly
+   * like this.
+   */
+  it('replaces a worker that a cancelled request left wedged', async () => {
+    const { engine, workers, clock } = twoToolSetup();
+
+    const controller = new AbortController();
+    const abandoned = engine.execute({
+      toolId: SLOW_TOOL_ID,
+      inputs: textInput,
+      options: {},
+      signal: controller.signal,
+    });
+
+    const [wedgeId] = executeIds(workers[0]);
+    expect(wedgeId).toBeDefined();
+    // The tool has begun, and from here it will never speak again.
+    if (wedgeId !== undefined) workers[0]?.reply({ kind: 'started', requestId: wedgeId });
+
+    controller.abort();
+    await expect(abandoned).resolves.toMatchObject({ ok: false, error: { code: 'cancelled' } });
+
+    // Nothing has told the engine the worker is dead, so the next run is posted
+    // to it - which is exactly the situation the deadline has to cover.
+    const next = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
+    expect(workers).toHaveLength(1);
+    const [, nextId] = executeIds(workers[0]);
+    expect(nextId).toBeDefined();
+
+    // Two deadlines are armed: the abandoned one and the new request's. The
+    // abandoned one is the point - without it this is 1, and the only timer
+    // left is the new request's own 15 seconds of nothing.
+    expect(clock.pending()).toBe(2);
+
+    const [wedgeTimer] = clock.handles();
+    expect(wedgeTimer).toBeDefined();
+    if (wedgeTimer !== undefined) clock.fire(wedgeTimer);
+
+    expect(workers[0]?.terminated()).toBe(true);
+    expect(workers).toHaveLength(2);
+
+    // And the innocent request went with the worker, so it is replayed rather
+    // than failed - the ordinary bystander rule, which now applies here too.
+    expect(executeIds(workers[1])).toEqual([nextId]);
+    if (nextId !== undefined) {
+      workers[1]?.reply(settled(nextId, ok({ out: { type: 'text', text: 'fine' } })));
+    }
+    await expect(next).resolves.toMatchObject({ ok: true });
+  });
+
+  /*
+   * The other half of it: a request nobody is waiting for must not be put back
+   * on the fresh worker. Replaying it would run a tool for no reader, and on
+   * the canvas that is a whole superseded pipeline executing a second time.
+   */
+  it('does not replay a cancelled request onto the replacement worker', async () => {
+    const { engine, workers, clock } = twoToolSetup();
+
+    const controller = new AbortController();
+    const abandoned = engine.execute({
+      toolId: TOOL_ID,
+      inputs: textInput,
+      options: {},
+      signal: controller.signal,
+    });
+    const slow = engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
+
+    const [abandonedId, slowId] = executeIds(workers[0]);
+    controller.abort();
+    await expect(abandoned).resolves.toMatchObject({ ok: false, error: { code: 'cancelled' } });
+
+    // The slow tool runs over, taking the worker down with it.
+    const slowTimer = clock.handles().at(-1);
+    expect(slowTimer).toBeDefined();
+    if (slowTimer !== undefined) clock.fire(slowTimer);
+    await expect(slow).resolves.toMatchObject({ ok: false, error: { code: 'timeout' } });
+
+    expect(executeIds(workers[1])).not.toContain(abandonedId);
+    expect(executeIds(workers[1])).toHaveLength(0);
+    expect(slowId).toBeDefined();
+    // Nothing is left holding a deadline: both entries are gone.
+    expect(clock.pending()).toBe(0);
+  });
 });
 
 describe('dispose', () => {

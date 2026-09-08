@@ -124,6 +124,13 @@ interface Pending {
   readonly replayable: boolean;
   /** At most one replay per request, so a wedging tool cannot loop forever. */
   retried: boolean;
+  /**
+   * True once the caller has stopped waiting for this request.
+   *
+   * The entry stays in `pending` anyway, and its deadline stays armed. See
+   * `onAbort`: cancelling tells the worker to stop, it does not make it stop.
+   */
+  cancelled: boolean;
   readonly timeoutMs: number;
   readonly timeoutMessage: string | undefined;
 }
@@ -196,7 +203,9 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
       if (!entry) return; // A late reply to something already settled.
 
       if (response.kind === 'progress') {
-        entry.onProgress?.(response.fraction, response.label);
+        // A cancelled request is kept only to hold its deadline; its caller
+        // has been settled and must not be told about work it walked away from.
+        if (!entry.cancelled) entry.onProgress?.(response.fraction, response.label);
         return;
       }
 
@@ -321,6 +330,14 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
     for (const [id, entry] of casualties) {
       dependencies.clearTimer(entry.timer);
 
+      /*
+       * A cancelled entry is only here to hold its deadline over a worker that
+       * may be wedged (see `onAbort`). Nobody is waiting for its answer, so
+       * putting it back on the fresh worker would run a tool for no reader -
+       * and on the canvas that is a whole superseded pipeline re-executing.
+       */
+      if (entry.cancelled) continue;
+
       if (!replay || !entry.replayable || entry.retried) {
         entry.settle(
           fail('internal', 'This run was interrupted before it could finish.', { detail: cause }),
@@ -437,13 +454,38 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
       };
 
       function onAbort(): void {
+        /*
+         * CANCELLING TELLS THE WORKER TO STOP. IT DOES NOT MAKE IT STOP.
+         *
+         * The caller is settled straight away - waiting on a tool that may
+         * never check its signal is the thing cancellation exists to avoid -
+         * but the request is NOT forgotten, and its deadline stays armed.
+         *
+         * Dropping the entry here was a way to strand a worker forever. A
+         * synchronous tool cannot be interrupted from inside, so the only
+         * thing that ever destroys a wedged worker is a request's deadline
+         * expiring; deleting the entry and clearing its timer removed the last
+         * reference to a thread still spinning inside `RegExp.exec`, and
+         * nothing was left to kill it. The next run was posted to that worker
+         * and waited there until either the wedging tool happened to give up by
+         * itself or its own deadline expired - with the main thread idle and
+         * every node on screen saying "Running". Measured through the whole app
+         * in `check:browsers`, deleting a runaway regex node mid-run and then
+         * feeding a base64 node: 10.8s in WebKit and 4.1s in Gecko, against
+         * 2.1s in both once the deadline survives. Those two numbers are the
+         * runaway pattern giving up on its own; the bound for a tool that never
+         * returns is the waiting node's own timeout - 15 seconds for base64, 60
+         * for an image conversion. On the canvas this is one keystroke away:
+         * edit or delete a node while a runaway one is in flight and the
+         * superseded run is cancelled exactly like this.
+         *
+         * So the deadline the tool declared still applies, measured from the
+         * same moment it always was. No new number: the guarantee is simply
+         * that a request cannot hold the worker past its own limit, whether or
+         * not anybody is still listening for the answer.
+         */
         const entry = pending.get(requestId);
-        if (entry) {
-          dependencies.clearTimer(entry.timer);
-          pending.delete(requestId);
-        }
-        // Tell the worker so a cooperative tool can stop early, then settle
-        // immediately rather than waiting on a tool that may never check.
+        if (entry) entry.cancelled = true;
         worker?.post({ kind: 'cancel', requestId }, []);
         settle(fail('cancelled', 'Cancelled.'));
       }
@@ -458,6 +500,7 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
         transfer,
         replayable: transfer.length === 0,
         retried: false,
+        cancelled: false,
         timeoutMs: meta.timeoutMs,
         timeoutMessage: meta.timeoutMessage,
       });

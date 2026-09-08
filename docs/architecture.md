@@ -432,6 +432,122 @@ next run was a cache **hit**, and the node reported "Cancelled." forever without
 ever executing again. Editing the node was the only way out, and nothing on
 screen said so.
 
+### Cancelling tells the worker to stop; it does not make it stop
+
+This is the half of cancellation that is about the worker rather than about the
+node, and it was missing.
+
+Cancelling settles the caller immediately — waiting on a tool that may never
+check its signal is the thing cancellation exists to avoid — and it used to
+forget the request entirely at the same moment: entry dropped, deadline
+cleared. But a synchronous tool cannot be interrupted from the outside, so a
+request that had wedged the worker was still wedging it, and **the deadline
+that was just cleared was the only thing in the system that would ever have
+destroyed that worker.** Nothing was left holding a reference to a thread
+spinning inside `RegExp.exec`.
+
+What that cost is not theoretical, and it is one keystroke away: editing or
+deleting a node while a runaway one is in flight supersedes the run, and a
+superseded run is cancelled exactly like this. The next run is then posted to
+the stranded worker and waits there — with the main thread idle and every node
+on screen saying `Running` — until either the wedging tool happens to give up
+by itself or the waiting node's **own** deadline expires.
+
+Measured through the whole app, by deleting a runaway regex node mid-run and
+then feeding an unrelated base64 node: **10.8 s in WebKit and 4.1 s in Gecko,
+against 2.1 s in both** once the cancelled request keeps its deadline. Those
+first two numbers are the runaway pattern giving up on its own — JavaScriptCore
+and SpiderMonkey abandon it at different points, which is the only reason it is
+seconds rather than the bound. The bound, for a tool that genuinely never
+returns, is the waiting node's own timeout: 15 seconds for base64, 60 for an
+image conversion. A pipeline that appears to hang for a quarter of a minute
+with nothing running does not read as a slow tool. It reads as a broken app.
+
+So a cancelled request keeps its deadline. The caller is settled and hears
+nothing further — not even progress — but the entry stays until either the
+worker answers for it or its time runs out, and if the time runs out the worker
+is replaced and the innocent requests beside it are replayed, exactly as for
+any other timeout. A cancelled request is never itself replayed: nobody is
+waiting for its answer, and on the canvas replaying one is a whole superseded
+pipeline executing a second time.
+
+No new number was introduced for this, deliberately. The guarantee is the one
+the tool already declares: **a request cannot hold the worker past its own
+limit, whether or not anybody is still listening for the answer.** A
+cooperative tool releases the deadline as soon as it notices the signal, which
+is the usual case and costs nothing.
+
+### What the intermittent worker-wedge failure actually was
+
+`checkPipeline`'s second sub-check failed about one WebKit run in three, and
+was filed against the scheduler: _"a scheduled pipeline run is delayed by
+around 25 seconds while the main thread sits idle."_ It is worth writing down
+that **nothing was ever delayed**, because the shape of the report sent the
+investigation at the scheduler twice over, and the scheduler was blameless.
+
+What the check does is type a catastrophic pattern into a regex node, type a
+payload into an unrelated base64 node, and then wait up to 25 seconds for each
+to reach its expected state. In a failing run the regex node sat at `blocked` —
+which is what a node with **no input at all** says — for the whole window, and
+the assertion below it read 25 000 ms. That number was not a delay. It was the
+poll's own timeout expiring, because the node it was watching had nothing to
+run and never would.
+
+The text never reached the node. `fill` puts a value in the box and fires the
+events; it does not know whether anything took it, and the canvas's [deferred
+focus move](#the-keyboard) took focus off the field between Playwright focusing
+it and inserting the text, so the characters went to the close button. Measured: the
+saved graph after a failing run holds `regex-tester: {}` — not an empty string,
+no key at all, so the store's setter was never called once.
+
+The chain of evidence, in the order it was established:
+
+1. The canvas moves focus to **Close the inspector** one animation frame after
+   `Enter`, in both engines. Pressing `Enter` and typing `hello` leaves the
+   editor empty.
+2. In a failing run the value never enters the graph store, while `fill`
+   reports success and the field's `aria-label` still names the right node.
+3. Making that frame arrive late — replacing `requestAnimationFrame` with a
+   40–90 ms timer, which is only what CPU load does to it — reproduces the loss
+   directly, with focus observably on the close button and the field empty.
+4. Interposing one extra round trip between locating the field and filling it,
+   which lets the frame land first, took the failure rate from 2 in 18 to 0 in
+   46 without changing anything else.
+5. With the focus move fixed: 25 consecutive clean runs under the same load
+   that produced the failures.
+
+Two things follow for the harness rather than for the app. `typeInto` now
+**verifies that what it typed arrived** — the editor is a controlled field, so
+the box still holding the text a moment later is proof the graph has it — and a
+precondition that can fail quietly is a check that blames the wrong thing
+twenty-five seconds later. And the `Enter`-into-the-editor behaviour is asserted
+directly, in both the unit suite and `check:browsers`, so it is a named failure
+rather than a symptom somewhere else.
+
+### Where else a long unexplained wait can come from
+
+The failure a user experiences as the product being broken, rather than as an
+error, is a wait with nothing on screen to explain it. Three were found in this
+pass, and they are the ones worth keeping in mind when this code changes:
+
+- **A cancelled request stranding the worker** — fixed above; measured at 10.8
+  seconds of `Running` with nothing running, bounded only by the waiting node's
+  own timeout.
+- **A tool running twice** — see the worker boundary; it doubles every wait in
+  Safari rather than creating one.
+- **Main-thread image conversion**, which blocks its own deadline and everyone
+  else's. Already recorded under [known
+  limitations](#known-limitations) and unchanged.
+
+Two more were looked at and found sound. A run superseded mid-flight can leave
+the previous `runPipeline` winding down beside the new one, sharing the result
+cache — but a cancelled node writes nothing to the cache and every emission is
+gated on the run token, so the worst case is a wasted re-run rather than a
+stale answer. And a node whose upstream produced nothing reports `blocked`
+rather than waiting: the pump resolves when nothing is active and nothing is
+ready, so there is no state in which the graph is waiting on a value that
+cannot arrive.
+
 ## The worker boundary
 
 Tools with `strategy: 'worker'` run off the main thread. The protocol is a
@@ -461,6 +577,45 @@ bound, each checked against a known digest.
 Where `OffscreenCanvas` is unavailable, image work falls back to the main
 thread and produces an identical result. `scripts/cross-browser-check.mjs`
 asserts which branch was actually taken, so the fallback cannot rot unnoticed.
+
+### The worker's entry is also a library, which ran every tool twice in Safari
+
+`worker.ts` is the module the worker is constructed from, and it registers a
+`message` listener on its global scope. It is also a **shared chunk**: the tool
+chunks it dynamically imports import it back for the registry helpers Rollup
+placed alongside it, and the page's own bundle imports it for the same reason.
+An entry that doubles as a library gets evaluated in places nobody meant it to
+be, and a global side effect run twice is not idempotent.
+
+Both places turned out to be real, and neither was visible from any test that
+looked at answers:
+
+- **In the worker**, JavaScriptCore evaluated the entry a second time when a
+  tool chunk imported it, so `message` had two listeners and **every request
+  ran its tool twice**. Measured over a base64 → structured data → hash chain
+  in Playwright's WebKit: two `started` and two `settled` for every one
+  `execute`, from the first run on a fresh worker. Gecko evaluates it once and
+  was always clean. Nothing was ever _wrong_ — a tool is a pure function, so
+  the second answer equals the first and the engine drops it as a late reply to
+  something already settled — it simply cost twice the CPU and twice the peak
+  memory of every worker tool in Safari, which for a 20 MB image conversion is
+  the whole difference.
+- **On the main thread**, `self` is the window, so the same evaluation put a
+  `message` listener on the _page_ that would run a tool for anything able to
+  `postMessage` to it. Nothing can today — the one iframe in the app is the
+  `sandbox=""` preview, which cannot script — but a page whose entire promise
+  is that nothing you paste leaves it should not carry an unintended global
+  entry point to its own executor.
+
+The listener is registered once now, guarded on the global scope rather than in
+module scope: two evaluations are two module scopes, and the thing that has to
+be unique is the listener on the one global they share. It is also skipped
+entirely outside a worker.
+
+This is a build shape as much as a code one, and the check that would catch it
+coming back is a **count** rather than an assertion about a result:
+`checkPipeline` now counts `started` messages against the `execute` messages
+posted, because no assertion about an answer can see a pure function run twice.
 
 ## Incremental caching
 
@@ -790,6 +945,29 @@ moved, so `Enter` followed it: it selects the node, opens the inspector and puts
 focus inside. Same key, same intent — which is why the panel needs no separate
 "open on this node" affordance for the keyboard at all. `Escape` steps back out
 to the node, which is the wording the shortcuts map has always carried.
+
+**Into the editor, and in the same task as the keystroke.** Both halves of that
+were wrong for as long as the panel has existed, and each hid the other.
+
+The target was asked for as "the first thing in the inspector that takes
+focus", written as one `querySelector` over a list of selectors — which returns
+the first element matching _any_ of them, in **document order**. The panel's
+header comes before its body, and the header holds the button that closes the
+panel. So the key whose entire purpose is to step into the node's input landed
+on **Close the inspector**: pressing `Enter` and typing produced nothing, and
+the next `Space` shut the panel. The unit test covering this asserted that
+focus was _somewhere in the panel_, which was true of the bug.
+
+The move was also deferred to `requestAnimationFrame`, and a deferred focus
+move is a focus move that lands in the middle of whatever happened next. Under
+load that frame can be tens of milliseconds late; anything focused in the
+meantime loses focus, and text typed into the editor in that window goes to the
+close button and is **discarded silently**, because text landing on a button is
+not an error anywhere. That is a real defect for anyone who types quickly, and
+it is also what made `check:browsers` fail roughly one worker-wedge run in
+three — see below. It is a layout effect now, which runs synchronously after
+the commit that mounted the panel, in the same task as the keystroke: there is
+no window to lose and no frame to guess at.
 
 The rail's size handle is the ARIA window-splitter pattern: a **focusable**
 separator with a value, arrow keys that resize by one grid step, and Home/End
@@ -1163,6 +1341,17 @@ removed the condition rather than the symptom.)
 `onProgress`, so a tool that reports progress shows none on the canvas. No
 shipped tool declares `reportsProgress: true`, so nothing is currently lost;
 adding one would need this wiring first.
+
+**Nothing here has seen a backgrounded tab.** Every deadline in the engine is a
+`window.setTimeout`, and browsers clamp those in a hidden tab — so leaving a
+run and switching away is a timing case the app has, and no test does.
+Playwright cannot produce one: bringing another page in the same context to the
+front leaves `document.visibilityState` at `visible` in both headless engines,
+with 300 ms timers still arriving at ~310 ms intervals (measured, both
+engines). So this is stated as uncovered rather than as either safe or broken.
+The reasoning, which is reasoning and not a measurement, is that clamping can
+only make a deadline **late**: a run cannot be cut short by it, and a wedged
+worker survives longer than it should in a tab nobody is looking at.
 
 **The two engines disagree about catastrophic backtracking**, which matters for
 any test that wants to wedge a worker on purpose. SpiderMonkey runs until it

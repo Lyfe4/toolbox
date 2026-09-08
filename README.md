@@ -520,6 +520,54 @@ The reasoning for every call, including the four things deliberately left
 alone, is in
 [architecture.md](docs/architecture.md#the-port-set).
 
+### What a test that failed one run in three was really telling us
+
+`check:browsers` had one intermittent failure, in the check that wedges a real
+worker with a catastrophically backtracking pattern. It failed about one WebKit
+run in three, and it was filed as a scheduling defect: a pipeline run apparently
+delayed by twenty-five seconds with the main thread idle. Nothing was delayed.
+The 25 000 ms was the poll's own timeout expiring against a node that had no
+input to run and never would — and the reason it had none is a bug a user hits
+without a harness anywhere near them.
+
+**Pressing `Enter` on a node put focus on the button that closes the inspector.**
+`Enter` exists to step into that node's input editor, and the panel's first
+focusable element in document order is the close button in its header —
+`querySelector` over a list of selectors returns the first element matching any
+of them, not the first selector that matches something. So pressing `Enter` and
+typing produced nothing, and the next `Space` shut the panel. The unit test
+covering this asserted that focus was _somewhere in the panel_, which was true
+of the bug.
+
+The move was also deferred to an animation frame, which is what made it
+intermittent rather than constant in the harness: Playwright focuses a field and
+inserts the text as two steps, and a frame that arrives late under load lands
+between them. The text then goes to the close button, where text landing on a
+button is not an error anywhere — the fill reports success, the node stays
+`blocked` for want of an input it appears to have, and the check fails
+twenty-five seconds later against the part of the system that did nothing wrong.
+
+Two more defects came out of looking at the same area properly, and both are the
+kind that only ever show up as a wait:
+
+- **A cancelled request stranded its worker.** Cancelling settles the caller; it
+  does not stop a synchronous tool. Forgetting the request also cleared the
+  deadline that was the only thing in the system that would ever have destroyed
+  the wedged worker — so the next run queued behind a thread that would never
+  answer. Measured: 10.8 s in WebKit and 4.1 s in Gecko of `Running` with
+  nothing running, against 2.1 s with the deadline kept, and bounded only by the
+  waiting node's own timeout. Editing or deleting a node while a runaway one is
+  in flight is all it takes.
+- **Every tool ran twice in Safari.** The worker's entry module is also a shared
+  chunk, so JavaScriptCore evaluated it a second time when a tool chunk imported
+  it back, and `message` had two listeners. Nothing was ever wrong, because a
+  tool is a pure function — it simply cost twice the CPU and twice the peak
+  memory of every worker tool, invisibly, in one engine. No assertion about an
+  answer can see that; the check that catches it counts.
+
+The reasoning, the measurements and what was looked at and found sound are in
+[architecture.md](docs/architecture.md#what-the-intermittent-worker-wedge-failure-actually-was).
+
 ### Where each kind of test lives
 
 jsdom has no layout engine, no Worker, no `OffscreenCanvas` and no pointer

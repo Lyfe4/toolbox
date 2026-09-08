@@ -643,6 +643,56 @@ describe('the keyboard path', () => {
     });
   });
 
+  /*
+   * INTO THE EDITOR, NOT INTO THE CLOSE BUTTON.
+   *
+   * The assertion above - "focus is somewhere in the panel" - was true of the
+   * bug it was meant to cover. `querySelector` returns the first element
+   * matching ANY selector in a list, in document order, and the panel's header
+   * holds the close button, so "the first thing in the inspector that takes
+   * focus" was the button that shuts it. Enter announced itself as stepping
+   * into the node's input; a user who pressed it and typed got nothing, and
+   * their next Space closed the panel.
+   *
+   * It is also asserted synchronously - no `waitFor`. The move used to be
+   * deferred to an animation frame, and a deferred focus move is a focus move
+   * that lands in the middle of whatever the user did next: text typed into
+   * the editor during that window goes to the button and is discarded, which
+   * is how `check:browsers` came to fail one worker-wedge run in three. Focus
+   * settles in the same task as the keystroke, so a test that has to wait for
+   * it is a test that would pass on the deferred version too.
+   */
+  it('puts focus in the input editor, in the same task as the keystroke', async () => {
+    const user = userEvent.setup();
+    seed([node('a', 'hash')]);
+    renderCanvas();
+
+    screen.getByTestId('node-a').focus();
+    await user.keyboard('{Enter}');
+
+    const panel = screen.getByTestId('node-inspector');
+    expect(document.activeElement).toBe(within(panel).getByRole('textbox', { name: 'Hash input' }));
+  });
+
+  /*
+   * A node whose only input port cannot carry text has no editor - it gets a
+   * sentence telling you to wire something into it - so Enter has to land on
+   * something rather than nowhere. Image convert is that node: its input is
+   * `bytes`.
+   */
+  it('falls back to the first control when the node has no text editor', async () => {
+    const user = userEvent.setup();
+    seed([node('a', 'image-convert')]);
+    renderCanvas();
+
+    screen.getByTestId('node-a').focus();
+    await user.keyboard('{Enter}');
+
+    const panel = screen.getByTestId('node-inspector');
+    expect(panel.contains(document.activeElement)).toBe(true);
+    expect(within(panel).queryByRole('textbox')).not.toBeInTheDocument();
+  });
+
   it('returns to the node on Escape', async () => {
     const user = userEvent.setup();
     seed([node('a', 'hash')]);
