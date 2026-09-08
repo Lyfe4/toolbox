@@ -364,6 +364,15 @@ later with a syntax error about a character nobody typed. The one exception is a
 that is not a guess, it is the file stating its own encoding in its first two
 bytes. Nothing without a BOM is decoded as anything but UTF-8.
 
+That decoder now lives in [`lib/text.ts`](../../lib/text.ts) rather than in
+`convert.ts`, and `decodeDocument` is re-exported from here so this tool's own
+imports are unchanged. It moved because the
+[port audit](../../../docs/architecture.md#the-port-set) widened three more
+document ports to accept `bytes` — `regex-tester`, `text-convert` and both of
+`diff`'s — and all four tools need the same answer to the same question. This
+tool's note about the pipeline that refusing bytes made impossible is what the
+other three were measured against.
+
 ## Known limitations
 
 Things that are true, that we have decided not to change, and that will not be

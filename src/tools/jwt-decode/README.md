@@ -35,6 +35,20 @@ one line above a `header` object nobody scrolls past. The caveat was said, and
 nobody was going to read it — which is the same failure the ordering above
 exists to prevent, reintroduced one level up.
 
+### One output, and no separate `payload` port
+
+The [port audit](../../../docs/architecture.md#the-port-set) considered adding
+one. A port carrying just the claims is the thing somebody would want
+downstream — "decode this token and convert its payload to YAML" — and its
+entire effect would be to hand the claims onward with the signature verdict
+detached from them, which is the one outcome everything below exists to
+prevent. The whole envelope goes out on one port, verdict first, and a
+downstream tool that wants only the claims can reach into `payload` itself.
+
+The input stays `text` only, and it is one of just two ports in the set that
+still refuses `bytes`. A compact token is a short literal a person pastes out
+of a header, not a document, and `maxInputBytes: 256 kB` says the same thing.
+
 The `output` port therefore declares `presentation: 'jwt'`, and
 [`JwtView`](../../features/toolrunner/JwtView.tsx) draws it under three rules:
 

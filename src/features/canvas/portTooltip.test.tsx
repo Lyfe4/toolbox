@@ -27,8 +27,17 @@ import { DEFAULT_VIEWPORT, useViewportStore } from './viewportStore';
  * and that attaching one does not cost the port its primary gesture.
  */
 
-/** Labels the stub should report as overflowing their box. */
-const TRUNCATED = new Set(['Rendered HTML', 'Detected source', 'Converted image']);
+/**
+ * Labels the stub should report as overflowing their box.
+ *
+ * Shorter than it was, and that is the point rather than an accident: the
+ * port audit renamed every label that did not fit an 84px box except this
+ * one. 'Detected source' became 'Detected', 'Converted image' became
+ * 'Converted', and 'Every notation' became 'Notations'. 'Rendered HTML' is
+ * kept long on purpose - the word HTML is information the port's data type
+ * (`text`) cannot carry - so it is the case this feature exists for.
+ */
+const TRUNCATED = new Set(['Rendered HTML', 'Unified patch']);
 
 const realScrollWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollWidth');
 const realClientWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth');
@@ -110,8 +119,8 @@ function port(portId: string): HTMLElement {
 beforeEach(() => {
   useCanvasStore.setState({ graph: EMPTY_GRAPH, selection: { nodes: [], edges: [] } });
   useViewportStore.setState({ viewport: DEFAULT_VIEWPORT });
-  // text-convert has both: "Input" and "Converted" fit, "Rendered HTML" and
-  // "Detected source" do not.
+  // text-convert has both: 'Document', 'Converted' and 'Detected' fit,
+  // 'Rendered HTML' does not.
   seed([node('n1', 'text-convert', 40, 40)]);
 });
 
@@ -137,6 +146,9 @@ describe('which labels get a tooltip', () => {
     // repeating a label you can already read is noise on every port.
     expect(port('input')).not.toHaveAttribute('data-state');
     expect(port('output')).not.toHaveAttribute('data-state');
+    // Renamed from 'Detected source' by the port audit, and now short enough
+    // to need no card - which is the better fix than a tooltip.
+    expect(port('detected')).not.toHaveAttribute('data-state');
   });
 });
 
@@ -144,7 +156,7 @@ describe('reaching it', () => {
   it('opens on focus, not only on hover', async () => {
     renderCanvas();
     await waitFor(() => {
-      expect(port('detected')).toHaveAttribute('data-state', 'closed');
+      expect(port('rendered')).toHaveAttribute('data-state', 'closed');
     });
 
     /*
@@ -155,14 +167,14 @@ describe('reaching it', () => {
      * than asserting a tab order the canvas deliberately does not have.
      */
     act(() => {
-      port('detected').focus();
+      port('rendered').focus();
     });
 
     await waitFor(() => {
-      expect(screen.getByRole('tooltip')).toHaveTextContent('Detected source');
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Rendered HTML');
     });
     // Announced, not merely drawn.
-    expect(port('detected')).toHaveAttribute('aria-describedby');
+    expect(port('rendered')).toHaveAttribute('aria-describedby');
   });
 
   it('opens on hover as well', async () => {
@@ -189,8 +201,8 @@ describe('the accessible name', () => {
 
     // Truncation is a fact about the box, never about the name of the thing.
     expect(port('rendered')).toHaveAccessibleName('Output Rendered HTML, carries text');
-    expect(port('detected')).toHaveAccessibleName('Output Detected source, carries text');
-    expect(port('input')).toHaveAccessibleName('Input Input, accepts text');
+    expect(port('detected')).toHaveAccessibleName('Output Detected, carries text');
+    expect(port('input')).toHaveAccessibleName('Input Document, accepts text or bytes');
   });
 });
 

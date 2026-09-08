@@ -858,7 +858,7 @@ describe('the tool', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(jsonOf(result.value.info)).toMatchObject({
+    expect(jsonOf(result.value.report)).toMatchObject({
       from: { format: 'image/png', width: 4, height: 4 },
       to: { format: 'image/webp', width: 4, height: 4, bytes: 40, metadata: [] },
     });
@@ -876,7 +876,7 @@ describe('the tool', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(jsonOf(result.value.info)).toMatchObject({
+    expect(jsonOf(result.value.report)).toMatchObject({
       summary: expect.stringContaining('Transparency') as unknown,
     });
   });
@@ -895,7 +895,7 @@ describe('the tool', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    const info = jsonOf(result.value.info);
+    const info = jsonOf(result.value.report);
     expect(info).toMatchObject({ from: { hasAlpha: false } });
     expect(JSON.stringify(info)).not.toContain('Transparency was flattened');
   });
@@ -912,7 +912,7 @@ describe('the tool', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(jsonOf(result.value.info)).toMatchObject({
+    expect(jsonOf(result.value.report)).toMatchObject({
       summary: expect.stringContaining('Transparency') as unknown,
     });
   });
@@ -924,7 +924,7 @@ describe('the tool', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(jsonOf(result.value.info)).toMatchObject({
+    expect(jsonOf(result.value.report)).toMatchObject({
       from: { metadata: ['EXIF', 'GPS location'] },
       to: { metadata: [] },
     });

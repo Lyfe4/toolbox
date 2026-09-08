@@ -26,6 +26,15 @@ the second port permanently blocked. The migration lives in
 `features/canvas/persistence.ts` as `migrateV2ToV3`, and it looks the port id up
 from the registry rather than assuming it is called `"input"`.
 
+Both ports accept `text`, `json` and `bytes`. **`json` is accepted here and
+refused by `hash`, and the asymmetry is deliberate.** Comparing two structures
+means serialising them, and the indentation that gets picked changes how the
+comparison _reads_ rather than whether it is true — where the same choice made
+inside a hash tool would change the digest, which is a number people compare
+across machines. So "diff two JSON documents" works by wiring
+`structured-data`'s `data` port straight in, and "fingerprint a structure" goes
+through its `output` port, where the serialisation is an explicit setting.
+
 ## The algorithm is not ours
 
 `diff` (jsdiff) does the Myers work. It is maintained, heavily exercised, and
@@ -220,9 +229,15 @@ than an undifferentiated wall of text. That rules out a coloured `<pre>`.
 
 So there are two outputs:
 
-- **`output`** — a real unified patch. Portable, pipeable, paste-into-a-review
-  text, and what a downstream node receives.
-- **`changes`** — the row structure, carrying `presentation: 'diff'`.
+- **`output`** (Unified patch) — a real unified patch. Portable, pipeable,
+  paste-into-a-review text, and what a downstream node receives.
+- **`changes`** (Changes) — the row structure, carrying `presentation: 'diff'`.
+
+`Unified patch` is one of two labels in the whole set that deliberately runs
+past the 84px label box on a node and takes a tooltip instead. Both output
+ports are `text` and `json` respectively, and neither type says which one is
+the patch — the word `patch` is information the type cannot carry, so it is
+worth the ellipsis.
 
 `presentation` is a small optional field on `OutputPort`: a hint for the rare
 case where the data type does not determine how to draw the value. `DiffView`
@@ -356,6 +371,13 @@ led to the terminated comparison text above.
   treats empty typed text as "not yet filled", so "what did I add to an empty
   file" leaves the node blocked. That is a platform-wide rule about required
   ports, not a decision this tool makes.
+- **Two binary files are refused rather than compared.** Both ports accept
+  `bytes`, which is what lets two decoded text files be compared — and until
+  the [port audit](../../../docs/architecture.md#the-port-set) the bytes were
+  decoded leniently, so two PNGs produced a well-formed unified diff of two
+  walls of U+FFFD. They now decode strictly, through
+  [`lib/text.ts`](../../lib/text.ts), and the refusal names which port it was:
+  with two document ports, "those bytes" is not an answer.
 
 ## Tests
 

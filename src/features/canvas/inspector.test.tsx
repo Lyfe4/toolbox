@@ -108,7 +108,7 @@ beforeEach(() => {
   window.localStorage.clear();
   usePipelineStore.getState().reset();
   usePipelineStore.setState({
-    execute: succeedsWith({ digest: { type: 'text', text: 'abc123' } }),
+    execute: succeedsWith({ output: { type: 'text', text: 'abc123' } }),
   });
   useCanvasStore.setState({
     graph: EMPTY_GRAPH,
@@ -392,7 +392,7 @@ describe('options', () => {
         seen.push(options.options);
         return Promise.resolve<ToolResult<ToolOutputs>>({
           ok: true,
-          value: { digest: { type: 'text', text: 'abc' } },
+          value: { output: { type: 'text', text: 'abc' } },
         });
       },
     });
@@ -474,7 +474,7 @@ describe('output', () => {
   it('shows the result of the node, through the runner’s own views', async () => {
     const user = userEvent.setup();
     usePipelineStore.setState({
-      execute: succeedsWith({ digest: { type: 'text', text: 'deadbeef' } }),
+      execute: succeedsWith({ output: { type: 'text', text: 'deadbeef' } }),
     });
     seed([node('a', 'hash', 0, 0, { inputs: { input: 'hello' } })]);
     renderCanvas();
@@ -536,7 +536,7 @@ describe('output', () => {
       execute: () =>
         new Promise<ToolResult<ToolOutputs>>((resolve) => {
           release = () => {
-            resolve({ ok: true, value: { digest: { type: 'text', text: 'done' } } });
+            resolve({ ok: true, value: { output: { type: 'text', text: 'done' } } });
           };
         }),
     });
@@ -590,7 +590,7 @@ describe('the node’s own summary', () => {
    */
   it('replaces the tool description once the node has run', async () => {
     usePipelineStore.setState({
-      execute: succeedsWith({ digest: { type: 'text', text: 'deadbeef' } }),
+      execute: succeedsWith({ output: { type: 'text', text: 'deadbeef' } }),
     });
     seed([node('a', 'hash', 0, 0, { inputs: { input: 'hello' } })]);
     renderCanvas();
@@ -607,7 +607,7 @@ describe('the node’s own summary', () => {
    */
   it('is part of the node’s accessible name', async () => {
     usePipelineStore.setState({
-      execute: succeedsWith({ digest: { type: 'text', text: 'deadbeef' } }),
+      execute: succeedsWith({ output: { type: 'text', text: 'deadbeef' } }),
     });
     seed([node('a', 'hash', 0, 0, { inputs: { input: 'hello' } })]);
     renderCanvas();
@@ -761,7 +761,7 @@ describe('accessibility', () => {
   it('has no axe violations showing a node', async () => {
     const user = userEvent.setup();
     usePipelineStore.setState({
-      execute: succeedsWith({ digest: { type: 'text', text: 'deadbeef' } }),
+      execute: succeedsWith({ output: { type: 'text', text: 'deadbeef' } }),
     });
     seed([node('a', 'hash', 0, 0, { inputs: { input: 'hello' } })]);
     const { container } = renderCanvas();

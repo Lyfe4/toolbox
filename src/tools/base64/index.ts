@@ -34,9 +34,20 @@ export const base64Tool = defineTool({
   outputs: [
     {
       id: 'output',
+      /*
+       * 'Output', and it stays 'Output'.
+       *
+       * Every other converter in the set names its first output for the value
+       * it carries - 'Converted', 'Digest', 'Decoded' - and this one cannot,
+       * because what it carries depends on the mode: base64 text one way,
+       * decoded bytes the other. Any specific name would be wrong half the
+       * time, and 'Encoded or decoded' is both longer than the label box and
+       * less clear than the description below it.
+       */
       label: 'Output',
       // Encoding produces text; decoding produces bytes. One port, two types.
       types: ['text', 'bytes'],
+      description: 'Base64 text when encoding, the decoded bytes when decoding.',
     },
   ],
 

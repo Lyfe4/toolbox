@@ -292,11 +292,5 @@ export function OutputView({
 
     case 'color':
       return <ColorView color={value.color} label={label} />;
-
-    case 'image':
-    case 'datetime':
-      // Declared in the type system, but no tool produces one yet. Saying so is
-      // better than rendering nothing and looking broken.
-      return <p className={styles.hint}>No viewer for {value.type} output yet.</p>;
   }
 }

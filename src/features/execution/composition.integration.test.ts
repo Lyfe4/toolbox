@@ -126,7 +126,7 @@ describe('a long chain', () => {
     // started from rather than something that merely looks like it.
     expect(textAt(summary.states, 'back', 'output')).toBe('{"name":"ada","tags":["x","y"]}');
     expect(textAt(summary.states, 'encode', 'output')).toBe(payload);
-    expect(textAt(summary.states, 'digest', 'digest')).toMatch(/^[0-9a-f]{64}$/);
+    expect(textAt(summary.states, 'digest', 'output')).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 
@@ -196,7 +196,7 @@ describe('binary data across several hops', () => {
     // give the empty-input digest instead, which is a perfectly valid-looking
     // 64 hex characters - so the value is asserted, not the shape.
     for (const id of consumers) {
-      expect(textAt(summary.states, id, 'digest')).toBe(
+      expect(textAt(summary.states, id, 'output')).toBe(
         'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9',
       );
     }
@@ -241,7 +241,7 @@ describe('binary data across several hops', () => {
     const summary = await runPipeline(grown, { execute, cache });
 
     expect(summary.states.src?.status).toBe('ok');
-    expect(textAt(summary.states, 'b', 'digest')).toBe('5eb63bbbe01eeed093cb22bb8f5acdc3');
+    expect(textAt(summary.states, 'b', 'output')).toBe('5eb63bbbe01eeed093cb22bb8f5acdc3');
   });
 });
 
@@ -267,8 +267,8 @@ describe('graph shapes', () => {
       [
         ['src', 'output', 'left', 'input'],
         ['src', 'output', 'right', 'input'],
-        ['left', 'digest', 'cmp', 'original'],
-        ['right', 'digest', 'cmp', 'changed'],
+        ['left', 'output', 'cmp', 'original'],
+        ['right', 'output', 'cmp', 'changed'],
       ],
     );
 
@@ -310,7 +310,7 @@ describe('graph shapes', () => {
     expect(summary.states.bad?.status).toBe('error');
     expect(summary.states.badSink?.status).toBe('upstream-failed');
     // The sibling ran to completion and produced the right answer.
-    expect(textAt(summary.states, 'goodSink', 'digest')).toBe(
+    expect(textAt(summary.states, 'goodSink', 'output')).toBe(
       'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9',
     );
 
@@ -335,7 +335,9 @@ describe('graph shapes', () => {
       ],
       chain.slice(1).map((id, index) => {
         const from = chain[index] ?? '';
-        return [from, from === 'a' ? 'output' : 'digest', id, 'input'] as const;
+        // Every tool's first output is `output`, base64 and hash alike, so
+        // this no longer has to know which tool it is wiring from.
+        return [from, 'output', id, 'input'] as const;
       }),
     );
 
@@ -368,54 +370,67 @@ describe('type boundaries between tools', () => {
    * The runtime check has to catch that, on the node that received it, with a
    * message naming the actual type - and it must not take the rest of the run
    * down with it.
+   *
+   * THE CONSUMER IS `jwt-decode` AND IT USED TO BE `regex-tester`, which is
+   * this pair's own record of the port audit. Two text-only ports are left in
+   * the set, and both of them are ports that take a short literal: a compact
+   * token and a colour. Every port that reads a DOCUMENT now accepts `bytes`
+   * as well, so the refusal these tests are about is no longer reachable from
+   * a tool that reads one.
    */
   it('refuses bytes at a text-only port without disturbing anything else', async () => {
     const graph = graphOf(
       [
         node('src', 'base64', { mode: 'decode' }, { input: 'aGVsbG8=' }),
-        node('re', 'regex-tester', { pattern: 'h.', flags: 'g', mode: 'match' }),
+        node('jwt', 'jwt-decode'),
         node('digest', 'hash', SHA256),
       ],
       [
-        ['src', 'output', 're', 'input'],
+        ['src', 'output', 'jwt', 'input'],
         ['src', 'output', 'digest', 'input'],
       ],
     );
 
     const summary = await runPipeline(graph, { execute: makeEngine() });
 
-    expect(summary.states.re?.status).toBe('error');
-    expect(summary.states.re?.error?.code).toBe('unsupported-type');
-    expect(summary.states.re?.error?.message).toContain('bytes');
+    expect(summary.states.jwt?.status).toBe('error');
+    expect(summary.states.jwt?.error?.code).toBe('unsupported-type');
+    expect(summary.states.jwt?.error?.message).toContain('bytes');
     // The sibling on the same output port is untouched.
     expect(summary.states.digest?.status).toBe('ok');
   });
 
   /*
-   * The same wire, the other way round: encoding produces text, and the same
-   * graph then runs. Nothing about the document changed except one option, so
-   * this is the case where a stale cache would be most tempting.
+   * The same wire, the other way round: encoding produces text, so the tool
+   * RUNS. Nothing about the document changed except one option, so this is the
+   * case where a stale cache would be most tempting - and a served refusal
+   * would say the wire is illegal for a value it never saw.
+   *
+   * What it runs on is base64 output, which is not a token, so the second
+   * outcome is still a failure. The assertion is about WHICH failure: a
+   * `parse-error` from inside the tool is a tool that was handed a value and
+   * read it, where `unsupported-type` is a value the port refused to accept.
    */
-  it('accepts the same wire once the upstream produces text', async () => {
+  it('stops refusing the wire on type once the upstream produces text', async () => {
     const cache: PipelineCache = new Map();
     const execute = makeEngine();
 
-    const wires: readonly Wire[] = [['src', 'output', 're', 'input']];
-    const consumer = node('re', 'regex-tester', { pattern: 'a.', flags: 'g', mode: 'match' });
+    const wires: readonly Wire[] = [['src', 'output', 'jwt', 'input']];
+    const consumer = node('jwt', 'jwt-decode');
 
     const decoding = graphOf(
       [node('src', 'base64', { mode: 'decode' }, { input: 'aGVsbG8=' }), consumer],
       wires,
     );
     const first = await runPipeline(decoding, { execute, cache });
-    expect(first.states.re?.status).toBe('error');
+    expect(first.states.jwt?.error?.code).toBe('unsupported-type');
 
     const encoding = graphOf(
       [node('src', 'base64', { mode: 'encode' }, { input: 'aGVsbG8=' }), consumer],
       wires,
     );
     const second = await runPipeline(encoding, { execute, cache });
-    expect(second.states.re?.status).toBe('ok');
+    expect(second.states.jwt?.error?.code).toBe('parse-error');
   });
 
   /*
@@ -456,6 +471,96 @@ describe('type boundaries between tools', () => {
 });
 
 /* ========================================================================== *
+ * The pipelines the port audit made possible
+ * ========================================================================== */
+
+describe('bytes arriving at a document port', () => {
+  /*
+   * BOTH OF THESE WERE IMPOSSIBLE TO WIRE, and neither was hard to want.
+   *
+   * `regex-tester` and `text-convert` declared `types: ['text']` on an input
+   * that reads a document, so base64's decoded output - which is `bytes` - had
+   * no legal wire into either. `structured-data` had widened the same port
+   * some time before, recording that refusing bytes "made the most obvious
+   * pipeline in the product impossible"; these two tools had the same port and
+   * not the same fix.
+   *
+   * Run end to end with real values rather than asserted as legal wires -
+   * `ports.test.ts` does the legality - because what is in question is whether
+   * the value survives the hop with its meaning intact.
+   */
+  it('greps a base64-decoded log file', async () => {
+    // Three log lines, newline-separated, in base64: `GET /a 200`, `GET /b
+    // 500`, `GET /c 500`.
+    const payload = 'R0VUIC9hIDIwMApHRVQgL2IgNTAwCkdFVCAvYyA1MDA=';
+
+    const graph = graphOf(
+      [
+        node('decode', 'base64', { mode: 'decode' }, { input: payload }),
+        node('grep', 'regex-tester', { pattern: '[0-9]{3}$', mode: 'match', multiline: true }),
+      ],
+      [['decode', 'output', 'grep', 'input']],
+    );
+
+    const summary = await runPipeline(graph, { execute: makeEngine() });
+
+    expect(summary.failed).toBe(0);
+    const matches = summary.states.grep?.outputs?.matches;
+    expect(matches?.type).toBe('json');
+    if (matches?.type !== 'json') return;
+    // Three lines, three status codes - so the newlines survived the decode
+    // and the multiline anchor is looking at real text.
+    expect(matches.data).toMatchObject({ count: 3 });
+  });
+
+  it('cleans up a base64-decoded HTML mail body', async () => {
+    // "<div><p>Hello <b>there</b></p></div>" in base64.
+    const payload = 'PGRpdj48cD5IZWxsbyA8Yj50aGVyZTwvYj48L3A+PC9kaXY+';
+
+    const graph = graphOf(
+      [
+        node('decode', 'base64', { mode: 'decode' }, { input: payload }),
+        node('clean', 'text-convert', { source: 'html', target: 'markdown', unsupported: 'text' }),
+      ],
+      [['decode', 'output', 'clean', 'input']],
+    );
+
+    const summary = await runPipeline(graph, { execute: makeEngine() });
+
+    expect(summary.failed).toBe(0);
+    expect(textAt(summary.states, 'clean', 'output').trim()).toBe('Hello **there**');
+  });
+
+  /*
+   * And the refusal, on the same wire, with a value that is not text. Accepting
+   * bytes is only safe because the decode is strict: a lenient one turns bytes
+   * nobody can read into a confident answer about content nobody wrote, which
+   * is what `diff` used to do with two PNGs.
+   */
+  it('refuses bytes that are not text, on the node that received them', async () => {
+    // 0x89 'PNG' - the real signature, and not valid UTF-8.
+    const graph = graphOf(
+      [
+        node('decode', 'base64', { mode: 'decode' }, { input: 'iVBORw0=' }),
+        node('grep', 'regex-tester', { pattern: 'a', mode: 'match' }),
+        node('digest', 'hash', SHA256),
+      ],
+      [
+        ['decode', 'output', 'grep', 'input'],
+        ['decode', 'output', 'digest', 'input'],
+      ],
+    );
+
+    const summary = await runPipeline(graph, { execute: makeEngine() });
+
+    expect(summary.states.grep?.status).toBe('error');
+    expect(summary.states.grep?.error?.message).toContain('could not be read as text');
+    // The sibling on the same output port is untouched: `hash` wants bytes.
+    expect(summary.states.digest?.status).toBe('ok');
+  });
+});
+
+/* ========================================================================== *
  * Cache correctness across rewiring
  * ========================================================================== */
 
@@ -480,16 +585,16 @@ describe('the cache across a rewiring', () => {
 
     const forwards = await runPipeline(
       graphOf(nodes, [
-        ['a', 'digest', 'cmp', 'original'],
-        ['b', 'digest', 'cmp', 'changed'],
+        ['a', 'output', 'cmp', 'original'],
+        ['b', 'output', 'cmp', 'changed'],
       ]),
       { execute, cache },
     );
 
     const backwards = await runPipeline(
       graphOf(nodes, [
-        ['b', 'digest', 'cmp', 'original'],
-        ['a', 'digest', 'cmp', 'changed'],
+        ['b', 'output', 'cmp', 'original'],
+        ['a', 'output', 'cmp', 'changed'],
       ]),
       { execute, cache },
     );
@@ -560,8 +665,8 @@ describe('the cache across a rewiring', () => {
         node('cmp', 'diff', {}),
       ],
       [
-        ['a', 'digest', 'cmp', 'original'],
-        ['b', 'digest', 'cmp', 'changed'],
+        ['a', 'output', 'cmp', 'original'],
+        ['b', 'output', 'cmp', 'changed'],
       ],
     );
 
@@ -630,8 +735,8 @@ describe('a graph that changes while it is running', () => {
       if (options.signal?.aborted) {
         return { ok: false, error: { code: 'cancelled', message: 'Cancelled.' } };
       }
-      const digest: ToolValue = { type: 'text', text: 'digest' };
-      return { ok: true, value: { digest } };
+      const output: ToolValue = { type: 'text', text: 'digest' };
+      return { ok: true, value: { output } };
     };
 
     const graph = graphOf([node('a', 'hash', SHA256, { input: 'AAA' })], []);
@@ -666,12 +771,12 @@ describe('a graph that changes while it is running', () => {
         return { ok: false, error: { code: 'cancelled', message: 'Cancelled.' } };
       }
       const output: ToolValue = { type: 'text', text: 'value' };
-      return { ok: true, value: { output, digest: output } };
+      return { ok: true, value: { output } };
     };
 
     const graph = graphOf(
       [node('a', 'hash', SHA256, { input: 'AAA' }), node('b', 'hash', MD5)],
-      [['a', 'digest', 'b', 'input']],
+      [['a', 'output', 'b', 'input']],
     );
 
     const running = runPipeline(graph, { execute, signal: controller.signal });

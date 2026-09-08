@@ -461,6 +461,29 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
         title="Ports"
         footer={`Runs in a ${entry.execution.strategy} context`}
       >
+        {/*
+          AN OUTPUT PORT'S DESCRIPTION IS SHOWN HERE, AND IT USED TO BE SHOWN
+          NOWHERE AT ALL.
+
+          `PortBase.description` is the one place a port explains itself, and
+          for an OUTPUT port nothing on any route read it. An input's is its
+          editor's placeholder and, for a bytes-only port, the instruction for
+          the file control - but an output's existed only for whoever was
+          reading the manifest source, including the sentence saying base64's
+          single output is text one way and bytes the other, which is the most
+          surprising fact in the whole port set.
+
+          This panel is where it belongs rather than beside the value: it is
+          the footnote about how the tool wires up, consulted while building a
+          pipeline rather than while reading a result. Every port now has a
+          description and `ports.test.ts` asserts that.
+
+          INPUTS DELIBERATELY DO NOT REPEAT THEIRS. Their prose is already on
+          this page, in the panel where it is acted on, and printing the same
+          sentence twice on one screen is worse than printing it once - the
+          image tool's "A PNG, JPEG, GIF or WebP file" would have appeared as
+          an instruction and again as a footnote four regions below it.
+        */}
         <div className={styles.stack}>
           {entry.inputs.map((input) => (
             <p key={input.id} className={styles.hint}>
@@ -468,9 +491,14 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
             </p>
           ))}
           {entry.outputs.map((output) => (
-            <p key={output.id} className={styles.hint}>
-              Out · {output.label} · {output.types.join(' or ')}
-            </p>
+            <div key={output.id} className={styles.port}>
+              <p className={styles.hint}>
+                Out · {output.label} · {output.types.join(' or ')}
+              </p>
+              {output.description === undefined ? null : (
+                <p className={styles.portNote}>{output.description}</p>
+              )}
+            </div>
           ))}
         </div>
       </Panel>

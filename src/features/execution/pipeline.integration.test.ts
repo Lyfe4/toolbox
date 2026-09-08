@@ -134,7 +134,7 @@ describe('a real pipeline', () => {
     expect(textAt(summary.states, 'a', 'output')).toBe('[{"name":"ada","age":"36"}]');
     // A SHA-256 in hex is 64 characters, and it is the digest of that exact
     // JSON - so the chain really carried the value through.
-    expect(textAt(summary.states, 'b', 'digest')).toMatch(/^[0-9a-f]{64}$/);
+    expect(textAt(summary.states, 'b', 'output')).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('fans one output into two hashes, and both see the same bytes', async () => {
@@ -174,10 +174,10 @@ describe('a real pipeline', () => {
     // Known digests of the literal bytes "hello world". If the buffer had been
     // detached by the first consumer, the second would have hashed nothing and
     // produced the empty-input digest instead.
-    expect(textAt(summary.states, 'sha', 'digest')).toBe(
+    expect(textAt(summary.states, 'sha', 'output')).toBe(
       'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9',
     );
-    expect(textAt(summary.states, 'md5', 'digest')).toBe('5eb63bbbe01eeed093cb22bb8f5acdc3');
+    expect(textAt(summary.states, 'md5', 'output')).toBe('5eb63bbbe01eeed093cb22bb8f5acdc3');
   });
 
   it('reports a real tool failure on the failing node only', async () => {
@@ -243,7 +243,7 @@ describe('a real pipeline', () => {
     // Only the hash node ran again; the encode was served from cache.
     expect(executions).toBe(3);
     expect(summary.cached).toBe(1);
-    expect(textAt(summary.states, 'b', 'digest')).toHaveLength(32);
+    expect(textAt(summary.states, 'b', 'output')).toHaveLength(32);
   });
 });
 

@@ -1,4 +1,5 @@
 import { defineTool, eraseTool, fail, ok, type ErasedTool } from '@/features/registry/types';
+import { decodeDocument } from '@/lib/text';
 
 import { detectFormat, type SourceFormat } from './detect';
 import {
@@ -24,11 +25,34 @@ import {
  * source list would put two unrelated jobs behind one control, which is the
  * mistake this merge exists to undo. See the README.
  *
- * THREE OUTPUTS. `output` is the conversion. `rendered` is always HTML, which
- * is what makes `presentation: 'html'` a fact rather than a guess and hangs the
- * preview and rich-text copy off it. `detected` reports what auto-detection
- * concluded and how sure it was, so a wrong guess is visible rather than
- * silent.
+ * THREE OUTPUTS, AND THE TWO TEXT ONES COINCIDE FOR EXACTLY ONE TARGET.
+ *
+ * `output` is the conversion, in whichever format `target` names. `rendered` is
+ * always sanitised HTML, which is what makes `presentation: 'html'` a fact
+ * rather than a guess and is what the preview and Copy as rich text hang off.
+ * `detected` reports what auto-detection concluded and how sure it was, so a
+ * wrong guess is visible rather than silent.
+ *
+ * With `target: 'html'` and a Markdown source the first two are the SAME
+ * STRING, and they have to be: converting a document to HTML and rendering it
+ * are the same operation, so no definition of `rendered` can differ from
+ * `output` there. The alternatives were weighed and both cost more:
+ *
+ *   - One port, presented as HTML only when the target is HTML. `presentation`
+ *     is static data in the eager manifest - the registry test compares
+ *     manifest ports to implementation ports with a structural equality that a
+ *     function property cannot pass - so "presented as HTML sometimes" is not
+ *     expressible. Making it unconditional would draw Markdown output in an
+ *     HTML preview.
+ *   - A port that appears only for the targets where it differs. Ports that
+ *     come and go as options change was rejected when the port model was
+ *     written, and for a better reason than this one: a node whose shape moves
+ *     under you while you are wiring it.
+ *
+ * So the coincidence is stated on the port itself rather than left for someone
+ * to discover by reading two identical text boxes. The cost of the other three
+ * targets losing the preview and the rich-text copy is much higher than the
+ * cost of one duplicated string.
  */
 export const textConvertTool = defineTool({
   id: 'text-convert',
@@ -39,8 +63,19 @@ export const textConvertTool = defineTool({
   inputs: [
     {
       id: 'input',
-      label: 'Input',
-      types: ['text'],
+      // 'Document', the same word `structured-data` uses, because the two
+      // tools are the same shape - a source, a target, and auto-detection -
+      // and a port called 'Input' says nothing a socket does not already say.
+      label: 'Document',
+      /*
+       * Bytes as well as text, for exactly the reason `structured-data` gives
+       * for the same widening: a document arrives as raw bytes far more often
+       * than not - out of a base64 decode, or a dropped `.md` or `.html` file
+       * - and refusing them made "decode this payload and clean up the HTML in
+       * it" impossible to wire. Decoded strictly, so a PNG on this port says
+       * so instead of being converted from mojibake.
+       */
+      types: ['text', 'bytes'],
       required: true,
       description: 'Markdown or HTML. Detected automatically unless you say otherwise.',
     },
@@ -57,12 +92,13 @@ export const textConvertTool = defineTool({
       id: 'rendered',
       label: 'Rendered HTML',
       types: ['text'],
-      description: 'Always HTML, sanitised. This is what the preview shows.',
+      description:
+        'Always HTML, sanitised - the preview and Copy as rich text. Identical to Converted when Markdown becomes HTML.',
       presentation: 'html',
     },
     {
       id: 'detected',
-      label: 'Detected source',
+      label: 'Detected',
       types: ['text'],
       description: 'What auto-detection concluded, and whether it was sure.',
     },
@@ -97,7 +133,12 @@ export const textConvertTool = defineTool({
    * anything. Loading it here makes it a sibling chunk fetched on first run.
    */
   run: async ({ inputs, options }) => {
-    const text = inputs.input.text;
+    // `arrived`, not `source`: `source` below is the FORMAT this document is
+    // in, which is a different question from where the characters came from.
+    const arrived = inputs.input;
+    const decoded = arrived.type === 'text' ? ok(arrived.text) : decodeDocument(arrived.bytes);
+    if (!decoded.ok) return decoded;
+    const text = decoded.value;
 
     if (text.trim() === '') {
       return fail('invalid-input', 'Nothing to convert: the input is empty.');
@@ -111,7 +152,8 @@ export const textConvertTool = defineTool({
         ? `${detection.format} (${detection.confidence}) - ${detection.reason}`
         : `${source} (chosen, not detected)`;
 
-    const { htmlToMarkdown, htmlToText, markdownToHtml } = await import('@/lib/markup/pipelines');
+    const { htmlToMarkdown, htmlToText, markdownToHtml, sanitiseHtml } =
+      await import('@/lib/markup/pipelines');
 
     const toHtmlOptions = { headingIds: options.headingIds, linkify: options.linkify };
     const toMarkdownOptions = {
@@ -136,7 +178,21 @@ export const textConvertTool = defineTool({
        * and HTML becomes whatever was asked for. It is also what makes
        * `rendered` free - the hub value IS the rendered output.
        */
-      const html = source === 'markdown' ? markdownToHtml(text, toHtmlOptions) : text;
+      const html =
+        source === 'markdown'
+          ? markdownToHtml(text, toHtmlOptions)
+          : /*
+             * SANITISED HERE, not left as the input string.
+             *
+             * This value is the hub, and it is also what `rendered` carries
+             * for two of the three targets - so passing the input through
+             * unchanged put raw markup on a port that declares it is
+             * sanitised, and from there onto the clipboard and into whatever
+             * node was wired to it. The three pipelines below all sanitise
+             * internally, so `output` is byte-identical either way; it is the
+             * port that promised it which was wrong.
+             */
+            sanitiseHtml(text, { headingIds: options.headingIds });
 
       const output =
         options.target === 'html'

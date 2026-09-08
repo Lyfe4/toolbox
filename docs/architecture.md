@@ -5,6 +5,7 @@ way they are.
 
 - [The shape of it](#the-shape-of-it)
 - [The registry](#the-registry)
+- [The port set](#the-port-set)
 - [The execution engine](#the-execution-engine)
 - [The worker boundary](#the-worker-boundary)
 - [Incremental caching](#incremental-caching)
@@ -96,6 +97,245 @@ type RunFor<T extends ToolSpec> = (
 See [`types.ts`](../src/features/registry/types.ts). The practical effect is
 that port compatibility is not a runtime string comparison that someone has to
 remember to write — the compiler already refused the mismatch.
+
+## The port set
+
+Every tool declares its input and output ports, and for a long time each
+declaration was written when that tool was written and never read beside the
+others. The canvas can now show a node's output, which makes the ports the
+thing a person reasons about while wiring — so they were audited as a set.
+These are the rules that came out of it, and the reasoning is here rather than
+in nine files because every one of them is about the set rather than about a
+tool.
+
+### The whole set, as it stands
+
+| Tool              | In                                                         | Out                                                                                      |
+| ----------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `base64`          | `input` Input · text, bytes                                | `output` Output · text, bytes                                                            |
+| `structured-data` | `input` Document · text, json, bytes                       | `output` Converted · text — `data` Parsed data · json                                    |
+| `hash`            | `input` Input · text, bytes                                | `output` Digest · text                                                                   |
+| `jwt-decode`      | `input` Token · text                                       | `output` Decoded · json                                                                  |
+| `diff`            | `original` Original, `changed` Changed · text, json, bytes | `output` Unified patch · text — `changes` Changes · json                                 |
+| `regex-tester`    | `input` Subject · text, bytes                              | `output` Result · text — `matches` Matches · json                                        |
+| `color-convert`   | `input` Colour · text, color                               | `output` Converted · text — `swatch` Swatch · color — `all` Notations · json             |
+| `image-convert`   | `input` Image · bytes                                      | `output` Converted · bytes — `report` Report · json                                      |
+| `text-convert`    | `input` Document · text, bytes                             | `output` Converted · text — `rendered` Rendered HTML · text — `detected` Detected · text |
+
+### The conventions, and what each one is worth
+
+**A tool's first output is `output`.** It was on eight of the nine and `hash`
+called its answer `digest`. That mattered because a node summarises its FIRST
+declared output on the grounds that the first port is the tool's answer and the
+rest are its working — a rule that was a per-tool lookup rather than something
+the shape of the set guaranteed. It is asserted for every tool now.
+
+**A tool with one input calls it `input`; a tool with several names each one.**
+`diff` is the only tool with two, and neither of them is "the" input. The
+v2 → v3 graph migration had to look a tool's first input port up in the live
+registry precisely because this was not something it could assume.
+
+**A port id is an identity; a label is a word for a person.** Ids appear in
+edges, in `CanvasNode.inputs` and in share links, so renaming one is a breaking
+change with a migration attached — see
+[`retiredPorts.ts`](../src/features/canvas/retiredPorts.ts). Labels are free to
+improve, and several did.
+
+**A label has 84px and about eleven characters.** `Every notation`,
+`Converted image` and `Detected source` were all drawn as a word and a half on
+every node that had one. `Rendered HTML` and `Unified patch` deliberately sit
+over the budget and take a tooltip instead, because in both the extra word is
+information the port's data TYPE cannot carry.
+
+**No label appears twice on one tool.** `color-convert` had an input labelled
+Colour facing an output labelled Colour, which on a 224px node is two identical
+words with nothing to tell them apart. The input is the one that could not
+move: a colour converter's input is a colour.
+
+**Every port has a description, and an output's is now shown.** A port's
+description is the only documentation of it that reaches a person, and for an
+OUTPUT port nothing on any route read it — an input's is its editor's
+placeholder, an output's existed only in the manifest source. The Ports panel
+on a tool page shows it. Inputs deliberately do not repeat theirs there, since
+their prose is already on the page in the panel where it is acted on.
+
+### A data type earns its place when a port carries it
+
+`DATA_TYPES` held `image` and `datetime` and no port on any tool declared
+either. `datetime` was merely dead — a payload shape no test could judge, and a
+glyph in the canvas's port legend for a type the canvas could not produce.
+
+`image` was worse than dead. Binary travels as `bytes` everywhere in this app
+and the SNIFF says what it is, which is what makes `image-convert → hash` and
+`image-convert → base64` legal wires. A separate `image` type would have made
+exactly those illegal, and left every future author choosing between two types
+for one concept with no right answer.
+
+`color` is the counter-example and the reason the shape is worth having:
+`color-convert` really does carry a parsed colour on a port, which is what lets
+a colour hop between nodes without a lossy round trip through text.
+
+### Every port that reads a document accepts bytes
+
+This is the audit's main finding, and it was the same finding twice.
+`structured-data` widened its document port to `bytes` some time ago and
+recorded that refusing them "made the most obvious pipeline in the product
+impossible". `regex-tester` and `text-convert` have the same port and had not
+had the same fix, so:
+
+- a decoded log file could not be wired into the regex subject, and
+- a base64-decoded mail body could not be wired into the text converter.
+
+Both were also inconsistent BETWEEN THE TWO ROUTES rather than merely
+restrictive. A tool page has always accepted a dropped text file on either
+tool, because the runner decodes a text-sniffed file before handing it over; it
+was only the canvas, where the same bytes arrive on a wire, that refused. One
+tool that accepts a file in one place and refuses it in the other is drift.
+
+The two ports that still refuse bytes take a short LITERAL rather than a
+document: a compact token and a colour. Their size limits say the same thing —
+256 kB and 4 kB.
+
+**Widening a port means refusing clearly, not guessing.** The risk of accepting
+bytes is that non-text bytes get decoded to replacement characters and
+processed anyway. `diff` did exactly that: two PNGs on its two ports produced a
+valid unified diff of two walls of U+FFFD, an answer that looks like an answer
+and means nothing. Every document port decodes through
+[`lib/text.ts`](../src/lib/text.ts) now — strict UTF-8, with a UTF-16 byte
+order mark as the one exception — and names which port could not be read,
+because with two document ports "those bytes" is not an answer.
+
+### What was deliberately left alone
+
+**`hash` still refuses `json`.** Wiring `structured-data`'s parsed structure
+into it looks obviously useful, and the digest of a STRUCTURE is undefined
+until someone picks a serialisation: key order and indentation change the
+bytes, so they change the number people compare across machines.
+`structured-data`'s `output` port is where that choice is made explicitly, with
+`sortKeys` and `indent` to control it. `diff` DOES accept `json`, and the
+asymmetry is the point — an indentation choice changes how a comparison reads
+rather than whether it is true.
+
+**`jwt-decode` has one output, not a separate `payload`.** A port carrying just
+the claims is the thing people would want downstream, and its entire effect
+would be to detach the claims from the signature verdict — which is the one
+thing this tool's whole design exists to prevent.
+
+**`text-convert` keeps all three outputs.** See below.
+
+**Every input stays required.** No tool in the set does anything useful with a
+missing input, and an optional port makes its value `| undefined` in `run`,
+which is a question the tool then has to have an answer for.
+
+### `Converted` and `Rendered HTML`, which was the specific question
+
+It was not obvious how `text-convert`'s first two outputs differed when the
+target format was HTML. The answer turned out to be two separate things.
+
+**One was a defect.** `rendered` declares "always HTML, sanitised" and there
+was no function in the markup pipelines that produced one: `markdownToHtml`
+sanitises the HTML it generates, and the other two sanitise on the way to
+something that is not HTML. So for an HTML source with any target but Markdown,
+the port carried the input string unchanged — `<script>` elements and `onclick`
+attributes included. Nothing ran: the preview iframe is `sandbox=""`. What did
+happen is that the string went onto the clipboard through Copy as rich text and
+out of the port into whatever node was wired to it, which are the two places a
+port's promise is all anybody has. `sanitiseHtml` fixes it, and `output` is
+byte-identical either way — all three pipelines already sanitised internally,
+so it was only the port that was wrong.
+
+**The other cannot be designed away, and the ports are right as they are.**
+With a Markdown source and an HTML target the two ports really are the same
+string, because converting a document to HTML and rendering it are the same
+operation. Both alternatives cost more:
+
+- **One port, presented as HTML only when the target is HTML.**
+  `OutputPort.presentation` is static data in the eager manifest, and
+  `registry.test.ts` compares manifest ports to implementation ports with a
+  structural equality that a function property cannot pass — so "presented as
+  HTML sometimes" is not expressible without giving that test up. Making it
+  unconditional would draw Markdown output in an HTML preview.
+- **A port that appears only for the targets where it differs.** Ports that
+  come and go as options change was rejected when the port model was written,
+  for a better reason than this one: a node whose shape moves under you while
+  you are wiring it.
+
+Losing the preview and the rich-text copy for the other two targets is a much
+larger cost than one duplicated string, so the coincidence is stated on the
+port's own description instead of being left for someone to find by reading two
+identical text boxes. In the other five combinations the two differ, and the
+html → html case is the interesting one: `output` is the normalising round trip
+through Markdown, `rendered` is the source with nothing but the sanitiser
+applied.
+
+**`detected` was considered for removal and kept.** Nobody would sensibly wire
+a sentence about a guess, which is the test this project applies to a port on a
+224px node. It stays because the alternative is a wrong guess that is
+invisible, and this tool guesses on every run by default — a `ToolResult` is a
+value or an error, so there is nowhere else for an advisory note to go.
+Reshaping it as a `report`-presented JSON port, the way `image-convert` handles
+the same problem, would make it properly wireable and no more wired, for one
+sentence written for a person.
+
+### Renamed, and what the migration does
+
+| Tool            | Was      | Is       | Why                                                                                                                               |
+| --------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `hash`          | `digest` | `output` | The first-output convention above, which is now asserted rather than nearly true.                                                 |
+| `image-convert` | `info`   | `report` | The port declares `presentation: 'report'` and is drawn by `ReportView`. Three names for one thing, none of them the word for it. |
+
+Both are breaking changes to documents that already exist, and both are
+migrated on both routes — the saved canvas at v4 → v5, and the share link at
+v2 → v3. The table lives once, in
+[`retiredPorts.ts`](../src/features/canvas/retiredPorts.ts), because three
+places need the same answer and a second copy is a bug waiting for whichever
+copy someone forgot.
+
+**Not migrating was not an option, and neither was refusing.** An edge leaving
+`hash.digest` still leaves a node that exists and arrives at a port that
+exists, so nothing refuses it: the engine looks for a value on an output port
+called `digest`, finds none, and reports `Nothing arrived on Original` against
+the node BELOW — a node that is correctly wired and did nothing wrong. The rest
+of the pipeline runs. That is a canvas that works except for the thing it was
+built to do, with nothing on screen to say which wire is the problem. And
+refusing every old link outright would break real pipelines belonging to real
+people for a rename made for tidiness; two of the shipped presets end in a hash
+node.
+
+### `checkConnection` now guards the two routes from outside this session
+
+`checkConnection` is the single source of truth for whether a wire is legal,
+and it had three callers: the pointer drop, the keyboard flow, and
+`validPartnersFor`, which both of those consult. The two routes that build a
+graph from OUTSIDE this session — a share link and the saved canvas — had none,
+and they are the two that most need one.
+
+[`firstRefusedEdge`](../src/features/canvas/connections.ts) walks a graph's
+edges onto a growing copy of it and returns the first one `checkConnection`
+would refuse. Edge by edge onto a growing graph is not an optimisation: two of
+the refusals are about the edges already present — an occupied input port, and
+a cycle — so checking each edge against the finished graph would refuse every
+edge for occupying the port it itself occupies.
+
+Both routes now refuse the whole document, with the rejection's own sentence,
+rather than applying part of it. Two silent repairs went with that change: the
+share decoder used to skip an edge whose endpoint was missing, which
+contradicted its own header — a link whose edges half survive IS a half-applied
+pipeline, just one where the missing half is invisible — and the graph loader
+used to filter the same edges out. `checkConnection` already reads a missing
+endpoint as "that port no longer exists", so keeping the edge and refusing the
+document gives one rule for every unusable wire instead of a filter in one
+place and a check in another.
+
+Nothing in the app can produce such a document: every route into the store goes
+through `checkConnection`, and any new command clears the redo branch. This is
+a guard against documents from elsewhere, not a state the canvas can reach by
+itself.
+
+**The presets are checked too.** A preset names ports as bare strings, which
+makes it the one place in the app that can reference a port that does not
+exist — and it failed exactly as quietly as the stale share link did. Every
+preset wire goes through `firstRefusedEdge` in `ports.test.ts`.
 
 ## The execution engine
 
@@ -508,7 +748,10 @@ between the tool's description, the reason it is blocked and the error that
 broke it; once a node has run, its **result** is its situation, so that is the
 fourth case. Only the first declared output is summarised — six of the nine
 tools have more than one, and the manifest's order is not arbitrary: the first
-port is the tool's answer and the rest are its working.
+port is the tool's answer and the rest are its working. Since the [port
+audit](#the-port-set) that first port is called `output` on every tool, and
+`registry.test.ts` asserts it, so "the first output" and "the tool's answer"
+are the same thing by construction rather than by nine separate decisions.
 
 | Output                   | Summary                              | Why that and not something else                                                                                                                                                               |
 | ------------------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -807,7 +1050,7 @@ answers below were decided rather than fallen into.
 `canConnect` compares two ports' declared type lists and allows the wire if
 they overlap. That is a static check on a union, and a union is not a
 guarantee: base64's output really is `text` when encoding and `bytes` when
-decoding, so `base64 → regex` is legal to draw and may still deliver bytes to a
+decoding, so `base64 → jwt` is legal to draw and may still deliver bytes to a
 port that only takes text.
 
 So the wire is checked twice, and the second check is the real one:
@@ -816,6 +1059,15 @@ arrived, and refuses it with `unsupported-type` naming the type it got. The
 refusal lands on the node that received the value, which is where the wire's
 consequence is visible, and it does not disturb anything else on the same
 output port.
+
+The example used to be `base64 → regex`, and the [port
+audit](#the-port-set) took it away: every port that reads a document accepts
+`bytes` now, so the only ports left that can refuse a value at runtime are the
+two that take a short literal — a compact token and a colour. That is the
+shape to expect. The static check is loose where a tool can genuinely read
+several kinds of value and tight where it cannot, so a runtime refusal is
+increasingly a sign that somebody wired a picture into a colour box rather than
+a hazard of the model.
 
 The alternative — ports that appear and disappear as options change, so the
 graph is always statically sound — was rejected when the port model was
@@ -969,7 +1221,7 @@ Four Zustand stores, split by what invalidates them:
 
 | Store           | Holds                                 | Persisted                                 |
 | --------------- | ------------------------------------- | ----------------------------------------- |
-| `graphStore`    | nodes, edges, selection, undo history | `patchbay:graph:v2`                       |
+| `graphStore`    | nodes, edges, selection, undo history | `patchbay:graph:v3`                       |
 | `viewportStore` | pan and zoom                          | no                                        |
 | `pipelineStore` | per-node run status and results       | no                                        |
 | `themeStore`    | selection, authored themes, draft     | `patchbay:theme:v1`, `patchbay:themes:v1` |

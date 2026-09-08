@@ -119,8 +119,12 @@ from_ its declared ports, so a tool declaring a `bytes` input cannot be
 implemented with a function expecting a string, and a port accepting
 `['text', 'bytes']` forces the implementation to narrow on the tag before
 touching either payload. Connection legality on the canvas is the same
-information at runtime — the drag preview, the keyboard connect flow and the
-share-link validator all ask one `checkConnection`.
+information at runtime — the drag preview, the keyboard connect flow, the
+share-link validator and the saved-canvas loader all ask one
+`checkConnection`. The [port set](docs/architecture.md#the-port-set) itself was
+audited as a set rather than tool by tool, and its conventions are asserted:
+every tool's first output is `output`, every port has a description, and every
+data type in the system is carried by a port somewhere.
 
 **Worker execution.** Heavy tools run off the main thread behind a small tagged
 message protocol. Binary payloads are `Uint8Array` or `Blob` — never base64
@@ -191,7 +195,8 @@ other, so nobody hears where a node used to be several seconds after it
 stopped. See [architecture.md](docs/architecture.md#announcements-are-a-log-not-a-variable).
 
 **Nothing relies on colour alone.** Port data types are shapes — square for
-text, diamond for JSON, circle for bytes. The selected palette row is a raised
+text, diamond for JSON, circle for bytes, hexagon for a colour, and two offset
+squares for a port that accepts more than one. The selected palette row is a raised
 surface _and_ a solid accent bar. Wires and ports switch to `CanvasText` and
 `Highlight` under `forced-colors`.
 
@@ -438,6 +443,82 @@ Nothing painted there, nothing overflowed sideways and nothing was clipped, so
 none of the existing geometric checks could see it — it was found by measuring
 the page height while making the tool runner's options panel sticky, which is
 the only reason anybody asked how tall the page was.
+
+### What reading the ports as a set found
+
+Nine tools' worth of port declarations, each written when its tool was written
+and never read beside the others. Individually every one was defensible; the
+set had four problems, and none of them is the kind a test could have asked
+about because each is a judgement about the whole.
+
+**A port promised sanitised HTML and handed back the input.** Text convert's
+`Rendered HTML` output declares "always HTML, sanitised", and there was no
+function in the markup pipelines that produced one — `markdownToHtml` sanitises
+the HTML _it_ generates, and the other two sanitise on the way to something
+that is not HTML. So for an HTML source with any target but Markdown, the port
+carried the input string unchanged. Measured:
+
+```
+in:  <p onclick="alert(1)">hi<script>alert(2)</script></p>
+out: <p onclick="alert(1)">hi<script>alert(2)</script></p>
+```
+
+Nothing ever ran, because the preview iframe is `sandbox=""` — no scripting, an
+opaque origin. What did happen is that the string went onto the clipboard
+through **Copy as rich text** and out of the port into whatever node was wired
+to it, which are the two places where a port's stated promise is all anybody
+has to go on. The conversion output is byte-identical either way; it was only
+the port that was wrong.
+
+**Two tools that read documents refused files.** Structured data widened its
+document port to accept `bytes` some time ago, recording that refusing them
+"made the most obvious pipeline in the product impossible". Regex and Text
+convert have the same port and never got the same fix, so a decoded log file
+could not be wired into a regex subject and a base64-decoded mail body could
+not be wired into the converter. Both were also inconsistent between the two
+_routes_ rather than merely strict: a tool page has always accepted a dropped
+text file on either tool, because the runner decodes it first. Only the canvas
+refused. One tool that takes a file in one place and refuses it in the other is
+drift, not a decision.
+
+**A diff of two PNGs was a valid unified diff of two walls of U+FFFD.** The
+lenient decoder is right where it lives — a preview of decoded base64 is more
+use than a refusal — and wrong on a document port, where it turns bytes nobody
+can read into a confident answer about content nobody wrote. Widening a port
+only pays if the port refuses clearly, so every document port decodes strictly
+now and says _which_ port it was: with two of them, "those bytes" is not an
+answer.
+
+**Two data types had no ports at all.** `image` and `datetime` were in the type
+system and nothing declared either. `datetime` was merely dead. `image` was
+worse: binary travels as `bytes` everywhere in this app and the sniff says what
+it is, which is exactly what makes Image → Hash and Image → Base64 legal — so a
+separate `image` type would have made those illegal and left every future
+author choosing between two types for one concept with no right answer.
+
+Two ports were renamed for consistency (`hash.digest` → `output`,
+`image-convert.info` → `report`), which breaks saved canvases and share links
+and is migrated on both routes. The interesting part is what _not_ migrating
+looked like: an edge leaving `hash.digest` still leaves a node that exists and
+arrives at a port that exists, so nothing refuses it — the engine finds no
+value on a port called `digest` and reports `Nothing arrived on Original`
+against the node **below**, which is correctly wired and did nothing wrong. The
+rest of the pipeline runs normally. A canvas that works except for the one
+thing it was built to do, with nothing on screen to say which wire is the
+problem.
+
+That is also why `checkConnection` now guards the two routes that build a graph
+from outside this session. It had three callers — the pointer drop, the
+keyboard flow, and the target list both of those consult — and the share link
+and the saved canvas had none, though this README already claimed otherwise.
+Both refuse the whole document with the reason now, rather than applying the
+part of it they understood. Two silent repairs went with that: the share
+decoder used to skip an edge whose endpoint was missing, contradicting its own
+header, and the graph loader used to filter the same edges out.
+
+The reasoning for every call, including the four things deliberately left
+alone, is in
+[architecture.md](docs/architecture.md#the-port-set).
 
 ### Where each kind of test lives
 

@@ -53,11 +53,19 @@ an accessible name so it is not merely decorative.
 
 ## Outputs
 
-| Port     | Type  | For                                                       |
-| -------- | ----- | --------------------------------------------------------- |
-| `output` | text  | The converted string in the chosen notation.              |
-| `swatch` | color | The parsed colour — the preview, and what a wire carries. |
-| `all`    | json  | All four notations at once, for a downstream tool.        |
+| Port     | Label     | Type  | For                                                       |
+| -------- | --------- | ----- | --------------------------------------------------------- |
+| `output` | Converted | text  | The converted string in the chosen notation.              |
+| `swatch` | Swatch    | color | The parsed colour — the preview, and what a wire carries. |
+| `all`    | Notations | json  | All four notations at once, for a downstream tool.        |
+
+Two of those labels were changed by the [port
+audit](../../../docs/architecture.md#the-port-set). `swatch` was labelled
+**Colour**, the same word as the input port opposite it, which on a 224px node
+is two identical words with nothing to tell them apart — and the input is the
+one that cannot move, because a colour converter's input is a colour. `all` was
+**Every notation**, fourteen characters in an 84px box, so every node carrying
+one drew `Every notat…`.
 
 `swatch` is a real `color` value rather than a string. That is what lets the
 preview and the contrast table read it without re-parsing, and what lets a

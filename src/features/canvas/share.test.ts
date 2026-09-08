@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { encodeBase64 } from '@/lib/base64';
 
+import { firstRefusedEdge } from './connections';
 import {
   buildShareUrl,
   decodeParamToGraph,
@@ -324,9 +325,11 @@ describe('a share link is untrusted input', () => {
   });
 
   it('rejects a payload from a format version it cannot read', () => {
-    // A FUTURE version. v1 is not in this list on purpose - it is migrated on
-    // the way in rather than refused; see the migration tests.
-    expect(sharePayloadSchema.safeParse({ v: 3, n: [], e: [] }).success).toBe(false);
+    // A FUTURE version. v1 and v2 are not in this list on purpose - they are
+    // migrated on the way in rather than refused; see the migration tests.
+    expect(
+      sharePayloadSchema.safeParse({ v: SHARE_FORMAT_VERSION + 1, n: [], e: [] }).success,
+    ).toBe(false);
     expect(sharePayloadSchema.safeParse({ n: [], e: [] }).success).toBe(false);
   });
 
@@ -343,14 +346,40 @@ describe('a share link is untrusted input', () => {
     );
   });
 
-  it('drops edges whose endpoints are missing rather than applying half a graph', () => {
+  /*
+   * WAS "drops edges whose endpoints are missing", AND DROPPING WAS THE BUG.
+   *
+   * The old behaviour skipped such an edge and applied the rest, which is the
+   * half-applied pipeline this module's own header says cannot happen - just
+   * one where the missing half is silent instead of reported. The edge is now
+   * kept in the graph `fromSharePayload` builds, and `decodeParamToGraph`
+   * refuses the link on it: `checkConnection` already reads a missing endpoint
+   * as "that port no longer exists".
+   */
+  it('keeps an edge with a missing endpoint for the connection check to refuse', () => {
     const graph = fromSharePayload({
       v: SHARE_FORMAT_VERSION,
       n: [['n1', 'base64', 0, 0, {}]],
       e: [['n1', 'output', 'ghost', 'input']],
     });
     expect(graph.nodeOrder).toEqual(['n1']);
-    expect(graph.edgeOrder).toEqual([]);
+    expect(graph.edgeOrder).toHaveLength(1);
+    expect(firstRefusedEdge(graph)?.rejection.message).toBe('That port no longer exists.');
+  });
+
+  it('refuses a payload with wires and no nodes rather than emptying it quietly', async () => {
+    // Nonsense rather than empty: dropping the edges to reach EMPTY_GRAPH
+    // would be the silent repair `fromSharePayload` has stopped doing.
+    const param = await encodeGraphToParam(
+      fromSharePayload({
+        v: SHARE_FORMAT_VERSION,
+        n: [['n1', 'base64', 0, 0, {}]],
+        e: [['n1', 'output', 'ghost', 'input']],
+      }),
+    );
+
+    const result = await decodeParamToGraph(param);
+    expect(result.status).toBe('error');
   });
 
   it('ignores duplicate node ids', () => {

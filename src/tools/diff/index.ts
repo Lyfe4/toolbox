@@ -3,9 +3,10 @@ import {
   eraseTool,
   ok,
   type ErasedTool,
+  type ToolResult,
   type ValueOfType,
 } from '@/features/registry/types';
-import { bytesToText } from '@/lib/base64';
+import { decodeDocument } from '@/lib/text';
 
 import { computeDiff, toJson, toUnified } from './compute';
 import { diffDefaultOptions, diffOptionFields, diffOptionsSchema } from './options';
@@ -16,15 +17,30 @@ import { diffDefaultOptions, diffOptionFields, diffOptionsSchema } from './optio
  * The parameter type is exactly what the port declares, so the switch is
  * exhaustive: widening a port to a fourth data type is a compile error here
  * rather than a silently missing branch.
+ *
+ * BYTES ARE DECODED STRICTLY, and they were not. `bytesToText` replaces every
+ * invalid sequence with U+FFFD, which is the right choice where it lives - a
+ * preview of decoded base64 is more use than a refusal - and the wrong one
+ * here. Two PNGs wired into these ports produced a confident, well-formed
+ * unified diff of two walls of replacement characters: an answer that looks
+ * like an answer and means nothing, which is the failure mode this repository
+ * keeps finding. It now says which port could not be read, because with two
+ * document ports "those bytes" is not an answer.
+ *
+ * A LOSSLESS `json` stringify is still fine, and the asymmetry with `hash` is
+ * deliberate. Serialising a structure to compare it picks an indentation, and
+ * that choice changes how the comparison READS; picking one to fingerprint a
+ * structure would change the digest, which is a number people compare across
+ * machines. So `diff` accepts `json` and `hash` does not.
  */
-function asText(value: ValueOfType<'text' | 'json' | 'bytes'>): string {
+function asText(value: ValueOfType<'text' | 'json' | 'bytes'>, label: string): ToolResult<string> {
   switch (value.type) {
     case 'text':
-      return value.text;
+      return ok(value.text);
     case 'bytes':
-      return bytesToText(value.bytes);
+      return decodeDocument(value.bytes, label);
     case 'json':
-      return JSON.stringify(value.data, null, 2);
+      return ok(JSON.stringify(value.data, null, 2));
   }
 }
 
@@ -96,10 +112,12 @@ export const diffTool = defineTool({
   },
 
   run: ({ inputs, options }) => {
-    const original = asText(inputs.original);
-    const changed = asText(inputs.changed);
+    const original = asText(inputs.original, 'Original');
+    if (!original.ok) return original;
+    const changed = asText(inputs.changed, 'Changed');
+    if (!changed.ok) return changed;
 
-    const report = computeDiff(original, changed, {
+    const report = computeDiff(original.value, changed.value, {
       // The option key still says "ignore"; its value now says how much. See
       // the note in options.ts for why the key was not renamed.
       whitespace: options.ignoreWhitespace,

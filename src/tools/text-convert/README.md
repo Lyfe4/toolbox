@@ -581,7 +581,118 @@ Unchanged by the merge, and written up where they live:
 the rich-text copy off a fact rather than a guess. `rendered` is **always**
 HTML: for a Markdown target it re-renders what was produced, which makes the
 semantic-stability invariant visible — if the Markdown is faithful, it looks
-like the HTML that went in.
+like the HTML that went in. For an HTML source it is the sanitised source, and
+[for a while it was not](#the-three-outputs-and-the-input-that-was-too-narrow).
+
+## The three outputs, and the input that was too narrow
+
+| Port       | Label         | Type        | For                                                    |
+| ---------- | ------------- | ----------- | ------------------------------------------------------ |
+| `input`    | Document      | text, bytes | Markdown or HTML, detected unless you say otherwise.   |
+| `output`   | Converted     | text        | The conversion, in whichever format `target` names.    |
+| `rendered` | Rendered HTML | text        | Always sanitised HTML: the preview and rich-text copy. |
+| `detected` | Detected      | text        | What auto-detection concluded, and how sure it was.    |
+
+The [port audit](../../../docs/architecture.md#the-port-set) asked how
+`Converted` differed from `Rendered HTML` when the target is HTML. The answer
+was two separate things.
+
+### `rendered` promised sanitised HTML and handed back the input
+
+Nothing in `pipelines.ts` produced sanitised HTML from HTML. `markdownToHtml`
+sanitises the HTML _it_ generates; `htmlToMarkdown` and `htmlToText` sanitise
+on the way to something that is not HTML. So the hub value — which is what
+`rendered` carries for two of the three targets — was the input string
+untouched whenever the source was HTML. Measured:
+
+```
+in:  <p onclick="alert(1)">hi<script>alert(2)</script></p>
+out: <p onclick="alert(1)">hi<script>alert(2)</script></p>
+```
+
+Nothing ever ran. The preview is an `<iframe sandbox="">` — no scripting, an
+opaque origin — so the markup was inert there, then and now. What did happen is
+that the string went onto the clipboard through **Copy as rich text** and out
+of the port into whatever node was wired to it, which are the two places where
+the port's stated promise is all anybody has to go on.
+
+`sanitiseHtml` in `pipelines.ts` fixes it, and it is `markdownToHtml`'s own
+chain from `normaliseSchemes` onwards — the same allow-list in the same plugin
+order, because two sanitisers with two answers is worse than one with the wrong
+answer: only one of them ever gets reviewed. `output` is byte-identical either
+way, since all three conversion pipelines already sanitised internally. It was
+only the port that was wrong.
+
+The two paths differ in one visible way, and it is not the allow-list: GFM's
+tagfilter runs on the Markdown path only, where it **escapes** a `<script>`
+into visible text rather than deleting it. That is the spec's behaviour and the
+fix for an unclosed raw-text tag eating the rest of the document. Here the
+input already is HTML, a real parser has handled it, and the sanitiser deletes
+the element and its content. Neither leaves anything executable; one leaves the
+tag legible as words.
+
+### `output` and `rendered` coincide for one target, and cannot be made not to
+
+With a Markdown source and an HTML target the two ports are the same string,
+because converting a document to HTML and rendering it are the same operation.
+No definition of `rendered` can differ from `output` there. Both alternatives
+cost more:
+
+- **One port, presented as HTML only when the target is HTML.**
+  `OutputPort.presentation` is static data in the eager manifest, and
+  `registry.test.ts` compares manifest ports to implementation ports with a
+  structural equality a function property cannot pass — so "presented as HTML
+  sometimes" is not expressible without giving that test up. Unconditional
+  would draw Markdown output in an HTML preview.
+- **A port that appears only for the targets where it differs.** Ports that
+  come and go as options change was rejected when the port model was written,
+  for a better reason than this one: a node whose shape moves under you while
+  you are wiring it.
+
+Losing the preview and the rich-text copy for the other two targets is a much
+larger cost than one duplicated string. So the ports stay as they are and the
+coincidence is stated on `rendered`'s own description, which the Ports panel
+now shows, rather than left for someone to find by reading two identical text
+boxes.
+
+In the other five combinations they differ, and `html → html` is the
+interesting one: `output` is the normalising round trip through Markdown, so it
+drops markup Markdown cannot express, where `rendered` is the source with
+nothing but the sanitiser applied. A `<div>` survives on one port and not the
+other. Two genuinely different answers to two genuinely different questions.
+
+### `detected` was considered for removal and kept
+
+Nobody would sensibly wire a sentence about a guess into another tool, and that
+is the test this project applies to a port occupying a socket on a 224px node.
+It stays because the alternative is a wrong guess that is invisible, and this
+tool guesses on every run by default. There is nowhere else for an advisory
+note to go: a `ToolResult` is a value or an error, with no channel for "I think
+this was Markdown, and I am not certain". Reshaping it as a `report`-presented
+JSON port, which is how `image-convert` handles the same problem, would make it
+properly wireable and no more wired, for one sentence written for a person.
+
+Its label was **Detected source**, fifteen characters in an 84px box.
+
+### The input accepts bytes
+
+It declared `types: ['text']`, so base64's decoded output — which is `bytes` —
+had no legal wire into it, and **"decode this payload and clean up the HTML
+inside it" was a pipeline the canvas could not express**. A mail body is the
+obvious case; a dropped `.md` or `.html` file is the other.
+`structured-data` had already widened its own document port for exactly this
+reason and recorded that refusing bytes "made the most obvious pipeline in the
+product impossible". This tool is the same shape and had not had the same fix.
+
+Bytes decode **strictly**, through [`lib/text.ts`](../../lib/text.ts), so a PNG
+on that port says it is not text rather than being converted from mojibake into
+a confident, well-formed document about content nobody wrote. That is the
+condition on widening a port at all.
+
+The label is **Document**, the same word `structured-data` uses, because the
+two tools are the same shape — a source, a target and auto-detection — and a
+port called Input says nothing a socket does not already say. There is a
+`decode-and-clean` preset that exists only because of this change.
 
 ## Migration
 

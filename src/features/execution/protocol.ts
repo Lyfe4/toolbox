@@ -143,14 +143,10 @@ export function measureInputs(inputs: ToolInputs): number {
       case 'bytes':
         total += value.bytes.byteLength;
         break;
-      case 'image':
-        total += value.blob.size;
-        break;
       case 'json':
         total += JSON.stringify(value.data).length * 2;
         break;
       case 'color':
-      case 'datetime':
         total += 32;
         break;
     }

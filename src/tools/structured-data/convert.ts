@@ -228,43 +228,12 @@ export function sortKeysDeep(value: JsonValue): JsonValue {
 /**
  * Turns dropped or wired-in bytes into text.
  *
- * UTF-8 with a strict decoder is the rule, so a PNG dropped on this tool says
- * it is not text rather than being parsed as mojibake and failing later with a
- * syntax error about a character nobody typed.
- *
- * The exception is a UTF-16 byte order mark, and it is not a guess: Excel's
- * "Unicode Text (*.txt)" export is UTF-16LE, and it is one of the two ways a
- * spreadsheet leaves a Windows machine. Refusing the most common tab-separated
- * export there is, with a message about UTF-8, is a bad answer to a file that
- * says in its first two bytes exactly what it is. Nothing without a BOM is
- * decoded as anything but UTF-8.
+ * Re-exported rather than implemented here. It moved to
+ * [`lib/text.ts`](../../lib/text.ts) when three more tools grew a `bytes`
+ * document port and needed exactly this answer; the export stays so this
+ * tool's own README and tests keep one import for everything conversion.
  */
-export function decodeDocument(bytes: Uint8Array): ToolResult<string> {
-  const encoding = utf16EncodingOf(bytes);
-
-  try {
-    if (encoding !== null) return ok(new TextDecoder(encoding, { fatal: true }).decode(bytes));
-    return ok(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-  } catch {
-    return fail('invalid-input', 'Those bytes are not text this tool can read.', {
-      detail:
-        encoding === null
-          ? 'Documents must be UTF-8, or UTF-16 with a byte order mark.'
-          : `The byte order mark says ${encoding}, but the bytes are not valid ${encoding}.`,
-    });
-  }
-}
-
-function utf16EncodingOf(bytes: Uint8Array): 'utf-16le' | 'utf-16be' | null {
-  // FF FE 00 00 is UTF-32LE, not UTF-16LE with a null first character. There is
-  // no UTF-32 decoder to hand it to, so it falls through to the UTF-8 refusal
-  // rather than being decoded as the wrong thing.
-  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
-    return bytes[2] === 0x00 && bytes[3] === 0x00 ? null : 'utf-16le';
-  }
-  if (bytes[0] === 0xfe && bytes[1] === 0xff) return 'utf-16be';
-  return null;
-}
+export { decodeDocument } from '@/lib/text';
 
 /* ========================================================================== *
  * Detection

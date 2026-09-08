@@ -412,6 +412,55 @@ export function markdownToHtml(markdown: string, options: MarkdownToHtmlOptions)
   return String(html);
 }
 
+/**
+ * HTML → sanitised HTML.
+ *
+ * The pass that makes `text-convert`'s `rendered` port honest. That port
+ * declares "always HTML, sanitised" and there was no function in this file
+ * that produced one: `markdownToHtml` sanitises the HTML IT generates, and
+ * `htmlToMarkdown` and `htmlToText` sanitise on the way to something that is
+ * not HTML. So an HTML source went to the port unchanged, and a `<script>` and
+ * an `onclick` in the input arrived on an output whose description promised
+ * neither could be there. Measured, before this existed:
+ *
+ *   in:  `<p onclick="alert(1)">hi<script>alert(2)</script></p>`
+ *   out: `<p onclick="alert(1)">hi<script>alert(2)</script></p>`
+ *
+ * The preview `<iframe>` is `sandbox=""`, so nothing in it ran even then. What
+ * did happen is that the string went onto the clipboard through Copy as rich
+ * text and out of the port into whatever node was wired to it, both of which
+ * are places the sanitiser's absence is nobody's guess.
+ *
+ * THE CHAIN IS `markdownToHtml`'S, from `normaliseSchemes` onwards, and it has
+ * to be: two orderings of these plugins are two different allow-lists, and the
+ * reasons each one sits where it does are written above it there. Slugs before
+ * the sanitiser so generated ids face the same allow-list as authored ones;
+ * dead links and images after it, because an href it rejected is gone by then.
+ *
+ * `linkify` is not a parameter, and its absence is not an omission: it is
+ * remark-gfm's autolink-literal extension, which only exists on the Markdown
+ * side. Bare URLs in HTML input are text, and were text before this ran.
+ */
+export function sanitiseHtml(html: string, options: { readonly headingIds: boolean }): string {
+  return String(
+    unified()
+      .use(rehypeParse, { fragment: true })
+      // Before the sanitiser, because it is the `style` attribute that gives
+      // the game away and the sanitiser is about to remove it.
+      .use(unwrapFakeBold)
+      .use(normaliseSchemes)
+      .use(options.headingIds ? [rehypeSlug] : [])
+      .use(rehypeSanitize, SANITISE_SCHEMA)
+      .use(unwrapDeadLinks)
+      .use(replaceDeadImages)
+      .use(dropMachineComments)
+      .use(namespaceIds)
+      .use(tidyWhitespace)
+      .use(rehypeStringify)
+      .processSync(html),
+  );
+}
+
 /** Identifier attributes that get namespaced, matching the sanitiser default. */
 const IDENTIFIER_PROPERTIES = ['id', 'name', 'ariaDescribedBy', 'ariaLabelledBy'] as const;
 

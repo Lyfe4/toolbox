@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { PREVIEW_STYLESHEET, previewDocument } from '@/features/toolrunner/previewDocument';
 import { richTextDocument, richTextPlain } from '@/features/toolrunner/richText';
 
-import { htmlToMarkdown, htmlToText, markdownToHtml } from './pipelines';
+import { htmlToMarkdown, htmlToText, markdownToHtml, sanitiseHtml } from './pipelines';
 
 /**
  * THE CATALOGUE OF REAL FAILURES.
@@ -565,6 +565,93 @@ describe('html from real sources', () => {
 /* ========================================================================== *
  * 9. THE PREVIEW AND THE CLIPBOARD
  * ========================================================================== */
+
+describe('html sanitised on the way to html', () => {
+  /*
+   * THE PORT THAT PROMISED SANITISED HTML AND HANDED BACK THE INPUT.
+   *
+   * `text-convert` declares an output called `rendered` whose description is
+   * "always HTML, sanitised", and there was no function in `pipelines.ts` that
+   * produced one. `markdownToHtml` sanitises the HTML IT generates;
+   * `htmlToMarkdown` and `htmlToText` sanitise on the way to something that is
+   * not HTML. So for an HTML SOURCE with any target but Markdown, the port
+   * carried the input string unchanged.
+   *
+   * Measured, before `sanitiseHtml` existed:
+   *
+   *   in:  <p onclick="alert(1)">hi<script>alert(2)</script></p>
+   *   out: <p onclick="alert(1)">hi<script>alert(2)</script></p>
+   *
+   * Nothing ran, then or now: the preview iframe is `sandbox=""`, so it has no
+   * scripting and an opaque origin. What did happen is that the string went
+   * onto the clipboard through Copy as rich text, and out of the port into
+   * whatever node was wired to it - two places where a port's promise is the
+   * only thing anybody has to go on.
+   */
+  it('removes a script element, its content included', () => {
+    const out = sanitiseHtml('<p>hi<script>alert(1)</script></p>', { headingIds: false });
+    expect(out).not.toContain('script');
+    expect(out).not.toContain('alert');
+    expect(out).toContain('hi');
+  });
+
+  it('removes an event handler attribute', () => {
+    const out = sanitiseHtml('<p onclick="alert(1)">hi</p>', { headingIds: false });
+    expect(out).not.toContain('onclick');
+    expect(out).toContain('hi');
+  });
+
+  it('removes a javascript: destination and keeps the words', () => {
+    const out = sanitiseHtml('<a href="javascript:alert(1)">click</a>', { headingIds: false });
+    expect(out).not.toContain('javascript');
+    expect(out).toContain('click');
+  });
+
+  it('removes an iframe', () => {
+    expect(
+      sanitiseHtml('<iframe src="https://x.test"></iframe>', { headingIds: false }),
+    ).not.toContain('iframe');
+  });
+
+  /*
+   * THE SAME ALLOW-LIST AS THE MARKDOWN PATH, and it has to be: two
+   * sanitisers with two answers is worse than one with the wrong answer,
+   * because only one of them ever gets reviewed. `sanitiseHtml` is
+   * `markdownToHtml`'s chain from `normaliseSchemes` onward, so the allow-list
+   * and the plugin ORDER are literally the same lines.
+   *
+   * The two paths do differ in one visible way, and it is not the allow-list.
+   * GFM's tagfilter runs on the Markdown path only, where it ESCAPES a
+   * `<script>` into text - the spec's behaviour, and the fix for an unclosed
+   * RAWTEXT tag eating the rest of the document before a parser ever sees it.
+   * On this path the input already is HTML, a real parser has already handled
+   * it, and the sanitiser deletes the element and its content. Neither leaves
+   * anything executable; one leaves the tag visible as words.
+   */
+  it('strips the same attributes and elements as the markdown path', () => {
+    const dangerous = '<p onclick="x" title="keep">a<em>c</em></p>';
+    expect(sanitiseHtml(dangerous, { headingIds: false })).toBe(
+      markdownToHtml(dangerous + LF, HTML).trim(),
+    );
+  });
+
+  it('deletes a raw-text element where the markdown path escapes it', () => {
+    // Same guarantee, different residue. Asserted so the difference reads as
+    // a decision rather than as one of them being broken.
+    expect(sanitiseHtml('<p>a<script>b</script>c</p>', { headingIds: false })).toBe('<p>ac</p>');
+    expect(markdownToHtml('<p>a<script>b</script>c</p>' + LF, HTML)).toContain('&#x3C;script>');
+  });
+
+  it('keeps ordinary markup, and namespaces heading ids when asked', () => {
+    expect(sanitiseHtml('<p><strong>a</strong> b</p>', { headingIds: false })).toContain(
+      '<strong>a</strong>',
+    );
+    expect(sanitiseHtml('<h2>Setup</h2>', { headingIds: true })).toContain(
+      'id="user-content-setup"',
+    );
+    expect(sanitiseHtml('<h2>Setup</h2>', { headingIds: false })).not.toContain('id=');
+  });
+});
 
 describe('the preview document', () => {
   /*

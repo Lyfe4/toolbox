@@ -203,12 +203,6 @@ export function summariseValue(
       const hex = `#${channel(r)}${channel(g)}${channel(b)}`;
       return a >= 1 ? hex : `${hex} at ${Math.round(a * 100).toString()}%`;
     }
-
-    case 'image':
-      return `${value.mediaType} image`;
-
-    case 'datetime':
-      return new Date(value.datetime.epochMs).toISOString();
   }
 }
 

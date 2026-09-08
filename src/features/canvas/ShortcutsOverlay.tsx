@@ -13,9 +13,7 @@ const TYPE_MEANING: Record<(typeof DATA_TYPES)[number], string> = {
   text: 'plain text',
   json: 'structured data',
   bytes: 'raw bytes or a file',
-  image: 'an image',
   color: 'a colour',
-  datetime: 'a moment in time',
 };
 
 export interface ShortcutsOverlayProps {

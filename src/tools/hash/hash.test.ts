@@ -148,7 +148,7 @@ describe('tool surface', () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.digest).toEqual({
+      expect(result.value.output).toEqual({
         type: 'text',
         text: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
       });
@@ -171,7 +171,7 @@ describe('tool surface', () => {
 
     expect(asText.ok && asBytes.ok).toBe(true);
     if (asText.ok && asBytes.ok) {
-      expect(asBytes.value.digest).toEqual(asText.value.digest);
+      expect(asBytes.value.output).toEqual(asText.value.output);
     }
   });
 
@@ -185,7 +185,7 @@ describe('tool surface', () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      const digest = result.value.digest;
+      const digest = result.value.output;
       if (digest?.type === 'text') expect(digest.text).toHaveLength(32);
     }
   });

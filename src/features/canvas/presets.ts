@@ -90,6 +90,30 @@ export const PIPELINE_PRESETS: readonly PipelinePreset[] = [
     ],
   },
   {
+    /*
+     * ADDED BY THE PORT AUDIT, and it could not be built before it.
+     *
+     * `text-convert` declared `types: ['text']` on its only input, so base64's
+     * decoded output - which is `bytes` - had no legal wire into it, and
+     * "decode this payload and clean up the HTML inside it" was a pipeline the
+     * canvas simply could not express. `structured-data` had already widened
+     * its document port for exactly this reason; the two tools are the same
+     * shape and one of them had the fix.
+     */
+    id: 'decode-and-clean',
+    name: 'Decode, then clean up',
+    summary: 'Base64-decode an HTML payload - a mail body, say - and strip it down to Markdown.',
+    nodes: [
+      { toolId: 'base64', offset: { x: 0, y: 0 }, options: { mode: 'decode' } },
+      {
+        toolId: 'text-convert',
+        offset: { x: COLUMN, y: 0 },
+        options: { source: 'html', target: 'markdown', unsupported: 'text' },
+      },
+    ],
+    wires: [[0, 'output', 1, 'input']],
+  },
+  {
     id: 'clean-pasted-html',
     name: 'Clean up pasted HTML',
     summary: 'Strip messy HTML down to Markdown, then render it back as clean, sanitised markup.',

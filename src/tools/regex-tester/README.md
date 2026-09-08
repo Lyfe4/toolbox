@@ -386,6 +386,24 @@ they ever stop doing so, the highlight is showing text the user did not type.
 | Unicode                 | Off, `u` (code points and `\p{...}`), or `v` (set notation, and properties that match more than one character). |
 | Sticky (y)              | The match must start where the last one ended.                                                                  |
 
+## Ports
+
+The subject port accepts **`text` and `bytes`**, and it used to accept only
+text. A log file is the canonical subject for a regular expression and a file
+is bytes, so the widening closed a gap that was between the two ROUTES rather
+than inside either: a tool page has always taken a dropped log file, because
+the runner decodes a text-sniffed file before handing it over, while on the
+canvas the same bytes arriving through a base64 decode had no legal wire at
+all. One tool that accepts a file in one place and refuses it in the other is
+drift rather than a decision. See the
+[port audit](../../../docs/architecture.md#the-port-set).
+
+Bytes are decoded **strictly**, through [`lib/text.ts`](../../lib/text.ts), so
+a PNG on that port says it is not text rather than being searched as mojibake
+and reporting matches at offsets into characters nobody wrote. That is the
+whole condition on widening a port: it has to refuse clearly instead of
+guessing.
+
 ## Outputs
 
 `output` is the replaced text in replace mode, and an offset-and-match listing

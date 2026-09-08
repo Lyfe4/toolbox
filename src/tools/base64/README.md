@@ -12,6 +12,24 @@ It stresses two parts of the type system that nothing else would:
   run function has to narrow on the value's tag before it can touch a payload.
   If the narrowing is removed, the tool stops compiling.
 
+## Why the output port is called Output
+
+Every other converter in the set names its first output for the value it
+carries — Converted, Digest, Decoded — and this one cannot. What it carries
+depends on the mode: base64 text when encoding, decoded bytes when decoding.
+Any specific name would be wrong half the time, and "Encoded or decoded" is
+both longer than the 84px label box and less clear than the port's
+description, which the Ports panel on the tool page shows.
+
+That union is also why base64 is the tool that can still deliver a value a
+downstream port refuses. Since the
+[port audit](../../../docs/architecture.md#the-port-set) every port that reads
+a document accepts `bytes`, so the only ports left that can refuse one at
+runtime are the two that take a short literal: a JWT and a colour. `base64 →
+jwt` is legal to draw and, in decode mode, delivers bytes to a text-only port —
+which `validateInputs` refuses on the node that received it, naming the type it
+got.
+
 ## Approach
 
 Encoding and decoding are written directly against bytes rather than built on

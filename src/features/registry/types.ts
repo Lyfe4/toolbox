@@ -21,8 +21,29 @@ import type { ZodType, output as ZodOutput } from 'zod';
 /**
  * `as const` freezes this into a readonly tuple of string literals rather than
  * `string[]`, which is what lets the union type below be derived from it.
+ *
+ * A DATA TYPE EARNS ITS PLACE WHEN A PORT CARRIES IT. This list held `image`
+ * and `datetime` for a long time and no port on any tool declared either, so
+ * both were a distinction that could only ever produce friction:
+ *
+ *   - `image` contradicted the rule the rest of the app follows. The one tool
+ *     that produces a picture declares `bytes` and lets the SNIFF say what the
+ *     bytes are, which is what makes `image-convert -> hash` and
+ *     `image-convert -> base64` legal. A separate `image` type would have made
+ *     exactly those wires illegal, and given every future author a choice
+ *     between two types for one concept with no right answer.
+ *   - `datetime` had no producer and no consumer, and so no test could say
+ *     whether its payload shape was right. It also appeared in the canvas's
+ *     port legend as a type the canvas could not produce.
+ *
+ * `color` is the counter-example and the reason the shape is worth having at
+ * all: `color-convert` really does carry a parsed colour on a port, which is
+ * what lets a colour hop between nodes without a lossy round trip through
+ * text. Re-adding a type is one entry here, one glyph and one payload member;
+ * carrying one nothing produces is a permanent tax on every switch over
+ * `ToolValue`.
  */
-export const DATA_TYPES = ['text', 'json', 'bytes', 'image', 'color', 'datetime'] as const;
+export const DATA_TYPES = ['text', 'json', 'bytes', 'color'] as const;
 
 /**
  * `(typeof DATA_TYPES)[number]` reads as "the type of any element of
@@ -79,13 +100,6 @@ export interface ColorPayload {
   readonly a: number;
 }
 
-export interface DateTimePayload {
-  /** Milliseconds since the Unix epoch, UTC. */
-  readonly epochMs: number;
-  /** IANA zone the value should be displayed in, when one is known. */
-  readonly timeZone: string | null;
-}
-
 /**
  * A DISCRIMINATED UNION: every member has a `type` field holding a different
  * string literal, so checking `value.type === 'bytes'` tells TypeScript which
@@ -109,9 +123,7 @@ export type ToolValue =
       readonly mediaType: string | null;
       readonly filename: string | null;
     }
-  | { readonly type: 'image'; readonly blob: Blob; readonly mediaType: string }
-  | { readonly type: 'color'; readonly color: ColorPayload }
-  | { readonly type: 'datetime'; readonly datetime: DateTimePayload };
+  | { readonly type: 'color'; readonly color: ColorPayload };
 
 /**
  * The payload shape for one or more data types.

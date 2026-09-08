@@ -178,6 +178,31 @@
   color: var(--pb-ink-muted);
 }
 
+/*
+ * One port in the footnote panel: its name and types, then what it carries.
+ *
+ * `gap: 2xs` rather than the stack's `md`, so the two lines read as one entry
+ * and the entries read as a list. Without it a six-port tool is twelve
+ * evenly-spaced lines with no telling which sentence belongs to which port.
+ */
+.port {
+  display: grid;
+  gap: var(--pb-space-2xs);
+  min-inline-size: 0;
+}
+
+/*
+ * Sentence case and not a label: this is prose, where the line above it is a
+ * name. Uppercase 10px with label tracking is unreadable at sentence length,
+ * which is the whole reason it is a separate class rather than another `hint`.
+ */
+.portNote {
+  margin: 0;
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-muted);
+  text-wrap: pretty;
+}
+
 .mono {
   font-family: var(--pb-font-ui);
   font-size: var(--pb-value-size);

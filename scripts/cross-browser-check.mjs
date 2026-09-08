@@ -3500,7 +3500,13 @@ async function checkTruncation(browser, label) {
   try {
     await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
 
-    // Text convert has both kinds: "Input" fits, "Detected source" does not.
+    /*
+     * Text convert has both kinds: 'Document', 'Converted' and 'Detected' fit,
+     * 'Rendered HTML' does not. The port audit renamed every label that did
+     * not fit except that one - `HTML` is information the port's `text` type
+     * cannot carry - so it is now the only cut-off label on either node, which
+     * is what the first check below is asserting is still true of something.
+     */
     for (const tool of ['Text convert', 'Colour']) {
       await page.getByRole('button', { name: 'Add tool' }).click();
       await page.locator('[role="option"]').first().waitFor({ timeout: 10_000 });
@@ -4899,7 +4905,16 @@ async function checkPipeline(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   const page = await context.newPage();
 
-  /** A graph as a link, which is the app's own way to be handed a whole one. */
+  /**
+   * A graph as a link, which is the app's own way to be handed a whole one.
+   *
+   * Deliberately still `v: 2` after the port audit bumped the format to 3. The
+   * migration is unit-tested, but a share link is decompressed, decoded,
+   * migrated and validated by browser APIs - `DecompressionStream`, a strict
+   * `TextDecoder` - so having every cross-browser run rebuild a real graph from
+   * an older link is coverage worth having for free. Bump it only when v2 stops
+   * being migratable, and then leave it one behind again.
+   */
   const link = (nodes, edges) => `${ORIGIN}/?p=${shareParam({ v: 2, n: nodes, e: edges })}`;
 
   /** The status word a node prints in its footer. */

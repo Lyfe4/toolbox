@@ -46,7 +46,12 @@ export const structuredDataTool = defineTool({
   ],
 
   outputs: [
-    { id: 'output', label: 'Converted', types: ['text'] },
+    {
+      id: 'output',
+      label: 'Converted',
+      types: ['text'],
+      description: 'The document serialised in the target format.',
+    },
     {
       id: 'data',
       label: 'Parsed data',

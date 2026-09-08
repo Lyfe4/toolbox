@@ -5,6 +5,7 @@ import {
   type ErasedTool,
   type JsonValue,
 } from '@/features/registry/types';
+import { decodeDocument } from '@/lib/text';
 
 import { diagnose, type Diagnosis } from './diagnose';
 import { flagsFor, regexDefaultOptions, regexOptionFields, regexOptionsSchema } from './options';
@@ -33,9 +34,25 @@ export const regexTesterTool = defineTool({
     {
       id: 'input',
       label: 'Subject',
-      types: ['text'],
+      /*
+       * Bytes as well as text, because a log file is the canonical subject for
+       * a regular expression and a file is bytes.
+       *
+       * The gap this closes was between the two routes rather than inside
+       * either: the tool PAGE has always accepted a dropped log file, because
+       * the runner decodes a text-sniffed file before handing it over. On the
+       * canvas the same file arriving through a base64 decode could not be
+       * wired in at all, since `bytes` and `text` do not overlap. One tool that
+       * accepts a file in one place and refuses it in the other is the kind of
+       * drift this audit exists to find.
+       *
+       * Decoded strictly, so a PNG on this port says it is not text instead of
+       * being searched as mojibake and reporting matches at offsets into
+       * characters nobody wrote.
+       */
+      types: ['text', 'bytes'],
       required: true,
-      description: 'The text to search. The pattern itself is an option.',
+      description: 'The text to search, or a text file. The pattern itself is an option.',
     },
   ],
 
@@ -50,6 +67,7 @@ export const regexTesterTool = defineTool({
       id: 'matches',
       label: 'Matches',
       types: ['json'],
+      description: 'Pattern, flags, every match with its groups, and the risk notes.',
       // The structured output IS the view model, the same bargain the diff
       // tool makes: one payload, rendered as a highlight here and readable as
       // plain JSON anywhere else.
@@ -82,6 +100,10 @@ export const regexTesterTool = defineTool({
   },
 
   run: ({ inputs, options }) => {
+    const arrived = inputs.input;
+    const subject = arrived.type === 'text' ? ok(arrived.text) : decodeDocument(arrived.bytes);
+    if (!subject.ok) return subject;
+
     const flags = flagsFor(options);
     const compiled = compilePattern(options.pattern, flags);
     if (!compiled.ok) return compiled;
@@ -95,7 +117,7 @@ export const regexTesterTool = defineTool({
     const startedAt = DEFAULT_LIMITS.now();
     const report = runRegex(
       compiled.value,
-      inputs.input.text,
+      subject.value,
       options.mode === 'replace' ? options.replacement : null,
       DEFAULT_LIMITS,
       names,
@@ -105,7 +127,7 @@ export const regexTesterTool = defineTool({
     const diagnosis = diagnose({
       pattern: options.pattern,
       flags,
-      subject: inputs.input.text,
+      subject: subject.value,
       report,
       mode: options.mode,
       replacement: options.replacement,

@@ -85,7 +85,7 @@ is still asking to be trusted rather than showing your working.
 So `inspect.ts` reads the container before anything is decoded and names what
 it finds: `EXIF`, `GPS location`, `ICC colour profile`, `XMP`, `IPTC`, `Text
 comments`. Location is promoted from a list item to its own warning, because it
-is the one with consequences. `info.to.metadata` is `[]` on every output, and
+is the one with consequences. `report.to.metadata` is `[]` on every output, and
 the cross-browser check greps the produced file for the EXIF header and for a
 comment it planted in the source.
 
@@ -277,10 +277,24 @@ is a different one.
 
 ## Outputs
 
-`output` is the encoded image as bytes, with a filename derived from the
-input's.
+| Port     | Label     | Type  | For                                                             |
+| -------- | --------- | ----- | --------------------------------------------------------------- |
+| `output` | Converted | bytes | The re-encoded image, with a filename derived from the input's. |
+| `report` | Report    | json  | What changed, then the before-and-after facts.                  |
 
-`info` reports both formats, both sets of dimensions, both sizes and the signed
+**The second port was called `info` and labelled Details**, and the [port
+audit](../../../docs/architecture.md#the-port-set) renamed both. It declares
+`presentation: 'report'` and is drawn by `ReportView`, so it had three names
+for one thing and none of them was the word for it — and "Details" undersells a
+payload whose whole job is to say what the tool changed without being asked.
+The id change is a breaking one, migrated on both routes; the label change is
+not, because a label is not an identity.
+
+`output` was labelled **Converted image**, fifteen characters in an 84px label
+box, with the word `image` already on the input port opposite it. `Converted` is
+what the other three converters in the set call their first output.
+
+`report` gives both formats, both sets of dimensions, both sizes and the signed
 percentage change — `1.2 MB → 460.3 kB (-62.4%)` — plus, for the source, whether
 it carried transparency, how many frames it had, and what metadata was in it.
 `from.hasAlpha` is the measured answer where anything measured it and the
@@ -303,7 +317,7 @@ uses. Every note is a change to the image the user did not ask for:
 **Warn-level titles are repeated in `summary`.** A caveat nobody scrolls to
 has not been said, so the warnings travel with the one-line summary as well.
 
-**And the notes are drawn as notes.** The `info` port declares
+**And the notes are drawn as notes.** The `report` port declares
 `presentation: 'report'`, so the tool runner renders it as the warnings first
 in sentences, then a before-and-after table, then the summary — rather than as
 `JSON.stringify(..., 2)` in a read-only textarea, which is where "GPS location
@@ -370,7 +384,7 @@ The practical consequence is that a colour-managed source — a wide-gamut
 photograph, a scan with an embedded profile — converts to sRGB, and _which_
 sRGB depends on the browser. There is no workaround short of shipping a decoder
 and a colour engine, which is not a reasonable thing for this tool to contain.
-An embedded ICC profile is at least reported in `info.from.metadata`, so a
+An embedded ICC profile is at least reported in `report.from.metadata`, so a
 colour shift has a visible explanation rather than being a mystery.
 
 **An animated source is flattened, and cannot be anything else.** None of the
