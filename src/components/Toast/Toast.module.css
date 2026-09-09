@@ -100,6 +100,19 @@
   color: var(--pb-ink-secondary);
 }
 
+/*
+ * The action, under the text rather than beside it.
+ *
+ * The toast is a three-column grid - icon, text, close - and a fourth column
+ * would take its width from the widest word in the row. Under the description
+ * the control keeps its own size at 320px and at the narrow end alike, and it
+ * reads in the order it is meant to be used: what happened, then what can be
+ * done about it.
+ */
+.action {
+  margin-block-start: var(--pb-space-sm);
+}
+
 @media (forced-colors: active) {
   .toast {
     border-color: CanvasText;

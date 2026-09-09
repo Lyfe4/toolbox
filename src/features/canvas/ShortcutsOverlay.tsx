@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef } from 'react';
 
 import { CloseIcon } from '@/components/Icon';
 import { IconButton } from '@/components/IconButton';
@@ -6,7 +6,7 @@ import { DATA_TYPES } from '@/features/registry';
 
 import styles from './canvas.module.css';
 import { PortGlyph } from './PortGlyph';
-import { SHORTCUT_GROUPS, SHORTCUTS, shortcutRowKey } from './shortcuts';
+import { SHORTCUT_GROUPS, SHORTCUTS, shortcutRowKey, TOUCH_ROUTES } from './shortcuts';
 
 /** What each data type actually carries, in a few words. */
 const TYPE_MEANING: Record<(typeof DATA_TYPES)[number], string> = {
@@ -27,8 +27,20 @@ export function ShortcutsOverlay({ onClose }: ShortcutsOverlayProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    // Move focus into the dialog so Escape and Tab behave as expected.
+  /*
+   * Move focus into the dialog so Escape and Tab behave as expected.
+   *
+   * A LAYOUT EFFECT, for the reason CommandDialog's carries at length. A
+   * passive effect defers the move past the paint and therefore past the task
+   * the `?` keystroke started, which leaves a window in which the canvas root
+   * still has focus - and this region is opened from a canvas that claims
+   * every single letter, so a key struck in that window is swallowed rather
+   * than reaching the dialog. The exposure here is smaller than the palette's,
+   * because nothing is typed into this panel; it is corrected anyway, because
+   * "small window" is how every one of the deferred-focus bugs already written
+   * up in this feature was described before it was found.
+   */
+  useLayoutEffect(() => {
     closeRef.current?.focus();
   }, []);
 
@@ -128,6 +140,40 @@ export function ShortcutsOverlay({ onClose }: ShortcutsOverlayProps) {
               </tbody>
             </table>
           ))}
+
+          {/*
+            WITHOUT A KEYBOARD
+            ──────────────────
+            A table of its own rather than rows in the three above, because
+            none of these has a key to print in the Keys column - they are
+            gestures and visible controls, and inventing a keystroke for them
+            would be worse than leaving them out.
+
+            It is here at all because the honest answer used to be
+            embarrassing: Delete, Duplicate and Select-all were keyboard-only,
+            so on a phone you could add nodes to a canvas and never remove
+            one. Read from `TOUCH_ROUTES`, in the same file the shortcut table
+            reads, so a route that stops existing stops being listed.
+          */}
+          <table className={styles.shortcutTable}>
+            <caption className={styles.groupLabel}>Without a keyboard</caption>
+            <thead>
+              <tr>
+                <th scope="col" className={styles.shortcutKeys}>
+                  Gesture
+                </th>
+                <th scope="col">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {TOUCH_ROUTES.map((route) => (
+                <tr key={route.gesture}>
+                  <td className={styles.shortcutKeys}>{route.gesture}</td>
+                  <td>{route.action}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
 
           {/*
             THE KEY

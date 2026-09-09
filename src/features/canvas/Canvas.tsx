@@ -41,6 +41,7 @@ import {
   gridStyle,
   MAX_ZOOM,
   MIN_ZOOM,
+  nearestEdge,
   NODE_WIDTH,
   portPositionById,
   snapPoint,
@@ -48,7 +49,7 @@ import {
   typedInputPorts,
   type PortSide,
 } from './geometry';
-import { useCanvasStore } from './graphStore';
+import { useCanvasStore, type Selection } from './graphStore';
 import inspectorStyles from './inspector.module.css';
 import { loadInspectorOpen, saveInspectorOpen } from './inspectorPreference';
 import { useKeyboardInset } from './keyboardInset';
@@ -63,7 +64,7 @@ import { ShortcutsOverlay } from './ShortcutsOverlay';
 import { toWorld, useViewportStore } from './viewportStore';
 import { Wires } from './Wires';
 
-import type { GraphData, NodeId, Point, PortRef } from './types';
+import type { EdgeId, GraphData, NodeId, Point, PortRef } from './types';
 /*
  * Aliased, because this file also handles the NATIVE PointerEvent and
  * KeyboardEvent - the canvas binds its own listeners imperatively - and two
@@ -267,6 +268,36 @@ function freeSpot(graph: GraphData, wanted: Point): Point {
   // Twelve nodes already stacked on one spot is not a case worth more code
   // than this; the last candidate is returned rather than looping forever.
   return spot;
+}
+
+/**
+ * What the selection is, in words - for the bar's label and the toast's title.
+ *
+ * A single node is named by its TOOL. "Deleted 1 item" is true and useless: on
+ * a canvas of six nodes the one question after a tap that deleted something is
+ * which one, and the undo offer beside the answer is what makes it recoverable
+ * rather than merely reversible. Everything else is counted, because six tool
+ * names in a notification is a paragraph.
+ *
+ * Nodes and wires are counted separately rather than summed, so "2 wires" does
+ * not read as two nodes. They are only summed for the mixed case, which no
+ * gesture on this canvas can currently produce - selecting a wire clears the
+ * nodes and vice versa - and which is therefore worded vaguely on purpose: a
+ * sentence for a state nothing reaches is a sentence nobody can check.
+ */
+function describeSelection(graph: GraphData, selection: Selection): string {
+  const { nodes, edges } = selection;
+
+  if (edges.length === 0) {
+    if (nodes.length === 1) {
+      const node = graph.nodes[nodes[0] ?? ''];
+      if (node) return getManifestEntry(node.toolId).name;
+    }
+    return counted(nodes.length, 'node');
+  }
+
+  if (nodes.length === 0) return counted(edges.length, 'wire');
+  return counted(nodes.length + edges.length, 'item');
 }
 
 export interface CanvasProps {
@@ -1323,6 +1354,150 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     store.getState().announce('That node is gone. The inspector is empty.');
   }, [store]);
 
+  /* ---------------------------------------------------------------------- *
+   * Acting on the selection
+   * ---------------------------------------------------------------------- */
+
+  /**
+   * REMOVING WHAT IS SELECTED. ONE FUNCTION, THREE ENTRANCES.
+   *
+   * Named `removeSelection` rather than `deleteSelection`, which is what the
+   * store's own action is called: this one wraps that one with the undo offer
+   * and the focus move, and two things called `deleteSelection` in one scope is
+   * how a caller ends up reaching past the wrapper for the bare action.
+   *
+   * `Delete` and `Backspace` on the canvas, the Delete button in the selection
+   * bar, and - through `removeWire` below - the inspector's Disconnect all end
+   * here. The same reasoning as the connect flow's two entrances, and the same
+   * evidence behind it: this repository has a written history of two routes to
+   * one graph agreeing on the day they were written and disagreeing later.
+   * `deletion.test.tsx` drives the key and the button over one graph and
+   * compares the document each leaves behind.
+   *
+   * HOW MANY STEPS TO UNDO, MEASURED RATHER THAN ASSUMED. `deleteSelection`
+   * pushes one command for wires and one for nodes, so a selection holding
+   * both is two history entries and a single `undo()` would restore half of
+   * it and call that recovery. Nothing on this canvas can currently select
+   * both at once - selecting a wire clears the nodes - but "the undo button
+   * silently under-restores" is not a defect worth leaving armed behind a
+   * selection rule in another file. The history's own length is the answer.
+   *
+   * FOCUS, SYNCHRONOUSLY, BEFORE REACT HAS REMOVED ANYTHING. The store write
+   * is batched, so at this line the bar is still mounted and the root still
+   * exists - `focus()` lands, and the button is unmounted from under a focus
+   * that has already moved on. That is why this needs no layout effect and no
+   * frame, unlike the three focus moves in this file that wait for a node or a
+   * panel to be RENDERED before they can aim at it.
+   */
+  const removeSelection = useCallback(() => {
+    const state = store.getState();
+    const { nodes, edges } = state.selection;
+    if (nodes.length === 0 && edges.length === 0) return;
+
+    const what = describeSelection(state.graph, state.selection);
+    const before = state.past.length;
+
+    state.deleteSelection();
+    const steps = store.getState().past.length - before;
+
+    rootRef.current?.focus();
+
+    /*
+     * THE UNDO IS THE POINT, not the notification.
+     *
+     * Undo already existed, and on a wide screen it is a labelled button in
+     * the toolbar. Below 640px the toolbar collapses and it moves into an
+     * overflow menu - so on the device where the only way to delete is a tap,
+     * the only way to take it back was three taps behind a control whose label
+     * says nothing about deletion. A destructive action reachable by finger
+     * needs its reversal offered at the moment it happens.
+     *
+     * `altText` is what a screen-reader user is told instead, because a live
+     * region announcement cannot be pressed.
+     */
+    notify({
+      title: `Deleted ${what}`,
+      tone: 'warn',
+      action: {
+        label: 'Undo',
+        altText: 'Press Ctrl+Z, or Undo on the toolbar, to bring it back',
+        onAction: () => {
+          for (let step = 0; step < steps; step += 1) store.getState().undo();
+        },
+      },
+    });
+  }, [notify, store]);
+
+  /**
+   * REMOVING ONE NAMED WIRE, from the inspector.
+   *
+   * Not routed through `deleteSelection`, and that is deliberate rather than
+   * an oversight. Doing so would mean selecting the wire first, which clears
+   * the node selection - and the node selection is what the inspector is
+   * SHOWING, so the panel would empty itself as a side effect of a button
+   * inside it. `removeEdges` is the store's existing single-purpose action and
+   * pushes exactly one command, so the undo offer is one step by construction.
+   */
+  const removeWire = useCallback(
+    (edgeId: EdgeId, description: string) => {
+      store.getState().removeEdges([edgeId]);
+
+      notify({
+        title: `Disconnected ${description}`,
+        tone: 'warn',
+        action: {
+          label: 'Undo',
+          altText: 'Press Ctrl+Z, or Undo on the toolbar, to reconnect it',
+          onAction: () => {
+            store.getState().undo();
+          },
+        },
+      });
+    },
+    [notify, store],
+  );
+
+  const duplicateSelection = useCallback(() => {
+    store.getState().duplicateSelection();
+  }, [store]);
+
+  /*
+   * The identical two lines the Ctrl+A branch used to hold, so the key and the
+   * button cannot word their announcement differently or disagree about
+   * whether wires are included. They are not: selecting every node and then
+   * pressing Delete is how a canvas is cleared, and the wires go with the
+   * nodes they touch.
+   */
+  const selectAllNodes = useCallback(() => {
+    const state = store.getState();
+    state.select({ nodes: [...state.graph.nodeOrder], edges: [] });
+    state.announce(`Selected ${state.graph.nodeOrder.length.toString()} nodes.`);
+  }, [store]);
+
+  /**
+   * WHICH WIRE A PRESS ON THE WIRE LAYER MEANS.
+   *
+   * Handed to `Wires` rather than worked out there, through the SAME
+   * `screenToWorld` a node drag and a wire drop already use. The first version
+   * measured the press against the wire layer's own client rect, on the
+   * reasoning that a 1x1 SVG pinned to the plane's origin is world (0, 0).
+   * Chromium agrees; Gecko and WebKit return the union with the overflowing
+   * children of an `overflow: visible` SVG root, so the "origin" was wherever
+   * the leftmost wire happened to start and every resolved point was out by
+   * however wide the graph was. `check:browsers` caught it in both engines,
+   * which is the whole reason that gate exists - jsdom returns zeros for every
+   * rect, so the unit suite could not have told the two approaches apart.
+   *
+   * The graph is READ at press time rather than closed over, so this callback
+   * is stable and the layer's one delegated listener is not rebound on every
+   * drag frame.
+   */
+  const resolveEdgeAt = useCallback(
+    (point: { readonly clientX: number; readonly clientY: number }): EdgeId | null =>
+      nearestEdge(store.getState().graph, screenToWorld(point)),
+    [screenToWorld, store],
+  );
+
   const tryConnect = useCallback(
     (from: PortRef, to: PortRef): boolean => {
       const result = store.getState().connect(from, to);
@@ -1618,8 +1793,9 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       case 'Backspace':
         if (state.selection.nodes.length === 0 && state.selection.edges.length === 0) return;
         event.preventDefault();
-        state.deleteSelection();
-        rootRef.current?.focus();
+        // The identical function the selection bar's Delete button calls -
+        // including the undo offer, which is not a touch-only courtesy.
+        removeSelection();
         return;
 
       case 'Escape':
@@ -1702,15 +1878,14 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       case 'A':
         if (!meta) return;
         event.preventDefault();
-        state.select({ nodes: [...state.graph.nodeOrder], edges: [] });
-        state.announce(`Selected ${state.graph.nodeOrder.length.toString()} nodes.`);
+        selectAllNodes();
         return;
 
       case 'd':
       case 'D':
         if (!meta) return;
         event.preventDefault();
-        state.duplicateSelection();
+        duplicateSelection();
         return;
 
       case 'z':
@@ -1926,7 +2101,16 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     const node = graph.nodes[id];
     if (!node) return null;
 
-    const wiredFrom: Record<string, string> = {};
+    /*
+     * THE EDGE ID TRAVELS WITH THE SENTENCE NOW.
+     *
+     * The panel said "Wired from Base64 · Encoded." and stopped there, which
+     * left removing that wire a thing only a pointer could do - it had to be
+     * aimed at on the plane, and there is no keyboard route to selecting one
+     * at all. The panel already knows exactly which wire it is describing;
+     * carrying the id is what lets it offer to remove the thing it just named.
+     */
+    const wiredFrom: Record<string, { readonly edgeId: EdgeId; readonly label: string }> = {};
     for (const edgeId of graph.edgeOrder) {
       const edge = graph.edges[edgeId];
       if (edge?.to.nodeId !== id) continue;
@@ -1934,7 +2118,10 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       if (!source) continue;
       const sourceEntry = getManifestEntry(source.toolId);
       const port = sourceEntry.outputs.find((candidate) => candidate.id === edge.from.portId);
-      wiredFrom[edge.to.portId] = `${sourceEntry.name} · ${port?.label ?? edge.from.portId}`;
+      wiredFrom[edge.to.portId] = {
+        edgeId,
+        label: `${sourceEntry.name} · ${port?.label ?? edge.from.portId}`,
+      };
     }
 
     return {
@@ -2176,6 +2363,18 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
   const compact = useMediaQuery(COMPACT_TOOLBAR);
   const shareNoteId = useId();
 
+  /* What the selection bar shows, and whether there is a selection at all. */
+  const selectionCount = selection.nodes.length + selection.edges.length;
+  const selectionLabel = useMemo(() => describeSelection(graph, selection), [graph, selection]);
+  /*
+   * Offered only when it would change the selection. "Select all" on a canvas
+   * where everything is already selected is a control that does nothing, and a
+   * control that does nothing is the affordance rule this repository has caught
+   * four times - read the other way round.
+   */
+  const canSelectAll =
+    selection.edges.length === 0 && graph.nodeOrder.length > selection.nodes.length;
+
   const canvasSize = useCallback(() => {
     const rect = rootRef.current?.getBoundingClientRect();
     return { width: rect?.width ?? 800, height: rect?.height ?? 600 };
@@ -2341,15 +2540,33 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
         <div
           className={styles.plane}
           data-testid="canvas-plane"
-          style={{
-            transform: `translate(${viewport.x.toString()}px, ${viewport.y.toString()}px) scale(${viewport.zoom.toString()})`,
-          }}
+          style={
+            {
+              transform: `translate(${viewport.x.toString()}px, ${viewport.y.toString()}px) scale(${viewport.zoom.toString()})`,
+              /*
+               * THE ZOOM, AS A NUMBER THE STYLESHEET CAN DIVIDE BY.
+               *
+               * `.wireHit` needs a stroke width in screen pixels on geometry
+               * the plane is scaling, and `vector-effect: non-scaling-stroke`
+               * - which is precisely the property for that - is honoured for
+               * painting and ignored for hit-testing. So the division is done
+               * in CSS instead, and this is the only value it needs.
+               *
+               * It rides along with the transform deliberately: the transform
+               * is already rewritten on every pan and zoom frame, so this
+               * costs one more string on a style object that was being rebuilt
+               * anyway, and the two can never describe different zooms.
+               */
+              '--canvas-zoom': viewport.zoom.toString(),
+            } as CSSProperties
+          }
         >
           <Wires
             graph={graph}
             selectedEdges={selection.edges}
             activeEdges={activeEdges}
             draft={draftPath}
+            resolveEdge={resolveEdgeAt}
             onSelectEdge={(id, additive) => {
               const state = store.getState();
               state.select({
@@ -2413,127 +2630,256 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
               assumed the reader already knew there was a palette; someone
               looking at an empty grid for the first time needs the visible
               button pointed at too.
+
+              THE VISIBLE CONTROLS LEAD, AND THE REFERENCE IS NAMED RATHER
+              THAN KEYED. It used to read "Press K or choose Add tool ... ?
+              lists every shortcut", which on a phone is a sentence where two
+              of the three things named do not exist - and the second of them
+              was the only pointer anybody was given to the one panel that
+              explains what DOES work without a keyboard.
+
+              `Shortcuts` rather than "More then Shortcuts", because the
+              control is called Shortcuts at both widths and only its
+              WHEREABOUTS changes: inline on the bar above 640px, inside the
+              overflow menu below it. Naming the path would be right at one
+              width and wrong at the other.
+
+              Not behind a `pointer: coarse` query, deliberately, and for the
+              reason the node's Connect button is not either: coarse is true of
+              a tablet with a keyboard folded onto it, so hiding the keys there
+              would be inventing a second wrong answer. Naming both routes is
+              correct on every device and needs no query at all.
             */}
             <p>
-              Press <kbd className={styles.kbd}>K</kbd> or choose{' '}
-              <span className={styles.emptyStrong}>Add tool</span> to place a module.{' '}
-              <kbd className={styles.kbd}>?</kbd> lists every shortcut.
+              Choose <span className={styles.emptyStrong}>Add tool</span> to place a module, or
+              press <kbd className={styles.kbd}>K</kbd>.{' '}
+              <span className={styles.emptyStrong}>Shortcuts</span> lists every key and every
+              gesture.
             </p>
           </div>
         ) : null}
 
         {/*
-          THE TOOLBAR
-          ───────────
-          Below `COMPACT_TOOLBAR` everything but "Add tool" and "Fit" moves
-          into an overflow menu. Collapsing rather than shrinking: this bar is
-          absolutely positioned with no right anchor, so its width was purely
-          the sum of its children - at 320px it grew to 475px and put Share and
-          Shortcuts off the side of the screen, unreachable by pointer or by
-          Tab. It is now width-constrained as well, so nothing can escape it
-          even if a label changes.
+          THE TOP-LEFT CHROME: the toolbar, and the selection bar under it.
+
+          THE TOOLBAR. Below `COMPACT_TOOLBAR` everything but "Add tool" and
+          "Fit" moves into an overflow menu. Collapsing rather than shrinking:
+          this bar had no right anchor, so its width was purely the sum of its
+          children - at 320px it grew to 475px and put Share and Shortcuts off
+          the side of the screen, unreachable by pointer or by Tab. It is
+          width-constrained as well now, so nothing can escape it even if a
+          label changes; the constraint comes from the stack, which is inset on
+          both sides.
         */}
-        <div className={styles.toolbar} data-canvas-chrome="toolbar">
-          <Button
-            size="sm"
-            onClick={() => {
-              setOverlay({ kind: 'palette' });
-            }}
-          >
-            <PlusIcon size={12} /> Add tool
-          </Button>
-
-          {/*
-            THE INSPECTOR TOGGLE, at every width and never in the overflow.
-
-            It is the only way to reach the panel with a pointer, so burying it
-            behind another tap on the size where the panel is hidden by default
-            would make the feature undiscoverable on exactly the devices that
-            start without it. `aria-pressed` rather than a changing label: the
-            control is the same control in both states, and "Inspector,
-            pressed" is what a screen reader should hear rather than a button
-            whose name flips between "Show" and "Hide".
-
-            Icon-only when compact, because a fourth worded button is what
-            pushed this toolbar off the side of a 320px screen once already.
-          */}
-          {compact ? (
-            <IconButton
-              size="sm"
-              label="Inspector"
-              icon={<SlidersIcon size={12} />}
-              aria-pressed={inspectorOpen}
-              onClick={toggleInspector}
-            />
-          ) : (
+        <div className={styles.topStack}>
+          <div className={styles.toolbar} data-canvas-chrome="toolbar">
             <Button
               size="sm"
-              variant="ghost"
-              aria-pressed={inspectorOpen}
-              onClick={toggleInspector}
+              onClick={() => {
+                setOverlay({ kind: 'palette' });
+              }}
             >
-              <SlidersIcon size={12} /> Inspector
+              <PlusIcon size={12} /> Add tool
             </Button>
-          )}
 
-          {compact ? (
-            <>
-              {/* Promoted out of the overflow menu - see overflowItems above. */}
-              <Button size="sm" variant="ghost" onClick={onFit}>
-                Fit
-              </Button>
-              <OverflowMenu label="More" items={overflowItems} />
-            </>
-          ) : (
-            <>
-              <Button size="sm" variant="ghost" onClick={onFit}>
-                Fit
-              </Button>
+            {/*
+              THE INSPECTOR TOGGLE, at every width and never in the overflow.
+
+              It is the only way to reach the panel with a pointer, so burying
+              it behind another tap on the size where the panel is hidden by
+              default would make the feature undiscoverable on exactly the
+              devices that start without it. `aria-pressed` rather than a
+              changing label: the control is the same control in both states,
+              and "Inspector, pressed" is what a screen reader should hear
+              rather than a button whose name flips between "Show" and "Hide".
+
+              Icon-only when compact, because a fourth worded button is what
+              pushed this toolbar off the side of a 320px screen once already.
+            */}
+            {compact ? (
+              <IconButton
+                size="sm"
+                label="Inspector"
+                icon={<SlidersIcon size={12} />}
+                aria-pressed={inspectorOpen}
+                onClick={toggleInspector}
+              />
+            ) : (
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => {
-                  store.getState().undo();
-                }}
+                aria-pressed={inspectorOpen}
+                onClick={toggleInspector}
               >
-                Undo
+                <SlidersIcon size={12} /> Inspector
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  store.getState().redo();
-                }}
-              >
-                Redo
-              </Button>
-              {/*
-                The privacy note is the SHARE button's own description rather
-                than a sibling in the button row. It used to sit between Share
-                and Shortcuts as a 190px block of wrapped text, crowding both
-                and taking width the controls needed. Now it is announced with
-                the button and revealed under the toolbar on hover or focus, so
-                it can never overlap a control at any width.
-              */}
-              <span className={styles.shareWrap}>
-                <Button size="sm" variant="ghost" aria-describedby={shareNoteId} onClick={onShare}>
-                  <CopyIcon size={12} /> Share
+            )}
+
+            {compact ? (
+              <>
+                {/* Promoted out of the overflow menu - see overflowItems above. */}
+                <Button size="sm" variant="ghost" onClick={onFit}>
+                  Fit
                 </Button>
-                <span className={styles.shareNote} id={shareNoteId} role="note">
-                  {SHARE_NOTE}
+                <OverflowMenu label="More" items={overflowItems} />
+              </>
+            ) : (
+              <>
+                <Button size="sm" variant="ghost" onClick={onFit}>
+                  Fit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    store.getState().undo();
+                  }}
+                >
+                  Undo
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    store.getState().redo();
+                  }}
+                >
+                  Redo
+                </Button>
+                {/*
+                  The privacy note is the SHARE button's own description rather
+                  than a sibling in the button row. It used to sit between Share
+                  and Shortcuts as a 190px block of wrapped text, crowding both
+                  and taking width the controls needed. Now it is announced with
+                  the button and revealed under the toolbar on hover or focus,
+                  so it can never overlap a control at any width.
+                */}
+                <span className={styles.shareWrap}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-describedby={shareNoteId}
+                    onClick={onShare}
+                  >
+                    <CopyIcon size={12} /> Share
+                  </Button>
+                  <span className={styles.shareNote} id={shareNoteId} role="note">
+                    {SHARE_NOTE}
+                  </span>
                 </span>
-              </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setOverlay({ kind: 'shortcuts' });
+                  }}
+                >
+                  <SearchIcon size={12} /> Shortcuts
+                </Button>
+              </>
+            )}
+          </div>
+
+          {/*
+            THE SELECTION BAR
+            ─────────────────
+            The home Delete needed, and the reason it is here rather than on
+            the node: a node's own chrome cannot serve a WIRE, which has no
+            box to hang a control off, and a panel anchored to either would
+            live inside the pan-and-zoom plane - scaling with it and clipped
+            by the root, which is the geometry that sent the toolbar's own
+            overflow menu to be anchored to the bar rather than to its
+            trigger. See `.topStack` for why it is at the top of the canvas
+            rather than the bottom, which is where it was built first.
+
+            It is canvas chrome, so it sits outside the plane at a fixed size
+            in a fixed place, and it is present at every pointer type for the
+            reason the node's Connect button is: `pointer: coarse` is not "no
+            keyboard", and Delete was undiscoverable for a mouse user who has
+            never opened the shortcut list either.
+
+            ONLY WHILE SOMETHING IS SELECTED. Permanent chrome for an action
+            that is meaningless most of the time is chrome everybody pays for
+            and nobody reads - and a Delete button that is usually disabled is
+            worse, because a disabled destructive control still has to be
+            understood before it can be ignored.
+          */}
+          {selectionCount > 0 ? (
+            <div
+              className={styles.selectionBar}
+              data-canvas-chrome="selection"
+              data-testid="canvas-selection-bar"
+              role="group"
+              /*
+               * A FIXED NAME, NOT THE SELECTION'S.
+               *
+               * Naming the group `Base64 selected` was the obvious first
+               * choice and it was wrong twice over. A node is also a
+               * `role="group"` whose accessible name is `Base64, at 96, 96, 1
+               * connection, ..., selected`, so the bar became a second group
+               * answering to the same description - ambiguous to anyone
+               * navigating by role, and it broke three existing tests that
+               * find a node that way, which is the same ambiguity showing up
+               * where it could be measured. What is selected is on screen in
+               * the line below and in Delete's own accessible name; the group
+               * only has to say what kind of thing it is.
+               */
+              aria-label="Selection actions"
+            >
+              <span className={styles.selectionCount}>{selectionLabel} selected</span>
+
+              {/*
+                SELECT ALL, HERE RATHER THAN IN THE TOOLBAR, and only when it
+                would change something.
+
+                It is the one action in this bar that is not about the current
+                selection, and it is here because the alternative places are
+                worse. The toolbar's overflow menu exists only below 640px, so
+                anything put in it is a control that does not exist on a
+                desktop - the note above `overflowItems` is explicit that the
+                two layouts must run the same actions. A permanent toolbar
+                button would be a seventh control on a bar that already
+                overflowed a 320px screen once.
+
+                The precondition costs one tap, and it is not a real barrier:
+                nobody wants "select every node" before they have touched a
+                node. What it buys is the only way a finger can clear a canvas
+                that is not N nodes times two taps.
+              */}
+              {canSelectAll ? (
+                <Button size="sm" variant="ghost" onClick={selectAllNodes}>
+                  Select all
+                </Button>
+              ) : null}
+
+              {selection.nodes.length > 0 ? (
+                <Button size="sm" variant="ghost" onClick={duplicateSelection}>
+                  Duplicate
+                </Button>
+              ) : null}
+
+              {/*
+                  LAST, AND THE ONLY `danger` ON THIS SURFACE. Destructive
+                  controls sit at the end of a row so a mis-aimed thumb reaching
+                  for the one before it does not find this one, and the variant
+                  is what says "destructive" without relying on the word alone -
+                  it carries a border and a colour, and the label carries the
+                  verb.
+
+                  The accessible name names the target as well, for the reason
+                  `Connect from <tool>` does: "Delete", read out of a list of
+                  controls, does not say delete WHAT.
+                */}
               <Button
                 size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setOverlay({ kind: 'shortcuts' });
-                }}
+                variant="danger"
+                aria-label={`Delete ${selectionLabel}`}
+                onClick={removeSelection}
               >
-                <SearchIcon size={12} /> Shortcuts
+                Delete
               </Button>
-            </>
-          )}
+            </div>
+          ) : null}
         </div>
 
         {/*
@@ -2703,6 +3049,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
           onInputChange={onInputChange}
           onFileChange={onFileChange}
           onOptionChange={onOptionChange}
+          onDisconnect={removeWire}
           onClose={() => {
             /*
              * Closing does NOT clear the selection. The two are separate

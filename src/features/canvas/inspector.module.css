@@ -185,6 +185,24 @@
   overflow-wrap: anywhere;
 }
 
+/*
+ * A wired input port: what is feeding it, and the way to unfeed it.
+ *
+ * Wrapping rather than a two-column grid. The sentence names a tool and a port
+ * ("Wired from Text convert · Converted.") and there is 320px at the rail's
+ * narrowest, so the pair does not fit on one line often; a grid would keep the
+ * button on the first line and squeeze the sentence to two words a row. Wrapped,
+ * the control drops below the sentence it belongs to, which is also the order
+ * it is read in.
+ */
+.wiredRow {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pb-space-xs);
+}
+
 .mono {
   font-family: var(--pb-font-ui);
   font-size: var(--pb-label-size);

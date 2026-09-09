@@ -125,6 +125,33 @@
   overflow: visible;
   /* The layer itself is inert; individual wire hit paths opt back in. */
   pointer-events: none;
+
+  /*
+   * How wide a wire's grab band is, in SCREEN pixels - see `.wireHit`, which
+   * divides the zoom back out of it.
+   *
+   * 24px is WCAG 2.5.8's minimum target size, applied to the one target on
+   * this canvas with no box of its own to grow; 44px is 2.5.5, the size every
+   * shared control in this application already takes on a coarse pointer.
+   * The pointer rule stays in CSS and the zoom comes from JavaScript, which
+   * is the only split where neither side keeps a copy of the other's number.
+   *
+   * WITH ITS UNIT, and the unit is load-bearing. `stroke-width` accepts a bare
+   * number as a presentation attribute, so `24` and `24px` look
+   * interchangeable - but the division happens in `calc()`, and `calc(24 /
+   * 0.36)` is a unitless number in a length context. Chromium accepts it and
+   * resolves it to px; Gecko and WebKit reject the whole declaration and fall
+   * back to the initial `stroke-width: 1`, which is a one-pixel grab band on a
+   * wire. Both engines reported it as a hit region 0px wide at 36% zoom in
+   * `check:browsers`, on a build that was perfect in Chromium.
+   */
+  --wire-hit: 24px;
+}
+
+@media (pointer: coarse) {
+  .wireLayer {
+    --wire-hit: 44px;
+  }
 }
 
 .wire {
@@ -141,11 +168,34 @@
 /*
  * A 1.5px line is far too thin to hit with a pointer, so every wire has an
  * invisible companion path with a fat stroke that takes the clicks.
+ *
+ * THE ZOOM IS DIVIDED BACK OUT, and that arithmetic is the whole point of
+ * this rule rather than a nicety.
+ *
+ * Everything in the wire layer lives inside the plane's `scale()`, so a plain
+ * `stroke-width: 14` was 14px only at 100%: 3.5px at the minimum zoom and 35px
+ * at the maximum. A grab target whose size is a function of the zoom is the
+ * wrong size almost always, and it was smallest exactly when a wire is hardest
+ * to aim at - zoomed out, looking at a whole graph. `--canvas-zoom` is written
+ * on the plane beside its transform, so dividing by it makes `--wire-hit` mean
+ * screen pixels at every zoom.
+ *
+ * `vector-effect: non-scaling-stroke` IS THE OBVIOUS WAY TO DO THIS AND IT
+ * DOES NOT WORK. It is exactly what the property is for, it computes, and it
+ * governs PAINTING only: hit-testing walks the untransformed stroke geometry,
+ * so a band declared non-scaling still shrank with the zoom. Measured, not
+ * assumed - toggling the property off left the hit region byte-identical at
+ * 0.5x and at 1x. It would have shipped looking correct, because the one thing
+ * it does change is invisible on a transparent stroke.
+ *
+ * Which of two overlapping bands a press means is decided by geometry rather
+ * than by paint order - see `resolveEdge` in Wires.tsx and `nearestEdge` in
+ * geometry.ts.
  */
 .wireHit {
   fill: none;
   stroke: transparent;
-  stroke-width: 14;
+  stroke-width: calc(var(--wire-hit) / var(--canvas-zoom, 1));
   pointer-events: stroke;
   cursor: pointer;
 }
@@ -186,10 +236,6 @@
   border-color: var(--pb-accent);
   border-width: var(--pb-border-width-strong);
   z-index: var(--pb-z-raised);
-}
-
-.nodeDragging {
-  cursor: grabbing;
 }
 
 .nodeHeader {
@@ -631,19 +677,72 @@
 /* --- Overlays ----------------------------------------------------------- */
 
 /*
- * Anchored on BOTH sides.
+ * THE TOP-LEFT CHROME COLUMN: the toolbar, and the selection bar under it.
  *
- * With only a start inset the bar's width was the sum of its children and
- * nothing stopped it growing past the viewport - at 320px it reached 475px
- * and pushed Share and Shortcuts off the screen entirely. The end inset plus
- * `max-inline-size` means it can never exceed the canvas, whatever is in it.
+ * ANCHORED ON BOTH SIDES, which the toolbar used to do for itself and which
+ * has moved up here with the rest of its positioning. With only a start inset
+ * a bar's width is the sum of its children and nothing stops it growing past
+ * the viewport - at 320px the toolbar reached 475px and pushed Share and
+ * Shortcuts off the screen entirely. Both insets on the column, plus
+ * `max-inline-size: 100%` on each bar inside it, mean neither can exceed the
+ * canvas whatever is in it.
+ *
+ * The toolbar used to position itself. It is in a column now because a second
+ * bar had to appear below it, and "below the toolbar" is a relationship the
+ * layout should hold rather than a number the other one carries - the toolbar
+ * is about 40px tall on a desktop and about 52px on a coarse pointer, where
+ * every control grows to 44px, so any `calc()` here would be right at one
+ * pointer type and wrong at the other.
+ *
+ * WHY THE TOP, WHICH IS NOT WHERE A THUMB IS. The selection bar was built at
+ * the bottom first, above the readout, and it was measured there: on a phone
+ * the inspector is a SHEET that covers the bottom 60% of the canvas root, and
+ * the root spans the whole workspace behind it. The bar and the readout both
+ * sat underneath it - present in the DOM, 300px below the sheet's top edge,
+ * invisible and unpressable. For the readout that is an old and survivable
+ * cost; for the only control that can delete anything it is the whole feature
+ * gone in the state a phone user is most likely to be in, since the inspector
+ * is remembered across sessions.
+ *
+ * The top has a second, better argument once you are there. The bar appears
+ * and disappears with the selection, and at the bottom it materialises next to
+ * the thumb that is panning - a destructive control arriving under a moving
+ * finger. Up here it appears inside the band already reserved for chrome.
+ *
+ * `pointer-events` is the load-bearing pair. The column stretches the full
+ * width so its children can wrap without being squeezed into a corner, and a
+ * full-width transparent box across the top would otherwise eat every pan that
+ * started there. The column declines events; each bar takes them back.
  */
-.toolbar {
+.topStack {
   position: absolute;
   inset-block-start: var(--pb-space-md);
   inset-inline-start: var(--pb-space-md);
   inset-inline-end: var(--pb-space-md);
   z-index: var(--pb-z-sticky);
+
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--pb-space-xs);
+  pointer-events: none;
+}
+
+.topStack > * {
+  pointer-events: auto;
+}
+
+.toolbar {
+  /*
+   * `relative` rather than `absolute`, and it still matters: the overflow menu
+   * is positioned against this element rather than against its own trigger
+   * (see `.overflowMenu`), so the bar has to stay a positioned ancestor. The
+   * z-index keeps that menu above the selection bar below it - both are
+   * children of one stack, and without it the later sibling would paint over
+   * an open menu.
+   */
+  position: relative;
+  z-index: 1;
 
   display: flex;
   align-items: center;
@@ -665,6 +764,53 @@
  */
 .toolbar > * {
   flex: 0 0 auto;
+}
+
+/*
+ * WHAT CAN BE DONE WITH WHAT IS SELECTED.
+ *
+ * Canvas chrome rather than anything anchored to the selection, and that is
+ * the decision this rule records. A panel hung off a node lives inside the
+ * pan-and-zoom plane: it scales with the plane, and the canvas root clips it,
+ * which is why the toolbar's own overflow menu is anchored to the bar rather
+ * than to its trigger. A wire has no box to hang anything off at all. One
+ * fixed place, outside the plane, is the only home that serves both.
+ *
+ * It WRAPS rather than collapsing to icons. At 320px the count and three
+ * controls do not fit on one line, and the alternative - unlabelled glyphs
+ * carrying the difference between Duplicate and Delete - is the one thing the
+ * accessibility rules here refuse outright.
+ */
+.selectionBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pb-space-2xs);
+  max-inline-size: 100%;
+  padding: var(--pb-space-2xs);
+
+  background-color: var(--pb-surface-raised);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-panel);
+}
+
+/*
+ * The count takes a whole line to itself, so the controls always wrap as one
+ * group and Delete is always last on its row. Without it the wrap point moves
+ * with the length of a tool name: at 320px "Base64 selected" left room for two
+ * controls and pushed Delete onto a second row under the first of them, which
+ * is a destructive button landing where a thumb had just been.
+ */
+.selectionCount {
+  flex-basis: 100%;
+  padding: var(--pb-space-2xs) var(--pb-space-2xs) 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .readout {
@@ -700,6 +846,13 @@
   justify-items: center;
   text-align: center;
   pointer-events: none;
+  /*
+   * Inset from the edges, because this is the one block of running prose on
+   * the canvas and it is centred rather than laid out - so it had nothing
+   * holding it off the sides. At 320px the line ran edge to edge with the
+   * first and last characters touching the border of the viewport.
+   */
+  padding-inline: var(--pb-space-lg);
   color: var(--pb-ink-muted);
   font-family: var(--pb-font-ui);
   font-size: var(--pb-value-size);
@@ -1028,7 +1181,6 @@
     color: CanvasText;
   }
 
-  .portInvalid,
   .nodeInvalid {
     opacity: 1;
     /* Opacity is ignored as a signal here, so fall back to a dashed outline. */
@@ -1076,25 +1228,6 @@
   font-family: var(--pb-font-ui);
   font-size: var(--pb-label-size);
   font-variant-numeric: tabular-nums;
-  color: var(--pb-ink-muted);
-}
-
-.nodeInput {
-  margin: 0 var(--pb-space-xs) var(--pb-space-xs);
-  block-size: 48px;
-  resize: none;
-
-  background-color: var(--pb-surface-inset);
-  border: var(--pb-border-width) solid var(--pb-control-border);
-  border-radius: var(--pb-radius-control);
-  color: var(--pb-ink-primary);
-
-  font-family: var(--pb-font-ui);
-  font-size: var(--pb-label-size);
-  padding: var(--pb-space-2xs) var(--pb-space-xs);
-}
-
-.nodeInput::placeholder {
   color: var(--pb-ink-muted);
 }
 
@@ -1447,18 +1580,5 @@
    */
   .option {
     block-size: 44px;
-  }
-
-  /*
-   * 16px, and it is not about legibility.
-   *
-   * iOS Safari zooms the whole viewport in when a field with a font smaller
-   * than 16px is focused, and does not zoom back out afterwards - so typing
-   * into a node left the canvas at some arbitrary scale with no way back
-   * except a manual pinch. The node body scales its own type down, so this is
-   * the one place the label size is overridden rather than inherited.
-   */
-  .nodeInput {
-    font-size: 16px;
   }
 }

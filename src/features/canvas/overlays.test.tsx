@@ -9,6 +9,7 @@ import { expectNoAxeViolations } from '@/lib/testing/axe';
 
 import { Canvas } from './Canvas';
 import { useCanvasStore } from './graphStore';
+import { TOUCH_ROUTES } from './shortcuts';
 import { type CanvasNode } from './types';
 import { DEFAULT_VIEWPORT, useViewportStore } from './viewportStore';
 
@@ -191,5 +192,49 @@ describe('the shortcuts reference specifically', () => {
     if (!scroller) throw new Error('the shortcuts overlay has no scroll region');
     expect(within(scroller).getAllByRole('table').length).toBeGreaterThan(0);
     expect(within(scroller).getByText(/Ports and wires/)).toBeInTheDocument();
+  });
+
+  /**
+   * THE SECTION THAT SAYS WHAT WORKS WITHOUT A KEYBOARD.
+   *
+   * Every row is read from `TOUCH_ROUTES`, so this is the assertion that stops
+   * the reference and the behaviour drifting: a route added to that list and
+   * not rendered fails here, and a route removed from the application but left
+   * in the list is a lie this catches at the point somebody has to edit it.
+   *
+   * It matters more than a normal docs test because the thing being documented
+   * is what is REACHABLE. A stale keyboard row sends someone to press a key
+   * that does nothing; a stale row here tells a phone user a control exists.
+   */
+  it('lists every route that needs no keyboard, from the one list in code', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+
+    await user.click(screen.getByRole('application'));
+    await user.keyboard('?');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Keyboard shortcuts' });
+    expect(within(dialog).getByText('Without a keyboard')).toBeInTheDocument();
+
+    for (const route of TOUCH_ROUTES) {
+      expect(within(dialog).getByText(route.gesture)).toBeInTheDocument();
+    }
+  });
+
+  /*
+   * Delete is the one this whole section exists for, so it is named rather than
+   * left to the loop: a list that happened to contain eight rows and not that
+   * one would pass the assertion above and still describe the gap.
+   */
+  it('says how something is deleted without a keyboard', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+
+    await user.click(screen.getByRole('application'));
+    await user.keyboard('?');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Keyboard shortcuts' });
+    expect(within(dialog).getByText(/Delete, Duplicate and Select all/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Remove the wire feeding an input/)).toBeInTheDocument();
   });
 });

@@ -29,8 +29,7 @@
   min-inline-size: 0;
 }
 
-.image,
-.placeholder {
+.image {
   inline-size: 100%;
   max-block-size: 420px;
   object-fit: contain;
@@ -56,12 +55,6 @@
     0 8px,
     8px -8px,
     -8px 0;
-}
-
-/* Holds the box open while the object URL is being created, so the panel does
- * not jump by 420px on the frame after a run finishes. */
-.placeholder {
-  block-size: 160px;
 }
 
 .caption {
@@ -103,8 +96,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .compare .image,
-  .compare .placeholder {
+  .compare .image {
     max-block-size: 320px;
   }
 }
@@ -142,7 +134,6 @@
 
 @media (forced-colors: active) {
   .image,
-  .placeholder,
   .oversized {
     border-color: CanvasText;
   }

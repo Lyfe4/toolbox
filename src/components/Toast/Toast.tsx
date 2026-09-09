@@ -1,6 +1,7 @@
 import * as RadixToast from '@radix-ui/react-toast';
 import { createContext, use, useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 
+import { Button } from '@/components/Button';
 import { CheckIcon, CloseIcon, ErrorIcon, InfoIcon, WarningIcon } from '@/components/Icon';
 import { IconButton } from '@/components/IconButton';
 import { cx } from '@/lib/cx';
@@ -9,11 +10,37 @@ import styles from './Toast.module.css';
 
 export type ToastTone = 'info' | 'ok' | 'warn' | 'error';
 
+/**
+ * ONE CONTROL A TOAST MAY CARRY, AND WHY IT IS WORTH THE PROP.
+ *
+ * A destructive action needs its reversal visible at the moment it happens,
+ * not discoverable later. The canvas has had undo since it had a history, and
+ * a visible Undo in the toolbar - but on a phone the toolbar collapses and
+ * undo moves into an overflow menu, so the recovery from a tap that deleted
+ * the wrong node was three taps away behind a control that says nothing about
+ * deletion. Putting it in the notification that reports the deletion is what
+ * makes "you can take that back" a fact the user is told rather than one they
+ * have to already know.
+ *
+ * `altText` IS REQUIRED, AND IT IS NOT A LABEL. Radix reads it to screen
+ * readers in the announcement as the way to describe an alternative to the
+ * control, which a live region cannot be clicked through - "press F8 then
+ * Undo", not "Undo".
+ */
+export interface ToastAction {
+  /** The visible word on the control. */
+  readonly label: string;
+  /** How to achieve the same thing without reaching the toast. */
+  readonly altText: string;
+  readonly onAction: () => void;
+}
+
 /** What a caller passes to `notify`. The id is assigned by the provider. */
 export interface ToastInput {
   readonly title: string;
   readonly description?: string;
   readonly tone?: ToastTone;
+  readonly action?: ToastAction;
 }
 
 interface ToastRecord extends ToastInput {
@@ -63,6 +90,21 @@ const TONE_DURATION: Partial<Record<ToastTone, number>> = {
 };
 
 /**
+ * The floor for a toast that carries a control.
+ *
+ * Six seconds is fine for a message: it is read or it is not, and nothing is
+ * lost either way. It is not enough for an OFFER. "Deleted Base64 / Undo" has
+ * to be noticed, understood as reversible, and reached - and on a phone
+ * reaching it means moving a thumb across the screen to a control that was not
+ * there a moment ago. A toast that expires mid-reach is worse than one with no
+ * button at all, because it teaches that the escape hatch is unreliable.
+ *
+ * Matched to the error duration rather than picked separately: both are "long
+ * enough to act on", and two numbers meaning the same thing drift.
+ */
+const ACTION_DURATION = 12_000;
+
+/**
  * Announces asynchronous results to screen readers.
  *
  * Radix Toast owns the live region, which is the part that is easy to get
@@ -100,7 +142,7 @@ export function ToastProvider({ children, duration = 6000 }: ToastProviderProps)
             key={toast.id}
             className={cx(styles.toast, styles[toast.tone])}
             type={toast.tone === 'error' ? 'foreground' : 'background'}
-            {...durationFor(toast.tone)}
+            {...durationFor(toast)}
             onOpenChange={(open) => {
               if (!open) dismiss(toast.id);
             }}
@@ -112,6 +154,20 @@ export function ToastProvider({ children, duration = 6000 }: ToastProviderProps)
                 <RadixToast.Description className={styles.description}>
                   {toast.description}
                 </RadixToast.Description>
+              ) : null}
+              {toast.action !== undefined ? (
+                /*
+                 * `asChild`, so the control is the application's own Button
+                 * and not a second button style that only appears here. Radix
+                 * closes the toast after the action runs, which is right: the
+                 * offer has been taken and leaving it on screen invites a
+                 * second press that would undo something else.
+                 */
+                <RadixToast.Action asChild altText={toast.action.altText} className={styles.action}>
+                  <Button size="sm" variant="ghost" onClick={toast.action.onAction}>
+                    {toast.action.label}
+                  </Button>
+                </RadixToast.Action>
               ) : null}
             </div>
             <RadixToast.Close asChild>
@@ -127,15 +183,18 @@ export function ToastProvider({ children, duration = 6000 }: ToastProviderProps)
 }
 
 /**
- * The duration override for a tone, as props to spread.
+ * The duration override for a toast, as props to spread.
  *
  * Spread rather than passed as `duration={...}` because
  * `exactOptionalPropertyTypes` refuses an explicit `undefined` for an
  * optional prop - and omitting it is exactly what "use the provider default"
  * has to mean.
  */
-function durationFor(tone: ToastTone): { duration?: number } {
-  const duration = TONE_DURATION[tone];
+function durationFor(toast: ToastRecord): { duration?: number } {
+  const tone = TONE_DURATION[toast.tone];
+  // The longer of the two, so an actionable error is not shortened to the
+  // action floor and an actionable message is not cut to the tone default.
+  const duration = toast.action === undefined ? tone : Math.max(tone ?? 0, ACTION_DURATION);
   return duration === undefined ? {} : { duration };
 }
 

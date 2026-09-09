@@ -824,14 +824,329 @@ focus, because a button does nothing with an arrow key. Ports are excluded by
 name — they are `<button>`s with `tabIndex={-1}` that a click still focuses,
 and yielding `Enter` to one would mean `Enter` did nothing there.
 
-**What a touch user still cannot reach.** The keyboard map covers undo, redo,
-fit, the palette, delete, duplicate, select-all and the reference overlay.
-Undo, redo, fit, the palette and the overlay all have visible controls.
-**Delete, Duplicate and Select-all do not** — on a phone you can add nodes to a
-canvas and never remove one. That is a larger hole than the connect flow was,
-and it is deliberately not fixed here: Delete needs somewhere to live that is
-not a popup inside a transformed plane, and a destructive control needs its
-undo to be more visible than the third item of an overflow menu.
+**What a touch user could not reach, when this was written.** The keyboard map
+covers undo, redo, fit, the palette, delete, duplicate, select-all and the
+reference overlay. Undo, redo, fit, the palette and the overlay all have
+visible controls. Delete, Duplicate and Select-all did not — on a phone you
+could add nodes to a canvas and never remove one, which was a larger hole than
+the connect flow had been. It was left deliberately, on the grounds that Delete
+needed somewhere to live that is not a popup inside a transformed plane, and
+that a destructive control needs its undo more visible than the third item of
+an overflow menu. Both points stood, and both are answered in
+[the section below](#deleting-things-without-a-keyboard).
+
+### Deleting things without a keyboard
+
+The gap above got worse the moment connecting became tappable, and the
+combination is what made it blocking rather than merely incomplete:
+`checkConnection` refuses a second wire into an occupied input and says to
+remove the existing one first, and removing a wire needed `Delete`. So a finger
+could wire two tools together in three taps and then be permanently unable to
+rewire them.
+
+**Wires were worse than that, and not only on touch.** Nothing on the keyboard
+has ever put an edge in the selection — `Ctrl+A` selects nodes, `Shift+Enter`
+toggles a node, and the wire layer's own `pointerdown` is the only thing in the
+application that writes `selection.edges`. So `Delete` could only ever remove a
+wire a POINTER had selected by hitting a 1.5px curve. Wire removal was
+pointer-only at every input type, and that had not been noticed because the
+touch audit was looking for missing buttons rather than for missing selections.
+
+#### Where the affordance lives: a selection bar in the canvas chrome
+
+Whatever is selected draws a bar of controls — the count, `Select all`,
+`Duplicate`, `Delete` — under the toolbar, outside the pan-and-zoom plane. It
+is present at every pointer type, for the same reason the node's `Connect`
+button is: `pointer: coarse` is not "no keyboard", and Delete was
+undiscoverable for a mouse user who has never opened the shortcut list either.
+
+**Not on the node.** The node's own action strip was the obvious place, and it
+cannot work: a wire has no box to hang a control off at all, so half the
+problem would be left exactly where it was. The node strip also already carries
+`Connect`, and a destructive control one tap from the thing people tap to
+select is the wrong neighbour.
+
+**Not a popup anchored to either.** This is the constraint the previous section
+recorded and it has not changed: a panel hung off a node lives inside the
+plane, scales with it, and is clipped by the root — the reason the toolbar's own
+overflow menu is anchored to the _bar_ rather than to its trigger. A node is
+smaller than that trigger and can be anywhere.
+
+**Not the overflow menu.** Geometrically fine, since it is anchored to the bar.
+Rejected twice over: that menu only exists below 640px, so anything put in it
+is a control that does not exist on a desktop — the note above `overflowItems`
+is explicit that the two layouts must run the same actions — and a destructive
+action behind a tap on a control labelled `More` is precisely the undo-hiding
+the earlier note refused.
+
+**Not a long-press.** No discoverable affordance, and it collides with the
+gesture a one-finger press already starts, which is a pan.
+
+**At the top, under the toolbar, and it was measured there rather than
+assumed.** The bar was built at the bottom first, above the readout, which is
+better for a thumb. On a phone the inspector is a **sheet** covering the bottom
+60% of the canvas root, and the root spans the whole workspace behind it — so
+the bar and the readout both sat underneath it, present in the DOM, 300px below
+the sheet's top edge, invisible and unpressable. For the readout that is an old
+and survivable cost. For the only control that can delete anything it is the
+whole feature gone in the state a phone user is most likely to be in, since the
+inspector's open/closed state is remembered across sessions. `checkTouch` now
+measures the bar against the sheet's top edge.
+
+The top has a second argument once you are there. The bar appears and
+disappears with the selection, and at the bottom it materialises next to the
+thumb that is panning — a destructive control arriving under a moving finger. Up
+here it appears inside the band already reserved for chrome.
+
+Both bars are children of one absolutely positioned column rather than
+positioning themselves, because "below the toolbar" is a relationship the
+layout should hold: the toolbar is about 40px tall on a desktop and about 52px
+on a coarse pointer, where every control grows to 44px, so any `calc()` would
+be right at one pointer type and wrong at the other. The column declines
+pointer events and each bar takes them back, so a full-width transparent box
+across the top does not eat every pan that starts there.
+
+**Only while something is selected.** Permanent chrome for an action that is
+meaningless most of the time is chrome everybody pays for and nobody reads —
+and a Delete button that is usually disabled is worse, because a disabled
+destructive control still has to be understood before it can be ignored.
+
+#### How a wire is selected by a finger
+
+Three things had to be true, and only the first was.
+
+1. **Something has to receive the press.** Every wire already had an invisible
+   companion path with a fat stroke, which is what a pointer actually hits.
+
+2. **That band has to be finger-sized on screen, at every zoom.** It was
+   `stroke-width: 14` in plane units, so it was 14px at 100%, 3.5px at the
+   minimum zoom and 35px at the maximum — a target whose size is a function of
+   the zoom is the wrong size almost always, and it was smallest exactly when a
+   wire is hardest to aim at: zoomed out, looking at a whole graph. It is now
+   24px on a fine pointer and 44px on a coarse one (2.5.8 and 2.5.5), with the
+   zoom divided back out.
+
+   **`vector-effect: non-scaling-stroke` is the property for this and it does
+   not work.** It is exactly what the property is for, it computes, and it
+   governs painting only: hit-testing walks the untransformed stroke geometry.
+   Measured rather than assumed — toggling the property off left the hit region
+   byte-identical at 0.5× and at 1×. It would have shipped looking correct,
+   because the one thing it does change is invisible on a transparent stroke.
+   So `--canvas-zoom` is written on the plane beside its transform and the
+   stylesheet divides by it. The pointer rule stays in CSS and the zoom comes
+   from JavaScript, which is the one split where neither side keeps a copy of
+   the other's number.
+
+   **And the width needs its unit.** `stroke-width` takes a bare number as a
+   presentation attribute, so `24` and `24px` read as interchangeable — but the
+   division happens in `calc()`, and `calc(24 / 0.36)` is a unitless number in
+   a length context. Chromium accepts that and resolves it to pixels. Gecko and
+   WebKit reject the declaration outright and fall back to the initial
+   `stroke-width: 1`, which is a **one-pixel** grab band on a wire. Both
+   engines reported the hit region as 0px wide at 36% zoom on a build that was
+   correct in Chromium, and the visible symptom would have been "tapping wires
+   doesn't work on my phone" from the two engines every phone actually runs.
+
+3. **The right wire has to win.** A 44px band immediately creates the problem
+   it solved: bands that wide overlap wherever wires converge, and they
+   converge hardest at a node's inputs, which sit on a 24px pitch. Hit-testing
+   hands such a press to whichever band paints last — document order, which is
+   to say an arbitrary wire that changes when an unrelated one is added. The
+   band now decides only WHETHER a press is a wire press; `nearestEdge` decides
+   which, by flattening each wire's cubic and taking the closest. That is the
+   rule a person is applying when they aim, it is a total order so the same tap
+   always selects the same wire, and it is pure arithmetic, so
+   `wireHit.test.ts` can hold it to a graph with the edge order reversed.
+
+   The sample count is measured rather than guessed. A chord always cuts inside
+   the curve, so the error is one-sided and a wire can only ever measure as
+   slightly further away than it is. A property test walking points off the
+   drawn path across the whole addressable plane failed at 24 segments with a
+   worst case of 1.0px, which is small but is not the "well under a pixel" the
+   first version of the comment claimed; it is 48 now, and this runs once per
+   press rather than once per frame.
+
+   **And the press has to be converted to a world point by the one converter
+   that already exists.** The first version did it inside the wire layer,
+   measuring against that layer's own `getBoundingClientRect()` — reasoning
+   that a 1×1 SVG pinned to the plane's origin with `overflow: visible` _is_
+   world (0, 0). Chromium reports it that way. Gecko and WebKit return the
+   union with the overflowing children, so the "origin" was wherever the
+   leftmost wire happened to start, and every resolved point was out by however
+   wide the graph was — with the visible symptom being that a tap aimed at a
+   wire selected a node.
+
+   `check:browsers` caught it in both engines, which is the whole argument for
+   that gate: jsdom returns zeros for every rect, so the unit suite could not
+   have told the two approaches apart, and on the machine it was written on it
+   worked. The resolver is now supplied by the canvas, through the same
+   `screenToWorld` a node drag and a wire drop have always used. A second
+   coordinate conversion had no reason to exist.
+
+**What is still only a hairline** is the wire itself. `.wire` is 1.5px in plane
+units and `.wireSelected` 2.5px, so at the minimum zoom a selected wire is
+under a pixel wide. The selection bar appearing and saying `1 wire selected` is
+the feedback that carries the state; making the visible stroke screen-constant
+too would change the weight of every wire at every zoom, which is a visual
+decision and not this one.
+
+#### How a deletion is reversed
+
+Undo already existed, has a command history behind it, and has a visible
+button — on a wide screen. Below 640px the toolbar collapses and Undo moves
+into the overflow menu, so on the device where the only way to delete is a tap,
+the only way to take it back was three taps behind a control whose label says
+nothing about deletion.
+
+**The notification that reports the deletion carries the Undo.** `Deleted
+Base64` with an `Undo` beside it, which is why `ToastInput` grew an optional
+action. A destructive action reachable by finger needs its reversal offered at
+the moment it happens rather than discoverable later, and a toast is the one
+surface that is already about "this just happened".
+
+Three details are load-bearing:
+
+- **A single node is named by its tool.** `Deleted 1 item` is true and useless:
+  on a canvas of six nodes the question after a tap that deleted something is
+  which one, and the answer has to be beside the offer for the offer to mean
+  anything. Everything else is counted, because six tool names is a paragraph.
+- **A toast with a control stays up for twelve seconds, not six.** Six is fine
+  for a message — it is read or it is not. An offer has to be noticed,
+  understood as reversible, and reached, and on a phone reaching it means
+  moving a thumb to a control that was not there a moment ago. A toast that
+  expires mid-reach teaches that the escape hatch is unreliable.
+- **The number of history steps to undo is measured, not assumed.**
+  `deleteSelection` pushes one command for wires and one for nodes, so a
+  selection holding both is two entries and a single `undo()` would restore
+  half of it and call that recovery. No gesture can currently select both at
+  once — selecting a wire clears the nodes — which is exactly why it is worth
+  handling: the guarantee lives in another file's selection rules, and "the
+  undo button silently under-restores" is not a defect worth leaving armed
+  behind one.
+
+**No confirmation dialog.** A modal per deletion on a canvas people rearrange
+constantly is a tax on the common case to protect the rare one, and it does not
+even protect it well: a confirmation is dismissed reflexively, whereas an undo
+is used deliberately. The [tool runner's own note on destructive
+controls](#the-decisions-and-why) takes the same line.
+
+#### Duplicate, Select all, and add-to-selection
+
+**Duplicate falls out.** It acts on the node selection, which is what the bar
+is about, and it is not destructive, so it needs nothing beyond the toolbar's
+Undo.
+
+**Select all is in the bar, not the toolbar.** It is the one action there that
+is not strictly about the current selection, and the alternatives are worse:
+the overflow menu does not exist above 640px, and a seventh permanent toolbar
+button is what pushed that bar off a 320px screen once already. The
+precondition — something must be selected before the bar exists — costs one tap
+and is not a real barrier, since nobody wants "select every node" before
+touching a node. What it buys is the only way a finger can clear a canvas that
+is not N nodes × two taps. It is offered only when it would change something:
+hidden once everything is selected, and hidden while a wire is selected, where
+it would silently replace the selection with something unrelated.
+
+**Add-to-selection is deliberately still keyboard-only.** `Shift`+tap has no
+touch equivalent that is not a mode, and a mode on a canvas whose primary
+gesture is a pan is a gesture that will be entered by accident. The actions
+that matter are reachable per-node and, for "everything", through Select all,
+so the marginal value is low against the cost. This is the one gap in this
+section left open on purpose.
+
+#### The route with no aiming in it
+
+A wired input port in the inspector printed `Wired from Base64 · Output.` and
+stopped there. It now carries a **`Disconnect`** button, whose accessible name
+names both ends, because "Disconnect" read out of a list of controls on a node
+with two occupied inputs does not say which.
+
+This is the answer to the specific sentence that made the gap blocking: the
+refusal says to remove the existing wire first, and this is that removal, at
+the one place in the application that already knows which wire is in the way,
+with no curve to hit. It is also the only route to removing a wire that a
+keyboard can reach at all.
+
+It does **not** go through `deleteSelection`. Doing so would mean selecting the
+wire first, which clears the node selection — and the node selection is what
+the panel is showing, so the panel would empty itself as a side effect of a
+button inside it. `removeEdges` pushes exactly one command, so its undo offer
+is one step by construction.
+
+#### One function, three entrances
+
+`Delete`/`Backspace` on the canvas, the bar's `Delete`, and the inspector's
+`Disconnect` all end in the same place, and `Ctrl+D`/`Ctrl+A` share a function
+with their buttons. `deletion.test.tsx` drives the key and the button over one
+graph and compares the document each leaves behind, and the same for duplicate
+and select-all. That is the shape [`firstRefusedEdge`](#checkconnection-now-guards-the-two-routes-from-outside-this-session)
+and the connect flow's two entrances already have, for the reason this
+repository keeps rediscovering: two routes to one graph that agree today are
+two routes that disagree later.
+
+Focus after a deletion moves to the canvas root **synchronously inside the
+handler**, and needs no layout effect: the store write is batched, so the bar is
+still mounted and the root still exists to aim at, and the button is unmounted
+from under a focus that has already left it. That is different from the three
+focus moves in `Canvas.tsx` that have to wait for a node or a panel to be
+RENDERED before they can aim at it — and those are why the deferral is worth
+naming rather than doing quietly.
+
+#### What a first-time phone user still cannot do
+
+Recorded rather than implied, because this is the second pass over the same
+question and the first one's honest list is what made this one possible.
+
+- **Add-to-selection**, as above.
+- **Read a node's full title.** A node is 224px and its title truncates with an
+  ellipsis; `C` opens a chooser that lists PORT labels in full, and the
+  inspector's header shows the tool name, so the information exists — but there
+  is no tooltip on tap, by the same reasoning `PortButton` records.
+- **Nudge a node by a precise amount.** Arrow keys move by 8px or 64px on the
+  grid; a finger drag snaps to the grid but cannot be told "one step left".
+- **Reach the wire layer at all from the keyboard.** `Disconnect` covers
+  removal, but there is still no keystroke that SELECTS a wire, so a keyboard
+  user cannot ask "what is this wire" the way a pointer user can.
+- **See a node whose bottom edge is off screen along with its action strip.**
+  The root clips, so the `Connect` button below a node near the bottom edge is
+  cut off. Unchanged, and `checkTouch` measures it after a Fit, which is where
+  a graph actually sits.
+- **Escape the on-screen keyboard's effect on the sheet** beyond what
+  `keyboardInset` already does.
+
+### The travelling dash that had never been drawn
+
+Found while adding the reverse half of `cssModules.test.ts`, and worth writing
+down because of what kind of bug it is.
+
+`.wireActive` — a single dash travelling along a wire while data moves through
+it, with a reduced-motion variant and a forced-colors variant — had its class
+written, its condition computed in `Canvas.tsx` on every render, and the set of
+active edges passed to `Wires` as a declared, typed prop. `Wires` never
+destructured it. The animation had therefore never once been on an element.
+
+Nothing failed. The prop was supplied and type-checked, `activeEdges` was
+derived correctly from the live run states, and a class nobody names produces
+no error and no visible difference from the same wire not moving. This is the
+inverse of the rule this repository already enforces — styling that implies
+behaviour the application does not have — and it is harder to notice, because
+the thing that is missing was never seen working.
+
+`cssModules.test.ts` has asked since the `.tokens` incident whether every class
+a component NAMES is declared. It now also asks whether every class a
+stylesheet DECLARES is named, which is the question that found this. Adding it
+turned up four dead blocks in the canvas alone and dead rules in four more
+stylesheets, including a `.placeholder` meant to hold an image panel open while
+its object URL is created — so `ImageView` really does jump by 420px on the
+frame after a run finishes, which is now a known defect rather than a comment
+describing behaviour that does not exist.
+
+The reverse check cannot be asked of a stylesheet whose importers use a
+computed key (`styles[variant]`, deliberate in four components), so those are
+exempt by construction rather than by a list somebody has to maintain. The
+reader was also generalised to any binding name: `Canvas.tsx` imports the
+inspector's stylesheet as `inspectorStyles`, and a checker that only knew the
+name `styles` had been blind to nine references in both directions.
 
 ### Announcements are a log, not a variable
 
@@ -1133,8 +1448,8 @@ three — see below. It is a layout effect now, which runs synchronously after
 the commit that mounted the panel, in the same task as the keystroke: there is
 no window to lose and no frame to guess at.
 
-**And the palette had the same defect, which is why this section says the rule
-rather than the case.** Choosing a tool moved focus onto the new node one
+**And three more places had the same defect, which is why this section says the
+rule rather than the case.** Choosing a tool moved focus onto the new node one
 animation frame later, for the same defensible reason — the node is added to
 the store, so it is not in the DOM when the handler returns — and with the same
 consequence: add a tool, move to another node, and the late frame takes that
@@ -1156,6 +1471,23 @@ request carries a sequence number as well as the id, because adding the same
 tool again after an undo would otherwise be a changed nothing and no effect at
 all.
 
+**The remaining two were the dialogs' own focus-on-mount**, which had not been
+looked at because they are one line each and obviously correct: `CommandDialog`
+focuses its search field and `ShortcutsOverlay` focuses its close button, both
+from a passive `useEffect`. Same defect, and the palette's is the one that
+bites. It is opened by `K`, and `K` is followed immediately by what the user
+came to type — so every character struck before the browser paints goes to
+whatever had focus, which is the canvas root: a `role="application"` region
+that swallows single letters and shows nothing for them. The search box then
+opens already missing the front of the word, with no error anywhere, because
+text landing on a region that claims it is not an error. Both are layout
+effects now. That makes five corrections of one shape in this feature, and the
+rule is worth stating plainly: **a focus move that answers a keystroke belongs
+in the task the keystroke started.** The only reason any of them needs to wait
+at all is a target that does not exist yet, and a layout effect is exactly the
+"after the commit that created it, before the task ends" the deferral was
+reaching for. A `requestAnimationFrame` is never that.
+
 Where each half is asserted follows from what each half is. That focus lands on
 the right element, and lands **before anything else can run**, is a scheduling
 question and is asserted in the unit suite, driven with `fireEvent` so there is
@@ -1163,6 +1495,13 @@ no `await` for a late move to catch up inside. That the element is really
 mounted by the time the effect looks for it is a question about React's commit
 in an engine, and `check:browsers` asks it — a miss there would leave focus on
 the canvas root with nothing on screen to say so.
+
+A wired input port carries a **`Disconnect`** button, which is the only route
+to removing a wire that a keyboard can reach: nothing on the keyboard puts an
+edge in the selection, so `Delete` could only ever remove a wire a pointer had
+selected off the plane. See
+[the deletion section](#the-route-with-no-aiming-in-it) for the rest of that,
+including why it does not go through the selection.
 
 The rail's size handle is the ARIA window-splitter pattern: a **focusable**
 separator with a value, arrow keys that resize by one grid step, and Home/End

@@ -533,6 +533,25 @@ async function inspectFirstNode(page) {
   await page.waitForTimeout(300);
 }
 
+/**
+ * How many wires are on the canvas, counted by EDGE ID.
+ *
+ * Not by path: every port draws its glyph as SVG inside the plane, so counting
+ * paths reported ten on a canvas with no wires at all. `data-edge-id` is the
+ * wire layer's own hook, and each wire draws two paths under one id - hence the
+ * set.
+ */
+async function countWires(page) {
+  return page.evaluate(
+    () =>
+      new Set(
+        [...document.querySelectorAll('[data-edge-id]')].map(
+          (element) => element.getAttribute('data-edge-id') ?? '',
+        ),
+      ).size,
+  );
+}
+
 async function setInspector(page, open) {
   const panel = page.getByTestId('node-inspector');
   const showing = (await panel.count()) > 0;
@@ -2419,6 +2438,28 @@ async function checkAxe(browser, label) {
     check(label, 'the populated canvas is clean', populated.length === 0, describe(populated));
 
     /*
+     * AND WITH A SELECTION, which is the only state the selection bar exists
+     * in - a `role="group"` of three controls, one of them the application's
+     * single `danger` button, that no scan above can reach because chrome that
+     * appears with the selection does not exist on an idle canvas.
+     *
+     * `color-contrast` is the rule this really buys, and it is the one jsdom
+     * cannot run at all: the bar's count line is `--pb-ink-secondary` on
+     * `--pb-surface-raised` and the Delete button is a red on the same ground,
+     * and both are theme-dependent. The unit suite asserts the structure; only
+     * this can say the words are legible.
+     */
+    await page.locator('[data-node-id]').first().click();
+    await page.getByTestId('canvas-selection-bar').waitFor({ timeout: 5_000 });
+    const withSelection = await scan();
+    check(
+      label,
+      'the canvas with a selection is clean',
+      withSelection.length === 0,
+      describe(withSelection),
+    );
+
+    /*
      * And with the inspector open on a node, which is a landmark, three
      * headings, a form and an output view that none of the scans above reach.
      *
@@ -3399,6 +3440,388 @@ async function checkTouch(engine, label) {
       tappedPartner && wires === 1,
       `from "${(firstPort ?? '').trim().slice(0, 40)}", ${String(wires)} wire(s)`,
     );
+
+    /* -- Deleting a node and a wire with nothing but a finger ------------- */
+
+    /*
+     * THE OTHER HALF OF THE TOUCH MODEL, AND THE HALF THAT WAS BLOCKING.
+     *
+     * Delete, Duplicate and Select-all were keyboard-only, and once connecting
+     * became tappable that stopped being merely incomplete: an occupied input
+     * refuses a second wire and says to remove the existing one first, so a
+     * finger could build a graph in three taps and be unable to rewire it.
+     *
+     * Every claim below needs a real engine:
+     *
+     *   A wire is a curve, not a box. Its grab band is a fat transparent
+     *   stroke inside the plane's `scale()`, and `vector-effect:
+     *   non-scaling-stroke` - which is exactly the property for keeping that
+     *   band a constant size on screen - turns out to govern PAINTING only:
+     *   hit-testing walks the untransformed geometry. So the zoom is divided
+     *   out in CSS instead, and whether the band really is finger-sized at 36%
+     *   AND at 196% is a question only a hit test in a real engine can answer.
+     *   It found two things a perfect Chromium build was hiding: a resolved
+     *   press measured against an `overflow: visible` SVG root's own client
+     *   rect, which Gecko and WebKit compute differently, and a `calc()`
+     *   dividing a unitless number in a length context, which both of them
+     *   reject outright - leaving `stroke-width: 1`, a one-pixel target.
+     *
+     *   The selection bar is chrome inside a root that clips, on a screen
+     *   where the inspector is a SHEET covering the bottom 60% of that root.
+     *   The bar was built at the bottom first and measured there: it sat
+     *   underneath the sheet, present in the DOM and unreachable, in the state
+     *   a phone is most likely to be in since the inspector is remembered.
+     *
+     *   And the taps are real taps. The harness used to press rows with
+     *   `locator.click()`, which is a mouse even in a `hasTouch` context, and
+     *   that hid two real touch bugs - so everything here goes through
+     *   `page.touchscreen`, where the engine decides whether a click follows.
+     */
+
+    /*
+     * THE TWO NODES ARE PULLED APART FIRST, and the first version of this
+     * block did not do it - which cost two of the four checks below and taught
+     * something worth writing down.
+     *
+     * `freeSpot` cascades a new node 32px down and right of the last, so the
+     * palette leaves two nodes almost on top of each other. The wire between
+     * them is then a few dozen pixels long and runs UNDER both of them, since
+     * the wire layer paints beneath the nodes. Every measurement here read the
+     * node instead: `elementFromPoint` at the wire's midpoint returned a node,
+     * so the grab band measured as absent, the tap selected a node, and the
+     * hunt for a wired input kept landing on whichever node paints on top.
+     * None of that was a defect in the application.
+     *
+     * Moved with the keyboard rather than a finger, deliberately. This is
+     * fixture setup, not a claim: `Shift`+arrow is exactly 64px, so the
+     * separation is deterministic and cannot finish with a node off the edge
+     * of a 390px screen the way a drag to a fixed coordinate can. What is
+     * under test below is the tap, and every tap below is a real one.
+     */
+    await page.locator('[data-node-id]').last().focus();
+    for (let step = 0; step < 8; step += 1) await page.keyboard.press('Shift+ArrowRight');
+    await page.keyboard.press('Shift+ArrowDown');
+    await page.waitForTimeout(300);
+
+    /**
+     * A world point on the plane, in viewport coordinates.
+     *
+     * FROM THE ROOT'S RECT AND THE PLANE'S TRANSFORM, not from the wire
+     * layer's own client rect - which was the first version and is the bug
+     * this whole block found in the application itself. That layer is a 1x1
+     * `<svg>` pinned to the plane's origin with `overflow: visible`, so its
+     * rect looks like world (0, 0): Chromium reports it that way, and Gecko
+     * and WebKit report the union with the overflowing wires instead. The
+     * plane's transform is the coordinate system, and reading it is the one
+     * answer all three agree on.
+     */
+    const wireMidpoint = () =>
+      page.evaluate(() => {
+        const path = document.querySelector('[data-edge-id] path');
+        const plane = document.querySelector('[data-testid="canvas-plane"]');
+        const root = document.querySelector('[data-testid="canvas-root"]');
+        if (!path || !plane || !root) return null;
+
+        const transform = plane.style.transform;
+        const zoom = Number(/scale\(([\d.]+)\)/.exec(transform)?.[1] ?? '1');
+        const pan = /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(transform);
+        const panX = Number(pan?.[1] ?? '0');
+        const panY = Number(pan?.[2] ?? '0');
+
+        const mid = path.getPointAtLength(path.getTotalLength() / 2);
+        const rect = root.getBoundingClientRect();
+        return {
+          x: rect.left + panX + mid.x * zoom,
+          y: rect.top + panY + mid.y * zoom,
+          zoom,
+        };
+      });
+
+    /**
+     * How far from the wire's centreline a press still lands on the wire, in
+     * SCREEN pixels, measured by hit-testing the real document.
+     *
+     * `elementFromPoint` rather than a computed `stroke-width`, deliberately.
+     * The reason this check exists is that the declared width and the hittable
+     * width came apart: `vector-effect: non-scaling-stroke` is exactly the
+     * property for holding a stroke at a constant screen size, it computes,
+     * and it governs painting only - hit-testing walks the untransformed
+     * geometry. Only the hit test knows.
+     *
+     * `-1` means the centreline itself was not on the wire, which is a broken
+     * fixture rather than a narrow band, and is reported as such.
+     */
+    const grabBandHalfWidth = async () => {
+      const centre = await wireMidpoint();
+      if (!centre) return -1;
+      return page.evaluate(({ x, y }) => {
+        const onWire = (dy) =>
+          Boolean(document.elementFromPoint(x, y + dy)?.closest?.('[data-edge-id]'));
+        if (!onWire(0)) return -1;
+
+        // Downward only: the two sides are symmetric, and going both ways
+        // doubles the chance of running into a node that overlaps on one.
+        let reach = 0;
+        while (reach < 120 && onWire(reach + 1)) reach += 1;
+        return reach;
+      }, centre);
+    };
+
+    /*
+     * FITTED FIRST, which is where a phone actually sits: two 224px nodes do
+     * not both fit on a 390px screen, so the zoom is well under 1 for most of
+     * the time anybody is looking at a graph. It is also the zoom at which the
+     * old band was narrowest - it was declared in plane units, so 44px became
+     * 17px at 40% - and therefore the case worth measuring first.
+     */
+    await page.getByRole('button', { name: 'Fit' }).click();
+    await page.waitForTimeout(350);
+
+    const fitted = await wireMidpoint();
+    const bandWhenZoomedOut = await grabBandHalfWidth();
+    check(
+      label,
+      'a wire is finger-sized to press when the canvas is zoomed out',
+      (fitted?.zoom ?? 1) < 0.9 && bandWhenZoomedOut * 2 >= 44,
+      `${String(bandWhenZoomedOut * 2)}px across at ${String(Math.round((fitted?.zoom ?? 1) * 100))}%`,
+    );
+
+    /*
+     * AND ZOOMED IN, about the wire itself.
+     *
+     * Two fingers spreading around the midpoint, which keeps that point where
+     * it is by construction: `zoomAt` solves for "the world point under here
+     * must not move", so the thing being measured stays under the measurement.
+     * A band that scaled with the plane would be measured as far too WIDE
+     * here, which is the other half of the same defect and the half that never
+     * looks broken.
+     */
+    if (fitted) {
+      const cx = Math.round(fitted.x);
+      const cy = Math.round(fitted.y);
+      await touch([
+        ['pointerdown', 1, cx - 20, cy],
+        ['pointerdown', 2, cx + 20, cy],
+        ['pointermove', 1, cx - 60, cy],
+        ['pointermove', 2, cx + 60, cy],
+        ['pointermove', 1, cx - 110, cy],
+        ['pointermove', 2, cx + 110, cy],
+        ['pointerup', 1, cx - 110, cy],
+        ['pointerup', 2, cx + 110, cy],
+      ]);
+      await page.waitForTimeout(300);
+    }
+
+    const zoomedIn = await wireMidpoint();
+    const bandWhenZoomedIn = await grabBandHalfWidth();
+    check(
+      label,
+      'the wire grab band is the same size on screen at a very different zoom',
+      (zoomedIn?.zoom ?? 0) > (fitted?.zoom ?? 1) * 1.5 && bandWhenZoomedIn * 2 >= 44,
+      `${String(bandWhenZoomedIn * 2)}px across at ${String(Math.round((zoomedIn?.zoom ?? 0) * 100))}%, against ${String(bandWhenZoomedOut * 2)}px at ${String(Math.round((fitted?.zoom ?? 1) * 100))}%`,
+    );
+
+    await page.getByRole('button', { name: 'Fit' }).click();
+    await page.waitForTimeout(350);
+
+    /* -- A real tap on the wire ------------------------------------------- */
+
+    const midpoint = await wireMidpoint();
+    if (midpoint) {
+      await page.touchscreen.tap(Math.round(midpoint.x), Math.round(midpoint.y));
+      await page.waitForTimeout(300);
+    }
+
+    const bar = page.getByTestId('canvas-selection-bar');
+    /*
+     * READ ONCE AND REPORTED, so a failure says what WAS selected rather than
+     * only that a wire was not.
+     *
+     * That detail earned its place twice. It reported `HASH SELECTED` for two
+     * different reasons in two runs: first because the application resolved
+     * the press against the wire layer's own client rect, which Gecko and
+     * WebKit measure differently from Chromium, and then because this fixture
+     * left two nodes 32px apart with the wire running underneath them. A bare
+     * pass/fail would have looked like the same failure both times.
+     */
+    const barText = (await bar.count()) > 0 ? (await bar.innerText()).replace(/\s+/g, ' ') : '';
+    const wireSelected = /1 wire/i.test(barText);
+    check(
+      label,
+      'a finger can select a wire',
+      midpoint !== null && wireSelected,
+      midpoint === null ? 'no wire midpoint' : `selection bar says "${barText}"`,
+    );
+
+    /*
+     * ON SCREEN, FINGER-SIZED, AND NOT BEHIND THE SHEET.
+     *
+     * The last of those is the one that moved this bar from the bottom of the
+     * canvas to the top. Measured with the inspector OPEN, because that is the
+     * state where it was unreachable and the state a returning phone user
+     * arrives in.
+     */
+    const measureBar = () =>
+      page.evaluate(() => {
+        const element = document.querySelector('[data-testid="canvas-selection-bar"]');
+        if (!element) return null;
+        const box = element.getBoundingClientRect();
+        const panel = document.querySelector('[data-testid="node-inspector"]');
+        const sheet = panel?.getBoundingClientRect() ?? null;
+        return {
+          box: { x: box.x, y: box.y, right: box.right, bottom: box.bottom },
+          clipped: element.scrollWidth > element.clientWidth + 1,
+          shortest: Math.min(
+            ...[...element.querySelectorAll('button')].map(
+              (button) => button.getBoundingClientRect().height,
+            ),
+          ),
+          coveredBySheet: sheet !== null && box.bottom > sheet.top,
+        };
+      });
+
+    const barBox = await measureBar();
+    const frameSize = page.viewportSize();
+    check(
+      label,
+      'the selection bar is inside the canvas and finger-sized',
+      barBox !== null &&
+        !barBox.clipped &&
+        barBox.shortest >= 44 &&
+        barBox.box.x >= 0 &&
+        barBox.box.right <= (frameSize?.width ?? 0) + 1 &&
+        barBox.box.y >= 0 &&
+        barBox.box.bottom <= (frameSize?.height ?? 0) + 1,
+      barBox
+        ? `${String(Math.round(barBox.box.x))},${String(Math.round(barBox.box.y))} to ${String(Math.round(barBox.box.right))},${String(Math.round(barBox.box.bottom))}, shortest control ${String(Math.round(barBox.shortest))}px, clipped=${String(barBox.clipped)}`
+        : 'no bar',
+    );
+
+    await setInspector(page, true);
+    await page.waitForTimeout(400);
+    const barUnderSheet = await measureBar();
+    check(
+      label,
+      'the selection bar is not buried under the inspector sheet',
+      barUnderSheet !== null && !barUnderSheet.coveredBySheet,
+      barUnderSheet
+        ? `bar bottom ${String(Math.round(barUnderSheet.box.bottom))}, covered=${String(barUnderSheet.coveredBySheet)}`
+        : 'no bar',
+    );
+    await setInspector(page, false);
+    await page.waitForTimeout(300);
+
+    /* -- Deleting it, and taking it back, by tap alone -------------------- */
+
+    const nodesBeforeWireDelete = await page.locator('[data-node-id]').count();
+    const tappedDelete =
+      wireSelected && (await tapCentre(page.getByRole('button', { name: /^Delete / })));
+    await page.waitForTimeout(400);
+
+    const wiresAfterDelete = await countWires(page);
+    const nodesAfterWireDelete = await page.locator('[data-node-id]').count();
+    check(
+      label,
+      'a finger can delete the wire it selected, and only the wire',
+      tappedDelete && wiresAfterDelete === 0 && nodesAfterWireDelete === nodesBeforeWireDelete,
+      `tapped=${String(tappedDelete)}, ${String(wiresAfterDelete)} wire(s) left, ${String(nodesAfterWireDelete)}/${String(nodesBeforeWireDelete)} node(s)`,
+    );
+
+    /*
+     * THE UNDO, IN THE NOTIFICATION.
+     *
+     * On this viewport the toolbar has collapsed, so the toolbar's own Undo is
+     * behind the overflow menu - which is why a destructive action reachable by
+     * finger reports itself with its reversal attached. Tapped, not clicked:
+     * the whole point is that a thumb can reach it.
+     */
+    const undo = page
+      .getByRole('region', { name: /notifications/i })
+      .getByRole('button', { name: 'Undo' });
+    const tappedUndo = (await undo.count()) > 0 && (await tapCentre(undo));
+    await page.waitForTimeout(500);
+
+    const wiresAfterUndo = await countWires(page);
+    check(
+      label,
+      'the notification offers an Undo a finger can reach, and it works',
+      tappedUndo && wiresAfterUndo === 1,
+      `tapped=${String(tappedUndo)}, ${String(wiresAfterUndo)} wire(s) back`,
+    );
+
+    /* -- And a node, which is the gap that was reported ------------------- */
+
+    await tapCentre(page.locator('[data-node-id]').first());
+    await page.waitForTimeout(300);
+
+    const nodesBefore = await page.locator('[data-node-id]').count();
+    const tappedNodeDelete = await tapCentre(page.getByRole('button', { name: /^Delete / }));
+    await page.waitForTimeout(400);
+    const nodesAfter = await page.locator('[data-node-id]').count();
+
+    check(
+      label,
+      'a finger can delete a node, which it could not do at all before',
+      tappedNodeDelete && nodesAfter === nodesBefore - 1,
+      `${String(nodesBefore)} -> ${String(nodesAfter)} node(s)`,
+    );
+
+    /*
+     * THE INSPECTOR'S DISCONNECT, which is the route with no aiming in it and
+     * the only one a keyboard could ever reach - nothing on the keyboard puts
+     * an edge in the selection, so before this a wire could only be removed by
+     * a pointer hitting a curve.
+     */
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(500);
+    await page.getByRole('button', { name: 'Fit' }).click();
+    await page.waitForTimeout(300);
+
+    /*
+     * Asserted before the panel is opened, so a failure below says whether the
+     * wire was missing or the button was.
+     */
+    const wiresRestored = await countWires(page);
+    check(
+      label,
+      'undoing the node deletion brings its wire back with it',
+      wiresRestored === 1,
+      `${String(wiresRestored)} wire(s)`,
+    );
+
+    /*
+     * WHICHEVER NODE THE WIRE ARRIVES AT, found by asking rather than assumed.
+     * Nodes are rendered in spatial order and `freeSpot` cascades, so "the
+     * second one" is not a fact this file can rely on - the same care the
+     * Connect block above takes about which node a tap actually landed on.
+     *
+     * THE SHEET IS CLOSED FOR EACH TAP. At this width the inspector covers the
+     * bottom 60% of the canvas root, so a node after a Fit can sit underneath
+     * it and the tap aimed at that node lands on the panel instead - which is
+     * how the first version of this reported "not present" for a button that
+     * was working.
+     */
+    const disconnect = page.getByRole('button', { name: /^Disconnect / });
+    let hasDisconnect = false;
+    const nodeCount = await page.locator('[data-node-id]').count();
+    for (let index = 0; index < nodeCount; index += 1) {
+      await setInspector(page, false);
+      await tapCentre(page.locator('[data-node-id]').nth(index));
+      await page.waitForTimeout(300);
+      await setInspector(page, true);
+      if ((await disconnect.count()) > 0) {
+        hasDisconnect = true;
+        break;
+      }
+    }
+
+    check(
+      label,
+      'the inspector offers Disconnect beside a wired input',
+      hasDisconnect,
+      hasDisconnect ? ((await disconnect.first().getAttribute('aria-label')) ?? '') : 'not present',
+    );
+    await setInspector(page, false);
   } finally {
     await context.close().catch(() => {});
     // This function owns its browser: it needs Gecko prefs the shared one does

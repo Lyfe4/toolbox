@@ -54,11 +54,6 @@
   inset-block-start: var(--pb-space-lg);
 }
 
-.readout {
-  display: grid;
-  gap: var(--pb-space-2xs);
-}
-
 .readoutRow {
   display: grid;
   grid-template-columns: 1fr auto;

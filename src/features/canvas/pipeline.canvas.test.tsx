@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { ToastProvider } from '@/components/Toast';
+import { idleState, type NodeRunState } from '@/features/execution/graph';
 import { usePipelineStore } from '@/features/execution/pipelineStore';
 import type { ToolOutputs, ToolResult } from '@/features/registry/types';
 import { EMPTY_ANNOUNCEMENTS } from '@/lib/announce';
@@ -373,5 +374,72 @@ describe('building and running a pipeline from the keyboard', () => {
       expect(Object.values(states).every((state) => state.status === 'ok')).toBe(true);
       expect(Object.keys(states)).toHaveLength(3);
     });
+  });
+});
+
+/* ========================================================================== *
+ * The wire that shows data moving through it
+ * ========================================================================== */
+
+/**
+ * THE ANIMATION THAT WAS WRITTEN, COMPUTED, PASSED AND NEVER APPLIED.
+ *
+ * `Canvas.tsx` derives `activeEdges` from the live run states on every render
+ * and hands it to `Wires`. `Wires` declared the prop, typed it, and did not
+ * destructure it - so `.wireActive`, its reduced-motion variant and its
+ * forced-colors variant have never once been on an element. Nothing failed:
+ * the prop was supplied, and a class nobody names produces no error and no
+ * visible difference from the same wire not moving.
+ *
+ * It was found by the reverse half of `cssModules.test.ts`, which asks whether
+ * every class a stylesheet DECLARES is named by a component - the mirror of
+ * the check that has been asking the opposite question since a missing
+ * `.tokens` made the styleguide wider than a phone.
+ *
+ * The class, not the animation. Whether it actually travels, and whether
+ * reduced motion stops it, are questions about a compositor jsdom does not
+ * have.
+ */
+describe('a wire feeding a running node', () => {
+  const activeWires = (): readonly string[] =>
+    [...document.querySelectorAll('[data-edge-id]')]
+      .filter((group) =>
+        [...group.querySelectorAll('path')].some((path) =>
+          (path.getAttribute('class') ?? '').includes('wireActive'),
+        ),
+      )
+      .flatMap((group) => group.getAttribute('data-edge-id') ?? []);
+
+  /** A run state built from the real idle one, so no field can be forgotten. */
+  const runState = (status: NodeRunState['status']): NodeRunState => ({
+    ...idleState(),
+    status,
+  });
+
+  it('is marked while that node is running, and only that wire', () => {
+    seed(
+      [node('a', 'base64'), node('b', 'hash', 400), node('c', 'hash', 800)],
+      [wire('e1', 'a', 'b'), wire('e2', 'b', 'c')],
+    );
+    renderCanvas();
+
+    act(() => {
+      usePipelineStore.setState({
+        states: { a: runState('ok'), b: runState('running'), c: runState('idle') },
+      });
+    });
+
+    expect(activeWires()).toEqual(['e1']);
+  });
+
+  it('is not marked while nothing is running', () => {
+    seed([node('a', 'base64'), node('b', 'hash', 400)], [wire('e1', 'a', 'b')]);
+    renderCanvas();
+
+    act(() => {
+      usePipelineStore.setState({ states: { a: runState('ok'), b: runState('ok') } });
+    });
+
+    expect(activeWires()).toEqual([]);
   });
 });

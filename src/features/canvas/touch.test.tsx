@@ -456,3 +456,104 @@ describe('while a dialog is open', () => {
     expect(viewport().x).toBe(before.x + 50);
   });
 });
+
+/**
+ * SELECTING A WIRE, AND THEN REMOVING IT, WITH ONE FINGER.
+ *
+ * The hard half of the touch gap. A wire is a thin curve on a pannable,
+ * zoomable plane with no chrome of its own, and there is no keystroke that
+ * selects one at all - so before the grab band was widened and the selection
+ * bar existed, a wire could only be removed by a mouse hitting a 1.5px line.
+ *
+ * What is answerable in jsdom is the STATE MACHINE: that a touch pointerdown
+ * routed through the wire layer selects an edge rather than starting a pan,
+ * that the resulting selection is a wire and not a node, and that the bar's
+ * Delete then removes it. Whether the band is really 44px wide on a coarse
+ * pointer, and whether it stays 44px when the plane is scaled, are questions
+ * about layout - jsdom has none, and `checkTouch` measures both.
+ */
+describe('a finger on a wire', () => {
+  const WIRED = {
+    e1: {
+      id: 'e1',
+      from: { nodeId: 'a', portId: 'output' },
+      to: { nodeId: 'b', portId: 'input' },
+    },
+  } as const;
+
+  function seedWired(): void {
+    usePipelineStore.getState().reset();
+    useCanvasStore.setState({
+      graph: {
+        nodes: {
+          a: node('a', 'base64', 100, 100),
+          b: node('b', 'hash', 500, 100),
+        },
+        nodeOrder: ['a', 'b'],
+        edges: WIRED,
+        edgeOrder: ['e1'],
+        nextId: 3,
+      },
+      selection: { nodes: [], edges: [] },
+      past: [],
+      future: [],
+      pendingMove: null,
+      ...EMPTY_ANNOUNCEMENTS,
+    });
+  }
+
+  /** The invisible fat companion path, which is what a pointer can hit. */
+  const hitPath = (): Element => {
+    const found = document.querySelector('[data-edge-id] path');
+    if (!found) throw new Error('no wire in the layer');
+    return found;
+  };
+
+  it('selects the wire rather than starting a pan', () => {
+    seedWired();
+    renderCanvas();
+
+    const before = viewport();
+    pointer('pointerdown', 300, 150, { target: hitPath() });
+    pointer('pointerup', 300, 150, { target: hitPath() });
+
+    expect(useCanvasStore.getState().selection.edges).toEqual(['e1']);
+    expect(useCanvasStore.getState().selection.nodes).toEqual([]);
+    // The wire layer stops the press reaching the canvas root, so the finger
+    // that selected a wire did not also drag the plane out from under it.
+    expect(viewport()).toEqual(before);
+  });
+
+  it('reaches a Delete that removes it, with no keyboard anywhere in the gesture', async () => {
+    const user = userEvent.setup();
+    seedWired();
+    renderCanvas();
+
+    pointer('pointerdown', 300, 150, { target: hitPath() });
+    pointer('pointerup', 300, 150, { target: hitPath() });
+
+    const bar = screen.getByTestId('canvas-selection-bar');
+    await user.click(screen.getByRole('button', { name: 'Delete 1 wire' }));
+
+    expect(bar).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(useCanvasStore.getState().graph.edgeOrder).toEqual([]);
+    });
+  });
+
+  /*
+   * A press that misses every wire still pans, which is what stops the widened
+   * band from turning the canvas into a minefield of dead taps.
+   */
+  it('still pans when the finger lands on no wire at all', () => {
+    seedWired();
+    renderCanvas();
+
+    pointer('pointerdown', 200, 400);
+    pointer('pointermove', 260, 400);
+    pointer('pointerup', 260, 400);
+
+    expect(viewport().x).toBe(60);
+    expect(useCanvasStore.getState().selection.edges).toEqual([]);
+  });
+});

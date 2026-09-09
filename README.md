@@ -240,6 +240,53 @@ opened the shortcut list, and connecting was undiscoverable for the second
 group too. The reasoning, and what was rejected, is in
 [architecture.md](docs/architecture.md#one-flow-two-entrances).
 
+### Without a keyboard at all
+
+The keyboard path above is complete. The pointer path was not, and the gap was
+in one direction only: **everything that removes something was keyboard-only.**
+`Delete`, `Ctrl+D` and `Ctrl+A` had no visible controls, so on a phone you
+could add nodes to a canvas and never remove one — and once connecting became
+tappable that stopped being merely incomplete, because an occupied input
+refuses a second wire and tells you to remove the existing one first. Three
+taps to build a graph, and no way to rewire it.
+
+**Whatever is selected now draws a bar of controls** under the toolbar:
+`Select all`, `Duplicate` and `Delete`, with the selection named beside them.
+It is canvas chrome rather than anything anchored to the selection, because a
+panel hung off a node lives inside the pan-and-zoom plane — it scales with the
+plane and the root clips it — and a wire has no box to hang anything off at all.
+It is at the **top** because on a phone the inspector is a sheet across the
+bottom 60% of the canvas, and the bar was measured underneath it before it moved.
+
+**A wire is selected by tapping it.** The grab band around each wire is 24px
+wide on a mouse and 44px under a finger, and it stays that size at every zoom —
+it used to be declared in plane units, so it was 3.5px zoomed out, which is
+exactly when a wire is hardest to aim at. Where two wires run close together
+the **nearest** one wins rather than whichever the browser painted last: a
+node's inputs are 24px apart, so finger-sized bands overlap there by
+construction, and paint order is an arbitrary answer that changes when an
+unrelated wire is added.
+
+**A deletion offers its own undo.** `Deleted Base64`, with an `Undo` beside it
+in the notification. Undo has existed since the canvas had a history, but below
+640px the toolbar collapses and it moves into an overflow menu — so on the one
+device where deleting is a tap, reversing it was three taps behind a control
+whose label says nothing about deletion.
+
+**And a wired input carries `Disconnect` in the inspector**, which is the route
+with no aiming in it and the only one a keyboard can reach: nothing on the
+keyboard has ever put a wire in the selection, so before this a wire could only
+be removed by a pointer hitting a curve. It is also exactly where the refusal
+points — the panel already prints which wire is in the way.
+
+`?` lists all of this in a "Without a keyboard" table generated from the same
+array the canvas implements, so it cannot drift. What is still keyboard-only is
+**add-to-selection**: `Shift`+tap has no touch equivalent that is not a mode,
+and a mode on a surface whose primary gesture is a pan will be entered by
+accident. The reasoning, the alternatives rejected, and the rest of what a
+first-time phone user still cannot do are in
+[architecture.md](docs/architecture.md#deleting-things-without-a-keyboard).
+
 Each node is a focusable `role="group"` whose accessible name states its tool,
 position, connection count, status, what it produced and selection: _"Base64,
 at 608, 368, 1 connection, blocked, Needs input, selected"_, and once it has run
@@ -666,6 +713,20 @@ data`, reproducing CI's DOM and its announcer text (`Pipeline finished. 3
 blocked.`) exactly. It is a layout effect now, like its twin: React commits the
 new node and the effect in the same pass, so the move happens after the node
 exists and before the task the keystroke started can end.
+
+**And two more, found by going back and looking.** `CommandDialog` focuses its
+search field on mount and `ShortcutsOverlay` focuses its close button, each one
+line, each from a passive `useEffect` — which had not been questioned because
+they look obviously correct. They are the same defect, and the palette's is the
+one that bites: it is opened by `K`, and `K` is followed immediately by what
+the user came to type, so every character struck before the browser paints goes
+to the canvas root instead. That root is a `role="application"` region which
+claims single letters and shows nothing for them, so the search box opens
+already missing the front of the word with no error anywhere. Five corrections
+of one shape now, which is enough to state the rule: **a focus move that
+answers a keystroke belongs in the task the keystroke started**, and the only
+thing that ever needs waiting for is a target that does not exist yet — which is
+what a layout effect is for.
 
 Three tests came out of it, and the shape of the old ones is the point:
 

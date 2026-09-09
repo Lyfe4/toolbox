@@ -1,6 +1,6 @@
 import { getManifestEntry, type ToolManifestEntry } from '@/features/registry';
 
-import type { CanvasNode, GraphData, NodeId, Point } from './types';
+import type { CanvasNode, EdgeId, GraphData, NodeId, Point } from './types';
 
 /**
  * All canvas measurements in one place.
@@ -311,10 +311,130 @@ export function portPositionById(
  * very short one does not fold back on itself.
  */
 export function wirePath(from: Point, to: Point): string {
-  const distance = Math.abs(to.x - from.x);
-  const control = clamp(distance * 0.5, 24, 160);
+  const control = wireControl(from, to);
 
   return `M ${from.x.toFixed(1)} ${from.y.toFixed(1)} C ${(from.x + control).toFixed(1)} ${from.y.toFixed(1)}, ${(to.x - control).toFixed(1)} ${to.y.toFixed(1)}, ${to.x.toFixed(1)} ${to.y.toFixed(1)}`;
+}
+
+/**
+ * The horizontal push on both control points of {@link wirePath}.
+ *
+ * Extracted so that the curve a wire is DRAWN along and the curve it is
+ * HIT-TESTED against are the same curve. They used to be the same only because
+ * one of them did not exist; the moment a second reader of this shape appeared,
+ * a private copy of the arithmetic would be a wire you can see in one place and
+ * select in another - which is precisely the defect `portPositionById` was
+ * introduced to end for the port anchors.
+ */
+function wireControl(from: Point, to: Point): number {
+  return clamp(Math.abs(to.x - from.x) * 0.5, 24, 160);
+}
+
+/**
+ * How many points the curve is flattened into for hit-testing.
+ *
+ * A cubic has no closed form for "distance to a point", so it is sampled and
+ * treated as a polyline. A chord always cuts inside the curve, so the error is
+ * one-sided: a sampled distance is an upper bound on the true one and a wire
+ * can therefore only ever measure as slightly FURTHER away than it is, never
+ * nearer.
+ *
+ * The count is measured rather than guessed. `wireHit.test.ts` walks points
+ * off the drawn path across the whole plane this canvas can address and holds
+ * the error under half a pixel; at 24 segments the worst case was 1.0px, which
+ * is small but is not the "well under a pixel" the first version of this
+ * comment claimed. Forty-eight is still nothing on a press - this runs once
+ * per pointerdown, not once per frame.
+ */
+const WIRE_SAMPLES = 48;
+
+/** A point on the cubic {@link wirePath} draws, at parameter `t` in [0, 1]. */
+function wirePointAt(from: Point, to: Point, t: number): Point {
+  const control = wireControl(from, to);
+  const p1 = { x: from.x + control, y: from.y };
+  const p2 = { x: to.x - control, y: to.y };
+
+  const u = 1 - t;
+  const a = u * u * u;
+  const b = 3 * u * u * t;
+  const c = 3 * u * t * t;
+  const d = t * t * t;
+
+  return {
+    x: a * from.x + b * p1.x + c * p2.x + d * to.x,
+    y: a * from.y + b * p1.y + c * p2.y + d * to.y,
+  };
+}
+
+/** Distance from `at` to the nearest point of one segment. */
+function distanceToSegment(start: Point, end: Point, at: Point): number {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+
+  // A zero-length segment is a point, and projecting onto it divides by zero.
+  const t =
+    lengthSquared === 0
+      ? 0
+      : clamp(((at.x - start.x) * dx + (at.y - start.y) * dy) / lengthSquared, 0, 1);
+
+  return Math.hypot(at.x - (start.x + t * dx), at.y - (start.y + t * dy));
+}
+
+/** How far `at` is from the wire drawn between two ports, in world units. */
+export function distanceToWire(from: Point, to: Point, at: Point): number {
+  let nearest = Number.POSITIVE_INFINITY;
+  let previous = from;
+
+  for (let step = 1; step <= WIRE_SAMPLES; step += 1) {
+    const point = step === WIRE_SAMPLES ? to : wirePointAt(from, to, step / WIRE_SAMPLES);
+    nearest = Math.min(nearest, distanceToSegment(previous, point, at));
+    previous = point;
+  }
+
+  return nearest;
+}
+
+/**
+ * The wire whose curve passes closest to a world point, or null on an empty
+ * graph.
+ *
+ * WHY GEOMETRY RATHER THAN THE EVENT'S OWN TARGET, which is what the wire
+ * layer used to trust. Each wire carries a fat transparent companion path so a
+ * pointer has something to hit, and that band is now finger-sized - which
+ * means bands overlap wherever wires converge, and they converge hardest
+ * exactly where a node's inputs are, on a 24px pitch. Hit-testing then hands
+ * the press to whichever band paints last, which is document order: an
+ * arbitrary answer that changes when an unrelated wire is added.
+ *
+ * Nearest is the rule a person is actually applying when they aim at a wire,
+ * and it is a total order, so the same tap always selects the same wire.
+ *
+ * NO RADIUS ARGUMENT, deliberately. This is asked only from a press that has
+ * already landed on some wire's hit band, so something is always in range; a
+ * second threshold here would be a second place for "close enough" to be
+ * decided, and the two would disagree the first time the stroke width changed.
+ */
+export function nearestEdge(graph: GraphData, at: Point): EdgeId | null {
+  let best: EdgeId | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const id of graph.edgeOrder) {
+    const edge = graph.edges[id];
+    if (!edge) continue;
+
+    const from = portPositionById(graph, edge.from.nodeId, 'output', edge.from.portId);
+    const to = portPositionById(graph, edge.to.nodeId, 'input', edge.to.portId);
+    if (!from || !to) continue;
+
+    const distance = distanceToWire(from, to, at);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = id;
+    }
+  }
+
+  return best;
 }
 
 export interface Rect {

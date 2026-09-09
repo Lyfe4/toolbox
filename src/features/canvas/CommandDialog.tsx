@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import { CloseIcon } from '@/components/Icon';
 import { IconButton } from '@/components/IconButton';
@@ -161,7 +170,24 @@ export function CommandDialog({
   const activeOption = flat[clampedActive];
   const activeId = activeOption ? `${listId}-${activeOption.id}` : undefined;
 
-  useEffect(() => {
+  /*
+   * A LAYOUT EFFECT, and this is the fifth time that correction has been made
+   * in this feature - twice in Canvas.tsx, once in OverflowMenu, and now here
+   * and in ShortcutsOverlay.
+   *
+   * A passive effect runs after the browser has painted, so the move lands in
+   * a later task than the keystroke that asked for it. The palette is opened
+   * by `K`, and `K` is followed immediately by what the user came to type -
+   * "k", "b", "a", "s", "e". Every character struck before that paint goes to
+   * whatever had focus, which is the canvas root: a `role="application"`
+   * region that swallows single letters and shows nothing for them. The search
+   * box then opens already missing the first letters of the word, and there is
+   * no error for text that lands nowhere.
+   *
+   * A layout effect runs synchronously after the commit that mounted this
+   * dialog, inside the task the keystroke started, so there is no window.
+   */
+  useLayoutEffect(() => {
     inputRef.current?.focus();
   }, []);
 
