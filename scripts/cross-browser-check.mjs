@@ -977,16 +977,31 @@ const RUNNER_PROBE = () => {
     };
   };
 
-  const regions = [...layout.children].map((el, index) => {
-    const heading = el.querySelector('h2');
-    return {
-      index,
-      // The controls rail is a plain div holding the Options panel and the run
-      // bar, so it is named from the panel inside it.
-      name: (heading?.textContent ?? '(unnamed)').trim(),
-      ...box(el),
-    };
-  });
+  /*
+   * THE FOUR REGIONS, FOUND BY THEIR HEADINGS RATHER THAN AS THE GRID'S
+   * CHILDREN.
+   *
+   * They used to be `layout.children`, which stopped being the same list: the
+   * Ports footnote is a sibling of that grid now, deliberately, because a
+   * sticky box's travel is bounded by its containing block and for a grid item
+   * that containing block is the grid CONTAINER. A full-bleed row inside the
+   * grid was therefore a row inside the rail's travel range.
+   *
+   * Asking the page for its named regions is also the better question. The
+   * reading-order assertion below is about what a person reads down the page,
+   * which was never a fact about one element's child list.
+   */
+  const WANTED = ['Input', 'Options', 'Output', 'Ports'];
+  const regions = [...document.querySelectorAll('section')]
+    .filter((el) => WANTED.includes((el.querySelector('h2')?.textContent ?? '').trim()))
+    .map((el, index) => {
+      const heading = el.querySelector('h2');
+      return {
+        index,
+        name: (heading?.textContent ?? '(unnamed)').trim(),
+        ...box(el),
+      };
+    });
 
   const run = [...document.querySelectorAll('button')].find(
     (el) => (el.textContent ?? '').trim() === 'Run',
@@ -994,8 +1009,38 @@ const RUNNER_PROBE = () => {
   const scroller = document.querySelector('[class*="optionsScroll"]');
   const rail = document.querySelector('[class*="controls"]');
 
+  /*
+   * EVERY SECTION THE RAIL COULD LAND ON, in viewport coordinates.
+   *
+   * Not just the four named ones: the assertion this feeds is that the rail
+   * overlaps NOTHING, and "nothing" has to include the Privacy panel the route
+   * renders after the runner and whatever a future page puts beside it.
+   *
+   * BOTH DIRECTIONS OF CONTAINMENT ARE SKIPPED. A box cannot meaningfully
+   * overlap its own ancestor, and it certainly cannot overlap its own
+   * descendants - the rail holds the Options panel and the run card, and the
+   * first version of this reported the rail overlapping both of them by their
+   * full width, which is true and is not what the question means.
+   */
+  const railRect = rail?.getBoundingClientRect() ?? null;
+  const overlaps =
+    railRect === null
+      ? []
+      : [...document.querySelectorAll('section')]
+          .filter((el) => !el.contains(rail) && !rail.contains(el))
+          .map((el) => {
+            const r = el.getBoundingClientRect();
+            const name = (el.querySelector('h2')?.textContent ?? '(untitled)').trim();
+            const vertical = Math.min(railRect.bottom, r.bottom) - Math.max(railRect.top, r.top);
+            const horizontal = Math.min(railRect.right, r.right) - Math.max(railRect.left, r.left);
+            return { name, overlap: Math.round(Math.min(vertical, horizontal)) };
+          })
+          .filter((entry) => entry.overlap > 1);
+
   return {
     regions,
+    overlaps,
+    runInRail: run !== undefined && rail !== null && rail.contains(run),
     run: run ? { ...box(run), viewportTop: Math.round(run.getBoundingClientRect().top) } : null,
     rail: rail
       ? {
@@ -1023,6 +1068,92 @@ const RUNNER_PROBE = () => {
     docClientWidth: document.documentElement.clientWidth,
     docHeight: document.documentElement.scrollHeight,
   };
+};
+
+/**
+ * A PATTERN THAT REALLY DOES WEDGE A WORKER, IN BOTH ENGINES.
+ *
+ * WHY NOT (a+)+$, AND WHY THE ALTERNATION IS SO WIDE.
+ *
+ * The two engines disagree about catastrophic backtracking, and the
+ * disagreement decides whether the wedge check tests anything at all.
+ * SpiderMonkey runs the backtracking until it exhausts its stack and then
+ * throws. JavaScriptCore instead bounds the backtracking COUNT and gives up
+ * quietly, which for (a+)+$ over 32 characters lands at roughly 0.9s -
+ * comfortably inside the tool's 2s deadline, so the worker was never wedged
+ * and the check passed while proving nothing.
+ *
+ * LENGTHENING THE SUBJECT DOES NOT HELP. JSC's budget is a count of
+ * backtracks, not a time, and it is spent inside a single `exec` however long
+ * the subject is: 40 characters and 200 characters both give up at ~1.9s. What
+ * raises the cost is making each backtrack step more expensive, which means
+ * widening the ALTERNATION - every branch is another comparison at every step.
+ *
+ * SO THE WIDTH IS THE DIAL, AND IT IS MEASURED. In JSC the cost is close to
+ * linear in the branch count, on one machine, steady state:
+ *
+ *     26 branches  1.5s      62 branches  3.5s     110 branches  ~8s
+ *     52 branches  2.9s      78 branches  4.8s     138 branches  9.0s
+ *
+ * SpiderMonkey throws on stack exhaustion at ~5s at every width past 52, so
+ * IT is the tighter of the two margins and widening does nothing for it.
+ *
+ * 138 branches gives 4.5x the deadline in JSC and 2.5x in SpiderMonkey. The
+ * previous fixture was the 26-branch version, which had been measured at 6.8s
+ * in JSC and was down to 1.5s by the time this was written - so it reported
+ * `ok` for n1 and the whole assertion inverted. A faster engine is what breaks
+ * this, so the number to raise when it happens is the width.
+ *
+ * Costing nine seconds is free, incidentally: the tool's deadline terminates
+ * the worker at 2s, so the regex never gets to finish. The nine seconds is
+ * what it WOULD take, which is the only thing that matters here.
+ */
+const WEDGE_BRANCHES = [
+  ...'abcdefghijklmnopqrstuvwxyz',
+  ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  ...'0123456789',
+  // No `!`: the pattern ends in `!!` and the subject ends in one `!`, which is
+  // what denies the match and forces the backtracking.
+  ...`@#%&=~:;,<>/"'-_`,
+  // Two-character branches to widen past the printable set without reaching
+  // for non-ASCII. They fail on their first character, like the rest.
+  ...[...'zyxwvu'].flatMap((head) => [...'0123456789'].map((tail) => head + tail)),
+];
+
+const WEDGE_PATTERN = `((${WEDGE_BRANCHES.join('|')})*)*!!`;
+
+/**
+ * A DELIBERATELY TALL OPTIONS PANEL, APPLIED TO A REAL PAGE.
+ *
+ * Every claim about the rail has to hold for a tool nobody has written yet,
+ * and a tool declares its own options - so no real tool's option count is the
+ * right thing to measure against. Regex declares the most today, at eight
+ * fields, and that number is not a promise.
+ *
+ * So the height is imposed here instead: a `min-block-size` on the Options
+ * panel, set through `element.style` (which CSP does not govern - the theme
+ * checks in this file rely on the same thing). It is a fixture rather than a
+ * measurement, and it keeps saying "taller than the rail" when the real tools
+ * change.
+ *
+ * Returns whether it applied, so a check cannot silently pass against a panel
+ * that was never made tall.
+ */
+const TALL_OPTIONS_FIXTURE = (height) => {
+  const panel = [...document.querySelectorAll('section')].find(
+    (el) => (el.querySelector('h2')?.textContent ?? '').trim() === 'Options',
+  );
+  if (!panel) return false;
+  panel.style.minBlockSize = `${String(height)}px`;
+  return true;
+};
+
+/** Undoes it, so later checks measure the page the application actually draws. */
+const CLEAR_TALL_OPTIONS = () => {
+  const panel = [...document.querySelectorAll('section')].find(
+    (el) => (el.querySelector('h2')?.textContent ?? '').trim() === 'Options',
+  );
+  if (panel) panel.style.minBlockSize = '';
 };
 
 /**
@@ -1089,6 +1220,23 @@ async function checkRunnerLayout(browser, label) {
       await page.locator('[aria-label="Match listing"]').waitFor({ timeout: 20_000 });
       await page.waitForTimeout(250);
 
+      /*
+       * PROBED AT REST, which this always meant and never said.
+       *
+       * `box()` reports document coordinates, and a STUCK sticky box's
+       * document position is its offset one - so every comparison below
+       * between the rail and the content column only holds while the rail is
+       * unstuck. Playwright scrolls an element into view before interacting
+       * with it, so filling the pattern and pressing Run can leave the page a
+       * few hundred pixels down; the reading-order check then read the rail as
+       * being below the output, which is where a stuck rail's document box
+       * genuinely is.
+       */
+      await page.evaluate(() => {
+        window.scrollTo(0, 0);
+      });
+      await page.waitForTimeout(150);
+
       const probe = await page.evaluate(RUNNER_PROBE);
       check(label, `the tool runner has a measurable layout at ${at}`, probe !== null, '');
       if (!probe) continue;
@@ -1123,16 +1271,65 @@ async function checkRunnerLayout(browser, label) {
         `${String(probe.docScrollWidth)} in ${String(probe.docClientWidth)}`,
       );
 
-      /* -- 2. Run sits between the options and the output ---------------- */
+      /* -- 2. Run sits after the options, inside the rail ---------------- */
+      /*
+       * `options` is the Options PANEL now rather than the whole rail, because
+       * the rail's other row is the run card and naming the rail after the
+       * panel inside it stopped being unambiguous once there were two. So the
+       * assertion is stated as what it actually means: Run comes after the
+       * options and is part of the rail.
+       */
       check(
         label,
-        `Run is below the options and above the output at ${at}`,
-        probe.run !== null && probe.run.top >= options.top && probe.run.bottom <= options.bottom,
+        `Run is after the options and inside the rail at ${at}`,
+        probe.run !== null && probe.runInRail && probe.run.top >= options.bottom,
         probe.run === null
           ? 'no Run button'
-          : `run ${String(probe.run.top)}..${String(probe.run.bottom)} in options ${String(
-              options.top,
-            )}..${String(options.bottom)}`,
+          : `run ${String(probe.run.top)} against options ending ${String(
+              options.bottom,
+            )}, inRail=${String(probe.runInRail)}`,
+      );
+
+      /*
+       * AND ON SCREEN BEFORE ANYTHING HAS BEEN SCROLLED.
+       *
+       * The rail's height comes from the region, and the region is at least a
+       * viewport tall - but it starts below the site header and the tool's own
+       * heading, so its last hundred-odd pixels are below the fold on arrival
+       * and the run button was in them. Measured at 1280x800: the card sat at
+       * 901..959 in an 800px window. `.runCard` is sticky to the block end,
+       * which pushes it up to the fold and leaves it alone once the rail
+       * itself sticks.
+       */
+      if (width >= 1000) {
+        check(
+          label,
+          `Run is on screen before anything is scrolled at ${at}`,
+          probe.run !== null &&
+            probe.run.viewportTop >= 0 &&
+            probe.run.viewportTop < probe.innerHeight,
+          probe.run === null
+            ? 'no Run button'
+            : `run at ${String(probe.run.viewportTop)} in ${String(probe.innerHeight)}px`,
+        );
+      }
+
+      /* -- THE OVERLAP, WHICH IS THE DEFECT THIS SECTION EXISTS FOR ------ */
+      /*
+       * The rail is `position: sticky`, and a sticky box's travel is bounded by
+       * its containing block - which for a grid item is the grid CONTAINER, not
+       * the grid area it was placed in. The Ports footnote used to be a third,
+       * full-bleed row of that grid, so it was inside the rail's travel range:
+       * at the foot of a JWT page the rail covered 52px of it. The fix is that
+       * the grid holds only the regions the rail travels beside; this asserts
+       * the consequence against EVERY section on the page rather than against
+       * the one that happened to be reported.
+       */
+      check(
+        label,
+        `the rail overlaps nothing at rest at ${at}`,
+        probe.overlaps.length === 0,
+        probe.overlaps.map((entry) => `${entry.name} by ${String(entry.overlap)}px`).join(', '),
       );
 
       if (width < 1000) {
@@ -1331,7 +1528,7 @@ async function checkRunnerLayout(browser, label) {
      * Run first, and scroll to the result. The rail can only be measured
      * against the viewport while it is actually pinned, and it stops
      * travelling at the bottom of the output - so on an unrun page, whose
-     * output is the one line "Run the tool to see output here", there is
+     * output is the one line "No output yet. Results appear here.", there is
      * nothing for it to be pinned over.
      */
     await shortPage
@@ -1400,6 +1597,176 @@ async function checkRunnerLayout(browser, label) {
       (probe?.scroller?.focusableInside ?? 0) > 0,
       `${String(probe?.scroller?.focusableInside)} focusable`,
     );
+
+    /* -- 5. The rail cannot overlap anything, at any scroll position ------- */
+
+    /*
+     * THE DEFECT, MEASURED THE WAY IT WAS FOUND.
+     *
+     * The rail is sticky, and a sticky box's travel is bounded by its containing
+     * block - which for a grid item is the grid CONTAINER, not the grid area it
+     * was placed in. That is the opposite of the intuitive reading, and it is
+     * why spanning "only" the two content rows never constrained the rail to
+     * them. With the Ports footnote still a third, full-bleed row of the same
+     * grid, the rail's bottom edge tracked the grid's bottom edge from the
+     * moment it came unstuck and ended 52px over that panel.
+     *
+     * Three things make this the check that would have caught it:
+     *
+     *   IT SWEEPS. The overlap does not exist at rest - it appears only once you
+     *   have scrolled far enough for the rail to run out of travel - so a probe
+     *   at one scroll position is a probe that agrees with the bug.
+     *
+     *   IT USES A FIXTURE, not a tool. The taller the options panel, the sooner
+     *   the rail runs out of travel; JWT failed sooner than regex only because
+     *   its panel is taller. A number imposed here holds for tools that do not
+     *   exist.
+     *
+     *   IT ASKS ABOUT EVERY SECTION. The original report named Ports and
+     *   Privacy; what has to be true is that the rail reaches none of them.
+     */
+    const sweepContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const sweepPage = await sweepContext.newPage();
+
+    try {
+      await sweepPage.goto(`${ORIGIN}/tools/jwt-decode`, { waitUntil: 'networkidle' });
+      await sweepPage.getByRole('heading', { level: 1, name: 'JWT' }).waitFor({ timeout: 15_000 });
+      // The options arrive with the tool's own lazily-imported module.
+      await sweepPage
+        .locator('[class*="optionsScroll"] select, [class*="optionsScroll"] button')
+        .first()
+        .waitFor({ timeout: 15_000 });
+
+      const applied = await sweepPage.evaluate(TALL_OPTIONS_FIXTURE, 2400);
+      check(label, 'the tall-options fixture applied', applied, '');
+
+      const worst = { overlap: 0, at: 0, what: '' };
+      const height = await sweepPage.evaluate(() => document.documentElement.scrollHeight);
+      const stops = [0, 200, 400, 800, 1600, height];
+
+      for (const y of stops) {
+        await sweepPage.evaluate((top) => {
+          window.scrollTo(0, top);
+        }, y);
+        await sweepPage.waitForTimeout(120);
+        const probe = await sweepPage.evaluate(RUNNER_PROBE);
+        for (const entry of probe?.overlaps ?? []) {
+          if (entry.overlap > worst.overlap) {
+            worst.overlap = entry.overlap;
+            worst.at = y;
+            worst.what = entry.name;
+          }
+        }
+      }
+
+      check(
+        label,
+        'a rail beside a 2400px options panel overlaps nothing at any scroll position',
+        worst.overlap === 0,
+        worst.overlap === 0
+          ? `${String(stops.length)} scroll positions clean`
+          : `${worst.what} by ${String(worst.overlap)}px at scroll ${String(worst.at)}`,
+      );
+
+      /*
+       * AND RUN STANDS STILL.
+       *
+       * The rail used to be as tall as its own contents, so its last row moved
+       * whenever the options did - `text-convert` reveals and hides fields as its
+       * target format changes, so the primary action moved under the cursor of
+       * anyone using it. The rail is as tall as the region now and the options
+       * take the difference by scrolling, so Run's position is a function of the
+       * viewport alone.
+       *
+       * Measured at the same scroll position with the fixture on and off, which
+       * is a bigger change in option height than any tool could produce.
+       */
+      await sweepPage.evaluate(() => {
+        window.scrollTo(0, 0);
+      });
+      await sweepPage.waitForTimeout(150);
+      const withTall = await sweepPage.evaluate(RUNNER_PROBE);
+      await sweepPage.evaluate(CLEAR_TALL_OPTIONS);
+      await sweepPage.waitForTimeout(150);
+      const withDeclared = await sweepPage.evaluate(RUNNER_PROBE);
+
+      check(
+        label,
+        'Run does not move when the option count changes under it',
+        withTall?.run != null &&
+          withDeclared?.run != null &&
+          withTall.run.top === withDeclared.run.top &&
+          withTall.run.bottom === withDeclared.run.bottom,
+        `${String(withDeclared?.run?.top)}..${String(withDeclared?.run?.bottom)} declared against ${String(
+          withTall?.run?.top,
+        )}..${String(withTall?.run?.bottom)} with a 2400px panel`,
+      );
+
+      /*
+       * And the difference went to the SCROLLER rather than to the page. A rail
+       * that simply grew would have been stable too - by pushing everything below
+       * it down the document, which is the same defect wearing a different coat.
+       */
+      check(
+        label,
+        'the tall panel scrolls inside the rail rather than growing the page',
+        withTall?.scroller?.scrolls === true &&
+          withDeclared?.scroller?.scrolls === false &&
+          withTall.docHeight === withDeclared.docHeight,
+        `scrolls ${String(withTall?.scroller?.scrolls)} against ${String(
+          withDeclared?.scroller?.scrolls,
+        )}, page ${String(withTall?.docHeight)} against ${String(withDeclared?.docHeight)}`,
+      );
+    } finally {
+      await sweepContext.close().catch(() => {});
+    }
+
+    /* -- 6. Stacked, the rail is never over the input ---------------------- */
+
+    /*
+     * Below the breakpoint the rail is in normal flow and nothing about it is
+     * pinned, which the width sweep above already asserts through
+     * `position: static`. This asserts the consequence rather than the
+     * declaration, and it asserts it while SCROLLED: a `sticky` that came back
+     * by accident - or a `min-block-size` that leaked out of the media query and
+     * made the region a viewport tall on a phone - would show up here as the rail
+     * standing still over the input.
+     */
+    const stackedContext = await browser.newContext({ viewport: { width: 390, height: 800 } });
+    const stackedPage = await stackedContext.newPage();
+
+    try {
+      await stackedPage.goto(`${ORIGIN}/tools/jwt-decode`, { waitUntil: 'networkidle' });
+      await stackedPage
+        .getByRole('heading', { level: 1, name: 'JWT' })
+        .waitFor({ timeout: 15_000 });
+      await stackedPage.locator('[class*="optionsScroll"]').first().waitFor({ timeout: 15_000 });
+      await stackedPage.evaluate(TALL_OPTIONS_FIXTURE, 1600);
+
+      let pinned = '';
+      for (const y of [0, 300, 900, 1800]) {
+        await stackedPage.evaluate((top) => {
+          window.scrollTo(0, top);
+        }, y);
+        await stackedPage.waitForTimeout(120);
+        const probe = await stackedPage.evaluate(RUNNER_PROBE);
+        if (probe?.rail?.position !== 'static')
+          pinned = `position ${String(probe?.rail?.position)}`;
+        for (const entry of probe?.overlaps ?? []) {
+          if (entry.overlap > 1)
+            pinned = `${entry.name} by ${String(entry.overlap)}px at ${String(y)}`;
+        }
+      }
+
+      check(
+        label,
+        'the stacked rail stays in flow and never covers the input',
+        pinned === '',
+        pinned,
+      );
+    } finally {
+      await stackedContext.close().catch(() => {});
+    }
   } finally {
     await shortContext.close().catch(() => {});
   }
@@ -6253,48 +6620,7 @@ async function checkPipeline(browser, label) {
     await page.goto(
       link(
         [
-          /*
-           * WHY THIS PATTERN AND NOT (a+)+$, AND WHY THE ALPHABET IS IN IT.
-           *
-           * The two engines disagree about catastrophic backtracking, and the
-           * disagreement decides whether this check tests anything at all.
-           * SpiderMonkey runs the backtracking until it exhausts its stack -
-           * about seven seconds here - and then throws. JavaScriptCore instead
-           * bounds the backtracking COUNT and gives up quietly, which for
-           * (a+)+$ over 32 characters lands at roughly 0.9s: comfortably
-           * inside the tool's 2s deadline, so the worker was never wedged and
-           * the check passed while proving nothing.
-           *
-           * (a*)*(b*)*c over 40 characters replaced it, at a measured ~2.4s in
-           * JSC - past the deadline, but by less than half a second. That
-           * margin has since closed: the same pattern now measures 1.3-2.9s
-           * across runs on the same machine, so the check reports `ok` for n1
-           * about as often as it reports `error`, which is worse than a
-           * failing check because it looks like a flake.
-           *
-           * LENGTHENING THE SUBJECT DOES NOT HELP, and that is the thing worth
-           * writing down. JSC's budget is a count of backtracks, not a time,
-           * and it is spent inside a single `exec` however long the subject
-           * is: 40 characters and 200 characters both give up at ~1.9s. What
-           * raises the cost is making each backtrack step more expensive, so
-           * the alternation is the whole lower-case alphabet rather than `a*`.
-           * Measured: WebKit ~6.8s, Firefox ~7.0s (stack exhaustion), against
-           * a 2s deadline. Both engines are now more than 3x past it.
-           *
-           * If this ever reports `ok` again, JSC has got faster rather than
-           * anything having regressed - widen the alternation, do not lengthen
-           * the input.
-           */
-          [
-            'n1',
-            'regex-tester',
-            0,
-            0,
-            {
-              pattern: '((a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z)*)*!!',
-              mode: 'match',
-            },
-          ],
+          ['n1', 'regex-tester', 0, 0, { pattern: WEDGE_PATTERN, mode: 'match' }],
           ['n2', 'base64', 0, 320, { mode: 'decode' }],
           ['n3', 'structured-data', 320, 320, { source: 'auto', target: 'yaml', indent: 2 }],
         ],

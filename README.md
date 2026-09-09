@@ -557,6 +557,38 @@ none of the existing geometric checks could see it — it was found by measuring
 the page height while making the tool runner's options panel sticky, which is
 the only reason anybody asked how tall the page was.
 
+### The other containing block, one layer up
+
+The same question — _what box is this positioned thing measured against?_ — had
+a second wrong answer on the same page, and this one was visible.
+
+A `position: sticky` box's travel is bounded by its containing block, and for a
+grid item that containing block is the grid **container**, not the grid area it
+was placed in. The options rail spans the two content rows so that sticky has
+somewhere to travel, which makes the natural reading "it can only move across
+those two rows". It cannot: it moves until its bottom reaches the bottom of the
+grid. The Ports footnote was a third row of that grid, spanning both columns —
+so it lay across the rail's entire travel range, and at the foot of
+`/tools/jwt-decode` the rail covered 52px of it. From the moment it came
+unstuck its bottom edge tracked the grid's bottom edge to the pixel, which is
+what identified the constraint.
+
+**`/styleguide` runs the same pattern and never had the problem**, and that is
+the clue that made the cause findable rather than workaroundable. Its grid has
+exactly two children: one content column holding every section, and the sticky
+sidebar. Its sidebar's containing block bottom _is_ the content column's
+bottom, so there is nothing inside the grid below it to reach. The tool page had
+a third row and that row was full-bleed.
+
+So the fix is not z-index, and could not have been: the rail was never escaping
+its bounds. The grid now holds only the three regions the rail travels beside,
+and everything a tool page renders below them is a sibling in the page's flow —
+outside the rail's containing block, whatever its height and however tall the
+options panel is. Two other defects went with the same span: the surplus height
+a spanning item distributes across `auto` rows was putting 80px of nothing
+between the input and the output, and the rail being as tall as its own contents
+meant the Run button moved every time a conditional option appeared under it.
+
 ### What reading the ports as a set found
 
 Nine tools' worth of port declarations, each written when its tool was written

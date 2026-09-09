@@ -12,6 +12,12 @@
  * left to right, top to bottom - at every width. Nothing here reorders
  * anything.
  *
+ * `.layout` HOLDS THE FIRST THREE ONLY. Ports is a sibling in the page's flow,
+ * and that is a fix rather than a tidy-up: it is the sticky rail's containing
+ * block that bounds the rail's travel, and for a grid item that containing
+ * block is the grid CONTAINER, not the grid area. Anything full-bleed inside
+ * this grid is therefore inside the rail's travel range. See `.controls`.
+ *
  * That is deliberate rather than incidental. `order`, `row-reverse` and a
  * column-major grid can each put Options where the eye wants it while leaving
  * the tab key and the screen reader walking the old path, and a page whose
@@ -36,7 +42,8 @@
  * Deliberately NOT sticky and NOT its own scroller below 1000px. A pinned rail
  * on a phone spends viewport the result needs, and a nested scrollbar inside a
  * document that already scrolls is the defect the mobile audit found in the
- * theme editor's contrast list.
+ * theme editor's contrast list. Nothing in this rule is conditional on that,
+ * because everything that pins or scrolls is inside the media query.
  */
 .controls {
   display: grid;
@@ -67,6 +74,13 @@
  * flag, scroll up past the options to reach Run, scroll back down past them
  * again to see what happened. Here the loop is change, run, read - in that
  * order and in that direction.
+ *
+ * INSIDE A `Panel` NOW, rather than sitting on the page background: on a
+ * surface where every other region is a bordered module, the primary action
+ * was the one thing with no container. This class stayed on the ROW rather
+ * than moving to the card, because `Panel` is itself a flex column and these
+ * rules describe a row - putting them on the section would have silently
+ * fought its own chassis.
  */
 .actions {
   display: flex;
@@ -93,8 +107,34 @@
  * controls that were already wide enough at 300.
  */
 @media (min-width: 1000px) {
+  /*
+   * TWO COLUMNS, TWO ROWS, AND NOTHING ELSE IN HERE.
+   *
+   * Ports used to be a third row of this grid, spanning both columns. That is
+   * what let the rail paint over it: see the note on `.controls` below. It is
+   * a sibling of this grid now, in the page's own flow, so the only things
+   * inside the rail's containing block are the two content rows it travels
+   * beside.
+   *
+   * `min-content minmax(0, 1fr)` RATHER THAN TWO AUTO ROWS, and the difference
+   * is visible. The rail spans both rows, so its height is distributed across
+   * them - with two `auto` tracks that surplus was split evenly, which put 80px
+   * of nothing between the Input panel and the Output panel on a JWT page and
+   * made the Output panel's top move whenever an option appeared. Row one is
+   * now exactly the input's height and row two absorbs the whole surplus, where
+   * it is invisible because the Output panel stretches into it.
+   *
+   * `min-block-size` IS WHAT MAKES RUN STAND STILL. It is the same viewport
+   * arithmetic the rail is capped by, so the region is never shorter than a
+   * full-height rail; the rail therefore always fills its area, and the row
+   * that holds Run sits at a fixed distance from the rail's top. Derived from
+   * the viewport, not from any tool's option count - which is the only way it
+   * can hold for a tool that has not been written.
+   */
   .layout {
     grid-template-columns: minmax(0, 1fr) 300px;
+    grid-template-rows: min-content minmax(0, 1fr);
+    min-block-size: calc(100dvh - var(--pb-space-lg) * 2);
   }
 
   .input {
@@ -103,27 +143,86 @@
   }
 
   /*
-   * The rail spans both content rows so that `sticky` has somewhere to travel:
-   * a sticky box may only move within its own containing block, and an item
-   * confined to row 1 would come unstuck the moment the input scrolled away.
+   * THE RAIL, AND THE TWO THINGS THAT WERE WRONG WITH IT.
+   *
+   * It spans both content rows so that `sticky` has somewhere to travel - an
+   * item confined to row 1 would come unstuck the moment the input scrolled
+   * away. That much was right and is unchanged.
+   *
+   * WHAT THE SPAN DOES NOT DO IS CONSTRAIN IT. A sticky box's travel is
+   * bounded by its containing block, and for a grid item that containing block
+   * is the grid CONTAINER, not the grid area it was placed in. The opposite is
+   * the intuitive reading, so it was measured: with Ports still a third row,
+   * the rail's bottom edge tracked the grid's bottom edge exactly from the
+   * moment it came unstuck, ending 52px over the Ports panel on a JWT page.
+   * No z-index, margin or padding would have helped - the rail was allowed to
+   * be there. Taking the full-bleed row out of the grid is what removes the
+   * permission, and it holds for any section any future tool renders below the
+   * fold, because such a section is not in here at all.
+   *
+   * `block-size: 100%` FILLS THE AREA, which is what decouples Run's position
+   * from the options. The rail used to be as tall as its own contents, so its
+   * last row moved every time a conditional option appeared - `text-convert`
+   * reveals and hides fields as its target format changes, so the button moved
+   * under the cursor of anyone using it. Now the rail is as tall as the region,
+   * the region is at least a viewport tall (see `.layout`), and the options
+   * take the difference by scrolling.
+   *
+   * A TALL OPTIONS PANEL CANNOT SIZE THE GRID'S ROWS, and the reason is one
+   * layer down rather than here. `.optionsScroll` is a scroll container, and a
+   * scroll container's min-content contribution in the scrolling axis is zero -
+   * so the rail's own contribution is the run card and a gap, whatever the
+   * options do. Measured: a 2400px options panel leaves the row tracks
+   * byte-identical. An `overflow: hidden` on the rail itself would do the same
+   * job and cost more than it is worth - it would make the rail a scrollport,
+   * and `.runCard`'s sticky would then be relative to the rail rather than to
+   * the page, which is the one thing it must not be.
+   *
+   * NO z-index. There was one, and it was doing nothing except making an
+   * overlap survivable instead of impossible. A rail that cannot reach any
+   * other content does not need to be told which of them paints on top.
    */
   .controls {
     grid-column: 2;
-    grid-row: 1 / 3;
+    grid-row: 1 / -1;
 
     position: sticky;
     inset-block-start: var(--pb-space-lg);
-    z-index: var(--pb-z-sticky);
+
+    block-size: 100%;
+    max-block-size: calc(100dvh - var(--pb-space-lg) * 2);
 
     /*
-     * Capped to the viewport, with the OPTIONS taking the scroll rather than
-     * the run button. `minmax(0, 1fr) auto` is what makes that work without a
-     * magic number: row one may shrink to nothing, row two never does, so Run
-     * and the status readout stay on screen however many options a tool
-     * declares.
+     * Row one may shrink to nothing and row two never does, so the options
+     * take the scroll and the run card does not.
      */
-    max-block-size: calc(100dvh - var(--pb-space-lg) * 2);
     grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  /*
+   * THE RUN CARD, PINNED TO THE BOTTOM OF THE VIEWPORT RATHER THAN OFF IT.
+   *
+   * The rail's height comes from the region and the region is at least a
+   * viewport tall, which is what stops the options moving this card - but the
+   * region does not START at the top of the viewport. It starts below the site
+   * header and the tool's own heading, so its last hundred-odd pixels are
+   * below the fold before anything has been scrolled, and the run button was
+   * in them. Measured at 1280x800: the card sat at 901..959 in an 800px
+   * window, so the primary action was invisible on arrival.
+   *
+   * Sticky to the block END, so the card is pushed UP when its resting place
+   * is below the fold and left alone when it is not. From the moment the rail
+   * itself sticks the two agree exactly - the rail's bottom is then
+   * `100dvh - lg`, which is where this puts the card anyway - so there is no
+   * jump between the two states.
+   *
+   * This is why the rail must not be `overflow: hidden`: sticky is relative to
+   * the nearest scrollport, and making the rail one would scope this to a box
+   * that never scrolls, where it would do nothing at all.
+   */
+  .runCard {
+    position: sticky;
+    inset-block-end: var(--pb-space-lg);
   }
 
   .optionsScroll {
@@ -133,20 +232,17 @@
     overscroll-behavior: contain;
   }
 
+  /*
+   * STRETCHED, so the surplus row two absorbs from the rail is the result area
+   * rather than bare page. `.layout` sets `align-items: start`, which is right
+   * for everything else in the grid and wrong here: it would have left the
+   * Output panel its content height with a viewport's worth of nothing under
+   * it, which is what the phantom gap looked like from the other side.
+   */
   .output {
     grid-column: 1;
     grid-row: 2;
-  }
-
-  /*
-   * Ports is reference material about how this tool wires up on the canvas -
-   * consulted occasionally, never while iterating - and it used to occupy the
-   * second most valuable position on the page, directly beneath the options.
-   * It reads as a footnote, so it is drawn as one.
-   */
-  .ports {
-    grid-column: 1 / -1;
-    grid-row: 3;
+    align-self: stretch;
   }
 }
 

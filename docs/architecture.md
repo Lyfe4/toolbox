@@ -1957,22 +1957,22 @@ component and adding a tenth adds no UI.
 
 ### Four regions, in reading order
 
-The page is one grid with four children, and the source order is the reading
-order:
+The source order is the reading order. Three of the four are in a grid; the
+fourth is deliberately not, for reasons the next section is about:
 
 ```
                         < 1000px                  >= 1000px
 
                      +--------------+      +-------------+--------+
-                  1  |    Input     |      |    Input    |        |
-                     +--------------+      +-------------+ Options|
-                  2  |   Options    |      |             |   Run  |
-                     |     Run      |      |   Output    | sticky |
-                     +--------------+      |             |        |
+                  1  |    Input     |      |    Input    | Options|  <- .layout
+                     +--------------+      +-------------+  ....  |
+                  2  |   Options    |      |             | scroll |
+                     |     Run      |      |   Output    |  ....  |
+                     +--------------+      |             |  Run   |
                   3  |    Output    |      +-------------+--------+
-                     +--------------+      |         Ports        |
-                  4  |    Ports     |      +----------------------+
                      +--------------+
+                  4  |    Ports     |      |         Ports        |  <- page flow
+                     +--------------+      +----------------------+
 ```
 
 **Options come before Output in the DOM.** This is the whole design, and it is
@@ -2021,16 +2021,99 @@ reach the button, scroll back down past them to see the result. It also means
 that on a wide screen — where the rail is sticky — Run is on screen however far
 down a long result you have scrolled, which it was not before.
 
+**It sits in a card, and it has not moved in the DOM.** It used to be the
+rail's bare tail: a button, a cancel button and a progress bar directly on the
+page background, on a surface where every other region is a bordered module. It
+is a `Panel` now, untitled — `Panel` claims a named region only when it has a
+title, and a fifth unnamed region in the landmark list would be noise while
+"Run" as a heading above a button labelled Run is worse than no heading at all.
+Its source position is unchanged, because that was never the problem: what was
+wrong is that it _moved_, and that was a fact about the rail's height rather
+than about where the button sits. Moving it before the options would have fixed
+the jumping and broken the loop the order exists for.
+
 **The rail is sticky above the breakpoint, and scrolls independently when it
 has to.** It spans both content rows, so `sticky` has somewhere to travel; it
 stops at the bottom of the output, because below that you are reading the ports
-footnote rather than the result. It is capped to the viewport with
-`grid-template-rows: minmax(0, 1fr) auto`, which puts the scroll on the options
-and never on the run button — the tallest options panel in the set (regex, with
-a pattern, a mode, a replacement and five flags) is taller than a 460px window.
-Below the breakpoint it is neither sticky nor a scroller: a pinned rail on a
-phone spends viewport the result needs, and a nested scrollbar inside a document
-that already scrolls is a defect this project has already fixed once.
+footnote rather than the result. `grid-template-rows: minmax(0, 1fr) auto` puts
+the scroll on the options and never on the run button — the tallest options
+panel in the set (regex, with a pattern, a mode, a replacement and five flags)
+is taller than a 460px window. Below the breakpoint it is neither sticky nor a
+scroller: a pinned rail on a phone spends viewport the result needs, and a
+nested scrollbar inside a document that already scrolls is a defect this
+project has already fixed once.
+
+### The rail's containing block, and the thing it was allowed to paint over
+
+A sticky box's travel is bounded by its **containing block**, and for a grid
+item that containing block is the grid **container** — not the grid area it was
+placed in. That is the opposite of the intuitive reading, and getting it wrong
+cost this page a defect that was visible on every tool.
+
+Ports used to be a third row of `.layout`, spanning both columns. The rail
+spans rows one and two, so the natural assumption is that it can only travel
+across those two rows. It cannot: it travels until its bottom edge reaches the
+bottom of the **grid**, and the grid's bottom edge is below Ports. Measured on
+`/tools/jwt-decode` at 1280×800 — scrolled to the foot of the page, the rail's
+bottom sat 52px below the top of the Ports panel, and from the moment it came
+unstuck its bottom edge tracked the grid's bottom edge to the pixel. The JWT
+page failed soonest only because its options panel is the second tallest in the
+set; nothing about the failure was specific to it.
+
+**`/styleguide` runs the same pattern and has never had the problem**, which is
+the clue that made the cause findable. Its grid has exactly two children: one
+`.content` column holding every section, and the sticky `.sidebar`. So the
+sidebar's containing block bottom _is_ the content column's bottom, and there is
+nothing inside the grid below it to reach. The tool page's grid had a third row,
+and that row was full-bleed, so it lay across the rail's whole travel range.
+
+**The fix is that `.layout` holds only the three regions the rail travels
+beside.** Ports is a sibling in the page's own flow. Nothing about z-index,
+margins or padding was involved, and none of them could have been: the rail was
+not escaping its bounds, it was inside them. The property that now holds is
+structural rather than measured — anything a future tool renders below the fold
+is outside the rail's containing block, because it is outside that grid, whatever
+its height and however tall the options panel is.
+
+Two more things fell out of the same span:
+
+- **Two `auto` rows split the rail's surplus height between them**, which put
+  80px of nothing between the Input and Output panels on a JWT page and moved
+  the Output panel's top whenever an option appeared. The rows are
+  `min-content minmax(0, 1fr)` now: row one is exactly the input's height and
+  row two absorbs the whole surplus, where it is invisible because the Output
+  panel stretches into it. The result area being large before a run is the right
+  reading of that space anyway.
+- **Run stood still.** The rail used to be as tall as its own contents, so its
+  last row moved every time a conditional option appeared — `text-convert`
+  reveals and hides fields as its target format changes, so the primary action
+  moved under the cursor of anyone using it. The rail now takes the region's
+  height (`block-size: 100%`, with `.layout` given a `min-block-size` of the
+  same viewport arithmetic the rail is capped by), so the row holding Run is a
+  fixed distance from the rail's top and the options take the difference by
+  scrolling. Derived from the viewport, never from a tool's option count, which
+  is the only way it can hold for a tool that has not been written.
+
+**`overflow: hidden` on the rail is load-bearing, not hygiene.** A scroll
+container's min-content contribution in the scrolling axis is zero, so it is
+what stops a tall options panel sizing the grid's rows — without it a tool
+declaring forty fields would inflate row two and hand the Output panel several
+thousand pixels of empty card. Measured both ways: a 2400px options panel
+leaves the row tracks byte-identical with it, and grows them without it.
+
+And **the `z-index` is gone**. It was on the rail, and it was never the fix — it
+decided which of two boxes painted on top of a collision rather than preventing
+one. A rail that cannot reach any other content does not need to be told what it
+paints over.
+
+> **The canvas selection bar is the same family and not the same primitive**, so
+> it was checked and left alone. It is `position: absolute` inside the canvas
+> root, which is explicitly `position: relative` with `overflow: hidden` — an
+> out-of-flow box whose containing block is declared rather than implied, and
+> which clips. The canvas route does not scroll at all, so there is no
+> scrollport for a travel range to exist in. The tool page's bug was that its
+> containing block was _implied_ by the grid and happened to include a third
+> row; nothing on the canvas can acquire one by accident.
 
 > `<main>` carries `overflow: clip` rather than `overflow: hidden`, and the
 > difference is load-bearing. `hidden` makes an element a scroll container —
