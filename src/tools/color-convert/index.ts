@@ -28,18 +28,28 @@ export const colorConvertTool = defineTool({
   ],
 
   outputs: [
-    { id: 'output', label: 'Converted', types: ['text'] },
+    {
+      id: 'output',
+      label: 'Converted',
+      types: ['text'],
+      description: 'The colour written in the target notation.',
+    },
     {
       id: 'swatch',
-      label: 'Colour',
+      // 'Swatch', not 'Colour'. The input port is called 'Colour', and a node
+      // reading `Colour` on the left and `Colour` on the right says nothing
+      // about which is which - on a 224px node the labels are all there is.
+      label: 'Swatch',
       types: ['color'],
       description: 'The parsed colour, previewed with its contrast against black and white.',
     },
     {
       id: 'all',
-      label: 'Every notation',
+      // Was 'Every notation', which is 14 characters against an 84px label box
+      // and was therefore drawn as 'Every notat…' on every node that had one.
+      label: 'Notations',
       types: ['json'],
-      description: 'The same colour in all four notations, for wiring into another tool.',
+      description: 'The same colour as hex, rgb(), hsl() and oklch() at once.',
     },
   ],
 

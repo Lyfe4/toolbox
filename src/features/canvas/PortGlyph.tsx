@@ -26,15 +26,9 @@ function shapeFor(type: DataType): string {
     case 'bytes':
       // Circle, drawn as two arcs.
       return 'M 1.5 5.5 A 4 4 0 1 0 9.5 5.5 A 4 4 0 1 0 1.5 5.5 Z';
-    case 'image':
-      // Triangle.
-      return 'M 5.5 1.5 L 10 9.5 L 1 9.5 Z';
     case 'color':
       // Hexagon.
       return 'M 5.5 1.5 L 9.5 3.5 L 9.5 7.5 L 5.5 9.5 L 1.5 7.5 L 1.5 3.5 Z';
-    case 'datetime':
-      // Half-round: flat left edge, domed right.
-      return 'M 2 1.5 H 5.5 A 4 4 0 0 1 5.5 9.5 H 2 Z';
   }
 }
 

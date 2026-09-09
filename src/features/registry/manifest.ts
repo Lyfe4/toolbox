@@ -55,7 +55,14 @@ export const TOOL_MANIFEST = [
         description: 'Text to encode, base64 to decode, or a dropped file.',
       },
     ],
-    outputs: [{ id: 'output', label: 'Output', types: ['text', 'bytes'] }],
+    outputs: [
+      {
+        id: 'output',
+        label: 'Output',
+        types: ['text', 'bytes'],
+        description: 'Base64 text when encoding, the decoded bytes when decoding.',
+      },
+    ],
     execution: {
       strategy: 'worker',
       requiresWasm: false,
@@ -82,7 +89,12 @@ export const TOOL_MANIFEST = [
       },
     ],
     outputs: [
-      { id: 'output', label: 'Converted', types: ['text'] },
+      {
+        id: 'output',
+        label: 'Converted',
+        types: ['text'],
+        description: 'The document serialised in the target format.',
+      },
       {
         id: 'data',
         label: 'Parsed data',
@@ -115,7 +127,14 @@ export const TOOL_MANIFEST = [
         description: 'Text or a file to fingerprint.',
       },
     ],
-    outputs: [{ id: 'digest', label: 'Digest', types: ['text'] }],
+    outputs: [
+      {
+        id: 'output',
+        label: 'Digest',
+        types: ['text'],
+        description: 'The fingerprint, in the chosen encoding and case.',
+      },
+    ],
     execution: {
       strategy: 'worker',
       requiresWasm: false,
@@ -147,6 +166,7 @@ export const TOOL_MANIFEST = [
         label: 'Decoded',
         types: ['json'],
         description: 'Signature verdict first, then the header and payload.',
+        presentation: 'jwt',
       },
     ],
     secretOptionKeys: ['key'],
@@ -217,9 +237,9 @@ export const TOOL_MANIFEST = [
       {
         id: 'input',
         label: 'Subject',
-        types: ['text'],
+        types: ['text', 'bytes'],
         required: true,
-        description: 'The text to search. The pattern itself is an option.',
+        description: 'The text to search, or a text file. The pattern itself is an option.',
       },
     ],
     outputs: [
@@ -229,7 +249,13 @@ export const TOOL_MANIFEST = [
         types: ['text'],
         description: 'The replaced text, or a list of matches with their offsets.',
       },
-      { id: 'matches', label: 'Matches', types: ['json'] },
+      {
+        id: 'matches',
+        label: 'Matches',
+        types: ['json'],
+        description: 'Pattern, flags, every match with its groups, and the risk notes.',
+        presentation: 'regex',
+      },
     ],
     execution: {
       strategy: 'worker',
@@ -259,18 +285,23 @@ export const TOOL_MANIFEST = [
       },
     ],
     outputs: [
-      { id: 'output', label: 'Converted', types: ['text'] },
+      {
+        id: 'output',
+        label: 'Converted',
+        types: ['text'],
+        description: 'The colour written in the target notation.',
+      },
       {
         id: 'swatch',
-        label: 'Colour',
+        label: 'Swatch',
         types: ['color'],
         description: 'The parsed colour, previewed with its contrast against black and white.',
       },
       {
         id: 'all',
-        label: 'Every notation',
+        label: 'Notations',
         types: ['json'],
-        description: 'The same colour in all four notations, for wiring into another tool.',
+        description: 'The same colour as hex, rgb(), hsl() and oklch() at once.',
       },
     ],
     execution: {
@@ -299,12 +330,18 @@ export const TOOL_MANIFEST = [
       },
     ],
     outputs: [
-      { id: 'output', label: 'Converted image', types: ['bytes'] },
       {
-        id: 'info',
-        label: 'Details',
+        id: 'output',
+        label: 'Converted',
+        types: ['bytes'],
+        description: 'The re-encoded image. Carries no metadata from the original.',
+      },
+      {
+        id: 'report',
+        label: 'Report',
         types: ['json'],
-        description: 'Dimensions and sizes before and after.',
+        description: 'What changed, then dimensions and sizes before and after.',
+        presentation: 'report',
       },
     ],
     execution: {
@@ -338,8 +375,8 @@ export const TOOL_MANIFEST = [
     inputs: [
       {
         id: 'input',
-        label: 'Input',
-        types: ['text'],
+        label: 'Document',
+        types: ['text', 'bytes'],
         required: true,
         description: 'Markdown or HTML. Detected automatically unless you say otherwise.',
       },
@@ -355,12 +392,13 @@ export const TOOL_MANIFEST = [
         id: 'rendered',
         label: 'Rendered HTML',
         types: ['text'],
-        description: 'Always HTML, sanitised. This is what the preview shows.',
+        description:
+          'Always HTML, sanitised - the preview and Copy as rich text. Identical to Converted when Markdown becomes HTML.',
         presentation: 'html',
       },
       {
         id: 'detected',
-        label: 'Detected source',
+        label: 'Detected',
         types: ['text'],
         description: 'What auto-detection concluded, and whether it was sure.',
       },

@@ -29,11 +29,22 @@ export const imageOptionFields: readonly OptionField<ImageOptions>[] = [
   {
     key: 'quality',
     label: 'Quality',
-    description: '0.1 to 1. Applies to JPEG and WebP; PNG is lossless and ignores it.',
+    description: '0.1 to 1. Lower is smaller and softer; 1 is the best this encoder will do.',
     control: 'number',
     min: 0.1,
     max: 1,
     step: 0.05,
+    /*
+     * PNG is lossless and its encoder ignores quality entirely - measured: the
+     * same 16x16 image comes out at exactly the same byte count at 0.1 and at
+     * 1 in both Firefox and WebKit. A control that silently does nothing is
+     * the `cursor: pointer` with no handler problem in another costume, so it
+     * is hidden rather than left there to be fiddled with. The value survives
+     * the hiding and comes back the moment the target is lossy again, and the
+     * `info` output still carries a note saying quality did not apply - the
+     * panel is not the only consumer of this tool.
+     */
+    when: (options) => options.format !== 'image/png',
   },
   {
     key: 'maxEdge',

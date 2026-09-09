@@ -4,6 +4,27 @@
  * rather than scattered across five near-identical files.
  */
 
+/*
+ * THE PAGE'S SHAPE, AND WHY THE DOM IS IN THIS ORDER.
+ *
+ * Source order is Input, Controls (the options and the run button), Output,
+ * Ports, and every rule below places those four in that same reading order -
+ * left to right, top to bottom - at every width. Nothing here reorders
+ * anything.
+ *
+ * That is deliberate rather than incidental. `order`, `row-reverse` and a
+ * column-major grid can each put Options where the eye wants it while leaving
+ * the tab key and the screen reader walking the old path, and a page whose
+ * focus ring jumps input, output, back up to options is worse than the problem
+ * being fixed. So the DOM was reordered and the CSS only decides where the
+ * columns break.
+ *
+ * The layout this replaces was two stacked columns - [Input, Output] beside
+ * [Options, Ports] - which had both defects at once. On a phone the whole
+ * options panel sat below the output, so changing one option meant scrolling
+ * past an arbitrarily long result and back. On a desktop the eye read Input,
+ * Options, Output while Tab went Input, Output, Options.
+ */
 .layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -11,16 +32,122 @@
   align-items: start;
 }
 
+/*
+ * Deliberately NOT sticky and NOT its own scroller below 1000px. A pinned rail
+ * on a phone spends viewport the result needs, and a nested scrollbar inside a
+ * document that already scrolls is the defect the mobile audit found in the
+ * theme editor's contrast list.
+ */
+.controls {
+  display: grid;
+  gap: var(--pb-space-lg);
+  min-inline-size: 0;
+}
+
+/*
+ * `position: relative` before this ever scrolls, for the reason
+ * Button.module.css spells out and diff.module.css was bitten by: an
+ * absolutely positioned descendant - which is what the visually-hidden recipe
+ * is - measures against the nearest POSITIONED ancestor, and against the
+ * document if there is none. It then escapes this box's overflow clip and adds
+ * its position to the document's scrollable height. No option field has one
+ * today; the fix costs a line and the bug has already cost this repo two.
+ */
+.optionsScroll {
+  position: relative;
+  min-inline-size: 0;
+}
+
+/*
+ * Run, Cancel and the busy readout, between the options and the output.
+ *
+ * They used to sit at the foot of the Input panel, which was fine while the
+ * options were somewhere else entirely. With the options directly above the
+ * output that would have become the new worst thing on the page: change a
+ * flag, scroll up past the options to reach Run, scroll back down past them
+ * again to see what happened. Here the loop is change, run, read - in that
+ * order and in that direction.
+ */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pb-space-sm);
+  min-inline-size: 0;
+}
+
+/*
+ * 1000px, and the number is arithmetic rather than a device.
+ *
+ * The rail is 300px and the page's own gutters are 16px a side, so a second
+ * column only pays for itself once what is left over is a main column wide
+ * enough for the widest thing drawn in it - the regex match table and the
+ * side-by-side diff both want about 600px before they start scrolling.
+ * 600 + 300 + 16 gap + 32 padding = 948, and 1000 is the next round number
+ * clear of it. Below that the rail would be taking width from the data in
+ * order to show four select boxes.
+ *
+ * One breakpoint, not two: the extra width on a large monitor goes to the
+ * output, where a diff and a match table can use it, rather than to a rail of
+ * controls that were already wide enough at 300.
+ */
 @media (min-width: 1000px) {
   .layout {
     grid-template-columns: minmax(0, 1fr) 300px;
   }
-}
 
-.column {
-  display: grid;
-  gap: var(--pb-space-lg);
-  min-inline-size: 0;
+  .input {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  /*
+   * The rail spans both content rows so that `sticky` has somewhere to travel:
+   * a sticky box may only move within its own containing block, and an item
+   * confined to row 1 would come unstuck the moment the input scrolled away.
+   */
+  .controls {
+    grid-column: 2;
+    grid-row: 1 / 3;
+
+    position: sticky;
+    inset-block-start: var(--pb-space-lg);
+    z-index: var(--pb-z-sticky);
+
+    /*
+     * Capped to the viewport, with the OPTIONS taking the scroll rather than
+     * the run button. `minmax(0, 1fr) auto` is what makes that work without a
+     * magic number: row one may shrink to nothing, row two never does, so Run
+     * and the status readout stay on screen however many options a tool
+     * declares.
+     */
+    max-block-size: calc(100dvh - var(--pb-space-lg) * 2);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .optionsScroll {
+    min-block-size: 0;
+    overflow-y: auto;
+    /* Reaching the end of the options must not then start scrolling the page. */
+    overscroll-behavior: contain;
+  }
+
+  .output {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  /*
+   * Ports is reference material about how this tool wires up on the canvas -
+   * consulted occasionally, never while iterating - and it used to occupy the
+   * second most valuable position on the page, directly beneath the options.
+   * It reads as a footnote, so it is drawn as one.
+   */
+  .ports {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
 }
 
 .stack {
@@ -49,6 +176,31 @@
   font-size: var(--pb-label-size);
   letter-spacing: var(--pb-label-tracking);
   color: var(--pb-ink-muted);
+}
+
+/*
+ * One port in the footnote panel: its name and types, then what it carries.
+ *
+ * `gap: 2xs` rather than the stack's `md`, so the two lines read as one entry
+ * and the entries read as a list. Without it a six-port tool is twelve
+ * evenly-spaced lines with no telling which sentence belongs to which port.
+ */
+.port {
+  display: grid;
+  gap: var(--pb-space-2xs);
+  min-inline-size: 0;
+}
+
+/*
+ * Sentence case and not a label: this is prose, where the line above it is a
+ * name. Uppercase 10px with label tracking is unreadable at sentence length,
+ * which is the whole reason it is a separate class rather than another `hint`.
+ */
+.portNote {
+  margin: 0;
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-muted);
+  text-wrap: pretty;
 }
 
 .mono {
@@ -151,7 +303,12 @@
 
 /* --- Output ------------------------------------------------------------- */
 
-.output {
+/*
+ * The big monospace box, used for both the input editors and a text result.
+ * Named for what it is rather than for where it sits: it was `.output` while
+ * also being every input's class, and `.output` is now the grid area.
+ */
+.editor {
   inline-size: 100%;
   min-block-size: 200px;
   resize: vertical;
@@ -258,6 +415,22 @@
 
   to {
     transform: translateX(300%);
+  }
+}
+
+/*
+ * `pointer: coarse` is the finger, not the screen size - a narrow window on a
+ * laptop keeps the dense instrument layout, a tablet does not. 44px is WCAG
+ * 2.5.5.
+ *
+ * The <label> rather than the <input>: the input is the control but it is
+ * visually hidden, so the label is the whole of what a finger can aim at. It
+ * was 24px on every tool page, and on a phone picking a file is the only way to
+ * get data into image-convert at all.
+ */
+@media (pointer: coarse) {
+  .fileButton {
+    block-size: 44px;
   }
 }
 

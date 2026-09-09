@@ -17,7 +17,12 @@ export interface SniffResult {
 }
 
 interface Signature {
-  readonly bytes: readonly number[];
+  /**
+   * The bytes to match. `null` is a wildcard for one byte, which is what makes
+   * a container signature expressible: a WebP file is RIFF, then a length
+   * nobody can predict, then WEBP.
+   */
+  readonly bytes: readonly (number | null)[];
   readonly offset: number;
   readonly mediaType: string;
   readonly label: string;
@@ -27,7 +32,19 @@ const SIGNATURES: readonly Signature[] = [
   { bytes: [0x89, 0x50, 0x4e, 0x47], offset: 0, mediaType: 'image/png', label: 'PNG image' },
   { bytes: [0xff, 0xd8, 0xff], offset: 0, mediaType: 'image/jpeg', label: 'JPEG image' },
   { bytes: [0x47, 0x49, 0x46, 0x38], offset: 0, mediaType: 'image/gif', label: 'GIF image' },
-  { bytes: [0x57, 0x45, 0x42, 0x50], offset: 8, mediaType: 'image/webp', label: 'WebP image' },
+  {
+    /*
+     * RIFF, four bytes of length, WEBP. Matching only the WEBP at offset 8 -
+     * which is what this did - calls any file with those four bytes in that
+     * position a WebP image, and the RIFF container is the whole reason they
+     * are there. The decoder rejects such a file anyway, so this buys a
+     * truthful error message rather than an opaque one.
+     */
+    bytes: [0x52, 0x49, 0x46, 0x46, null, null, null, null, 0x57, 0x45, 0x42, 0x50],
+    offset: 0,
+    mediaType: 'image/webp',
+    label: 'WebP image',
+  },
   {
     bytes: [0x25, 0x50, 0x44, 0x46],
     offset: 0,
@@ -57,7 +74,9 @@ const SIGNATURES: readonly Signature[] = [
 
 function matches(bytes: Uint8Array, signature: Signature): boolean {
   if (bytes.length < signature.offset + signature.bytes.length) return false;
-  return signature.bytes.every((byte, index) => bytes[signature.offset + index] === byte);
+  return signature.bytes.every(
+    (byte, index) => byte === null || bytes[signature.offset + index] === byte,
+  );
 }
 
 /** UTF-8, UTF-16 LE and UTF-16 BE byte order marks. */

@@ -40,13 +40,16 @@ export const SUMMARY_HEIGHT = 40;
 /** Lines the summary box is sized for. Asserted against the real box. */
 export const SUMMARY_LINES = 2;
 export const FOOTER_HEIGHT = 24;
-/**
- * The typed-input editor: a 48px box plus the 4px gap under it.
+
+/*
+ * There is no INPUT_HEIGHT any more.
  *
- * Matched to the CSS rather than rounded up. Over-reserving here left the
- * footer floating a few pixels above the node's bottom edge.
+ * A node used to grow a 52px editor for every unwired input port, so its
+ * height was a function of the graph's wiring and changed under the user as
+ * they connected things. Input moved to the inspector, so a node's height is
+ * now a function of its TOOL alone - every base64 node on the canvas is
+ * exactly as tall as every other, which is what makes a row of them scannable.
  */
-export const INPUT_HEIGHT = 52;
 
 /**
  * Clear space between the input stack and the output stack.
@@ -193,7 +196,7 @@ export function portStackGap(entry: ToolManifestEntry): number {
   return entry.inputs.length > 0 && entry.outputs.length > 0 ? PORT_STACK_GAP : 0;
 }
 
-export function nodeHeight(entry: ToolManifestEntry, typedInputs = 0): number {
+export function nodeHeight(entry: ToolManifestEntry): number {
   return (
     NODE_BORDER * 2 +
     HEADER_HEIGHT +
@@ -201,7 +204,6 @@ export function nodeHeight(entry: ToolManifestEntry, typedInputs = 0): number {
     BODY_PADDING * 2 +
     portRowCount(entry) * PORT_ROW_HEIGHT +
     portStackGap(entry) +
-    typedInputs * INPUT_HEIGHT +
     FOOTER_HEIGHT
   );
 }
@@ -209,8 +211,10 @@ export function nodeHeight(entry: ToolManifestEntry, typedInputs = 0): number {
 /**
  * The input ports a node takes typed text for: every input port with no wire.
  *
- * The editors sit BELOW the ports, so adding one changes the node's height
- * without moving any connector - wire geometry is unaffected.
+ * A wire always wins over typed text, so a port with one arriving is not
+ * offered as somewhere to type. The list is what the inspector draws editors
+ * for and what the node's blocked guidance is computed from; nothing about it
+ * affects geometry any more.
  */
 export function typedInputPorts(graph: GraphData, node: CanvasNode): readonly string[] {
   const wired = new Set<string>();
@@ -222,11 +226,6 @@ export function typedInputPorts(graph: GraphData, node: CanvasNode): readonly st
   return getManifestEntry(node.toolId)
     .inputs.filter((port) => !wired.has(port.id))
     .map((port) => port.id);
-}
-
-/** How many typed-input editors a node shows. */
-export function typedInputCount(graph: GraphData, node: CanvasNode): number {
-  return typedInputPorts(graph, node).length;
 }
 
 export type PortSide = 'input' | 'output';
@@ -325,12 +324,12 @@ export interface Rect {
   readonly height: number;
 }
 
-export function nodeRect(node: CanvasNode, typedInputs = 0): Rect {
+export function nodeRect(node: CanvasNode): Rect {
   return {
     x: node.position.x,
     y: node.position.y,
     width: NODE_WIDTH,
-    height: nodeHeight(getManifestEntry(node.toolId), typedInputs),
+    height: nodeHeight(getManifestEntry(node.toolId)),
   };
 }
 
@@ -346,7 +345,7 @@ export function graphBounds(graph: GraphData): Rect | null {
   for (const id of graph.nodeOrder) {
     const node = graph.nodes[id];
     if (!node) continue;
-    const rect = nodeRect(node, typedInputCount(graph, node));
+    const rect = nodeRect(node);
     minX = Math.min(minX, rect.x);
     minY = Math.min(minY, rect.y);
     maxX = Math.max(maxX, rect.x + rect.width);

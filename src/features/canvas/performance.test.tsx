@@ -2,6 +2,8 @@ import { act, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { ToastProvider } from '@/components/Toast';
+import { usePipelineStore } from '@/features/execution/pipelineStore';
+import { EMPTY_ANNOUNCEMENTS } from '@/lib/announce';
 
 import { Canvas } from './Canvas';
 import { useCanvasStore } from './graphStore';
@@ -33,6 +35,7 @@ function bigGraph(): GraphData {
       position: { x: (index % 10) * 280, y: Math.floor(index / 10) * 240 },
       options: {},
       inputs: {},
+      fileInputs: {},
     };
   }
 
@@ -74,13 +77,20 @@ function measure(label: string, iterations: number, run: () => void): number {
 
 beforeEach(() => {
   window.localStorage.clear();
+  /*
+   * The pipeline store keeps a result cache keyed by node id, and every test
+   * here builds a canvas whose first node is n1. Without this, one test's
+   * result can be served to the next as a cache hit - state leaking between
+   * tests in exactly the shape it leaks between documents.
+   */
+  usePipelineStore.getState().reset();
   useCanvasStore.setState({
     graph: bigGraph(),
     selection: { nodes: [], edges: [] },
     past: [],
     future: [],
     pendingMove: null,
-    announcement: { text: '', seq: 0 },
+    ...EMPTY_ANNOUNCEMENTS,
   });
   useViewportStore.setState({ viewport: DEFAULT_VIEWPORT, isPanning: false });
 });

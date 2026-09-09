@@ -8,6 +8,7 @@ export {
   connectionCount,
   edgesTouching,
   edgeInto,
+  firstRefusedEdge,
   validPartnersFor,
   validTargetsFor,
   type ConnectionTarget,

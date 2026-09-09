@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { encodeBase64 } from '@/lib/base64';
 
+import { firstRefusedEdge } from './connections';
 import {
   buildShareUrl,
   decodeParamToGraph,
@@ -26,6 +27,7 @@ function node(
     position: { x: 0, y: 0 },
     options: { mode: 'decode' },
     inputs: { input },
+    fileInputs: {},
   };
 }
 
@@ -124,6 +126,50 @@ describe('user data never enters a share link', () => {
     }
   });
 
+  /*
+   * A FILENAME NEVER TRAVELS EITHER, AND IT IS NOT MERELY THE SAME RULE AGAIN.
+   *
+   * A file's bytes could not go in a URL at any size, so the only question was
+   * its NAME - and a filename is frequently the most revealing single string in
+   * a document: `Q3-layoffs.xlsx` says something a pipeline's SHAPE does not.
+   * The recipient has no file and would gain nothing but the name.
+   *
+   * Driven through the real encoder rather than through `toSharePayload`, so
+   * the compressed bytes are checked as well as the structure they came from.
+   */
+  it('never encodes the name of a chosen file into the URL', async () => {
+    const graph = pipeline();
+    const first = graph.nodeOrder[0];
+    expect(first).toBeDefined();
+    if (first === undefined) return;
+    const target = graph.nodes[first];
+    expect(target).toBeDefined();
+    if (!target) return;
+
+    const withFile: GraphData = {
+      ...graph,
+      nodes: {
+        ...graph.nodes,
+        [first]: {
+          ...target,
+          fileInputs: { input: { name: 'Q3-layoffs.xlsx', size: 4096, token: 3 } },
+        },
+      },
+    };
+
+    const param = await encodeGraphToParam(withFile);
+    expect(param).not.toContain('Q3-layoffs');
+
+    const decoded = await decodeParamToGraph(param);
+    expect(decoded.status).toBe('ok');
+    if (decoded.status !== 'ok') return;
+    expect(JSON.stringify(decoded.graph)).not.toContain('Q3-layoffs');
+    // And every node comes back asking for a file rather than claiming one.
+    for (const id of decoded.graph.nodeOrder) {
+      expect(decoded.graph.nodes[id]?.fileInputs).toEqual({});
+    }
+  });
+
   it('has no field for input in the payload schema at all', () => {
     // Belt and braces: even a hand-crafted payload cannot carry input.
     const withInput = sharePayloadSchema.safeParse({
@@ -153,6 +199,7 @@ describe('secret options never enter a share link', () => {
         position: { x: 0, y: 0 },
         options: { key: 'super-secret-signing-key', keyEncoding: 'utf8', clockToleranceSec: 30 },
         inputs: {},
+        fileInputs: {},
       },
     },
     nodeOrder: ['n1'],
@@ -231,6 +278,54 @@ describe('round trip', () => {
     expect(encodeURIComponent(param)).toBe(param);
   });
 
+  /*
+   * THE ID COUNTER AFTER A RESTORE.
+   *
+   * `nextId` used to be `nodes.length + edges.length + 1`, which is only right
+   * while the ids are dense - and they stop being dense the moment anyone
+   * deletes a node. A pipeline whose survivors are n3 and n7 restored with a
+   * counter of 3, so the next node the recipient added was ALSO n3: it landed
+   * on top of the existing one, silently changing that node's tool while its
+   * wires stayed pointing at ports the new tool does not have.
+   *
+   * Sparse ids are not an edge case. They are what a share link looks like
+   * after any editing at all.
+   */
+  it('restores a counter past every id in a sparse link', async () => {
+    const sparse: GraphData = {
+      nodes: {
+        n3: {
+          id: 'n3',
+          toolId: 'base64',
+          position: { x: 0, y: 0 },
+          options: {},
+          inputs: {},
+          fileInputs: {},
+        },
+        n7: {
+          id: 'n7',
+          toolId: 'hash',
+          position: { x: 320, y: 0 },
+          options: {},
+          inputs: {},
+          fileInputs: {},
+        },
+      },
+      nodeOrder: ['n3', 'n7'],
+      edges: {},
+      edgeOrder: [],
+      nextId: 8,
+    };
+
+    const result = await decodeParamToGraph(await encodeGraphToParam(sparse));
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+
+    expect(result.graph.nextId).toBeGreaterThan(7);
+    // The concrete consequence: the id the canvas would issue next is free.
+    expect(`n${result.graph.nextId.toString()}` in result.graph.nodes).toBe(false);
+  });
+
   it('round-trips an empty canvas', async () => {
     const empty: GraphData = {
       nodes: {},
@@ -290,9 +385,11 @@ describe('a share link is untrusted input', () => {
   });
 
   it('rejects a payload from a format version it cannot read', () => {
-    // A FUTURE version. v1 is not in this list on purpose - it is migrated on
-    // the way in rather than refused; see the migration tests.
-    expect(sharePayloadSchema.safeParse({ v: 3, n: [], e: [] }).success).toBe(false);
+    // A FUTURE version. v1 and v2 are not in this list on purpose - they are
+    // migrated on the way in rather than refused; see the migration tests.
+    expect(
+      sharePayloadSchema.safeParse({ v: SHARE_FORMAT_VERSION + 1, n: [], e: [] }).success,
+    ).toBe(false);
     expect(sharePayloadSchema.safeParse({ n: [], e: [] }).success).toBe(false);
   });
 
@@ -309,14 +406,40 @@ describe('a share link is untrusted input', () => {
     );
   });
 
-  it('drops edges whose endpoints are missing rather than applying half a graph', () => {
+  /*
+   * WAS "drops edges whose endpoints are missing", AND DROPPING WAS THE BUG.
+   *
+   * The old behaviour skipped such an edge and applied the rest, which is the
+   * half-applied pipeline this module's own header says cannot happen - just
+   * one where the missing half is silent instead of reported. The edge is now
+   * kept in the graph `fromSharePayload` builds, and `decodeParamToGraph`
+   * refuses the link on it: `checkConnection` already reads a missing endpoint
+   * as "that port no longer exists".
+   */
+  it('keeps an edge with a missing endpoint for the connection check to refuse', () => {
     const graph = fromSharePayload({
       v: SHARE_FORMAT_VERSION,
       n: [['n1', 'base64', 0, 0, {}]],
       e: [['n1', 'output', 'ghost', 'input']],
     });
     expect(graph.nodeOrder).toEqual(['n1']);
-    expect(graph.edgeOrder).toEqual([]);
+    expect(graph.edgeOrder).toHaveLength(1);
+    expect(firstRefusedEdge(graph)?.rejection.message).toBe('That port no longer exists.');
+  });
+
+  it('refuses a payload with wires and no nodes rather than emptying it quietly', async () => {
+    // Nonsense rather than empty: dropping the edges to reach EMPTY_GRAPH
+    // would be the silent repair `fromSharePayload` has stopped doing.
+    const param = await encodeGraphToParam(
+      fromSharePayload({
+        v: SHARE_FORMAT_VERSION,
+        n: [['n1', 'base64', 0, 0, {}]],
+        e: [['n1', 'output', 'ghost', 'input']],
+      }),
+    );
+
+    const result = await decodeParamToGraph(param);
+    expect(result.status).toBe('error');
   });
 
   it('ignores duplicate node ids', () => {

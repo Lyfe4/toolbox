@@ -1,5 +1,20 @@
+/*
+ * WRAPPING, NOT SCROLLING, AND NOT NOWRAP.
+ *
+ * A nowrap flex row has a min-content width equal to the sum of its children,
+ * and that number propagates up through every `min-inline-size: auto` ancestor
+ * until something clips or the document scrolls sideways. Seven token-group
+ * tabs came to ~490px, which is wider than any phone.
+ *
+ * The alternative - `overflow-x: auto` - keeps one tidy row but hides tabs off
+ * the edge with nothing to say they are there, and a category strip whose
+ * categories you cannot see is worse than one that takes three lines. Wrapping
+ * costs vertical space only when the row genuinely does not fit, so nothing
+ * changes at desktop widths.
+ */
 .list {
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 0;
   border-block-end: var(--pb-border-width) solid var(--pb-border-hairline);
@@ -69,6 +84,17 @@
 .panel:focus-visible {
   outline: var(--pb-focus-width) solid var(--pb-focus-ring);
   outline-offset: calc(var(--pb-focus-offset) * -1);
+}
+
+/*
+ * `pointer: coarse` is the finger, not the screen size - a narrow window on a
+ * laptop keeps the dense instrument layout, a tablet does not. 44px is WCAG
+ * 2.5.5; a tab was 32px tall before this.
+ */
+@media (pointer: coarse) {
+  .tab {
+    block-size: 44px;
+  }
 }
 
 @media (forced-colors: active) {

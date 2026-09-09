@@ -3,6 +3,8 @@ export type { ButtonProps, ButtonSize, ButtonVariant } from './Button';
 export { Field } from './Field';
 export type { FieldControlProps, FieldProps } from './Field';
 export * from './Icon';
+export { LIVE_REGION_DWELL_MS, LiveRegion } from './LiveRegion';
+export type { LiveRegionProps } from './LiveRegion';
 export { IconButton } from './IconButton';
 export type { IconButtonProps } from './IconButton';
 export { Panel } from './Panel';

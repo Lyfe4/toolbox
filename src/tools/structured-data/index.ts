@@ -1,7 +1,14 @@
 import { defineTool, eraseTool, ok, type ErasedTool } from '@/features/registry/types';
-import { bytesToTextStrict } from '@/lib/base64';
 
-import { DELIMITERS, detectFormat, parseSource, serialise, sortKeysDeep } from './convert';
+import {
+  checkJsonInput,
+  decodeDocument,
+  DELIMITERS,
+  parseAuto,
+  parseSource,
+  serialise,
+  sortKeysDeep,
+} from './convert';
 import {
   structuredDataDefaultOptions,
   structuredDataOptionFields,
@@ -39,7 +46,12 @@ export const structuredDataTool = defineTool({
   ],
 
   outputs: [
-    { id: 'output', label: 'Converted', types: ['text'] },
+    {
+      id: 'output',
+      label: 'Converted',
+      types: ['text'],
+      description: 'The document serialised in the target format.',
+    },
     {
       id: 'data',
       label: 'Parsed data',
@@ -66,28 +78,34 @@ export const structuredDataTool = defineTool({
     const { input } = inputs;
     const delimiter = DELIMITERS[options.delimiter];
 
-    // A wired-in 'json' value is already parsed. Bytes are decoded as UTF-8
-    // first, strictly: a PNG wired in here should say so, not be parsed as
-    // mojibake and fail with a confusing syntax error.
+    // A wired-in 'json' value is already parsed. Bytes are decoded strictly -
+    // see `decodeDocument` for why UTF-16 with a byte order mark is the one
+    // encoding other than UTF-8 that gets through.
     let source: string;
     if (input.type === 'json') {
       source = '';
     } else if (input.type === 'bytes') {
-      const decoded = bytesToTextStrict(input.bytes);
+      const decoded = decodeDocument(input.bytes);
       if (!decoded.ok) return decoded;
       source = decoded.value;
     } else {
       source = input.text;
     }
 
+    /*
+     * A value wired in on the `json` port is already parsed, so it skips the
+     * parser - but NOT the guards. It is the one route into this tool whose
+     * shape nothing in this file has checked, and `sortKeysDeep` and
+     * `JSON.stringify` are both recursive: a value nested a few thousand deep
+     * threw `RangeError` straight out of `run`, which the execution contract
+     * says can never happen.
+     */
     const parsed =
       input.type === 'json'
-        ? ok(input.data)
-        : parseSource(
-            source,
-            options.source === 'auto' ? detectFormat(source) : options.source,
-            delimiter,
-          );
+        ? checkJsonInput(input.data)
+        : options.source === 'auto'
+          ? parseAuto(source, delimiter)
+          : parseSource(source, options.source, delimiter);
 
     if (!parsed.ok) return parsed;
 

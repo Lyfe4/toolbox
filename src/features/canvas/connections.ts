@@ -122,6 +122,52 @@ export function checkConnection(graph: GraphData, from: PortRef, to: PortRef): C
   return { ok: true };
 }
 
+/**
+ * The first edge in a graph that `checkConnection` would refuse, or null.
+ *
+ * WHY THIS EXISTS RATHER THAN A SECOND SET OF RULES. `checkConnection` is the
+ * single source of truth for whether a wire is legal, and it had three callers
+ * - the pointer drop, the keyboard flow, and `validPartnersFor`, which both of
+ * those consult. The two routes that build a graph from OUTSIDE this session -
+ * a share link and the saved canvas - had none, and they are the two that most
+ * need one: a document written by an older build can name a port that has
+ * since been renamed, and a link is attacker-controlled besides.
+ *
+ * What happened without it was not a crash but something quieter. An edge
+ * naming a port that no longer exists is dropped by nothing: the engine finds
+ * no value on the output port and reports `Nothing arrived on ...` on the
+ * node BELOW it, or finds no input port matching the wire and reports the
+ * input as needing something the user can plainly see is connected. A pipeline
+ * that ran, with one wire silently doing nothing, is the failure this
+ * repository keeps finding: confident, well formed, and wrong.
+ *
+ * EDGE BY EDGE, ONTO A GROWING GRAPH, because two of the refusals are about
+ * the edges already present - an input port that is already occupied, and a
+ * cycle. Checking each edge against the finished graph would refuse every edge
+ * for occupying the port it itself occupies.
+ */
+export function firstRefusedEdge(
+  graph: GraphData,
+): { readonly edge: CanvasEdge; readonly rejection: ConnectionRejection } | null {
+  let accumulated: GraphData = { ...graph, edges: {}, edgeOrder: [] };
+
+  for (const id of graph.edgeOrder) {
+    const edge = graph.edges[id];
+    if (!edge) continue;
+
+    const check = checkConnection(accumulated, edge.from, edge.to);
+    if (!check.ok) return { edge, rejection: check.rejection };
+
+    accumulated = {
+      ...accumulated,
+      edges: { ...accumulated.edges, [id]: edge },
+      edgeOrder: [...accumulated.edgeOrder, id],
+    };
+  }
+
+  return null;
+}
+
 export interface ConnectionTarget {
   readonly nodeId: NodeId;
   readonly portId: string;

@@ -1,3 +1,5 @@
+import { isCanonicalColour } from './customThemes';
+
 import type { CustomTheme, ThemeName } from './types';
 
 /**
@@ -24,6 +26,16 @@ export function applyTheme(root: HTMLElement, theme: ThemeName, custom: CustomTh
   if (custom === null) return;
 
   for (const [token, value] of Object.entries(custom.overrides)) {
-    if (typeof value === 'string') root.style.setProperty(`--pb-${token}`, value);
+    /*
+     * THE LAST GATE BEFORE CSS.
+     *
+     * Every path that produces an override already canonicalises it to hex -
+     * the editor through the colour parser, import through its schema, storage
+     * through `readCustomTheme`. This checks again anyway, because this is the
+     * single line in the application where a string becomes a stylesheet, and
+     * a custom property will happily hold `url(...)` or `var(...)` if one ever
+     * reached it. One regex here means no future caller can get it wrong.
+     */
+    if (isCanonicalColour(value)) root.style.setProperty(`--pb-${token}`, value);
   }
 }

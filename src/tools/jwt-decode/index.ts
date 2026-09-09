@@ -41,6 +41,13 @@ export const jwtDecodeTool = defineTool({
       label: 'Decoded',
       types: ['json'],
       description: 'Signature verdict first, then the header and payload.',
+      /*
+       * Not a JSON tree. The verdict is the reason anybody opens a JWT
+       * decoder, and as `JSON.stringify` it is a line of braces among other
+       * braces - directly above claims that base64 makes trivial to forge.
+       * See JwtView.
+       */
+      presentation: 'jwt',
     },
   ],
 
@@ -79,6 +86,18 @@ export const jwtDecodeTool = defineTool({
       signature: {
         algorithm: decoded.value.algorithm,
         verified: verification.status === 'verified',
+        /*
+         * The outcome as a TOKEN rather than as prose, beside the prose.
+         *
+         * `verified: false` covers five different situations - no key, an
+         * algorithm we cannot check, a key that would not import, a signature
+         * that did not match, and `alg: none` - and the difference between
+         * "nobody checked" and "it is forged" is the entire content of this
+         * output. Anything drawing this had only `status`, a sentence written
+         * for a human, and sniffing prose for the word INVALID is not a way to
+         * decide how loudly to shout. See JwtView.
+         */
+        state: verification.status,
         status: verification.summary,
         detail: verification.detail,
       },

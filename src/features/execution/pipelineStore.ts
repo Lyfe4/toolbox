@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 
+import { useAttachmentStore } from '@/features/canvas/attachmentStore';
 import type { GraphData, NodeId } from '@/features/canvas/types';
 import type { ToolOutputs, ToolResult } from '@/features/registry/types';
+import { appendAnnouncement, EMPTY_ANNOUNCEMENTS, type AnnouncementSlice } from '@/lib/announce';
 import { counted } from '@/lib/plural';
 
 import {
@@ -25,16 +27,19 @@ export const RERUN_DEBOUNCE_MS = 300;
 /** A run must last at least this long before its start is announced. */
 const START_ANNOUNCE_MS = 400;
 
-export interface PipelineAnnouncement {
-  readonly text: string;
-  readonly seq: number;
-}
+/**
+ * The channel every pipeline message shares.
+ *
+ * Pipeline status is a single fact about a single thing, so a queued "Running
+ * pipeline." that has not been spoken yet should be replaced by the summary
+ * that supersedes it rather than read out and then contradicted.
+ */
+const PIPELINE_CHANNEL = 'pipeline';
 
-export interface PipelineStore {
+export interface PipelineStore extends AnnouncementSlice {
   readonly states: PipelineState;
   readonly running: boolean;
   readonly summary: PipelineSummary | null;
-  readonly announcement: PipelineAnnouncement;
   /** Injectable so tests can drive the pipeline without a Worker. */
   readonly execute: (options: ExecuteOptions) => Promise<ToolResult<ToolOutputs>>;
 
@@ -60,7 +65,7 @@ export const usePipelineStore = create<PipelineStore>()((set, get) => {
   let runToken = 0;
 
   const announce = (text: string): void => {
-    set((state) => ({ announcement: { text, seq: state.announcement.seq + 1 } }));
+    set((state) => appendAnnouncement(state, text, PIPELINE_CHANNEL));
   };
 
   const clearStartTimer = (): void => {
@@ -79,7 +84,7 @@ export const usePipelineStore = create<PipelineStore>()((set, get) => {
     states: {},
     running: false,
     summary: null,
-    announcement: { text: '', seq: 0 },
+    ...EMPTY_ANNOUNCEMENTS,
     execute: (options) => getSharedEngine().execute(options),
 
     stateFor: (nodeId) => get().states[nodeId] ?? idleState(),
@@ -112,6 +117,13 @@ export const usePipelineStore = create<PipelineStore>()((set, get) => {
           maxNodes: DEFAULT_MAX_NODES,
           signal,
           cache,
+          /*
+           * Read through the store rather than captured, so the run sees the
+           * files as they are when each node executes. The store is the
+           * canvas's, and this is the one place execution reaches into it -
+           * `runPipeline` itself only ever sees this function.
+           */
+          fileInput: (nodeId, portId) => useAttachmentStore.getState().valueFor(nodeId, portId),
           onUpdate: (nodeId, state) => {
             // A superseded run must not paint over the newer one's results.
             if (runToken !== token) return;
@@ -143,17 +155,27 @@ export const usePipelineStore = create<PipelineStore>()((set, get) => {
         return;
       }
 
+      /*
+       * WHAT A RUN ACTUALLY DID, INCLUDING THE NODES THAT NEVER GOT TO TRY.
+       *
+       * The summary used to name only failures, so one broken node in a chain
+       * of five announced "1 failure" and said nothing about the four that
+       * produced no answer because of it. The parts also used to be able to
+       * come out empty, which produced the sentence "Pipeline finished with 1
+       * failure. ." - a full stop on its own, read aloud.
+       */
       const parts: string[] = [];
       if (summary.ran > 0) parts.push(`${summary.ran.toString()} run`);
       if (summary.cached > 0) parts.push(`${summary.cached.toString()} cached`);
+      if (summary.skipped > 0) parts.push(`${summary.skipped.toString()} skipped`);
       if (summary.blocked > 0) parts.push(`${summary.blocked.toString()} blocked`);
 
+      const detail = parts.length > 0 ? ` ${parts.join(', ')}.` : '';
+
       if (summary.failed > 0) {
-        announce(
-          `Pipeline finished with ${counted(summary.failed, 'failure')}. ${parts.join(', ')}.`,
-        );
+        announce(`Pipeline finished with ${counted(summary.failed, 'failure')}.${detail}`);
       } else if (parts.length > 0) {
-        announce(`Pipeline finished. ${parts.join(', ')}.`);
+        announce(`Pipeline finished.${detail}`);
       }
     },
 

@@ -1,8 +1,15 @@
 import { create } from 'zustand';
 
 import { getManifestEntry, type ToolId } from '@/features/registry';
+import {
+  appendAnnouncement,
+  EMPTY_ANNOUNCEMENTS,
+  type Announcement,
+  type AnnouncementSlice,
+} from '@/lib/announce';
 import { counted } from '@/lib/plural';
 
+import { useAttachmentStore } from './attachmentStore';
 import { applyCommand, describeCommand, revertCommand, type Command } from './commands';
 import { checkConnection, edgesTouching } from './connections';
 import { GRID, snapPoint, snapToGrid } from './geometry';
@@ -12,6 +19,7 @@ import {
   type CanvasEdge,
   type ConnectionCheck,
   type EdgeId,
+  type FileInputRef,
   type GraphData,
   type NodeId,
   type Point,
@@ -26,31 +34,30 @@ export interface Selection {
 
 const NO_SELECTION: Selection = { nodes: [], edges: [] };
 
-/**
- * A message for the canvas live region.
- *
- * `seq` increments on every announcement so that saying the same thing twice
- * in a row still re-renders and is therefore re-announced - a live region that
- * receives identical text is silent.
- */
-export interface Announcement {
-  readonly text: string;
-  readonly seq: number;
-}
+export type { Announcement };
 
-export interface CanvasStore {
+/**
+ * Groups the position chatter a held arrow key produces.
+ *
+ * Every repeat announces, and reading all of them would leave a screen-reader
+ * user hearing where the node used to be for seconds after it stopped. Queued
+ * messages on this channel supersede one another; anything already spoken is
+ * left alone. See `@/lib/announce`.
+ */
+const MOVE_CHANNEL = 'canvas-move';
+
+export interface CanvasStore extends AnnouncementSlice {
   readonly graph: GraphData;
   readonly selection: Selection;
   readonly past: readonly Command[];
   readonly future: readonly Command[];
-  readonly announcement: Announcement;
   /** Set while a pointer drag is in flight, so it becomes one undo step. */
   readonly pendingMove: {
     readonly ids: readonly NodeId[];
     readonly from: Record<NodeId, Point>;
   } | null;
 
-  readonly announce: (text: string) => void;
+  readonly announce: (text: string, channel?: string) => void;
   readonly addNode: (toolId: ToolId, position: Point) => NodeId;
   readonly duplicateSelection: () => void;
   readonly applyPreset: (presetId: string, origin: Point) => void;
@@ -61,8 +68,25 @@ export interface CanvasStore {
   readonly endMove: () => void;
   readonly connect: (from: PortRef, to: PortRef) => ConnectionCheck;
   readonly removeEdges: (ids: readonly EdgeId[]) => void;
-  readonly setNodeOptions: (nodeId: NodeId, options: Readonly<Record<string, unknown>>) => void;
+  /**
+   * `coalesce` merges this into the previous options change on the same node,
+   * so typing into an option field is one undo step rather than one per
+   * keystroke. See `setNodeOptions` below.
+   */
+  readonly setNodeOptions: (
+    nodeId: NodeId,
+    options: Readonly<Record<string, unknown>>,
+    coalesce?: boolean,
+  ) => void;
   readonly setNodeInput: (nodeId: NodeId, portId: string, value: string) => void;
+  /**
+   * Records or clears the file on an input port.
+   *
+   * The BYTES are not here - they are in `attachmentStore`, and the caller has
+   * already put them there. This writes only what the document may keep: a
+   * name, a size and a token.
+   */
+  readonly setNodeFile: (nodeId: NodeId, portId: string, ref: FileInputRef | null) => void;
   readonly select: (selection: Partial<Selection>) => void;
   readonly toggleNode: (id: NodeId) => void;
   readonly clearSelection: () => void;
@@ -103,6 +127,36 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
       return;
     }
 
+    /*
+     * The same merge for options, and for the same reason.
+     *
+     * Options are a graph edit on the canvas - they are part of the document,
+     * they travel in a share link, and they belong in the undo history. That
+     * makes typing a regex pattern into the inspector one history entry per
+     * KEYSTROKE, which buries whatever the user actually wants to undo under
+     * forty steps of their own typing.
+     *
+     * Merging keeps the OLDER `from`, so one undo returns to the value before
+     * the run of edits began - the same inverse a coalesced drag has. The
+     * caller decides when to ask: the inspector merges text and number fields
+     * and never merges a toggle or a select, because a discrete choice is a
+     * deliberate act worth its own step.
+     */
+    if (
+      coalesce &&
+      command.kind === 'set-options' &&
+      top?.kind === 'set-options' &&
+      top.nodeId === command.nodeId
+    ) {
+      const merged: Command = { ...command, from: top.from };
+      set({
+        graph: applyCommand(state.graph, command),
+        past: [...state.past.slice(0, -1), merged],
+        future: [],
+      });
+      return;
+    }
+
     set({
       graph: applyCommand(state.graph, command),
       past: [...state.past, command],
@@ -112,8 +166,17 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
     });
   };
 
-  const announce = (text: string): void => {
-    set((state) => ({ announcement: { text, seq: state.announcement.seq + 1 } }));
+  /*
+   * Appends to a LOG rather than overwriting a single value.
+   *
+   * Two announcements in one React batch used to produce one render carrying
+   * only the second, so the first was gone before any element had held it.
+   * The log is what `LiveRegion` drains, one message at a time - see
+   * `@/lib/announce` for why this is one problem rather than the several
+   * unrelated-looking ones it kept being mistaken for.
+   */
+  const announce = (text: string, channel?: string): void => {
+    set((state) => appendAnnouncement(state, text, channel));
   };
 
   return {
@@ -121,7 +184,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
     selection: NO_SELECTION,
     past: [],
     future: [],
-    announcement: { text: '', seq: 0 },
+    ...EMPTY_ANNOUNCEMENTS,
     pendingMove: null,
 
     announce,
@@ -139,6 +202,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
           position: snapPoint(position),
           options: {},
           inputs: {},
+          fileInputs: {},
         },
       });
 
@@ -175,6 +239,26 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
         const id: NodeId = `n${counter.toString()}`;
         counter += 1;
         created.push(id);
+
+        /*
+         * A DUPLICATE GETS THE ORIGINAL'S FILES TOO.
+         *
+         * `...source` copies `fileInputs`, which names files the attachment
+         * store holds under the SOURCE node's id - so without this the copy
+         * would claim a file it could not produce and sit there as though the
+         * canvas had been reloaded. The value is immutable and handed to the
+         * engine by borrow, so two nodes sharing one is not a hazard; it is the
+         * same fan-out a wire into two inputs already is.
+         *
+         * The token `attach` issues is deliberately discarded: the copy carries
+         * the SOURCE's reference, and it is the same file, so it should hash to
+         * the same cache key rather than to a new one.
+         */
+        const attachments = useAttachmentStore.getState();
+        for (const portId of Object.keys(source.fileInputs)) {
+          const loaded = attachments.attachmentFor(sourceId, portId);
+          if (loaded) attachments.attach(id, portId, loaded);
+        }
 
         push({
           kind: 'add-node',
@@ -265,6 +349,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
         moved.length === 1 && position
           ? `Moved to ${position.x.toString()}, ${position.y.toString()}.`
           : `Moved ${moved.length.toString()} nodes.`,
+        MOVE_CHANNEL,
       );
     },
 
@@ -338,6 +423,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
         pendingMove.ids.length === 1
           ? 'Moved node.'
           : `Moved ${pendingMove.ids.length.toString()} nodes.`,
+        MOVE_CHANNEL,
       );
     },
 
@@ -377,10 +463,10 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
       announce(`Removed ${counted(edges.length, 'wire')}.`);
     },
 
-    setNodeOptions: (nodeId, options) => {
+    setNodeOptions: (nodeId, options, coalesce = false) => {
       const node = get().graph.nodes[nodeId];
       if (!node) return;
-      push({ kind: 'set-options', nodeId, from: node.options, to: options });
+      push({ kind: 'set-options', nodeId, from: node.options, to: options }, coalesce);
     },
 
     setNodeInput: (nodeId, portId, value) => {
@@ -396,6 +482,33 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
             ...state.graph.nodes,
             [nodeId]: { ...node, inputs: { ...node.inputs, [portId]: value } },
           },
+        },
+      }));
+    },
+
+    /*
+     * CHOOSING A FILE IS NOT AN UNDO STEP, for the reason typing is not: it is
+     * input data rather than a change to the pipeline's shape, and `inputs`
+     * established that input stays out of the history. It would also be an
+     * entry undo could not honour once the session ended - the reference would
+     * come back pointing at bytes nothing holds - so the one thing an undoable
+     * version would add is a step that sometimes cannot be taken.
+     */
+    setNodeFile: (nodeId, portId, ref) => {
+      const node = get().graph.nodes[nodeId];
+      if (!node) return;
+
+      // Filtered rather than deleted: a computed `delete` is what the lint
+      // rules refuse, and rebuilding says exactly which key is going.
+      const fileInputs: Record<string, FileInputRef> = Object.fromEntries(
+        Object.entries(node.fileInputs).filter(([id]) => id !== portId),
+      );
+      if (ref !== null) fileInputs[portId] = ref;
+
+      set((state) => ({
+        graph: {
+          ...state.graph,
+          nodes: { ...state.graph.nodes, [nodeId]: { ...node, fileInputs } },
         },
       }));
     },
@@ -462,6 +575,18 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
     },
 
     replaceGraph: (graph) => {
+      /*
+       * EVERY FILE GOES WITH THE GRAPH THAT WAS HOLDING IT.
+       *
+       * Node ids are reused across documents - every canvas starts at `n1` -
+       * so an attachment surviving a replacement would silently hand the
+       * previous canvas's file to whatever the new one happens to call `n1`.
+       * That is the same reasoning `pipelineStore.reset` already follows for
+       * results, and here it would be worse than a stale answer: it is one
+       * user's data appearing in a pipeline somebody else shared with them.
+       */
+      useAttachmentStore.getState().resetAttachments();
+
       // Loading a saved graph is not an undoable step: there is nothing
       // sensible to go back to, and keeping the history would let undo
       // "delete" a graph the user never created in this session.

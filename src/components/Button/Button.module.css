@@ -1,4 +1,17 @@
 .button {
+  /*
+   * Positioned so that a VisuallyHidden label inside a button is contained by
+   * it. That recipe is `position: absolute` with no offsets, so its containing
+   * block is the nearest positioned ancestor - which, for a bare button, is the
+   * initial containing block. An absolutely positioned box measured against the
+   * ICB is not clipped by any `overflow: hidden` between it and the root, so a
+   * button that had been pushed off-screen dragged the DOCUMENT's scroll width
+   * out with it via a label nobody can see. Found on the theme editor's Reset
+   * buttons, where the page scrolled sideways to 487px while every visible box
+   * was clipped at the viewport edge.
+   */
+  position: relative;
+
   /* A control is a fixed-height slab: dense rows stay optically aligned. */
   display: inline-flex;
   align-items: center;

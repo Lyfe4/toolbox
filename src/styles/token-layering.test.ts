@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { semanticTokenNames } from '@/lib/testing/cssTokens';
+import { semanticTokenNames } from '@/lib/cssTokens';
 
 /**
  * Enforces the three-layer token rule.

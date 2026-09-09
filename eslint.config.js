@@ -170,6 +170,17 @@ export default tseslint.config(
         'error',
         { tags: [], roles: ['tabpanel', 'application', 'group'], allowExpressionValues: true },
       ],
+
+      // The inspector's size handle is the ARIA window-splitter pattern: a
+      // FOCUSABLE separator, which is a widget rather than a decoration. It is
+      // built on a real <button> so that focus, activation and the tab order
+      // are the browser's rather than hand-rolled, and the rule cannot tell a
+      // focusable separator from a static one. Every other interactive element
+      // given a non-interactive role is still caught.
+      'jsx-a11y/no-interactive-element-to-noninteractive-role': [
+        'error',
+        { button: ['separator'] },
+      ],
     },
   },
 

@@ -18,6 +18,29 @@ export interface Point {
   readonly y: number;
 }
 
+/**
+ * A FILE CHOSEN FOR AN INPUT PORT, AS THE DOCUMENT REMEMBERS IT.
+ *
+ * The bytes are NOT here and never will be. A `File` is not serialisable, a
+ * graph is saved to localStorage and shared by URL, and megabytes of somebody's
+ * photograph belong in neither - so the document keeps the smallest true
+ * statement it can make, "this port was fed a file called this", and the bytes
+ * live in `attachmentStore` for the length of the session.
+ *
+ * That split is what turns a reload from a crash or a silently empty node into
+ * a sentence: the node comes back knowing it was fed `photo.png` and knowing it
+ * cannot produce it, and says so. See `docs/architecture.md`.
+ *
+ * `token` distinguishes two files with the same name and the same size, which
+ * name and size alone cannot. It is part of the node's cache key, so replacing
+ * a file always re-runs the node rather than serving the previous answer.
+ */
+export interface FileInputRef {
+  readonly name: string;
+  readonly size: number;
+  readonly token: number;
+}
+
 export interface CanvasNode {
   readonly id: NodeId;
   readonly toolId: ToolId;
@@ -35,6 +58,19 @@ export interface CanvasNode {
    * USER DATA: persisted locally, and deliberately never in a share URL.
    */
   readonly inputs: Readonly<Record<string, string>>;
+  /**
+   * Files chosen for input ports, keyed by input port id. Names and sizes only.
+   *
+   * A file OUTRANKS typed text on the same port, and a wire outranks both:
+   * wire, then file, then text. Each of those is a more deliberate act than the
+   * one after it, and drawing a control whose contents the run would ignore is
+   * the defect the inspector already avoids for a wired port.
+   *
+   * USER DATA, and more revealing than `inputs` in one respect - a filename can
+   * say `Q3-layoffs.xlsx` - so it is persisted locally and never in a share
+   * URL, enforced by `toSharePayload` and asserted by `share.test.ts`.
+   */
+  readonly fileInputs: Readonly<Record<string, FileInputRef>>;
 }
 
 /*

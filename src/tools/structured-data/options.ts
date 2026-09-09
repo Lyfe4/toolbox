@@ -22,7 +22,8 @@ export const structuredDataOptionFields: readonly OptionField<StructuredDataOpti
   {
     key: 'source',
     label: 'Source format',
-    description: 'Auto-detect tries JSON, then delimited text, then YAML.',
+    description:
+      'Auto-detect tries JSON, then YAML markers, then delimited text. Choosing a format turns off the fallbacks.',
     control: 'select',
     choices: [
       { value: 'auto', label: 'Auto-detect' },
@@ -46,7 +47,7 @@ export const structuredDataOptionFields: readonly OptionField<StructuredDataOpti
   {
     key: 'delimiter',
     label: 'CSV delimiter',
-    description: 'Used for CSV only. TSV is always tab-separated.',
+    description: 'Used for CSV, and preferred by auto-detection. TSV is always tab-separated.',
     control: 'select',
     choices: [
       { value: 'comma', label: 'Comma' },

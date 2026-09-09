@@ -82,6 +82,13 @@ function createClock() {
       for (const callback of [...timers.values()]) callback();
       timers.clear();
     },
+    /** Fires ONE timer, which is what a single tool running over looks like. */
+    fire: (handle: number): void => {
+      const callback = timers.get(handle);
+      timers.delete(handle);
+      callback?.();
+    },
+    handles: (): readonly number[] => [...timers.keys()],
     pending: (): number => timers.size,
   };
 }
@@ -99,6 +106,8 @@ const WORKER_META: ExecutionMeta = {
 const MAIN_META: ExecutionMeta = { ...WORKER_META, strategy: 'main' };
 
 const TOOL_ID = 'base64' as ToolId;
+/** A second tool, so a graph can hold two deadlines that differ wildly. */
+const SLOW_TOOL_ID = 'regex-tester' as ToolId;
 
 function setup(meta: ExecutionMeta = WORKER_META, tool?: ErasedTool) {
   const workers: FakeWorker[] = [];
@@ -610,5 +619,335 @@ describe('prefetch', () => {
     // warmed again rather than being assumed ready.
     engine.prefetch(TOOL_ID);
     expect(workers[1]?.posted[0]?.message).toEqual({ kind: 'preload', toolId: TOOL_ID });
+  });
+});
+
+/* ========================================================================== *
+ * One request's timeout, and everything else that was in flight
+ * ========================================================================== */
+
+describe('a timeout with other requests in flight', () => {
+  /**
+   * Two tools, two very different deadlines, one worker between them - which is
+   * the ordinary case on a canvas.
+   */
+  function twoToolSetup() {
+    const workers: FakeWorker[] = [];
+    const clock = createClock();
+
+    const metaFor = (id: ToolId): ExecutionMeta =>
+      id === SLOW_TOOL_ID
+        ? { ...WORKER_META, timeoutMs: 2000, timeoutMessage: 'That pattern is too slow.' }
+        : { ...WORKER_META, timeoutMs: 15_000 };
+
+    const engine = createExecutionEngine({
+      createWorker: () => {
+        const worker = createFakeWorker();
+        workers.push(worker);
+        return worker.handle;
+      },
+      loadTool: () => Promise.resolve(stubTool()),
+      getExecutionMeta: metaFor,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+    });
+
+    return { engine, workers, clock };
+  }
+
+  /** The request id of the nth execute posted to a worker. */
+  function executeIds(worker: FakeWorker | undefined): readonly string[] {
+    return (worker?.posted ?? [])
+      .map((entry) => entry.message)
+      .filter((message) => message.kind === 'execute')
+      .map((message) => message.requestId);
+  }
+
+  /*
+   * THE BUG THIS CATCHES
+   *
+   * A timeout terminates the worker. It used to settle only the request that
+   * ran over and leave every other in-flight request sitting in `pending` with
+   * its own timer still ticking - against a worker that no longer existed. A
+   * base64 node running beside a runaway regex therefore hung for its own full
+   * 15 seconds and then reported a timeout it had never had.
+   *
+   * Why it matters: the two nodes are unrelated. Nothing the user did to the
+   * base64 node caused it, nothing they can do to it fixes it, and the message
+   * points at the wrong node entirely.
+   */
+  it('does not leave the other requests hanging on a dead worker', async () => {
+    const { engine, workers, clock } = twoToolSetup();
+
+    const slow = engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
+    const bystander = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
+
+    const [slowId] = executeIds(workers[0]);
+    expect(slowId).toBeDefined();
+
+    // Only the slow tool's deadline fires. The bystander's has not elapsed.
+    const [slowTimer] = clock.handles();
+    expect(slowTimer).toBeDefined();
+    if (slowTimer !== undefined) clock.fire(slowTimer);
+
+    const slowResult = await slow;
+    expect(slowResult.ok).toBe(false);
+    if (!slowResult.ok) {
+      expect(slowResult.error.code).toBe('timeout');
+      expect(slowResult.error.message).toBe('That pattern is too slow.');
+    }
+
+    // The bystander was replayed onto the replacement worker rather than being
+    // abandoned, so it is still resolvable - and resolves as itself.
+    const replacement = workers[1];
+    expect(replacement).toBeDefined();
+    const [replayedId] = executeIds(replacement);
+    expect(replayedId).toBeDefined();
+    if (replayedId !== undefined) {
+      replacement?.reply(settled(replayedId, ok({ out: { type: 'text', text: 'bystander' } })));
+    }
+
+    const bystanderResult = await bystander;
+    expect(bystanderResult.ok).toBe(true);
+    if (bystanderResult.ok) {
+      expect(bystanderResult.value.out).toEqual({ type: 'text', text: 'bystander' });
+    }
+  });
+
+  /*
+   * The replay keeps the SAME request id, so a reply arriving from the new
+   * worker still correlates. Getting this wrong would look like the bug above
+   * all over again: the reply would be dropped as "a late reply to something
+   * already settled" and the caller would wait forever.
+   */
+  it('replays the bystander under its original request id', async () => {
+    const { engine, workers, clock } = twoToolSetup();
+
+    void engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
+    const bystander = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
+
+    const before = executeIds(workers[0]);
+    const [slowTimer] = clock.handles();
+    if (slowTimer !== undefined) clock.fire(slowTimer);
+
+    expect(executeIds(workers[1])).toEqual([before[1]]);
+
+    const replayed = executeIds(workers[1])[0];
+    if (replayed !== undefined) workers[1]?.reply(settled(replayed, ok({})));
+    await expect(bystander).resolves.toMatchObject({ ok: true });
+  });
+
+  /*
+   * A replay is bounded at one. Two tools that both wedge would otherwise put
+   * the engine in a loop, rebuilding a worker and re-posting the same doomed
+   * request forever.
+   */
+  it('fails a bystander that has already been replayed once', async () => {
+    const { engine, clock } = twoToolSetup();
+
+    void engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
+    const bystander = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
+
+    // First casualty: replayed.
+    const first = clock.handles()[0];
+    if (first !== undefined) clock.fire(first);
+
+    // A second run-over on the replacement worker. The bystander's replay
+    // budget is spent, so this time it is told what happened rather than
+    // being re-posted.
+    const settledSoFar = new Set(clock.handles());
+    void engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
+    const second = clock.handles().find((handle) => !settledSoFar.has(handle));
+    expect(second).toBeDefined();
+    if (second !== undefined) clock.fire(second);
+
+    const result = await bystander;
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('internal');
+      // It says whose fault it was. A node reporting a failure it did not
+      // cause has to at least point somewhere useful.
+      expect(result.error.detail).toContain('ran over its time limit');
+    }
+  });
+
+  /*
+   * Transferred buffers are detached in the sender, so replaying a transferred
+   * request would post zero-length views and produce a confident, wrong answer
+   * several steps later. The engine refuses, and says so instead.
+   */
+  it('refuses to replay a request whose buffers were transferred', async () => {
+    const { engine, clock } = twoToolSetup();
+
+    void engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
+    const transferred = engine.execute({
+      toolId: TOOL_ID,
+      inputs: {
+        input: { type: 'bytes', bytes: new Uint8Array([1, 2, 3]), mediaType: null, filename: null },
+      },
+      options: {},
+      ownership: 'transfer',
+    });
+
+    const [slowTimer] = clock.handles();
+    if (slowTimer !== undefined) clock.fire(slowTimer);
+
+    const result = await transferred;
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('internal');
+  });
+
+  /*
+   * There is one worker and one thread behind it. Requests posted together are
+   * really a queue, and timing a request from the moment it was POSTED spent
+   * its deadline on other tools' work: a 2s regex sitting behind a long image
+   * conversion reported a timeout for work it had not begun.
+   */
+  it("starts a tool's deadline when the tool starts, not when it was queued", async () => {
+    const { engine, workers, clock } = twoToolSetup();
+
+    const promise = engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
+    const [requestId] = executeIds(workers[0]);
+    const armedOnPost = clock.handles()[0];
+    expect(armedOnPost).toBeDefined();
+
+    // The worker finally reaches this request and says so.
+    if (requestId !== undefined) workers[0]?.reply({ kind: 'started', requestId });
+
+    // The original deadline is gone; a fresh one is running in its place.
+    const armedOnStart = clock.handles()[0];
+    expect(clock.handles()).toHaveLength(1);
+    expect(armedOnStart).not.toBe(armedOnPost);
+
+    if (requestId !== undefined) workers[0]?.reply(settled(requestId, ok({})));
+    await expect(promise).resolves.toMatchObject({ ok: true });
+  });
+
+  /*
+   * ...but a request the worker never even acknowledges still has to fail. If
+   * the deadline only ever started on `started`, a worker that wedged before
+   * reaching a queued request would leave it pending for the life of the tab.
+   */
+  it('still times out a request the worker never starts', async () => {
+    const { engine, clock } = twoToolSetup();
+    const promise = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
+
+    clock.fireAll();
+
+    await expect(promise).resolves.toMatchObject({ ok: false, error: { code: 'timeout' } });
+  });
+
+  /*
+   * A CANCELLED REQUEST THAT WEDGED THE WORKER STILL HAS TO KILL IT.
+   *
+   * Cancelling settles the caller; it does not stop a synchronous tool, which
+   * cannot be interrupted from inside. The only thing in the system that ever
+   * destroys a wedged worker is a request's deadline expiring - so forgetting
+   * the request on abort, timer and all, removed the last reference to a
+   * thread still spinning, and nothing was left that could kill it.
+   *
+   * What that costs is not an abstraction. The next run is posted to the same
+   * worker, joins a queue that will never move, and waits out ITS OWN timeout
+   * before anything notices: 15 seconds for a base64 node, 60 for an image
+   * conversion, with the main thread idle and every node saying "Running". It
+   * is one keystroke away on the canvas - editing a node while a runaway regex
+   * is in flight supersedes the run, and a superseded run is cancelled exactly
+   * like this.
+   */
+  it('replaces a worker that a cancelled request left wedged', async () => {
+    const { engine, workers, clock } = twoToolSetup();
+
+    const controller = new AbortController();
+    const abandoned = engine.execute({
+      toolId: SLOW_TOOL_ID,
+      inputs: textInput,
+      options: {},
+      signal: controller.signal,
+    });
+
+    const [wedgeId] = executeIds(workers[0]);
+    expect(wedgeId).toBeDefined();
+    // The tool has begun, and from here it will never speak again.
+    if (wedgeId !== undefined) workers[0]?.reply({ kind: 'started', requestId: wedgeId });
+
+    controller.abort();
+    await expect(abandoned).resolves.toMatchObject({ ok: false, error: { code: 'cancelled' } });
+
+    // Nothing has told the engine the worker is dead, so the next run is posted
+    // to it - which is exactly the situation the deadline has to cover.
+    const next = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
+    expect(workers).toHaveLength(1);
+    const [, nextId] = executeIds(workers[0]);
+    expect(nextId).toBeDefined();
+
+    // Two deadlines are armed: the abandoned one and the new request's. The
+    // abandoned one is the point - without it this is 1, and the only timer
+    // left is the new request's own 15 seconds of nothing.
+    expect(clock.pending()).toBe(2);
+
+    const [wedgeTimer] = clock.handles();
+    expect(wedgeTimer).toBeDefined();
+    if (wedgeTimer !== undefined) clock.fire(wedgeTimer);
+
+    expect(workers[0]?.terminated()).toBe(true);
+    expect(workers).toHaveLength(2);
+
+    // And the innocent request went with the worker, so it is replayed rather
+    // than failed - the ordinary bystander rule, which now applies here too.
+    expect(executeIds(workers[1])).toEqual([nextId]);
+    if (nextId !== undefined) {
+      workers[1]?.reply(settled(nextId, ok({ out: { type: 'text', text: 'fine' } })));
+    }
+    await expect(next).resolves.toMatchObject({ ok: true });
+  });
+
+  /*
+   * The other half of it: a request nobody is waiting for must not be put back
+   * on the fresh worker. Replaying it would run a tool for no reader, and on
+   * the canvas that is a whole superseded pipeline executing a second time.
+   */
+  it('does not replay a cancelled request onto the replacement worker', async () => {
+    const { engine, workers, clock } = twoToolSetup();
+
+    const controller = new AbortController();
+    const abandoned = engine.execute({
+      toolId: TOOL_ID,
+      inputs: textInput,
+      options: {},
+      signal: controller.signal,
+    });
+    const slow = engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
+
+    const [abandonedId, slowId] = executeIds(workers[0]);
+    controller.abort();
+    await expect(abandoned).resolves.toMatchObject({ ok: false, error: { code: 'cancelled' } });
+
+    // The slow tool runs over, taking the worker down with it.
+    const slowTimer = clock.handles().at(-1);
+    expect(slowTimer).toBeDefined();
+    if (slowTimer !== undefined) clock.fire(slowTimer);
+    await expect(slow).resolves.toMatchObject({ ok: false, error: { code: 'timeout' } });
+
+    expect(executeIds(workers[1])).not.toContain(abandonedId);
+    expect(executeIds(workers[1])).toHaveLength(0);
+    expect(slowId).toBeDefined();
+    // Nothing is left holding a deadline: both entries are gone.
+    expect(clock.pending()).toBe(0);
+  });
+});
+
+describe('dispose', () => {
+  /*
+   * Dropping the pending map left every awaiting caller holding a promise that
+   * could never settle. On the canvas that is a pipeline stuck at `running`
+   * for as long as the tab is open, with no way back short of a reload.
+   */
+  it('settles everything in flight rather than abandoning it', async () => {
+    const { engine } = setup();
+    const promise = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
+
+    engine.dispose();
+
+    await expect(promise).resolves.toMatchObject({ ok: false, error: { code: 'cancelled' } });
   });
 });

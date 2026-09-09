@@ -40,7 +40,25 @@ export const hashTool = defineTool({
     },
   ],
 
-  outputs: [{ id: 'digest', label: 'Digest', types: ['text'] }],
+  /*
+   * `output`, not `digest`, and the rename cost a migration.
+   *
+   * Every other tool in the set calls its first output `output`, and that
+   * ordering is load-bearing: `resultSummary` shows the FIRST declared output
+   * on a node because "the first port is the tool's answer and the rest are
+   * its working". One tool spelling it differently made that a per-tool lookup
+   * instead of a structural fact, and `registry.test.ts` now asserts the
+   * convention for every tool at once. The LABEL stays "Digest" - the id is
+   * the wiring identity, the label is the human word for the value.
+   */
+  outputs: [
+    {
+      id: 'output',
+      label: 'Digest',
+      types: ['text'],
+      description: 'The fingerprint, in the chosen encoding and case.',
+    },
+  ],
 
   optionsSchema: hashOptionsSchema,
   defaultOptions: hashDefaultOptions,
@@ -66,7 +84,7 @@ export const hashTool = defineTool({
     if (!digest.ok) return digest;
 
     const text = formatDigest(digest.value, options.encoding, options.outputCase);
-    return ok({ digest: { type: 'text', text } as const });
+    return ok({ output: { type: 'text', text } as const });
   },
 });
 

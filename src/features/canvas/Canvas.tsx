@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/Button';
-import { CopyIcon, PlusIcon, SearchIcon, SignalIcon } from '@/components/Icon';
+import { CopyIcon, PlusIcon, SearchIcon, SignalIcon, SlidersIcon } from '@/components/Icon';
+import { IconButton } from '@/components/IconButton';
+import { LiveRegion } from '@/components/LiveRegion';
 import { useToast } from '@/components/Toast';
 import { VisuallyHidden } from '@/components/VisuallyHidden';
 import { idleState } from '@/features/execution/graph';
@@ -14,9 +16,11 @@ import {
   type ToolId,
 } from '@/features/registry';
 import { cx } from '@/lib/cx';
+import { describeFile, loadFileForPort, type LoadedFile } from '@/lib/fileInput';
 import { counted } from '@/lib/plural';
 import { useMediaQuery } from '@/lib/useMediaQuery';
 
+import { useAttachmentStore } from './attachmentStore';
 import styles from './canvas.module.css';
 import { CanvasNodeView, portKey } from './CanvasNodeView';
 import { CommandDialog, type DialogGroup, type DialogOption } from './CommandDialog';
@@ -29,7 +33,9 @@ import {
   validPartnersFor,
   type PortEnd,
 } from './connections';
+import { fileTargetPorts, otherInputBytes } from './fileInputs';
 import {
+  clamp,
   clearOfExistingNodes,
   GRID,
   gridStyle,
@@ -43,6 +49,10 @@ import {
   type PortSide,
 } from './geometry';
 import { useCanvasStore } from './graphStore';
+import inspectorStyles from './inspector.module.css';
+import { loadInspectorOpen, saveInspectorOpen } from './inspectorPreference';
+import { useKeyboardInset } from './keyboardInset';
+import { NodeInspector, type InspectorNode } from './NodeInspector';
 import { OverflowMenu, type OverflowItem } from './OverflowMenu';
 import { createDebouncedSaver, loadGraph } from './persistence';
 import { pinchPair, pinchSample, pinchStep, type PinchSample } from './pinch';
@@ -54,6 +64,17 @@ import { toWorld, useViewportStore } from './viewportStore';
 import { Wires } from './Wires';
 
 import type { GraphData, NodeId, Point, PortRef } from './types';
+/*
+ * Aliased, because this file also handles the NATIVE PointerEvent and
+ * KeyboardEvent - the canvas binds its own listeners imperatively - and two
+ * types with the same name and different shapes in one file is how a handler
+ * ends up reading `nativeEvent` off something that has none.
+ */
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from 'react';
 
 /**
  * The order tool categories appear in the palette.
@@ -137,6 +158,51 @@ const COMPACT_TOOLBAR = '(max-width: 640px)';
 const SHARE_NOTE = 'Link holds structure only, never your input';
 
 /**
+ * Where the inspector stops being a rail beside the canvas and becomes a sheet
+ * over it. Matches the breakpoint in inspector.module.css, which carries the
+ * arithmetic behind the number.
+ */
+const INSPECTOR_RAIL = '(min-width: 1000px)';
+
+/**
+ * The rail's width, in the same units the CSS custom property takes.
+ *
+ * The minimum is what the output views are already held to at the narrow end
+ * by `checkMobileLayout`; the maximum stops the rail eating a canvas that no
+ * longer has room for a graph. The step is the grid, so a keyboard resize
+ * lands on the same 8px baseline everything else does.
+ */
+const RAIL_MIN = 320;
+const RAIL_MAX = 640;
+const RAIL_DEFAULT = 340;
+const RAIL_STEP = GRID * 2;
+
+/**
+ * The inspector's four states, of which two are resting and two are the slide.
+ *
+ * `entering` and `closing` exist because the panel has to be on screen while it
+ * moves: a panel that unmounts the moment it is closed cannot slide out, and
+ * one that mounts already in place cannot slide in. `animationend` is what
+ * retires each of them - see `inspector.module.css`, and note that reduced
+ * motion collapses the duration to 1ms rather than to 0 precisely so that
+ * event still arrives.
+ */
+type InspectorPhase = 'closed' | 'entering' | 'open' | 'closing';
+
+/**
+ * How long to wait for `animationend` before giving up on it.
+ *
+ * NOT THE DURATION, and it must not be read as one - the duration lives in CSS,
+ * in `--pb-motion-base`, and is the only thing that decides how long the slide
+ * takes. This is a deadline for a signal: an animation that is never composited
+ * (a `display: none` ancestor, an engine that refuses to interpolate the
+ * property, a tab backgrounded mid-slide) fires no event, and a panel stranded
+ * in `closing` would be a panel that never leaves. Generous on purpose, because
+ * being late here costs nothing and being early would cut a slide short.
+ */
+const INSPECTOR_SETTLE_MS = 600;
+
+/**
  * True for a pointer that touches the screen directly.
  *
  * A POSITIVE test, not `pointerType !== 'mouse'`, and the difference is not
@@ -210,11 +276,12 @@ export interface CanvasProps {
 
 export function Canvas({ shareParam }: CanvasProps = {}) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
   const descriptionId = useId();
 
   const graph = useCanvasStore((state) => state.graph);
   const selection = useCanvasStore((state) => state.selection);
-  const announcement = useCanvasStore((state) => state.announcement);
+  const announcementLog = useCanvasStore((state) => state.announcementLog);
   const store = useCanvasStore;
 
   const viewport = useViewportStore((state) => state.viewport);
@@ -223,6 +290,52 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
   const { notify } = useToast();
   const [overlay, setOverlay] = useState<Overlay>({ kind: 'none' });
   const [spacePressed, setSpacePressed] = useState(false);
+
+  /*
+   * THE INSPECTOR IS OPEN OR IT IS NOT, and the selection only decides what it
+   * SHOWS.
+   *
+   * The alternative - open it whenever one node is selected - was rejected
+   * twice over. On a phone the panel covers the canvas, so every tap while
+   * arranging a graph would bury the graph. And on a desktop, where the rail
+   * costs nothing because the canvas simply narrows, a panel that reopens
+   * itself is a panel you cannot close.
+   *
+   * WHAT CHANGED IS ONLY THE STARTING POINT. It used to default to open
+   * wherever the rail fitted, which meant the first thing a first-time visitor
+   * saw on a desktop was an empty panel whose entire message was that there was
+   * nothing to inspect - the canvas explaining its own furniture before the user
+   * had done anything. It starts CLOSED now, and stays wherever the user last
+   * put it: see `inspectorPreference`. `I` toggles it at both sizes and the
+   * toolbar carries the same toggle with an `aria-pressed` that says which it
+   * currently is.
+   *
+   * THE PHASE, NOT A BOOLEAN, because the panel has to outlive the decision to
+   * close it: a slide-out needs the element on screen while it slides. `open`
+   * and `closed` are the resting states and the two others are the animation.
+   *
+   * Read from storage in the INITIALISER rather than in an effect, for the
+   * reason `themeStore` reads the theme at module load: an effect would paint
+   * one frame of the wrong state, and here that frame would also start the
+   * enter animation on a panel that was supposed to be simply present.
+   */
+  const railFits = useMediaQuery(INSPECTOR_RAIL);
+  const [inspectorPhase, setInspectorPhase] = useState<InspectorPhase>(() =>
+    loadInspectorOpen() ? 'open' : 'closed',
+  );
+  /** Whether the user wants it: `aria-pressed`, and what gets remembered. */
+  const inspectorOpen = inspectorPhase === 'open' || inspectorPhase === 'entering';
+  /**
+   * Whether it is in the DOM, which includes sliding out.
+   *
+   * This also NARROWS the phase where the panel is rendered: TypeScript infers
+   * a type predicate for a `const` boolean holding a comparison, so guarding on
+   * it is what lets `NodeInspector` take the three live states rather than all
+   * four and still compile without a cast. Worth saying out loud, because the
+   * alternative to knowing that is someone adding one.
+   */
+  const inspectorMounted = inspectorPhase !== 'closed';
+  const [railWidth, setRailWidth] = useState(RAIL_DEFAULT);
   /**
    * The wire being dragged.
    *
@@ -254,6 +367,12 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       void decodeParamToGraph(shareParam).then((result) => {
         if (cancelled) return;
         if (result.status === 'ok') {
+          // Results belong to the graph that produced them. Node ids are
+          // reused across documents - every canvas starts at n1 - so leaving
+          // the old run's states in place shows the previous pipeline's output
+          // on the new pipeline's nodes until the first run of the new one
+          // finishes, which is a wrong answer rather than a missing one.
+          usePipelineStore.getState().reset();
           store.getState().replaceGraph(result.graph);
           store
             .getState()
@@ -271,6 +390,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
 
     const result = loadGraph();
     if (result.status === 'loaded') {
+      usePipelineStore.getState().reset();
       store.getState().replaceGraph(result.graph);
     } else if (result.status === 'rejected') {
       // A corrupt save produces an empty canvas and an explanation, never a
@@ -297,7 +417,16 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
 
   const runStates = usePipelineStore((state) => state.states);
   const pipelineRunning = usePipelineStore((state) => state.running);
-  const pipelineAnnouncement = usePipelineStore((state) => state.announcement);
+  /*
+   * Derived from the live per-node states rather than from the last summary:
+   * a summary is a snapshot of a finished run and goes stale the moment the
+   * next one starts, which would leave the readout contradicting the nodes.
+   */
+  const failedCount = useMemo(
+    () => Object.values(runStates).filter((state) => state.status === 'error').length,
+    [runStates],
+  );
+  const pipelineLog = usePipelineStore((state) => state.announcementLog);
 
   /*
    * Re-run whenever the document changes. `schedule` is debounced, so typing
@@ -351,14 +480,24 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     [],
   );
 
-  // Pipeline messages go to the canvas's single live region rather than a
-  // second one, so nothing competes to be read out.
+  /*
+   * Pipeline messages go to the canvas's single live region rather than a
+   * second one, so nothing competes to be read out.
+   *
+   * Every unbridged entry is forwarded, not just the newest. Reading only the
+   * latest was the same last-writer-wins bug one layer further out: a run that
+   * announced its start and its summary inside one React batch delivered only
+   * the summary, and a cancelled-then-restarted run could deliver neither.
+   */
   const lastPipelineSeq = useRef(0);
   useEffect(() => {
-    if (pipelineAnnouncement.seq === lastPipelineSeq.current) return;
-    lastPipelineSeq.current = pipelineAnnouncement.seq;
-    if (pipelineAnnouncement.text !== '') store.getState().announce(pipelineAnnouncement.text);
-  }, [pipelineAnnouncement, store]);
+    const { announce } = store.getState();
+    for (const entry of pipelineLog) {
+      if (entry.seq <= lastPipelineSeq.current) continue;
+      lastPipelineSeq.current = entry.seq;
+      if (entry.text !== '') announce(entry.text, entry.channel);
+    }
+  }, [pipelineLog, store]);
 
   /* ---------------------------------------------------------------------- *
    * Viewport: pan and zoom, throttled to animation frames
@@ -571,6 +710,22 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     // the way at the next thing the user does.
     setRefused(null);
 
+    /*
+     * THE CHROME IS NOT THE CANVAS.
+     *
+     * The toolbar and the readout are rendered inside this root, so a click on
+     * one of them arrives here as a pointerdown on "not a node" - which used
+     * to clear the selection. Pressing Fit, or Undo, or Share therefore threw
+     * away the selection as a side effect nobody asked for, silently, at every
+     * width.
+     *
+     * That was survivable while nothing on screen depended on the selection.
+     * It stopped being survivable the moment one of those buttons was the
+     * inspector toggle: pressing it deselected the node and opened a panel
+     * showing "no node selected", which reads as the feature not working.
+     */
+    if (target.closest('[data-canvas-chrome]')) return;
+
     const nodeElement = target.closest('[data-node-id]');
     const nodeId = nodeElement?.getAttribute('data-node-id') ?? null;
 
@@ -768,12 +923,391 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     );
   }, [store, notify]);
 
+  /**
+   * SHOW, HIDE AND TOGGLE, in one place, because there are four ways in.
+   *
+   * `I`, the toolbar button, `Enter` on a node, a file dropped on a node with
+   * more than one input, and the panel's own close button all move the panel
+   * between the same states, and every one of them has to go through the phase
+   * rather than setting a boolean - otherwise a close skips its slide, or an
+   * open interrupts one and leaves the panel animating out of a state it is no
+   * longer in.
+   *
+   * Opening from `closing` goes straight to `open` rather than to `entering`.
+   * The panel is already on screen and mid-slide; restarting the enter from
+   * off-screen would make a fast toggle jump backwards before coming in again.
+   */
+  const showInspector = useCallback(() => {
+    setInspectorPhase((phase) => {
+      if (phase === 'open' || phase === 'entering') return phase;
+      return phase === 'closing' ? 'open' : 'entering';
+    });
+  }, []);
+
+  const hideInspector = useCallback(() => {
+    setInspectorPhase((phase) => (phase === 'closed' ? 'closed' : 'closing'));
+  }, []);
+
   const onInputChange = useCallback(
     (nodeId: string, portId: string, value: string) => {
       store.getState().setNodeInput(nodeId, portId, value);
     },
     [store],
   );
+
+  /**
+   * A FILE CHOSEN FOR, OR CLEARED FROM, AN INPUT PORT.
+   *
+   * Two writes, and the order matters. The bytes go into the attachment store
+   * FIRST, so there is no render in which the document names a file the store
+   * cannot produce - which is exactly what a reloaded canvas looks like, and it
+   * would be wrong to show it for a frame to somebody who just chose one.
+   *
+   * The document write is what schedules the run: it changes `graph`, the
+   * effect watching `graph` calls `schedule`, and that is the existing 300ms
+   * debounce. Nothing here runs the pipeline directly, for the reason the
+   * options handler gives - a second trigger is a second thing to keep in step.
+   */
+  const onFileChange = useCallback(
+    (nodeId: NodeId, portId: string, loaded: LoadedFile | null) => {
+      const attachments = useAttachmentStore.getState();
+
+      /*
+       * ANNOUNCED BY THE PORT'S LABEL, NOT ITS ID. "A port id is an identity;
+       * a label is a word for a person" is the port audit's own rule, and this
+       * is read aloud - `Removed the file from original.` is the id leaking
+       * into a sentence. The node is looked up rather than passed in because
+       * the caller already knows which port it means and should not have to
+       * know what it is called.
+       */
+      const node = store.getState().graph.nodes[nodeId];
+      const label =
+        node === undefined
+          ? portId
+          : (getManifestEntry(node.toolId).inputs.find((port) => port.id === portId)?.label ??
+            portId);
+
+      if (loaded === null) {
+        attachments.detach(nodeId, portId);
+        store.getState().setNodeFile(nodeId, portId, null);
+        store.getState().announce(`Removed the file from ${label}.`);
+        return;
+      }
+
+      const ref = attachments.attach(nodeId, portId, loaded);
+      store.getState().setNodeFile(nodeId, portId, ref);
+      store
+        .getState()
+        .announce(`Loaded ${describeFile(ref.name, ref.size)} into ${label}. Nothing is uploaded.`);
+    },
+    [store],
+  );
+
+  /**
+   * A FILE DROPPED ON A NODE.
+   *
+   * The gesture people try first, and it was doing the worst possible thing:
+   * with no handler anywhere on this route, dropping a file on the canvas made
+   * the BROWSER navigate to it, replacing the app with a picture. That is fixed
+   * whatever else happens here - `dragover` is prevented across the whole
+   * workspace - and the drop itself now lands where it looks like it should.
+   *
+   * WHICH PORT, when a node has two. `diff` is the only tool in the set with
+   * two inputs and neither of them is "the" one, so a drop with two candidate
+   * ports does not guess: it selects the node, opens the inspector and says so,
+   * which puts the user in front of the two named controls that can answer the
+   * question. Guessing "the first port" would silently make one of the two
+   * comparisons impossible to reach by drag, and the wrong one half the time.
+   *
+   * A DROP ON THE BACKGROUND IS REFUSED, not turned into a new node. Deciding
+   * which tool a file wants means reading its bytes and picking on the user's
+   * behalf - a hash for an archive, a converter for a PNG - and a gesture that
+   * silently chooses a tool is a worse surprise than one that does nothing and
+   * says what would have worked.
+   */
+  const onNodeDrop = useCallback(
+    async (nodeId: NodeId | null, file: File): Promise<void> => {
+      const refuse = (message: string): void => {
+        notify({ title: 'Nothing to drop that on', description: message, tone: 'warn' });
+        store.getState().announce(message);
+      };
+
+      if (nodeId === null) {
+        refuse('Drop a file onto a node, or choose one in the inspector.');
+        return;
+      }
+
+      const { graph: current } = store.getState();
+      const node = current.nodes[nodeId];
+      if (!node) return;
+
+      const entry = getManifestEntry(node.toolId);
+      const candidates = fileTargetPorts(current, node);
+
+      if (candidates.length === 0) {
+        refuse(`Every input on ${entry.name} is wired. Remove a wire to feed it a file.`);
+        return;
+      }
+
+      if (candidates.length > 1) {
+        store.getState().select({ nodes: [nodeId], edges: [] });
+        showInspector();
+        const names = candidates.map((port) => port.label).join(' and ');
+        notify({
+          title: `${entry.name} has more than one input`,
+          description: `Choose a file for ${names} in the inspector.`,
+          tone: 'warn',
+        });
+        store.getState().announce(`${entry.name} takes ${names}. Choose which in the inspector.`);
+        return;
+      }
+
+      const port = candidates[0];
+      if (!port) return;
+
+      const attachments = useAttachmentStore.getState().files[nodeId] ?? {};
+      const result = await loadFileForPort(port, file, {
+        maxBytes: entry.execution.maxInputBytes,
+        otherBytes: otherInputBytes(node, entry.inputs, port.id, attachments),
+      });
+
+      if ('error' in result) {
+        notify({ title: 'File rejected', description: result.error, tone: 'error' });
+        store.getState().announce(result.error);
+        return;
+      }
+
+      onFileChange(nodeId, port.id, result.loaded);
+    },
+    [notify, onFileChange, showInspector, store],
+  );
+
+  /**
+   * The node a file is currently being dragged over, for the drop highlight.
+   *
+   * A drop target nothing marks is a guess, and on a canvas of overlapping
+   * nodes it is a guess the user gets wrong. Held here rather than on the node
+   * because only one node can be the target.
+   */
+  const [dropTarget, setDropTarget] = useState<NodeId | null>(null);
+
+  /*
+   * The drag listeners are attached to the WORKSPACE, imperatively.
+   *
+   * The workspace rather than the canvas root, because `dragover` has to be
+   * prevented everywhere on the route - including the inspector's own
+   * surroundings - or the browser navigates away from the app on any drop that
+   * misses a drop zone. The inspector's own `FileDrop` stops propagation, so a
+   * drop that has already named its port never reaches this.
+   *
+   * Imperatively, for the reason `FileDrop` gives about the same handlers: a
+   * `<div>` carrying interaction props is a genuine accessibility smell, and
+   * silencing that rule here would blunt it where it really catches something.
+   */
+  useEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return undefined;
+
+    const nodeUnder = (target: EventTarget | null): NodeId | null => {
+      if (!(target instanceof Element)) return null;
+      return target.closest('[data-node-id]')?.getAttribute('data-node-id') ?? null;
+    };
+
+    const onDragOver = (event: DragEvent): void => {
+      // Without this the browser opens the file and the canvas is gone.
+      event.preventDefault();
+      setDropTarget(nodeUnder(event.target));
+    };
+    const onDragLeave = (event: DragEvent): void => {
+      // Only when the pointer has actually left the workspace: `dragleave`
+      // fires for every child boundary crossed on the way in, and clearing on
+      // those makes the highlight flicker off under the cursor.
+      if (event.relatedTarget === null) setDropTarget(null);
+    };
+    const onDrop = (event: DragEvent): void => {
+      event.preventDefault();
+      setDropTarget(null);
+      const file = event.dataTransfer?.files.item(0);
+      if (file) void onNodeDrop(nodeUnder(event.target), file);
+    };
+
+    workspace.addEventListener('dragover', onDragOver);
+    workspace.addEventListener('dragleave', onDragLeave);
+    workspace.addEventListener('drop', onDrop);
+
+    return () => {
+      workspace.removeEventListener('dragover', onDragOver);
+      workspace.removeEventListener('dragleave', onDragLeave);
+      workspace.removeEventListener('drop', onDrop);
+    };
+  }, [onNodeDrop]);
+
+  /*
+   * An option change is an ordinary graph edit, so it goes through the same
+   * path everything else does: the store updates the document, the effect that
+   * watches `graph` schedules a run, and that schedule is debounced by 300ms.
+   * Typing into a regex pattern therefore produces one run after the pause,
+   * exactly as typing into an input does, and the executor's cache means only
+   * this node and its descendants actually execute - the options are part of
+   * the node's cache key and nothing upstream of it has changed.
+   *
+   * Nothing here re-runs the pipeline directly. A second trigger beside the
+   * existing one would be a second thing to keep in step with the debounce.
+   */
+  const onOptionChange = useCallback(
+    (nodeId: NodeId, key: string, value: unknown, coalesce: boolean) => {
+      const node = store.getState().graph.nodes[nodeId];
+      if (!node) return;
+      store.getState().setNodeOptions(nodeId, { ...node.options, [key]: value }, coalesce);
+    },
+    [store],
+  );
+
+  /**
+   * MOVING FOCUS INTO THE INSPECTOR: WHICH ELEMENT, AND WHEN.
+   *
+   * Both halves of this were wrong, and each was wrong in a way the other hid.
+   *
+   * WHICH. The panel's first focusable element in DOCUMENT order is the close
+   * button in its header, not the editor - `querySelector` takes the first
+   * node that matches ANY of a selector list, not the first selector that
+   * matches anything. So Enter, whose whole stated purpose is to step into the
+   * node's input, landed on "Close the inspector": a user who pressed Enter
+   * and typed got nothing, and their next Space or Enter shut the panel. The
+   * editor is asked for by name now, and the generic list is only the fallback
+   * for a node that has no text editor at all - a port that takes bytes gets a
+   * sentence rather than a box.
+   *
+   * WHEN. The move was deferred to `requestAnimationFrame`, which meant it
+   * happened at some point AFTER the keystroke that asked for it, with nothing
+   * to say what had happened to focus in between. Under load that frame can be
+   * tens of milliseconds late, and it then lands in the middle of somebody
+   * else's interaction and takes focus off whatever they had just put it on -
+   * text typed into the editor in that window goes to the close button and is
+   * silently discarded, because a button is not an editable element and there
+   * is no error for text that lands nowhere. That is a real defect for anyone
+   * who types quickly, and it is also what made the worker-wedge check in
+   * `check:browsers` fail roughly one run in three: Playwright focuses the
+   * field and then inserts the text as a second step, and the stolen frame fell
+   * between them.
+   *
+   * A layout effect runs synchronously after the commit that mounted the panel,
+   * in the same task as the keystroke, so there is no window to lose and no
+   * frame to guess at. The counter is the request: two Enters in a row are two
+   * requests, where a boolean would be one.
+   */
+  const [focusRequest, setFocusRequest] = useState(0);
+  const focusInspector = useCallback(() => {
+    setFocusRequest((request) => request + 1);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (focusRequest === 0) return;
+    const panel = workspaceRef.current?.querySelector('[data-testid="node-inspector"]');
+    if (!panel) return;
+
+    /*
+     * ASKED FOR BY NAME, IN PRIORITY ORDER, ONE SELECTOR AT A TIME.
+     *
+     * The text editor, then the file chooser, then anything focusable. Three
+     * separate calls rather than one selector list, because a list returns the
+     * first element matching ANY of them in DOCUMENT order - which is the bug
+     * that put focus on "Close the inspector", the panel's header coming before
+     * its body.
+     *
+     * The file chooser is the second entry rather than a happy accident of
+     * document order: a port that takes bytes only has no editor to step into,
+     * so its chooser is what "step into this node's input" has to mean there.
+     * Without it, `Enter` fell through to the generic selector and happened to
+     * find the same element - and would have stopped doing so the first time
+     * anything else in the panel came before it.
+     */
+    const target =
+      panel.querySelector<HTMLElement>('[data-inspector-input]') ??
+      panel.querySelector<HTMLElement>('[data-file-input]') ??
+      panel.querySelector<HTMLElement>('textarea, input, select') ??
+      panel.querySelector<HTMLElement>('button, [tabindex]:not([tabindex="-1"])');
+    target?.focus();
+  }, [focusRequest]);
+
+  const toggleInspector = useCallback(() => {
+    // The announcement is made OUTSIDE the updater. A `setState` callback has
+    // to be pure - React may call it twice, and in StrictMode does - and
+    // announcing from inside one is a store write during another component's
+    // render, which React refuses out loud.
+    if (inspectorOpen) hideInspector();
+    else showInspector();
+    store.getState().announce(inspectorOpen ? 'Inspector hidden.' : 'Inspector shown.');
+  }, [hideInspector, inspectorOpen, showInspector, store]);
+
+  /**
+   * RETIRING A SLIDE WHEN IT FINISHES.
+   *
+   * `animationend` on the panel is the signal, and it is the right one rather
+   * than a timer: it is what the browser says when the animation it actually
+   * ran is over, at whatever duration the stylesheet asked for - including the
+   * 1ms reduced-motion collapse, which `global.css` chose over 0 for exactly
+   * this reason.
+   *
+   * `INSPECTOR_SETTLE_MS` is a deadline behind it, not a second opinion about
+   * the duration. Both paths land on the same phase, so arriving twice is
+   * harmless.
+   */
+  useEffect(() => {
+    if (inspectorPhase !== 'entering' && inspectorPhase !== 'closing') return undefined;
+
+    const settle = (): void => {
+      setInspectorPhase((phase) => {
+        if (phase === 'entering') return 'open';
+        if (phase === 'closing') return 'closed';
+        return phase;
+      });
+    };
+
+    const panel = workspaceRef.current?.querySelector<HTMLElement>(
+      '[data-testid="node-inspector"]',
+    );
+    /*
+     * ONLY THE PANEL'S OWN ANIMATION COUNTS. `animationend` bubbles, so any
+     * keyframe finishing anywhere inside the panel arrives here too - and the
+     * panel renders the tool runner's own components, which is a surface this
+     * file does not control and should not have to audit for animations every
+     * time one is added to a view.
+     */
+    const onEnd = (event: AnimationEvent): void => {
+      if (event.target === panel) settle();
+    };
+
+    panel?.addEventListener('animationend', onEnd);
+    const deadline = window.setTimeout(settle, INSPECTOR_SETTLE_MS);
+
+    return () => {
+      panel?.removeEventListener('animationend', onEnd);
+      window.clearTimeout(deadline);
+    };
+  }, [inspectorPhase]);
+
+  /*
+   * Remembered on every change of the user's intent, and never for the two
+   * animation phases - `entering` and `closing` are already covered by the
+   * resting state each of them is heading for, and writing during a slide would
+   * store the same value twice.
+   */
+  useEffect(() => {
+    saveInspectorOpen(inspectorOpen);
+  }, [inspectorOpen]);
+
+  /**
+   * Where focus goes when the node being inspected stops existing.
+   *
+   * Only called when focus was actually inside the panel - see NodeInspector -
+   * so this cannot steal focus from a deletion the user performed on the
+   * canvas, which already put focus back on the root itself.
+   */
+  const onInspectorOrphaned = useCallback(() => {
+    rootRef.current?.focus();
+    store.getState().announce('That node is gone. The inspector is empty.');
+  }, [store]);
 
   const tryConnect = useCallback(
     (from: PortRef, to: PortRef): boolean => {
@@ -835,6 +1369,37 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
    * Adding tools
    * ---------------------------------------------------------------------- */
 
+  /**
+   * MOVING FOCUS ONTO A NODE THAT DOES NOT EXIST YET.
+   *
+   * The node is added to the store, so it is not in the DOM until React has
+   * rendered it - which is the whole reason this was ever deferred. A frame is
+   * the wrong way to wait for a render: it waits for LONGER than the render
+   * takes, and everything that happens in the surplus gets its focus stolen.
+   *
+   * The request is state instead, so React commits the new node and this
+   * layout effect in the same pass and the move happens synchronously after
+   * it, before the task the keystroke started can end. That is the same
+   * correction already applied to `Enter` into the inspector, one screen up.
+   *
+   * The sequence number IS the request: adding the same tool twice after an
+   * undo would otherwise be one changed id and no effect.
+   */
+  const [nodeFocusRequest, setNodeFocusRequest] = useState<{
+    readonly id: NodeId;
+    readonly seq: number;
+  } | null>(null);
+
+  const requestNodeFocus = useCallback((id: NodeId) => {
+    setNodeFocusRequest((previous) => ({ id, seq: (previous?.seq ?? 0) + 1 }));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!nodeFocusRequest) return;
+    const selector = `[data-node-id="${nodeFocusRequest.id}"]`;
+    rootRef.current?.querySelector<HTMLElement>(selector)?.focus();
+  }, [nodeFocusRequest]);
+
   const addTool = useCallback(
     (toolId: ToolId) => {
       const root = rootRef.current;
@@ -855,13 +1420,25 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
           freeSpot(store.getState().graph, { x: centre.x - NODE_WIDTH / 2, y: centre.y - 60 }),
         );
 
-      // Focus follows the new node, so the next keystroke acts on it.
-      requestAnimationFrame(() => {
-        const element = rootRef.current?.querySelector<HTMLElement>(`[data-node-id="${id}"]`);
-        element?.focus();
-      });
+      /*
+       * Focus follows the new node, so the next keystroke acts on it - asked
+       * for here, PERFORMED by the layout effect above, in the same task.
+       *
+       * This used to be a `requestAnimationFrame`, and it was the second
+       * instance of the defect already written up against the inspector: a
+       * deferred focus move lands in the middle of whatever happened next.
+       * Add a tool, then immediately Tab to another node and press a key, and
+       * the late frame takes focus off the node the user had chosen and puts
+       * it on the one the palette just added - so the keystroke acts on the
+       * wrong node, silently and plausibly. `C` starts a connection from it,
+       * an arrow key moves it, Delete deletes it. Reproduced with the frame
+       * made 18ms late: a three-node chain built entirely from the keyboard
+       * came out wired backwards - Hash into Base64 - and nothing on screen
+       * said so, because every wire in it is legal.
+       */
+      requestNodeFocus(id);
     },
-    [store],
+    [store, requestNodeFocus],
   );
 
   const addPreset = useCallback(
@@ -945,22 +1522,22 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     if (overlay.kind !== 'none') return;
 
     /*
-     * When the caret is in a node's input, the keyboard belongs to the text -
-     * otherwise typing "k" would open the palette and Delete would remove the
-     * node being edited. Escape is the one key still handled here, to step
-     * back out to the node.
+     * Nothing on the canvas plane takes text any more - input moved to the
+     * inspector, which is a SIBLING of this root rather than a child, so its
+     * fields never reach this handler at all and there is no longer a case
+     * where "k" would open the palette while somebody was typing.
+     *
+     * The guard stays anyway, and deliberately: this is a `role="application"`
+     * region that claims every single letter, and a future control inside it
+     * with a text field would silently inherit that claim. It costs one
+     * instanceof and it is the difference between a rule and an accident.
      */
     const target = event.target;
     const editing =
       target instanceof HTMLElement &&
       (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable);
 
-    if (editing) {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      target.closest<HTMLElement>('[data-node-id]')?.focus();
-      return;
-    }
+    if (editing) return;
 
     const state = store.getState();
     const focused = focusedNodeId();
@@ -1011,14 +1588,17 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
           state.toggleNode(focused);
           return;
         }
-        // Step into this node's input editor, if it has one.
-        const field = rootRef.current?.querySelector<HTMLTextAreaElement>(
-          `[data-node-id="${focused}"] [data-node-input]`,
-        );
-        if (field) {
-          event.preventDefault();
-          field.focus();
-        }
+        /*
+         * Enter used to step into the node's own input editor. The editor
+         * moved, so Enter follows it: it selects the node on its own, opens
+         * the inspector and puts focus in it. Same key, same intent, one more
+         * thing on the other end of it - and it is the reason the inspector
+         * needs no separate "open on this node" affordance for the keyboard.
+         */
+        event.preventDefault();
+        state.select({ nodes: [focused], edges: [] });
+        showInspector();
+        focusInspector();
         return;
       }
 
@@ -1033,6 +1613,13 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       case 'K':
         event.preventDefault();
         setOverlay({ kind: 'palette' });
+        return;
+
+      case 'i':
+      case 'I':
+        if (meta) return;
+        event.preventDefault();
+        toggleInspector();
         return;
 
       case '?':
@@ -1131,6 +1718,13 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       endGestures,
     };
   });
+
+  /*
+   * On a phone the inspector is a sheet along the bottom of the workspace, and
+   * an on-screen keyboard covers the bottom of the layout viewport. See
+   * keyboardInset.ts for why the browser cannot fix that one itself.
+   */
+  useKeyboardInset(workspaceRef);
 
   /*
    * NOT BOUND WHILE AN OVERLAY IS OPEN, for the same reason the wheel listener
@@ -1252,6 +1846,67 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     return map;
   }, [graph]);
 
+  /**
+   * Which ports on each node have a file whose bytes this session still has.
+   *
+   * The node draws its own summary from the DOCUMENT (`node.fileInputs`), which
+   * cannot tell a file just chosen from one a reload left behind - and those two
+   * states say opposite things. This is the other half of the answer.
+   */
+  const attachedFiles = useAttachmentStore((state) => state.files);
+  const fileInputFor = useMemo(() => {
+    const map = new Map<NodeId, readonly string[]>();
+    for (const [nodeId, ports] of Object.entries(attachedFiles)) {
+      map.set(nodeId, Object.keys(ports));
+    }
+    return map;
+  }, [attachedFiles]);
+
+  /*
+   * WHAT THE INSPECTOR IS LOOKING AT.
+   *
+   * Exactly one selected node, or nothing. Several selected nodes deliberately
+   * produce `null` rather than the first of them: a panel that silently picks
+   * one of a multi-selection to edit is a panel that edits something the user
+   * did not choose. The several case is handled in the panel, which lists them
+   * and lets one be picked.
+   */
+  const inspectorTarget = useMemo<InspectorNode | null>(() => {
+    if (selection.nodes.length !== 1) return null;
+    const id = selection.nodes[0];
+    if (id === undefined) return null;
+    const node = graph.nodes[id];
+    if (!node) return null;
+
+    const wiredFrom: Record<string, string> = {};
+    for (const edgeId of graph.edgeOrder) {
+      const edge = graph.edges[edgeId];
+      if (edge?.to.nodeId !== id) continue;
+      const source = graph.nodes[edge.from.nodeId];
+      if (!source) continue;
+      const sourceEntry = getManifestEntry(source.toolId);
+      const port = sourceEntry.outputs.find((candidate) => candidate.id === edge.from.portId);
+      wiredFrom[edge.to.portId] = `${sourceEntry.name} · ${port?.label ?? edge.from.portId}`;
+    }
+
+    return {
+      node,
+      run: runStates[id] ?? idleState(),
+      typedInputPorts: typedInputFor.get(id) ?? EMPTY_PORTS,
+      wiredFrom,
+    };
+  }, [selection.nodes, graph, runStates, typedInputFor]);
+
+  /** Tool names for the several-selected list, so the panel needs no registry. */
+  const selectedLabels = useMemo(() => {
+    const labels: Record<NodeId, string> = {};
+    for (const id of selection.nodes) {
+      const node = graph.nodes[id];
+      if (node) labels[id] = getManifestEntry(node.toolId).name;
+    }
+    return labels;
+  }, [selection.nodes, graph]);
+
   /** Wires feeding a node that is running right now. */
   const activeEdges = useMemo(() => {
     const active = new Set<string>();
@@ -1364,6 +2019,100 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     rootRef.current?.focus();
   }, []);
 
+  /* ---------------------------------------------------------------------- *
+   * Resizing the rail
+   * ---------------------------------------------------------------------- */
+
+  /**
+   * THE HANDLE IS A `separator`, NOT A DECORATED BORDER.
+   *
+   * The ARIA window-splitter pattern, which means it is a real tab stop with a
+   * value, a range, and arrow keys that change it. A drag handle that only a
+   * pointer can move is a preference only a pointer user has, and the reason
+   * the rail is resizable at all is that a diff wants more width than a colour
+   * swatch does.
+   *
+   * The width is session state rather than something persisted. It is one
+   * drag to restore, and a stored value would be a second storage key, a
+   * second thing to validate on read and a second thing to migrate - for a
+   * preference that changes with what you happen to be looking at.
+   */
+  const resizeRail = useCallback((width: number) => {
+    setRailWidth(Math.round(clamp(width, RAIL_MIN, RAIL_MAX)));
+  }, []);
+
+  const onHandlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      // Not `stopPropagation` for the canvas's sake - the handle is outside
+      // the canvas root, so nothing there ever sees this - but the browser's
+      // own text selection during a drag has to be suppressed.
+      event.preventDefault();
+      const handle = event.currentTarget;
+      handle.setPointerCapture(event.pointerId);
+
+      const right = workspaceRef.current?.getBoundingClientRect().right ?? window.innerWidth;
+
+      const move = (moveEvent: PointerEvent): void => {
+        resizeRail(right - moveEvent.clientX);
+      };
+      const up = (): void => {
+        handle.removeEventListener('pointermove', move);
+        handle.removeEventListener('pointerup', up);
+        handle.removeEventListener('pointercancel', up);
+      };
+
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', up);
+      handle.addEventListener('pointercancel', up);
+    },
+    [resizeRail],
+  );
+
+  const onHandleKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      // The rail grows leftwards, so ArrowLeft widens it. Stated because the
+      // opposite mapping is just as arguable and this is the one the on-screen
+      // direction of travel agrees with.
+      switch (event.key) {
+        case 'ArrowLeft':
+          event.preventDefault();
+          resizeRail(railWidth + RAIL_STEP);
+          return;
+        case 'ArrowRight':
+          event.preventDefault();
+          resizeRail(railWidth - RAIL_STEP);
+          return;
+        case 'Home':
+          event.preventDefault();
+          resizeRail(RAIL_MAX);
+          return;
+        case 'End':
+          event.preventDefault();
+          resizeRail(RAIL_MIN);
+          return;
+        default:
+      }
+    },
+    [railWidth, resizeRail],
+  );
+
+  /**
+   * Escape leaves the inspector and returns to the node it is showing.
+   *
+   * The mirror of Enter, and the same wording the shortcuts map has always
+   * carried for stepping out of an editor. It is bound here rather than in the
+   * canvas's own key handler because the panel is outside that root, which is
+   * exactly what stops the canvas claiming single letters typed into a field.
+   */
+  const onInspectorEscape = useCallback(() => {
+    const id = useCanvasStore.getState().selection.nodes[0];
+    const node =
+      id === undefined
+        ? null
+        : rootRef.current?.querySelector<HTMLElement>(`[data-node-id="${id}"]`);
+    (node ?? rootRef.current)?.focus();
+  }, []);
+
   /* ---------------------------------------------------------------------- */
 
   const zoomPercent = Math.round(viewport.zoom * 100);
@@ -1439,300 +2188,479 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
   );
 
   return (
+    /*
+     * THE WORKSPACE: the canvas, then the inspector, as siblings.
+     *
+     * The inspector is deliberately NOT inside the canvas root. Everything the
+     * canvas renders inside that root - the palette, the connect dialogs, the
+     * shortcuts reference - is an overlay, and the canvas detaches its wheel,
+     * pointer and key listeners for as long as one is open, because those
+     * listeners would otherwise pan the canvas underneath a dialog and swallow
+     * the dialog's own scrolling.
+     *
+     * That machinery is right for a dialog and exactly wrong for this panel. A
+     * docked inspector has to coexist with a live canvas: you change an option
+     * and watch the chain behind it re-run, you pan to see the node it feeds,
+     * you press Tab and land on a node. Rendering it as a sibling means none
+     * of the canvas's listeners ever see a keystroke meant for a text field,
+     * and none of the panel's scrolling is fighting a wheel handler - both
+     * without a single guard, because there is no path between them.
+     */
     <div
-      ref={rootRef}
-      className={cx(styles.root, isPanning && styles.panning, spacePressed && styles.panReady)}
+      ref={workspaceRef}
+      className={inspectorStyles.workspace}
+      style={{ '--inspector-width': `${railWidth.toString()}px` } as CSSProperties}
       /*
-       * role="application" hands arrow keys and single letters to us instead of
-       * to the screen reader's browse mode - without it, none of the canvas's
-       * keyboard model would ever reach this handler. It is the right role for
-       * a spatial editor, and the /tools view remains the document-shaped way
-       * to do everything here.
+       * OPEN OR NOT, AND NOTHING ELSE.
+       *
+       * The grid has to know whether to reserve a column, because a closed
+       * inspector must not leave 340px of empty surface beside the canvas -
+       * that part cannot be done in the media query alone. Whether the panel is
+       * a rail or a sheet is decided by the media query and by nothing else.
+       *
+       * That split is not tidiness. This attribute once carried the shape too,
+       * from `railFits`, which is a JavaScript copy of the same breakpoint -
+       * and the two can disagree for a render, because a media-query
+       * subscription that re-subscribes can miss a change. Observed: a 1280px
+       * window laying the panel out as a full-width implicit grid row across
+       * the canvas, with the rail's CSS still applying. One source of truth for
+       * the shape removes the disagreement rather than papering over it.
        */
-      role="application"
-      aria-roledescription="Node canvas"
-      aria-label="Pipeline canvas"
-      aria-describedby={descriptionId}
-      tabIndex={0}
-      data-testid="canvas-root"
+      /*
+       * THE PHASE, AND NOTHING LAYS OUT FROM IT ANY MORE.
+       *
+       * It used to carry `open`/`none` and the stylesheet sized the rail's grid
+       * track off it, because a track declared at 340px would have taken 340px
+       * from the canvas with no panel in it. The track is `auto` now and sizes
+       * itself to whatever is actually there, so the guarantee comes from the
+       * sizing instead - see the note in inspector.module.css.
+       *
+       * It stays because it is the one place the phase is legible from outside:
+       * `check:browsers` measures the slide against it, and a state machine
+       * whose state cannot be observed is one nothing can hold to its own rules.
+       */
+      data-inspector={inspectorPhase}
+      data-testid="canvas-workspace"
     >
-      <VisuallyHidden as="div">
-        <span id={descriptionId}>{CANVAS_DESCRIPTION}</span>
-      </VisuallyHidden>
-
-      {/*
-        The canvas's own live region. Movement and selection chatter goes here
-        rather than to the toast system, which is reserved for things worth
-        interrupting for - a refused connection, a reset save.
-      */}
-      <VisuallyHidden as="div">
-        <span role="status" aria-live="polite" data-testid="canvas-announcer">
-          {announcement.text}
-        </span>
-      </VisuallyHidden>
-
       <div
-        className={styles.grid}
-        aria-hidden="true"
-        style={{
-          ...gridStyle(viewport),
-          // Fade the dense grid out when it would turn into a solid wash.
-          opacity: viewport.zoom < 0.5 ? 0.4 : 1,
-        }}
-      />
-
-      <div
-        className={styles.plane}
-        data-testid="canvas-plane"
-        style={{
-          transform: `translate(${viewport.x.toString()}px, ${viewport.y.toString()}px) scale(${viewport.zoom.toString()})`,
-        }}
+        ref={rootRef}
+        className={cx(
+          styles.root,
+          inspectorStyles.surface,
+          isPanning && styles.panning,
+          spacePressed && styles.panReady,
+        )}
+        /*
+         * role="application" hands arrow keys and single letters to us instead of
+         * to the screen reader's browse mode - without it, none of the canvas's
+         * keyboard model would ever reach this handler. It is the right role for
+         * a spatial editor, and the /tools view remains the document-shaped way
+         * to do everything here.
+         */
+        role="application"
+        aria-roledescription="Node canvas"
+        aria-label="Pipeline canvas"
+        aria-describedby={descriptionId}
+        tabIndex={0}
+        data-testid="canvas-root"
       >
-        <Wires
-          graph={graph}
-          selectedEdges={selection.edges}
-          activeEdges={activeEdges}
-          draft={draftPath}
-          onSelectEdge={(id, additive) => {
-            const state = store.getState();
-            state.select({
-              nodes: [],
-              edges: additive ? [...state.selection.edges, id] : [id],
-            });
+        <VisuallyHidden as="div">
+          <span id={descriptionId}>{CANVAS_DESCRIPTION}</span>
+        </VisuallyHidden>
+
+        {/*
+          The canvas's own live region. Movement and selection chatter goes here
+          rather than to the toast system, which is reserved for things worth
+          interrupting for - a refused connection, a reset save.
+
+          It drains a LOG rather than rendering one string. Several unrelated
+          sources announce into this one region - the graph store, the pipeline,
+          the viewport - and none of them can be asked to take turns, so the
+          region takes turns on their behalf. See `@/lib/announce`.
+        */}
+        <LiveRegion log={announcementLog} testId="canvas-announcer" />
+
+        <div
+          className={styles.grid}
+          aria-hidden="true"
+          style={{
+            ...gridStyle(viewport),
+            // Fade the dense grid out when it would turn into a solid wash.
+            opacity: viewport.zoom < 0.5 ? 0.4 : 1,
           }}
         />
 
-        {orderedNodeIds.map((id) => {
-          const node = graph.nodes[id];
-          if (!node) return null;
-          const valid = validTargets.get(id);
-
-          return (
-            <CanvasNodeView
-              key={id}
-              node={node}
-              selected={selectedNodes.has(id)}
-              connections={connectionCount(graph, id)}
-              run={runStates[id] ?? idleState()}
-              typedInputPorts={typedInputFor.get(id) ?? EMPTY_PORTS}
-              linking={draft !== null}
-              validPorts={valid ?? emptySet}
-              heldPort={
-                draft?.origin.ref.nodeId === id
-                  ? portKey(draft.origin.side, draft.origin.ref.portId)
-                  : null
-              }
-              armedPort={
-                draft?.snapped?.ref.nodeId === id
-                  ? portKey(draft.snapped.side, draft.snapped.ref.portId)
-                  : null
-              }
-              refusedPort={
-                refused?.ref.nodeId === id ? portKey(refused.side, refused.ref.portId) : null
-              }
-              connectedPorts={connectedPorts.get(id) ?? emptySet}
-              onPortPointerDown={onPortPointerDown}
-              onInputChange={onInputChange}
-            />
-          );
-        })}
-      </div>
-
-      {graph.nodeOrder.length === 0 ? (
-        <div className={styles.empty}>
-          <p className={styles.emptyTitle}>Empty canvas</p>
-          {/*
-            One quiet line, naming both routes in. The keyboard shortcut alone
-            assumed the reader already knew there was a palette; someone
-            looking at an empty grid for the first time needs the visible
-            button pointed at too.
-          */}
-          <p>
-            Press <kbd className={styles.kbd}>K</kbd> or choose{' '}
-            <span className={styles.emptyStrong}>Add tool</span> to place a module.{' '}
-            <kbd className={styles.kbd}>?</kbd> lists every shortcut.
-          </p>
-        </div>
-      ) : null}
-
-      {/*
-        THE TOOLBAR
-        ───────────
-        Below `COMPACT_TOOLBAR` everything but "Add tool" and "Fit" moves
-        into an overflow menu. Collapsing rather than shrinking: this bar is
-        absolutely positioned with no right anchor, so its width was purely
-        the sum of its children - at 320px it grew to 475px and put Share and
-        Shortcuts off the side of the screen, unreachable by pointer or by
-        Tab. It is now width-constrained as well, so nothing can escape it
-        even if a label changes.
-      */}
-      <div className={styles.toolbar}>
-        <Button
-          size="sm"
-          onClick={() => {
-            setOverlay({ kind: 'palette' });
+        <div
+          className={styles.plane}
+          data-testid="canvas-plane"
+          style={{
+            transform: `translate(${viewport.x.toString()}px, ${viewport.y.toString()}px) scale(${viewport.zoom.toString()})`,
           }}
         >
-          <PlusIcon size={12} /> Add tool
-        </Button>
+          <Wires
+            graph={graph}
+            selectedEdges={selection.edges}
+            activeEdges={activeEdges}
+            draft={draftPath}
+            onSelectEdge={(id, additive) => {
+              const state = store.getState();
+              state.select({
+                nodes: [],
+                edges: additive ? [...state.selection.edges, id] : [id],
+              });
+            }}
+          />
 
-        {compact ? (
-          <>
-            {/* Promoted out of the overflow menu - see overflowItems above. */}
-            <Button size="sm" variant="ghost" onClick={onFit}>
-              Fit
-            </Button>
-            <OverflowMenu label="More" items={overflowItems} />
-          </>
-        ) : (
-          <>
-            <Button size="sm" variant="ghost" onClick={onFit}>
-              Fit
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                store.getState().undo();
-              }}
-            >
-              Undo
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                store.getState().redo();
-              }}
-            >
-              Redo
-            </Button>
+          {orderedNodeIds.map((id) => {
+            const node = graph.nodes[id];
+            if (!node) return null;
+            const valid = validTargets.get(id);
+
+            return (
+              <CanvasNodeView
+                key={id}
+                node={node}
+                selected={selectedNodes.has(id)}
+                connections={connectionCount(graph, id)}
+                run={runStates[id] ?? idleState()}
+                typedInputPorts={typedInputFor.get(id) ?? EMPTY_PORTS}
+                fileInputPorts={fileInputFor.get(id) ?? EMPTY_PORTS}
+                dropTarget={dropTarget === id}
+                linking={draft !== null}
+                validPorts={valid ?? emptySet}
+                heldPort={
+                  draft?.origin.ref.nodeId === id
+                    ? portKey(draft.origin.side, draft.origin.ref.portId)
+                    : null
+                }
+                armedPort={
+                  draft?.snapped?.ref.nodeId === id
+                    ? portKey(draft.snapped.side, draft.snapped.ref.portId)
+                    : null
+                }
+                refusedPort={
+                  refused?.ref.nodeId === id ? portKey(refused.side, refused.ref.portId) : null
+                }
+                connectedPorts={connectedPorts.get(id) ?? emptySet}
+                onPortPointerDown={onPortPointerDown}
+              />
+            );
+          })}
+        </div>
+
+        {graph.nodeOrder.length === 0 ? (
+          <div className={styles.empty}>
+            <p className={styles.emptyTitle}>Empty canvas</p>
             {/*
-              The privacy note is the SHARE button's own description rather
-              than a sibling in the button row. It used to sit between Share
-              and Shortcuts as a 190px block of wrapped text, crowding both
-              and taking width the controls needed. Now it is announced with
-              the button and revealed under the toolbar on hover or focus, so
-              it can never overlap a control at any width.
+              One quiet line, naming both routes in. The keyboard shortcut alone
+              assumed the reader already knew there was a palette; someone
+              looking at an empty grid for the first time needs the visible
+              button pointed at too.
             */}
-            <span className={styles.shareWrap}>
-              <Button size="sm" variant="ghost" aria-describedby={shareNoteId} onClick={onShare}>
-                <CopyIcon size={12} /> Share
-              </Button>
-              <span className={styles.shareNote} id={shareNoteId} role="note">
-                {SHARE_NOTE}
-              </span>
-            </span>
+            <p>
+              Press <kbd className={styles.kbd}>K</kbd> or choose{' '}
+              <span className={styles.emptyStrong}>Add tool</span> to place a module.{' '}
+              <kbd className={styles.kbd}>?</kbd> lists every shortcut.
+            </p>
+          </div>
+        ) : null}
+
+        {/*
+          THE TOOLBAR
+          ───────────
+          Below `COMPACT_TOOLBAR` everything but "Add tool" and "Fit" moves
+          into an overflow menu. Collapsing rather than shrinking: this bar is
+          absolutely positioned with no right anchor, so its width was purely
+          the sum of its children - at 320px it grew to 475px and put Share and
+          Shortcuts off the side of the screen, unreachable by pointer or by
+          Tab. It is now width-constrained as well, so nothing can escape it
+          even if a label changes.
+        */}
+        <div className={styles.toolbar} data-canvas-chrome="toolbar">
+          <Button
+            size="sm"
+            onClick={() => {
+              setOverlay({ kind: 'palette' });
+            }}
+          >
+            <PlusIcon size={12} /> Add tool
+          </Button>
+
+          {/*
+            THE INSPECTOR TOGGLE, at every width and never in the overflow.
+
+            It is the only way to reach the panel with a pointer, so burying it
+            behind another tap on the size where the panel is hidden by default
+            would make the feature undiscoverable on exactly the devices that
+            start without it. `aria-pressed` rather than a changing label: the
+            control is the same control in both states, and "Inspector,
+            pressed" is what a screen reader should hear rather than a button
+            whose name flips between "Show" and "Hide".
+
+            Icon-only when compact, because a fourth worded button is what
+            pushed this toolbar off the side of a 320px screen once already.
+          */}
+          {compact ? (
+            <IconButton
+              size="sm"
+              label="Inspector"
+              icon={<SlidersIcon size={12} />}
+              aria-pressed={inspectorOpen}
+              onClick={toggleInspector}
+            />
+          ) : (
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => {
-                setOverlay({ kind: 'shortcuts' });
-              }}
+              aria-pressed={inspectorOpen}
+              onClick={toggleInspector}
             >
-              <SearchIcon size={12} /> Shortcuts
+              <SlidersIcon size={12} /> Inspector
             </Button>
-          </>
-        )}
+          )}
+
+          {compact ? (
+            <>
+              {/* Promoted out of the overflow menu - see overflowItems above. */}
+              <Button size="sm" variant="ghost" onClick={onFit}>
+                Fit
+              </Button>
+              <OverflowMenu label="More" items={overflowItems} />
+            </>
+          ) : (
+            <>
+              <Button size="sm" variant="ghost" onClick={onFit}>
+                Fit
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  store.getState().undo();
+                }}
+              >
+                Undo
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  store.getState().redo();
+                }}
+              >
+                Redo
+              </Button>
+              {/*
+                The privacy note is the SHARE button's own description rather
+                than a sibling in the button row. It used to sit between Share
+                and Shortcuts as a 190px block of wrapped text, crowding both
+                and taking width the controls needed. Now it is announced with
+                the button and revealed under the toolbar on hover or focus, so
+                it can never overlap a control at any width.
+              */}
+              <span className={styles.shareWrap}>
+                <Button size="sm" variant="ghost" aria-describedby={shareNoteId} onClick={onShare}>
+                  <CopyIcon size={12} /> Share
+                </Button>
+                <span className={styles.shareNote} id={shareNoteId} role="note">
+                  {SHARE_NOTE}
+                </span>
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setOverlay({ kind: 'shortcuts' });
+                }}
+              >
+                <SearchIcon size={12} /> Shortcuts
+              </Button>
+            </>
+          )}
+        </div>
+
+        {/*
+          THE READOUT
+          ───────────
+          Each item is its own inline-flex box. They used to be plain spans, and
+          `reset.css` makes every svg `display: block` - a block child inside an
+          inline span pushes the text after it onto a second line, which is why
+          "5 nodes" drew a row below "1 wires  idle  100%" inside a 32px box and
+          read as overlapping.
+        */}
+        <div className={styles.readout} data-canvas-chrome="readout" data-testid="canvas-readout">
+          <span className={styles.readoutItem}>
+            <SignalIcon size={10} />
+            {counted(graph.nodeOrder.length, 'node')}
+          </span>
+          <span className={styles.readoutItem}>{counted(graph.edgeOrder.length, 'wire')}</span>
+          <span className={styles.readoutItem}>{pipelineRunning ? 'running' : 'idle'}</span>
+          {/*
+            HOW SEVERAL FAILURES AT ONCE ARE SURFACED.
+            ─────────────────────────────────────────
+            Each failing node shows its own message, which is right - the message
+            belongs beside the thing it is about - but on a graph big enough to
+            need scrolling that is a message you cannot see. This is a COUNT, not
+            a copy of the messages: enough to know something broke and to go
+            looking, without a second place where errors are worded.
+
+            Errors only. Blocked nodes are the normal state of a pipeline you are
+            still wiring up, and a chrome that shouts about them is a chrome
+            people learn to ignore.
+          */}
+          {failedCount > 0 ? (
+            <span className={cx(styles.readoutItem, styles.readoutFailed)}>
+              {failedCount.toString()} failed
+            </span>
+          ) : null}
+          {/*
+            A real control, not a label that looks like one. It sat in a
+            bordered, raised box with the rest of the readout and did nothing;
+            now it does what the 0 shortcut does, and says so.
+          */}
+          <button
+            type="button"
+            className={styles.readoutZoom}
+            aria-label={zoomResetLabel}
+            onClick={onResetZoom}
+          >
+            {zoomPercent}%{zoomLimit}
+          </button>
+        </div>
+
+        {overlay.kind === 'palette' ? (
+          <CommandDialog
+            title="Add a tool"
+            searchLabel="Search tools"
+            placeholder="base64, yaml, convert…"
+            options={paletteOptions}
+            groups={PALETTE_GROUPS}
+            emptyMessage="No tools are available."
+            onClose={closeOverlay}
+            onChoose={(id) => {
+              closeOverlay();
+              if (id.startsWith('preset:')) {
+                addPreset(id.slice('preset:'.length));
+                return;
+              }
+              addTool(id as ToolId);
+            }}
+          />
+        ) : null}
+
+        {overlay.kind === 'choose-port' ? (
+          <CommandDialog
+            title="Connect from which port?"
+            searchLabel="Search ports"
+            placeholder="Filter ports"
+            options={portOptions}
+            groups={PORT_GROUPS}
+            emptyMessage="This tool has no ports."
+            onClose={closeOverlay}
+            onChoose={(id) => {
+              const origin = decodeEnd(id);
+              if (origin) setOverlay({ kind: 'choose-partner', origin });
+            }}
+          />
+        ) : null}
+
+        {overlay.kind === 'choose-partner' ? (
+          <CommandDialog
+            title={
+              overlay.origin.side === 'output'
+                ? 'Connect to which input?'
+                : 'Connect from which output?'
+            }
+            searchLabel="Search valid ports"
+            placeholder="Filter ports"
+            options={partnerOptions}
+            groups={PARTNER_GROUPS}
+            emptyMessage={
+              overlay.origin.side === 'output'
+                ? 'Nothing on the canvas can accept this output yet.'
+                : 'Nothing on the canvas can feed this input yet.'
+            }
+            onClose={closeOverlay}
+            onChoose={(id) => {
+              const partner = decodeEnd(id);
+              closeOverlay();
+              if (!partner) return;
+              // Oriented through the same helper the pointer drop uses, so the
+              // two routes cannot disagree about which end is which.
+              const oriented = orientEnds(overlay.origin, partner);
+              if (oriented) tryConnect(oriented.from, oriented.to);
+            }}
+          />
+        ) : null}
+
+        {overlay.kind === 'shortcuts' ? <ShortcutsOverlay onClose={closeOverlay} /> : null}
       </div>
 
       {/*
-        THE READOUT
-        ───────────
-        Each item is its own inline-flex box. They used to be plain spans, and
-        `reset.css` makes every svg `display: block` - a block child inside an
-        inline span pushes the text after it onto a second line, which is why
-        "5 nodes" drew a row below "1 wires  idle  100%" inside a 32px box and
-        read as overlapping.
+        THE RAIL'S SIZE HANDLE.
+
+        Only present above the breakpoint, where the inspector is a rail
+        beside the canvas rather than a sheet over it - there is nothing to
+        resize when the panel is the full width of the screen.
       */}
-      <div className={styles.readout} data-testid="canvas-readout">
-        <span className={styles.readoutItem}>
-          <SignalIcon size={10} />
-          {counted(graph.nodeOrder.length, 'node')}
-        </span>
-        <span className={styles.readoutItem}>{counted(graph.edgeOrder.length, 'wire')}</span>
-        <span className={styles.readoutItem}>{pipelineRunning ? 'running' : 'idle'}</span>
-        {/*
-          A real control, not a label that looks like one. It sat in a
-          bordered, raised box with the rest of the readout and did nothing;
-          now it does what the 0 shortcut does, and says so.
-        */}
+      {inspectorOpen && railFits ? (
         <button
           type="button"
-          className={styles.readoutZoom}
-          aria-label={zoomResetLabel}
-          onClick={onResetZoom}
-        >
-          {zoomPercent}%{zoomLimit}
-        </button>
-      </div>
-
-      {overlay.kind === 'palette' ? (
-        <CommandDialog
-          title="Add a tool"
-          searchLabel="Search tools"
-          placeholder="base64, yaml, convert…"
-          options={paletteOptions}
-          groups={PALETTE_GROUPS}
-          emptyMessage="No tools are available."
-          onClose={closeOverlay}
-          onChoose={(id) => {
-            closeOverlay();
-            if (id.startsWith('preset:')) {
-              addPreset(id.slice('preset:'.length));
-              return;
-            }
-            addTool(id as ToolId);
-          }}
+          className={inspectorStyles.handle}
+          /*
+           * A <button> carrying `role="separator"`, rather than a div with a
+           * tabindex. The ARIA window-splitter pattern wants a focusable
+           * separator with a value; a native button is what gives it real
+           * focus, real activation and a real place in the tab order without
+           * any of that being hand-rolled. The role overrides the button's
+           * own, which is the point - this is a splitter, not a command.
+           */
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Inspector width"
+          aria-valuenow={railWidth}
+          aria-valuemin={RAIL_MIN}
+          aria-valuemax={RAIL_MAX}
+          onPointerDown={onHandlePointerDown}
+          onKeyDown={onHandleKeyDown}
+          data-testid="inspector-handle"
         />
       ) : null}
 
-      {overlay.kind === 'choose-port' ? (
-        <CommandDialog
-          title="Connect from which port?"
-          searchLabel="Search ports"
-          placeholder="Filter ports"
-          options={portOptions}
-          groups={PORT_GROUPS}
-          emptyMessage="This tool has no ports."
-          onClose={closeOverlay}
-          onChoose={(id) => {
-            const origin = decodeEnd(id);
-            if (origin) setOverlay({ kind: 'choose-partner', origin });
+      {inspectorMounted ? (
+        <NodeInspector
+          /*
+           * `closing` means on screen and on its way out, which is exactly the
+           * state nothing should be able to Tab into or read out - so the panel
+           * is inert for the length of its own slide rather than being a live
+           * region that happens to be moving.
+           */
+          phase={inspectorPhase}
+          target={inspectorTarget}
+          selectedIds={selection.nodes}
+          selectedLabels={selectedLabels}
+          onEscape={onInspectorEscape}
+          onSelectOnly={(id) => {
+            store.getState().select({ nodes: [id], edges: [] });
           }}
+          onInputChange={onInputChange}
+          onFileChange={onFileChange}
+          onOptionChange={onOptionChange}
+          onClose={() => {
+            /*
+             * Closing does NOT clear the selection. The two are separate
+             * facts - what you are working on, and whether the panel that
+             * shows it is on screen - and collapsing them would mean the
+             * only way to get the canvas's full width back was to deselect
+             * the node you were about to move.
+             */
+            hideInspector();
+            rootRef.current?.focus();
+          }}
+          onOrphaned={onInspectorOrphaned}
+          hasNodes={graph.nodeOrder.length > 0}
         />
       ) : null}
-
-      {overlay.kind === 'choose-partner' ? (
-        <CommandDialog
-          title={
-            overlay.origin.side === 'output'
-              ? 'Connect to which input?'
-              : 'Connect from which output?'
-          }
-          searchLabel="Search valid ports"
-          placeholder="Filter ports"
-          options={partnerOptions}
-          groups={PARTNER_GROUPS}
-          emptyMessage={
-            overlay.origin.side === 'output'
-              ? 'Nothing on the canvas can accept this output yet.'
-              : 'Nothing on the canvas can feed this input yet.'
-          }
-          onClose={closeOverlay}
-          onChoose={(id) => {
-            const partner = decodeEnd(id);
-            closeOverlay();
-            if (!partner) return;
-            // Oriented through the same helper the pointer drop uses, so the
-            // two routes cannot disagree about which end is which.
-            const oriented = orientEnds(overlay.origin, partner);
-            if (oriented) tryConnect(oriented.from, oriented.to);
-          }}
-        />
-      ) : null}
-
-      {overlay.kind === 'shortcuts' ? <ShortcutsOverlay onClose={closeOverlay} /> : null}
     </div>
   );
 }

@@ -3,7 +3,9 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { ToastProvider } from '@/components/Toast';
+import { usePipelineStore } from '@/features/execution/pipelineStore';
 import { getManifestEntry } from '@/features/registry';
+import { EMPTY_ANNOUNCEMENTS } from '@/lib/announce';
 
 import { Canvas } from './Canvas';
 import { nearestCompatiblePort, orientEnds } from './connections';
@@ -27,7 +29,7 @@ import { DEFAULT_VIEWPORT, useViewportStore } from './viewportStore';
  */
 
 function node(id: string, toolId: CanvasNode['toolId'], x: number, y: number): CanvasNode {
-  return { id, toolId, position: { x, y }, options: {}, inputs: {} };
+  return { id, toolId, position: { x, y }, options: {}, inputs: {}, fileInputs: {} };
 }
 
 function graphOf(nodes: readonly CanvasNode[]): GraphData {
@@ -41,13 +43,20 @@ function graphOf(nodes: readonly CanvasNode[]): GraphData {
 }
 
 function seed(nodes: readonly CanvasNode[]): void {
+  /*
+   * The pipeline store keeps a result cache keyed by node id, and every test
+   * here builds a canvas whose first node is n1. Without this, one test's
+   * result can be served to the next as a cache hit - state leaking between
+   * tests in exactly the shape it leaks between documents.
+   */
+  usePipelineStore.getState().reset();
   useCanvasStore.setState({
     graph: graphOf(nodes),
     selection: { nodes: [], edges: [] },
     past: [],
     future: [],
     pendingMove: null,
-    announcement: { text: '', seq: 0 },
+    ...EMPTY_ANNOUNCEMENTS,
   });
 }
 
@@ -140,7 +149,7 @@ beforeEach(() => {
     past: [],
     future: [],
     pendingMove: null,
-    announcement: { text: '', seq: 0 },
+    ...EMPTY_ANNOUNCEMENTS,
   });
   useViewportStore.setState({ viewport: DEFAULT_VIEWPORT, isPanning: false });
 });

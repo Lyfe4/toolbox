@@ -134,10 +134,19 @@ describe('HTML → plain text', () => {
     expect(htmlToText('<p>one<br>two</p>', TO_TEXT)).toBe('one\ntwo');
   });
 
-  it('never leaves a run of more than one blank line', () => {
+  it('never leaves a run of more than one blank line BETWEEN blocks', () => {
     const out = htmlToText('<div><div><div><p>a</p></div></div></div><p>b</p>', TO_TEXT);
 
     expect(/\n{3,}/.test(out)).toBe(false);
+  });
+
+  it('does leave one inside a code block, where it is content', () => {
+    // The qualifier above is load-bearing. Collapsing blank lines is right
+    // between blocks and wrong inside a program, and the collapse used to be
+    // a regex over the finished string that could not tell the two apart.
+    const out = htmlToText('<pre><code>a\n\n\nb</code></pre>', TO_TEXT);
+
+    expect(out).toBe('    a\n\n\n    b');
   });
 });
 

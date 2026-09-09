@@ -182,6 +182,11 @@ export const textConvertOptionFields: readonly OptionField<TextConvertOptions>[]
   {
     key: 'unsupported',
     label: 'Markup Markdown cannot express',
+    // Names <details> specifically, because it is the element in this set
+    // where the default loses MEANING rather than decoration - a collapsed
+    // section stops being collapsed - and nothing else in the panel says which
+    // control gets it back.
+    description: 'Keep as HTML to preserve <details>, <kbd>, <sub> and <abbr>.',
     control: 'select',
     choices: [
       { value: 'keep', label: 'Keep as inline HTML' },

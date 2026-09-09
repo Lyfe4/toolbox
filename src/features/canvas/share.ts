@@ -4,7 +4,10 @@ import { decodeBase64, encodeBase64 } from '@/lib/base64';
 import { setOwnProperty } from '@/lib/safeObject';
 import { z } from '@/lib/zod';
 
+import { safeNextId } from './commands';
+import { firstRefusedEdge } from './connections';
 import { snapToGrid } from './geometry';
+import { currentInputPortId, currentOutputPortId } from './retiredPorts';
 import { isRetiredToolId, migrateRetiredOptions, REPLACEMENT_TOOL_ID } from './retiredTools';
 import { MAX_SHARE_PARAM_LENGTH, SHARE_PARAM } from './shareSearch';
 import { EMPTY_GRAPH, type CanvasEdge, type CanvasNode, type GraphData } from './types';
@@ -21,9 +24,17 @@ import { EMPTY_GRAPH, type CanvasEdge, type CanvasNode, type GraphData } from '.
  * whole premise of Patchbay is that pasted data does not leave the machine.
  * A URL is the one place it could accidentally escape, so the omission is
  * enforced by `toSharePayload` and asserted by share.test.ts.
+ *
+ * NOR `fileInputs`, AND THAT IS NOT MERELY THE SAME RULE AGAIN. A file's bytes
+ * could not travel here at any size, so the only question was whether its NAME
+ * should - and a filename is often the most revealing single string in a
+ * document: `Q3-layoffs.xlsx` says something a pipeline's shape does not. The
+ * recipient does not have the file and would gain nothing but the name, so
+ * they are told what the port needs by the port itself, exactly as they are
+ * for a text input nobody typed into.
  */
 
-export const SHARE_FORMAT_VERSION = 2;
+export const SHARE_FORMAT_VERSION = 3;
 
 // Re-exported so callers have one import for everything share-related, while
 // the route keeps importing the tiny module directly.
@@ -93,10 +104,11 @@ function shareableOptions(node: CanvasNode): Record<string, unknown> {
 }
 
 /**
- * Structure only. Note what is NOT read from the node: `inputs`.
+ * Structure only. Note what is NOT read from the node: `inputs`, `fileInputs`.
  *
  * Written as an explicit field list rather than a spread-and-delete, so adding
- * a field to CanvasNode cannot silently start leaking it into share links.
+ * a field to CanvasNode cannot silently start leaking it into share links -
+ * which is exactly what this bought when `fileInputs` was added.
  */
 export function toSharePayload(graph: GraphData): SharePayload {
   return {
@@ -192,14 +204,13 @@ export type ShareResult =
 const BAD_LINK = 'That shared pipeline link could not be read, so the canvas was left empty.';
 
 /**
- * Rewrites a v1 payload to v2.
+ * Rewrites an older payload to the current format.
  *
  * MIGRATE, NOT REJECT, and the reasoning is about what a share link is for. A
  * link is something people paste into a chat or an issue and come back to
  * weeks later; breaking every previously-shared pipeline that happened to
- * contain a Markdown node would be a real cost to real people, and the mapping
- * is exact - both retired tools correspond to a source/target pair with
- * nothing lost.
+ * contain a Markdown node - or a hash node, for the v2 step - would be a real
+ * cost to real people, and both mappings are exact.
  *
  * RUN BEFORE VALIDATION, deliberately. The schema checks tool ids against the
  * live registry, so a v1 link naming `markdown` would be refused outright if
@@ -216,13 +227,24 @@ function migrateSharePayload(parsed: unknown): unknown {
   if (typeof parsed !== 'object' || parsed === null) return parsed;
 
   const payload = parsed as Record<string, unknown>;
-  if (payload.v !== 1 || !Array.isArray(payload.n)) return parsed;
 
+  // Chained, the same way the persisted graph's migrations chain: each step
+  // knows only about the one before it, and the v1 step's output goes back in
+  // so the v2 step sees CURRENT tool ids rather than retired ones - which
+  // matters, because the port rename it applies is looked up per tool.
+  if (payload.v === 1) return migrateSharePayload(shareV1ToV2(payload));
+  if (payload.v === 2) return shareV2ToV3(payload);
+  return parsed;
+}
+
+/** v1 -> v2: the two retired tools become `text-convert`. */
+function shareV1ToV2(payload: Record<string, unknown>): unknown {
+  if (!Array.isArray(payload.n)) return { ...payload, v: 2 };
   const nodes: readonly unknown[] = payload.n;
 
   return {
     ...payload,
-    v: SHARE_FORMAT_VERSION,
+    v: 2,
     n: nodes.map((node): unknown => {
       // Positional tuples: [id, toolId, x, y, options]. Anything not shaped
       // like one is left alone for the schema to reject.
@@ -232,6 +254,60 @@ function migrateSharePayload(parsed: unknown): unknown {
       if (!isRetiredToolId(toolId)) return node;
 
       return [id, REPLACEMENT_TOOL_ID, x, y, migrateRetiredOptions(toolId, options) ?? {}];
+    }),
+  };
+}
+
+/**
+ * v2 -> v3: two output ports were renamed.
+ *
+ * `hash.digest` became `output` and `image-convert.info` became `report`, and
+ * a link's edges are the only place those ids appear in a payload - a link
+ * carries no typed input, so there are no input keys to rewrite.
+ *
+ * WHY A LINK NAMING THE OLD PORT COULD NOT SIMPLY BE REFUSED. A link is
+ * something people paste into a chat or an issue and come back to weeks later,
+ * and half the shipped presets end in a hash node. Refusing them would break
+ * real pipelines belonging to real people for a rename made for tidiness.
+ *
+ * WHY IT COULD NOT SIMPLY BE ACCEPTED EITHER. The edge would still name a node
+ * that exists and an input port that exists, so nothing refuses it: the
+ * recipient gets a canvas that draws the wire, runs the upstream node, and
+ * reports `Nothing arrived on Input` on the node below it. Half-applied is the
+ * one outcome a share link must never have.
+ *
+ * The table is shared with the persisted-graph migration - see
+ * `retiredPorts.ts`, which explains what each rename was for.
+ */
+function shareV2ToV3(payload: Record<string, unknown>): unknown {
+  const v = SHARE_FORMAT_VERSION;
+  if (!Array.isArray(payload.n)) return { ...payload, v };
+
+  const nodes: readonly unknown[] = payload.n;
+  const toolOf = new Map<string, unknown>();
+  for (const node of nodes) {
+    if (!Array.isArray(node) || node.length < 2) continue;
+    const [id, toolId] = node as readonly unknown[];
+    if (typeof id === 'string') toolOf.set(id, toolId);
+  }
+
+  const edges: readonly unknown[] = Array.isArray(payload.e) ? payload.e : [];
+
+  return {
+    ...payload,
+    v,
+    e: edges.map((edge): unknown => {
+      // [fromNode, fromPort, toNode, toPort]. Anything else is the schema's
+      // problem, not this function's.
+      if (!Array.isArray(edge) || edge.length < 4) return edge;
+
+      const [fromNode, fromPort, toNode, toPort] = edge as readonly unknown[];
+      return [
+        fromNode,
+        currentOutputPortId(toolOf.get(String(fromNode)), fromPort),
+        toNode,
+        currentInputPortId(toolOf.get(String(toNode)), toPort),
+      ];
     }),
   };
 }
@@ -283,7 +359,32 @@ export async function decodeParamToGraph(param: string): Promise<ShareResult> {
     };
   }
 
-  return { status: 'ok', graph: fromSharePayload(payload.data) };
+  const graph = fromSharePayload(payload.data);
+
+  /*
+   * THE LAST CHECK IS THE SAME ONE A POINTER DROP MAKES.
+   *
+   * The schema has said every edge is shaped like an edge and every tool id is
+   * real. Only `checkConnection` can say the wires are connections THIS build
+   * could make: a port that has been renamed since the link was written, two
+   * wires into one input, a cycle, a node wired to itself. A hostile link can
+   * carry any of those and a genuine old one can carry the first.
+   *
+   * Refused whole, never in part, which is the property the header of this
+   * file claims and this is what makes it true of ports as well as of parsing.
+   * The rejection's own sentence is included: "Input already has a connection"
+   * is a fact about the link the recipient can act on, where "could not be
+   * read" is a shrug.
+   */
+  const refused = firstRefusedEdge(graph);
+  if (refused) {
+    return {
+      status: 'error',
+      message: `That shared pipeline link has a connection this version cannot make, so nothing was applied. ${refused.rejection.message}`,
+    };
+  }
+
+  return { status: 'ok', graph };
 }
 
 /** Turns a validated payload into the normalised store shape. */
@@ -300,6 +401,9 @@ export function fromSharePayload(payload: SharePayload): GraphData {
       options,
       // Always empty: input never travels in a link, so it never comes back.
       inputs: {},
+      // Nor does a filename. A node fed a file by the sender arrives at the
+      // recipient as an ordinary empty node asking for one.
+      fileInputs: {},
     };
     nodeOrder.push(id);
   }
@@ -307,8 +411,17 @@ export function fromSharePayload(payload: SharePayload): GraphData {
   const edges: Record<string, CanvasEdge> = {};
   const edgeOrder: string[] = [];
 
+  /*
+   * EVERY EDGE IS KEPT, including one naming a node that is not here.
+   *
+   * This used to skip those, which contradicted the paragraph above it: a link
+   * whose edges half survive IS a half-applied pipeline, just one where the
+   * missing half is invisible rather than reported. `checkConnection` already
+   * reads a missing endpoint as "that port no longer exists", so keeping the
+   * edge and letting `decodeParamToGraph` refuse the link gives one rule for
+   * every unusable wire instead of a filter here and a check there.
+   */
   payload.e.forEach(([fromNode, fromPort, toNode, toPort], index) => {
-    if (!(fromNode in nodes) || !(toNode in nodes)) return;
     const id = `e${index.toString()}`;
     edges[id] = {
       id,
@@ -318,14 +431,24 @@ export function fromSharePayload(payload: SharePayload): GraphData {
     edgeOrder.push(id);
   });
 
-  if (nodeOrder.length === 0) return EMPTY_GRAPH;
+  /*
+   * An empty link is an empty canvas, and only an empty link. A payload with
+   * no nodes but some EDGES is not empty, it is nonsense - and returning
+   * EMPTY_GRAPH for it would drop those edges on the floor, which is the
+   * silent repair this function has just stopped doing one paragraph up. Built
+   * as it stands instead, so `decodeParamToGraph` refuses it by name.
+   */
+  if (nodeOrder.length === 0 && edgeOrder.length === 0) return EMPTY_GRAPH;
 
   return {
     nodes,
     nodeOrder,
     edges,
     edgeOrder,
-    nextId: nodeOrder.length + edgeOrder.length + 1,
+    // Derived from the ids actually present, never from how many there are.
+    // See `safeNextId` - counting was wrong for any link whose ids were
+    // sparse, which is every link made after deleting anything.
+    nextId: safeNextId(nodeOrder, edgeOrder),
   };
 }
 

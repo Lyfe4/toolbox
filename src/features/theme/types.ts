@@ -77,13 +77,17 @@ export const THEMED_TOKENS = [
 export type ThemedToken = (typeof THEMED_TOKENS)[number];
 
 /**
- * A user-authored theme. The builder UI comes later; the type and the storage
- * layer exist now so nothing has to be migrated when it arrives.
+ * A user-authored theme.
  *
  * `Partial<Record<ThemedToken, string>>` means "an object whose keys are
  * themed token names and whose values are CSS colours, where every key is
  * optional". A custom theme therefore overrides only what it cares about and
  * inherits everything else from its `base` preset.
+ *
+ * Values are canonical hex, and only canonical hex. See `isCanonicalColour` in
+ * customThemes.ts: that is a security boundary rather than a style rule, and
+ * it is why a colour typed as `oklch(...)` is converted before it is stored
+ * rather than being kept as written.
  */
 export interface CustomTheme {
   readonly id: string;
@@ -103,11 +107,15 @@ export type ThemeSelection =
   | { readonly kind: 'preset'; readonly name: ThemeName }
   | { readonly kind: 'custom'; readonly id: string };
 
-/** The whole persisted blob. `version` exists so future migrations are possible. */
+/**
+ * The persisted SELECTION. `version` exists so future migrations are possible.
+ *
+ * Authored themes deliberately are not in here; they have their own key, for
+ * the reasons set out at the top of customThemes.ts.
+ */
 export interface PersistedThemeState {
   readonly version: 1;
   readonly selection: ThemeSelection;
-  readonly customThemes: readonly CustomTheme[];
 }
 
 /** Narrows an arbitrary string to a ThemeName. */

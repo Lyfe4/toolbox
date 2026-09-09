@@ -1,0 +1,149 @@
+/*
+ * Image preview.
+ *
+ * Two things here are load-bearing rather than decorative:
+ *
+ * 1. THE CHEQUERBOARD. A PNG converted to JPEG has its transparency matted,
+ *    and on a flat background the difference between "transparent" and
+ *    "white" is invisible — which is precisely the change the report warns
+ *    about. A chequer makes it visible, which is the whole reason the tool
+ *    bothers to warn.
+ *
+ * 2. `max-block-size` WITH `object-fit: contain`. A 4000px-wide result must
+ *    not decide the width of the panel, and a 20px favicon must not be
+ *    stretched to fill it. Contain does both and preserves the aspect ratio,
+ *    which matters because judging a conversion by eye means judging
+ *    proportions too.
+ */
+
+.wrapper {
+  display: grid;
+  gap: var(--pb-space-sm);
+  min-inline-size: 0;
+}
+
+.figure {
+  display: grid;
+  gap: var(--pb-space-2xs);
+  margin: 0;
+  min-inline-size: 0;
+}
+
+.image,
+.placeholder {
+  inline-size: 100%;
+  max-block-size: 420px;
+  object-fit: contain;
+  /* Left-aligned rather than centred: two compared images share an edge. */
+  object-position: left center;
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-control);
+
+  /*
+   * The chequer, in tokens rather than in a raster. Two gradients at a 16px
+   * repeat, offset by half a tile — the classic four-square pattern with no
+   * asset to fetch, which also means it cannot be blocked by `img-src`.
+   */
+  background-color: var(--pb-surface-inset);
+  background-image:
+    linear-gradient(45deg, var(--pb-surface-sunken) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--pb-surface-sunken) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--pb-surface-sunken) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--pb-surface-sunken) 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+}
+
+/* Holds the box open while the object URL is being created, so the panel does
+ * not jump by 420px on the frame after a run finishes. */
+.placeholder {
+  block-size: 160px;
+}
+
+.caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--pb-space-xs);
+}
+
+.side {
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  font-weight: var(--pb-label-weight);
+  color: var(--pb-ink-primary);
+}
+
+.facts {
+  margin: 0;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-secondary);
+}
+
+/*
+ * Side by side above 560px, stacked below it. The breakpoint is about the
+ * images rather than about the page: under about 260px each, a JPEG artefact
+ * is smaller than the thing you are looking for, and a stacked pair you scroll
+ * between is a better comparison than a shrunken one you cannot read.
+ */
+.compare {
+  display: grid;
+  gap: var(--pb-space-sm);
+  min-inline-size: 0;
+}
+
+@media (min-width: 560px) {
+  .compare {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .compare .image,
+  .compare .placeholder {
+    max-block-size: 320px;
+  }
+}
+
+.oversized {
+  display: grid;
+  gap: var(--pb-space-xs);
+  justify-items: start;
+  padding: var(--pb-space-md);
+  background-color: var(--pb-surface-inset);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-control);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--pb-body-size);
+  line-height: var(--pb-body-leading);
+  color: var(--pb-ink-secondary);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pb-space-sm);
+}
+
+.hint {
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  color: var(--pb-ink-muted);
+  overflow-wrap: anywhere;
+}
+
+@media (forced-colors: active) {
+  .image,
+  .placeholder,
+  .oversized {
+    border-color: CanvasText;
+  }
+}

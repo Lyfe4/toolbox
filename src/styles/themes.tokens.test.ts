@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { THEME_NAMES, THEMED_TOKENS } from '@/features/theme';
-import { themeOverrideTokens } from '@/lib/testing/cssTokens';
+import { themeOverrideTokens } from '@/lib/cssTokens';
 
 /**
  * The TypeScript union and the CSS are two descriptions of the same set, so

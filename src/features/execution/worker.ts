@@ -39,6 +39,14 @@ async function execute(request: Extract<WorkerRequest, { kind: 'execute' }>): Pr
     const tool = await loadTool(request.toolId);
     importedAt = performance.now();
 
+    /*
+     * Told BEFORE the tool runs, not after: this is what lets the engine time
+     * the tool's own work instead of the wall clock since the request was
+     * posted. Several requests can be in flight against this one worker, and
+     * a request that waited its turn must not spend its deadline waiting.
+     */
+    post({ kind: 'started', requestId: request.requestId });
+
     result = await tool.run({
       inputs: request.inputs,
       options: request.options,
@@ -81,30 +89,73 @@ async function execute(request: Extract<WorkerRequest, { kind: 'execute' }>): Pr
   );
 }
 
-self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
-  const request = event.data;
+/**
+ * REGISTERED ONCE, AND ONLY INSIDE A WORKER.
+ *
+ * This module is the worker's ENTRY, and it is also a shared chunk: the tool
+ * chunks it dynamically imports import it back for the registry helpers that
+ * Rollup happened to place here, and so does the page's own bundle. An entry
+ * that doubles as a library is a module that gets evaluated in places nobody
+ * meant it to be, and this one has a global side effect, so both places were
+ * real:
+ *
+ *   - IN THE WORKER, JavaScriptCore evaluated the entry a SECOND time when a
+ *     tool chunk imported it, giving `message` two listeners - so every
+ *     request ran its tool TWICE. Measured over a base64 -> structured-data ->
+ *     hash chain in Playwright's WebKit: two `started` and two `settled` for
+ *     every one `execute`, from the first run on a fresh worker. Gecko
+ *     evaluates it once and was always clean, which is why the unit suite and
+ *     Firefox both said the worker was fine. Nothing was ever WRONG - a tool
+ *     is a pure function, so the second answer equals the first and the engine
+ *     drops it as a late reply to something already settled - it simply cost
+ *     twice the CPU and twice the peak memory of every worker tool in Safari,
+ *     which for a 20 MB image conversion is the whole difference.
+ *
+ *   - ON THE MAIN THREAD, `self` is the window, so evaluating it there put a
+ *     `message` listener on the PAGE that would run a tool for anything that
+ *     could `postMessage` to it. Nothing can today - the one iframe in the app
+ *     is the `sandbox=""` preview, which cannot script - but a page whose
+ *     entire promise is that nothing you paste leaves it should not carry an
+ *     unintended global entry point to its own executor.
+ *
+ * The guard is on `self` rather than in module scope on purpose: two
+ * evaluations are two module instances with two module scopes, and the thing
+ * that must be unique is the listener on the one global they share.
+ */
+const scope = self as { __patchbayWorkerListening?: true };
+const insideWorker = typeof WorkerGlobalScope !== 'undefined';
 
-  switch (request.kind) {
-    case 'execute':
-      // Deliberately not awaited: the worker stays responsive to `cancel`
-      // messages while a tool is running.
-      void execute(request);
-      return;
+if (insideWorker && !scope.__patchbayWorkerListening) {
+  scope.__patchbayWorkerListening = true;
+  listen();
+}
 
-    case 'cancel':
-      inFlight.get(request.requestId)?.abort();
-      inFlight.delete(request.requestId);
-      return;
+function listen(): void {
+  self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
+    const request = event.data;
 
-    case 'ping':
-      // Reaching here at all is the answer: the module graph has evaluated.
-      post({ kind: 'ready' });
-      return;
+    switch (request.kind) {
+      case 'execute':
+        // Deliberately not awaited: the worker stays responsive to `cancel`
+        // messages while a tool is running.
+        void execute(request);
+        return;
 
-    case 'preload':
-      // Fire and forget. A failure here is not worth reporting - the execute
-      // path will import the tool again and fail properly if it must.
-      void loadTool(request.toolId).catch(() => undefined);
-      return;
-  }
-});
+      case 'cancel':
+        inFlight.get(request.requestId)?.abort();
+        inFlight.delete(request.requestId);
+        return;
+
+      case 'ping':
+        // Reaching here at all is the answer: the module graph has evaluated.
+        post({ kind: 'ready' });
+        return;
+
+      case 'preload':
+        // Fire and forget. A failure here is not worth reporting - the execute
+        // path will import the tool again and fail properly if it must.
+        void loadTool(request.toolId).catch(() => undefined);
+        return;
+    }
+  });
+}

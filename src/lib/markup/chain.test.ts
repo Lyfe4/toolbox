@@ -99,7 +99,7 @@ describe('text-convert → hash', () => {
         context: { signal: new AbortController().signal, reportProgress: () => undefined },
       });
       if (!result.ok) throw new Error('hash failed');
-      return asText((result.value as Record<string, ToolValue>).digest);
+      return asText((result.value as Record<string, ToolValue>).output);
     };
 
     const one = await digest(await render('# Title\n\nBody\n'));

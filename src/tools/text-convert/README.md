@@ -389,6 +389,137 @@ Whitespace is normalised throughout: no trailing spaces on any line, never more
 than one blank line, and a list item spanning several lines gets a blank line
 after it while a one-line item stays tight against its neighbours.
 
+## Whitespace inside code
+
+A blank line in a code block is a line of the program. So is a trailing space,
+and so is the second space in `` `a  b` ``. This section exists because a bug
+report said blank lines were being dropped in fenced blocks, and running it
+down found three different losses — none of them the one reported.
+
+### What was reported did not reproduce
+
+Markdown → HTML keeps the blank line, in every spelling of the document there
+is: backtick and tilde fences, with and without a language, indented four
+spaces instead, inside a list, inside a blockquote, with CRLF line endings,
+with spaces or a tab on the blank line, and with no trailing newline. Fifteen
+variants, all measured, all correct. That direction was never broken and is now
+pinned so it cannot break quietly.
+
+### What did
+
+**Two blank lines in a row became one, in the plain-text output.**
+`htmlToText` finished by running `.replace(/\n{3,}/g, '\n\n')` over the whole
+string. Between blocks that is exactly right — it is what stops a heading and a
+list drifting apart. Inside a program it destroys a line. `tidyWhitespace`,
+fifty lines further up the same file, carries a comment explaining that it
+walks the tree rather than running a regex over the finished string "because a
+regex could not tell the newlines between two table rows from the ones inside a
+fenced code block". The same mistake, made again below it.
+
+**A document that opened with a code block lost the indent on its first line
+only.** The same post-processing ended with `.trim()`, which acts on the ends of
+the document — and a leading code block is at one. Line one came out flush
+against the margin with every line after it indented four spaces, which looks
+like the code is broken rather than the converter.
+
+Both are fixed by rendering each code block once, replacing it with a marker,
+running the tidy-up, and substituting the blocks back. The marker is U+0000,
+which is safe by construction rather than by hope: the HTML tokenizer disposes
+of every NUL in character data, so no tree this code sees can contain one.
+Every path parses HTML first, the Markdown one included. The substitution uses
+a replacer **function**, not a replacement string, because `$&` in a shell
+snippet is exactly what turns up inside a code block here.
+
+**A trailing blank line inside a fence was lost on the way back to Markdown**,
+and **a run of spaces inside a code span was collapsed**. Both upstream, and
+both fixed from outside the dependency:
+
+- `hast-util-to-mdast`'s code handler runs `trimTrailingLines`, which strips
+  every trailing newline where mdast wants exactly one removed — the one that
+  mdast-to-hast adds when it renders a fence. So the block came back one line
+  shorter each time.
+- It also runs `rehype-minify-whitespace` before any handler is consulted, and
+  whitespace sensitivity there is a `switch` on tag name: `<pre>` is in it, a
+  bare inline `<code>` is not. `<code>a  b</code>` arrived at the handler
+  already collapsed.
+
+Neither has an option. Both are reachable anyway, because `toMdast` minifies a
+**clone** — the original tree is still there, and the clone keeps `position`,
+which is a reliable identity for a parsed node. The pipeline records code text
+off the real tree on the way past and hands it back to a handler that would
+otherwise have to trust the clone. Same mechanism `stripAutolinkLiterals` uses.
+A node with no position falls through to the default, so the worst case is the
+old behaviour rather than a crash.
+
+A line ending inside a code span still becomes a single space. That is not a
+loss: a code span cannot contain a line break, so CommonMark has no spelling
+for one.
+
+### And one that reproduces, and is CommonMark
+
+A `<pre>` written inside a **single-line `<details>`** really is cut in half at
+the blank line:
+
+```html
+<details>
+  <summary>s</summary>
+  <pre><code>a
+
+b</code></pre>
+</details>
+```
+
+A raw HTML block opened by a tag other than `pre`, `script`, `style` or
+`textarea` ends at the first blank line — CommonMark's HTML block condition 6.
+[Example 148](https://spec.commonmark.org/0.31.2/#example-148) mandates exactly
+this shape of damage, cmark-gfm does it, GitHub does it, and the conformance
+suite already asserts this tool matches. Diverging would mean failing the spec
+on purpose.
+
+The document-level fix is the one every README uses: a blank line after the
+`</summary>`, and the fence on its own lines.
+
+````markdown
+<details>
+<summary>s</summary>
+
+```ts
+a;
+
+b;
+```
+````
+
+</details>
+```
+
+That form survives intact, and is asserted next to the broken one.
+
+## `<details>` and the unsupported option
+
+Converting `<details><summary>…</summary>…</details>` to Markdown with the
+default settings returns the summary text and the body and drops both tags.
+That is the `Markup Markdown cannot express` option doing what it says, not a
+defect — but the loss is real and worth naming, because `<details>` is the one
+element in that list where dropping the tag drops **meaning**. A collapsed
+section stops being collapsed.
+
+| Setting                 | `<details>`                             |
+| ----------------------- | --------------------------------------- |
+| Keep as inline HTML     | survives exactly, and reads back        |
+| Keep the text (default) | the words survive, the fold does not    |
+| Drop it entirely        | the element and its content are removed |
+
+**The default stays `text`,** and the reason is in the git history rather than
+in taste: `keep` writes a container element back as inline HTML, so a document
+wrapped in a single `<div>` — which is every Word and Google Docs paste —
+converted to itself. A default that is wrong for pasted HTML is worse than one
+that is lossy for `<details>`, and `keep` is one control away.
+
+`keep` is genuinely lossless here, not merely verbose: a block element is
+written as its opening tag, its children as **real Markdown**, and its closing
+tag, so a fenced code block inside `<details>` stays a fenced code block.
+
 ## Known limitations
 
 Every one of these is asserted in
@@ -397,12 +528,6 @@ behaviour, so an upstream fix shows up as a failing test with the file and
 line to go and delete.
 
 ### Upstream, with no clean fix from outside
-
-**A space at the edge of a code span is dropped.** `<code> ab</code>` becomes
-`` `ab` ``. `hast-util-to-mdast` runs `rehype-minify-whitespace` over the tree
-before any handler sees it, so the space is gone before there is anything to
-preserve it with. (The previous guess blamed the serialiser; the serialiser
-pads correctly when given the right value.) Interior spaces are safe.
 
 **A backslash immediately before inline markup is mangled.** `a\x<em>b</em>`
 serialises as `a\&#x78;_b_`; read back, `\&` is an escaped ampersand, so the
@@ -456,7 +581,118 @@ Unchanged by the merge, and written up where they live:
 the rich-text copy off a fact rather than a guess. `rendered` is **always**
 HTML: for a Markdown target it re-renders what was produced, which makes the
 semantic-stability invariant visible — if the Markdown is faithful, it looks
-like the HTML that went in.
+like the HTML that went in. For an HTML source it is the sanitised source, and
+[for a while it was not](#the-three-outputs-and-the-input-that-was-too-narrow).
+
+## The three outputs, and the input that was too narrow
+
+| Port       | Label         | Type        | For                                                    |
+| ---------- | ------------- | ----------- | ------------------------------------------------------ |
+| `input`    | Document      | text, bytes | Markdown or HTML, detected unless you say otherwise.   |
+| `output`   | Converted     | text        | The conversion, in whichever format `target` names.    |
+| `rendered` | Rendered HTML | text        | Always sanitised HTML: the preview and rich-text copy. |
+| `detected` | Detected      | text        | What auto-detection concluded, and how sure it was.    |
+
+The [port audit](../../../docs/architecture.md#the-port-set) asked how
+`Converted` differed from `Rendered HTML` when the target is HTML. The answer
+was two separate things.
+
+### `rendered` promised sanitised HTML and handed back the input
+
+Nothing in `pipelines.ts` produced sanitised HTML from HTML. `markdownToHtml`
+sanitises the HTML _it_ generates; `htmlToMarkdown` and `htmlToText` sanitise
+on the way to something that is not HTML. So the hub value — which is what
+`rendered` carries for two of the three targets — was the input string
+untouched whenever the source was HTML. Measured:
+
+```
+in:  <p onclick="alert(1)">hi<script>alert(2)</script></p>
+out: <p onclick="alert(1)">hi<script>alert(2)</script></p>
+```
+
+Nothing ever ran. The preview is an `<iframe sandbox="">` — no scripting, an
+opaque origin — so the markup was inert there, then and now. What did happen is
+that the string went onto the clipboard through **Copy as rich text** and out
+of the port into whatever node was wired to it, which are the two places where
+the port's stated promise is all anybody has to go on.
+
+`sanitiseHtml` in `pipelines.ts` fixes it, and it is `markdownToHtml`'s own
+chain from `normaliseSchemes` onwards — the same allow-list in the same plugin
+order, because two sanitisers with two answers is worse than one with the wrong
+answer: only one of them ever gets reviewed. `output` is byte-identical either
+way, since all three conversion pipelines already sanitised internally. It was
+only the port that was wrong.
+
+The two paths differ in one visible way, and it is not the allow-list: GFM's
+tagfilter runs on the Markdown path only, where it **escapes** a `<script>`
+into visible text rather than deleting it. That is the spec's behaviour and the
+fix for an unclosed raw-text tag eating the rest of the document. Here the
+input already is HTML, a real parser has handled it, and the sanitiser deletes
+the element and its content. Neither leaves anything executable; one leaves the
+tag legible as words.
+
+### `output` and `rendered` coincide for one target, and cannot be made not to
+
+With a Markdown source and an HTML target the two ports are the same string,
+because converting a document to HTML and rendering it are the same operation.
+No definition of `rendered` can differ from `output` there. Both alternatives
+cost more:
+
+- **One port, presented as HTML only when the target is HTML.**
+  `OutputPort.presentation` is static data in the eager manifest, and
+  `registry.test.ts` compares manifest ports to implementation ports with a
+  structural equality a function property cannot pass — so "presented as HTML
+  sometimes" is not expressible without giving that test up. Unconditional
+  would draw Markdown output in an HTML preview.
+- **A port that appears only for the targets where it differs.** Ports that
+  come and go as options change was rejected when the port model was written,
+  for a better reason than this one: a node whose shape moves under you while
+  you are wiring it.
+
+Losing the preview and the rich-text copy for the other two targets is a much
+larger cost than one duplicated string. So the ports stay as they are and the
+coincidence is stated on `rendered`'s own description, which the Ports panel
+now shows, rather than left for someone to find by reading two identical text
+boxes.
+
+In the other five combinations they differ, and `html → html` is the
+interesting one: `output` is the normalising round trip through Markdown, so it
+drops markup Markdown cannot express, where `rendered` is the source with
+nothing but the sanitiser applied. A `<div>` survives on one port and not the
+other. Two genuinely different answers to two genuinely different questions.
+
+### `detected` was considered for removal and kept
+
+Nobody would sensibly wire a sentence about a guess into another tool, and that
+is the test this project applies to a port occupying a socket on a 224px node.
+It stays because the alternative is a wrong guess that is invisible, and this
+tool guesses on every run by default. There is nowhere else for an advisory
+note to go: a `ToolResult` is a value or an error, with no channel for "I think
+this was Markdown, and I am not certain". Reshaping it as a `report`-presented
+JSON port, which is how `image-convert` handles the same problem, would make it
+properly wireable and no more wired, for one sentence written for a person.
+
+Its label was **Detected source**, fifteen characters in an 84px box.
+
+### The input accepts bytes
+
+It declared `types: ['text']`, so base64's decoded output — which is `bytes` —
+had no legal wire into it, and **"decode this payload and clean up the HTML
+inside it" was a pipeline the canvas could not express**. A mail body is the
+obvious case; a dropped `.md` or `.html` file is the other.
+`structured-data` had already widened its own document port for exactly this
+reason and recorded that refusing bytes "made the most obvious pipeline in the
+product impossible". This tool is the same shape and had not had the same fix.
+
+Bytes decode **strictly**, through [`lib/text.ts`](../../lib/text.ts), so a PNG
+on that port says it is not text rather than being converted from mojibake into
+a confident, well-formed document about content nobody wrote. That is the
+condition on widening a port at all.
+
+The label is **Document**, the same word `structured-data` uses, because the
+two tools are the same shape — a source, a target and auto-detection — and a
+port called Input says nothing a socket does not already say. There is a
+`decode-and-clean` preset that exists only because of this change.
 
 ## Migration
 

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { isToolId } from '@/features/registry';
-import { encodeBase64 } from '@/lib/base64';
+import { legacyShareLink } from '@/lib/testing/shareLink';
 
 import { GRAPH_STORAGE_KEY, loadGraph } from './persistence';
 import { migrateRetiredOptions } from './retiredTools';
@@ -170,43 +170,11 @@ describe('a saved canvas', () => {
 });
 
 describe('an old share link', () => {
-  /**
-   * Encodes an arbitrary payload the way an older build would have.
-   *
-   * Built by hand rather than with the encoder, because the encoder can only
-   * produce the CURRENT format - and a v1 link is exactly what this is for.
-   * The stream is assembled explicitly because jsdom's Blob has no `stream()`,
-   * the same reason share.ts has its own `streamOf`.
-   */
-  async function legacyLink(payload: unknown): Promise<string> {
-    const source = new ReadableStream<BufferSource>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(JSON.stringify(payload)));
-        controller.close();
-      },
-    });
-
-    const reader = source.pipeThrough(new CompressionStream('deflate-raw')).getReader();
-    const chunks: Uint8Array[] = [];
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-    }
-
-    const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    const bytes = new Uint8Array(total);
-    let at = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, at);
-      at += chunk.length;
-    }
-
-    return encodeBase64(bytes, { urlSafe: true, padding: false, wrapAt: 0 });
-  }
-
+  // The hand-rolled encoder lives in `lib/testing/shareLink.ts`: the retired-
+  // PORT migration needs the same thing, and two deflate streams to keep in
+  // step is one too many.
   const v1Link = (nodes: readonly unknown[]): Promise<string> =>
-    legacyLink({ v: 1, n: nodes, e: [] });
+    legacyShareLink({ v: 1, n: nodes, e: [] });
 
   it('migrates rather than being refused', async () => {
     /*
@@ -265,7 +233,7 @@ describe('an old share link', () => {
   });
 
   it('refuses a version from the future rather than half-reading it', async () => {
-    const param = await legacyLink({ v: 99, n: [], e: [] });
+    const param = await legacyShareLink({ v: 99, n: [], e: [] });
 
     const result = await decodeParamToGraph(param);
 

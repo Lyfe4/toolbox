@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { applyTheme } from './applyTheme';
-import { readThemeState, THEME_STORAGE_KEY, writeThemeState } from './storage';
+import {
+  readLegacyCustomThemes,
+  readThemeState,
+  THEME_STORAGE_KEY,
+  writeThemeState,
+} from './storage';
 import { resolveSelection } from './store';
 
 import type { CustomTheme } from './types';
@@ -47,17 +52,12 @@ describe('theme storage', () => {
     expect(readThemeState()).toBeNull();
   });
 
-  it('round-trips a selection and its custom themes', () => {
-    writeThemeState({
-      version: 1,
-      selection: { kind: 'custom', id: 'my-rig' },
-      customThemes: [CUSTOM],
-    });
+  it('round-trips a selection', () => {
+    writeThemeState({ version: 1, selection: { kind: 'custom', id: 'my-rig' } });
 
     expect(readThemeState()).toEqual({
       version: 1,
       selection: { kind: 'custom', id: 'my-rig' },
-      customThemes: [CUSTOM],
     });
   });
 
@@ -75,7 +75,13 @@ describe('theme storage', () => {
     expect(readThemeState()).toBeNull();
   });
 
-  it('drops unknown keys from custom theme overrides', () => {
+  /*
+   * The library used to share this key. Nothing ever wrote one - the editor
+   * that would have is what shipped alongside this test - but a hand-edited
+   * localStorage or a branch someone was carrying would otherwise lose its
+   * themes silently, so the old shape is still read once.
+   */
+  it('migrates custom themes left under the old selection key', () => {
     window.localStorage.setItem(
       THEME_STORAGE_KEY,
       JSON.stringify({
@@ -87,7 +93,14 @@ describe('theme storage', () => {
       }),
     );
 
-    expect(readThemeState()?.customThemes[0]?.overrides).toEqual({ accent: '#fff' });
+    const migrated = readLegacyCustomThemes();
+    expect(migrated).toHaveLength(1);
+    expect(migrated[0]?.overrides).toEqual({ accent: '#fff' });
+  });
+
+  it('no longer writes custom themes into the selection key', () => {
+    writeThemeState({ version: 1, selection: { kind: 'system' } });
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY) ?? '').not.toContain('customThemes');
   });
 });
 

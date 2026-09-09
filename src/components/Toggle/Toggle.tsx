@@ -54,7 +54,17 @@ export function Toggle({
         }}
         {...rest}
       >
-        <span className={styles.thumb} />
+        {/*
+          THE ROCKER IS A CHILD, NOT THE BUTTON ITSELF.
+          The button is the hit area and the rocker is the picture of it, and on
+          a coarse pointer those two want different sizes: 44px to hit, 32x18 to
+          look like a panel switch rather than a phone pill. One element cannot
+          be both - growing the button stretched the track and stranded the
+          thumb, which is positioned against it.
+        */}
+        <span className={styles.visual}>
+          <span className={styles.thumb} />
+        </span>
       </button>
       {labelHidden ? (
         <VisuallyHidden>

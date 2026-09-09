@@ -5,6 +5,7 @@ import type { NodeRunState, NodeRunStatus } from '@/features/execution/graph';
 import { getManifestEntry, type ToolCategory, type ToolManifestEntry } from '@/features/registry';
 import { cx } from '@/lib/cx';
 import { counted } from '@/lib/plural';
+import { formatBytes } from '@/lib/sniff';
 
 import styles from './canvas.module.css';
 import {
@@ -19,6 +20,7 @@ import {
 } from './geometry';
 import { PortButton } from './PortButton';
 import { PORT_GLYPH_SIZE } from './PortGlyph';
+import { summariseOutputs } from './resultSummary';
 
 import type { CanvasNode, PortRef } from './types';
 
@@ -86,8 +88,25 @@ export interface CanvasNodeViewProps {
   readonly selected: boolean;
   readonly connections: number;
   readonly run: NodeRunState;
-  /** Input ports with no wire; each gets its own small editor. */
+  /**
+   * Input ports with no wire.
+   *
+   * The node no longer draws an editor for them - that moved to the inspector
+   * - but it still has to know which ports are waiting on the user in order to
+   * say so. See `hintFor`.
+   */
   readonly typedInputPorts: readonly string[];
+  /**
+   * Input ports holding a file whose bytes this session still has.
+   *
+   * The document alone cannot answer this. `node.fileInputs` says a port was
+   * fed a file and what it was called; only the attachment store knows whether
+   * the bytes survived, and a file chosen a moment ago and a file a reload left
+   * behind say opposite things on the node. See `attachmentStore`.
+   */
+  readonly fileInputPorts: readonly string[];
+  /** Whether a file is being dragged over THIS node right now. */
+  readonly dropTarget: boolean;
   /** Whether a wire is being dragged anywhere on the canvas. */
   readonly linking: boolean;
   /** Ports on THIS node the current drag could legally land on. Keyed by portKey. */
@@ -100,7 +119,6 @@ export interface CanvasNodeViewProps {
   readonly refusedPort: string | null;
   readonly connectedPorts: ReadonlySet<string>;
   readonly onPortPointerDown: (ref: PortRef, side: PortSide) => void;
-  readonly onInputChange: (nodeId: string, portId: string, value: string) => void;
 }
 
 /**
@@ -115,6 +133,8 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   connections,
   run,
   typedInputPorts,
+  fileInputPorts,
+  dropTarget,
   linking,
   validPorts,
   heldPort,
@@ -122,11 +142,10 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   refusedPort,
   connectedPorts,
   onPortPointerDown,
-  onInputChange,
 }: CanvasNodeViewProps) {
   const entry: ToolManifestEntry = getManifestEntry(node.toolId);
   const Glyph = CATEGORY_GLYPHS[entry.category] ?? SignalIcon;
-  const height = nodeHeight(entry, typedInputPorts.length);
+  const height = nodeHeight(entry);
   /** The space the two port stacks reserve, so the footer sits below them. */
   const bodyHeight = portRowCount(entry) * PORT_ROW_HEIGHT + portStackGap(entry) + BODY_PADDING * 2;
 
@@ -147,11 +166,73 @@ export const CanvasNodeView = memo(function CanvasNodeView({
    * sentence. `hintFor` already returns null when nothing is actually
    * waiting, so the wire count was never the right question.
    */
-  const blockedHint = run.status === 'blocked' ? hintFor(entry, node, typedInputPorts) : null;
+  const blockedHint =
+    run.status === 'blocked' ? hintFor(entry, node, typedInputPorts, fileInputPorts) : null;
+
+  /**
+   * WHAT A NODE SAYS ABOUT A FILE IT HAS BEEN GIVEN.
+   *
+   * `photo.png · 2.1 MB` - the name and the size, which is what tells one image
+   * node from another on a canvas of ten. Shown only while there is no result
+   * yet, because once a node has run its ANSWER is its situation: that is the
+   * rule the summary box already follows for the tool's description, and a file
+   * that pushed the result out of the box would have cost the node the thing it
+   * exists to show. The name is in the accessible name below whatever the box
+   * is showing, so it does not stop being available when the answer arrives.
+   *
+   * ITERATED OVER THE MANIFEST'S PORTS RATHER THAN THE DOCUMENT'S KEYS.
+   * `fileInputs` is keyed by port id and comes back from `localStorage`, which
+   * is neither signed nor beyond a user's reach - so a hand-edited save can
+   * name a port no tool has. The engine ignores such a key, correctly, because
+   * it iterates the ports too; reading the record directly left the node
+   * printing `phantom.png · 1.0 kB` under a result the file had nothing to do
+   * with, on a node that was running perfectly well.
+   *
+   * WHAT WAS REJECTED. A permanent chip in the footer, which has 224px for
+   * `blocked` and `3 wires` already; and a paperclip badge, which is an
+   * unlabelled glyph carrying information - the one thing the accessibility
+   * rules here refuse outright - and labelling it needs room the node does not
+   * have.
+   */
+  const fileNames = entry.inputs.flatMap((port) => {
+    const ref = node.fileInputs[port.id];
+    return ref ? [ref] : [];
+  });
+  const fileSummary =
+    fileNames.length === 0
+      ? null
+      : fileNames.map((ref) => `${ref.name} · ${formatBytes(ref.size)}`).join(', ');
+  /** The first file's bare name, for the accessible name's redundancy check. */
+  const fileName = fileNames[0]?.name ?? null;
+
+  /*
+   * WHAT A NODE SAYS ABOUT ITS RESULT.
+   *
+   * A SUMMARY, NOT A PREVIEW - "47 matches", "2.1 MB PNG image" - so a chain
+   * can be read at a glance without opening anything. It goes in the summary
+   * box rather than beside the footer because the box is already the "what is
+   * the situation with this node" line, and once a node has run, its result IS
+   * its situation: the tool's own description is only useful up to the moment
+   * there is an answer to describe instead.
+   *
+   * Every branch here is mutually exclusive with the others, so nothing has to
+   * decide what wins - a node is failed, or blocked, or it has run.
+   */
+  const resultSummary = run.status === 'ok' ? summariseOutputs(entry, run.outputs) : null;
+
+  const summaryText =
+    run.status === 'error' && run.error
+      ? run.error.message
+      : (blockedHint ?? resultSummary ?? run.blockedReason ?? fileSummary ?? entry.summary);
 
   /*
    * The accessible name carries everything a sighted user reads off the node
    * plus everything they read off its position on the plane.
+   *
+   * The result summary is in here for the same reason it is on screen: a chain
+   * that can be scanned by eye and not by ear is not a chain a keyboard user
+   * can follow. It is `summariseValue`'s job to keep it short enough to be
+   * read aloud - see SUMMARY_LIMIT.
    */
   const label = [
     entry.name,
@@ -159,6 +240,24 @@ export const CanvasNodeView = memo(function CanvasNodeView({
     counted(connections, 'connection'),
     STATUS_TEXT[run.status],
     run.blockedReason,
+    /*
+     * THE FILE, UNLESS THE VISIBLE TEXT HAS ALREADY SAID IT.
+     *
+     * It is here at all because a chain scannable by eye and not by ear is not
+     * one a keyboard user can follow, and "which node has the photograph" is a
+     * question a file input creates - so once a RESULT takes the summary box,
+     * the filename has nowhere else to be.
+     *
+     * The condition is not cosmetic. A node reloaded with a file it no longer
+     * has says `"holiday.png" needs choosing again`, and appending `from
+     * holiday.png · 540 B` to that read the name twice in one breath. The test
+     * is on the rendered string rather than on the status, so any future
+     * summary that happens to name the file is covered by the same line.
+     */
+    fileSummary !== null && fileName !== null && !summaryText.includes(fileName)
+      ? `from ${fileSummary}`
+      : null,
+    resultSummary,
     run.status === 'error' ? run.error?.message : null,
     selected ? 'selected' : null,
   ]
@@ -173,6 +272,9 @@ export const CanvasNodeView = memo(function CanvasNodeView({
         // Not the node the drag started from: its own ports are never legal
         // partners, and dimming the thing you are holding reads as a refusal.
         linking && heldPort === null && validPorts.size === 0 && styles.nodeInvalid,
+        // A drop target nothing marks is a guess, and on overlapping nodes it
+        // is a guess the user gets wrong.
+        dropTarget && styles.nodeDropTarget,
       )}
       style={{ left: node.position.x, top: node.position.y, height }}
       data-node-id={node.id}
@@ -199,10 +301,8 @@ export const CanvasNodeView = memo(function CanvasNodeView({
 
       <p className={styles.nodeSummary}>
         {/* The inner span is what gets clamped to two lines; see the CSS. */}
-        <span className={styles.nodeSummaryText}>
-          {run.status === 'error' && run.error
-            ? run.error.message
-            : (blockedHint ?? run.blockedReason ?? entry.summary)}
+        <span className={cx(styles.nodeSummaryText, resultSummary !== null && styles.nodeResult)}>
+          {summaryText}
         </span>
       </p>
 
@@ -264,43 +364,6 @@ export const CanvasNodeView = memo(function CanvasNodeView({
         }),
       )}
 
-      {/*
-        One editor per input port that has no wire. A tool with two required
-        inputs - diff - gets two, so neither is left permanently blocked just
-        because it is not the first port.
-      */}
-      {typedInputPorts.map((portId) => {
-        const port = entry.inputs.find((candidate) => candidate.id === portId);
-        return (
-          <textarea
-            key={portId}
-            className={styles.nodeInput}
-            /*
-             * Not a tab stop: Tab walks NODES, as documented. Enter on the
-             * focused node moves focus in here, Escape moves it back out.
-             */
-            tabIndex={-1}
-            data-node-input={portId}
-            aria-label={
-              entry.inputs.length > 1
-                ? `${entry.name} ${port?.label ?? portId} input`
-                : `${entry.name} input`
-            }
-            placeholder={entry.inputs.length > 1 ? (port?.label ?? portId) : 'Type or paste input'}
-            value={node.inputs[portId] ?? ''}
-            spellCheck={false}
-            // The canvas listens for pointerdown to start a drag; a textarea
-            // has to keep its own selection behaviour.
-            onPointerDown={(event) => {
-              event.stopPropagation();
-            }}
-            onChange={(event) => {
-              onInputChange(node.id, portId, event.target.value);
-            }}
-          />
-        );
-      })}
-
       <div className={styles.nodeFooter}>
         <span>{STATUS_LABEL[run.status]}</span>
         <span>{counted(connections, 'wire')}</span>
@@ -319,9 +382,23 @@ function hintFor(
   entry: ToolManifestEntry,
   node: CanvasNode,
   unwired: readonly string[],
+  withFiles: readonly string[],
 ): string | null {
   const waiting = entry.inputs.find(
-    (port) => port.required && unwired.includes(port.id) && (node.inputs[port.id] ?? '') === '',
+    (port) =>
+      port.required &&
+      unwired.includes(port.id) &&
+      (node.inputs[port.id] ?? '') === '' &&
+      // A port holding a file is not waiting on anybody.
+      !withFiles.includes(port.id) &&
+      /*
+       * NOR IS A PORT WHOSE FILE THIS SESSION HAS LOST. It is waiting, but not
+       * on anything this hint knows how to say: the engine's `blockedReason`
+       * names the file - `"photo.png" needs choosing again` - and telling
+       * somebody to type into a port they fed a photograph is how a fixable
+       * state reads as a bug.
+       */
+      node.fileInputs[port.id] === undefined,
   );
   if (!waiting) return null;
 
@@ -334,9 +411,25 @@ function hintFor(
    * Direction is not spelled out here; the shortcuts overlay's ports-and-wires
    * key covers it once, properly, instead of every node repeating it.
    */
+  /*
+   * The two sentences differ because the two ports differ, and that
+   * distinction is the whole reason this branch exists: `image-convert`'s only
+   * input takes bytes, so telling anyone to type into it describes behaviour
+   * that does not exist. The node used to draw an editor for that port anyway
+   * - every keystroke in it changed a value the engine then refused to look
+   * at, leaving the node blocked forever with a text box under it inviting
+   * another go. See the runner's own version of this fix in architecture.md.
+   *
+   * BOTH SENTENCES NAME A FILE NOW, because both ports can take one. The bytes
+   * version used to read `Wire an output into Image.`, which described half of
+   * what would work and left the only way to start an image conversion on the
+   * canvas undiscoverable - the defect that made a file input necessary in the
+   * first place. "Add" rather than "choose" or "drop": one word that covers
+   * both the picker and the drag, in a box with room for neither pair.
+   */
   return waiting.types.includes('text')
-    ? `Type below, or wire an output into ${waiting.label}.`
-    : `Wire an output into ${waiting.label}.`;
+    ? `Type or add a file in the inspector, or wire ${waiting.label}.`
+    : `Add a file in the inspector, or wire ${waiting.label}.`;
 }
 
 /** Sub-millisecond runs read as "<1ms" rather than "0ms". */

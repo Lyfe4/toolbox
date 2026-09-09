@@ -20,6 +20,18 @@ export function useMediaQuery(query: string): boolean {
   );
 }
 
+/**
+ * The same question outside React's render cycle.
+ *
+ * An event handler that needs to know the pointer type wants the answer at the
+ * moment it runs, not a subscription: a tablet that has just had a keyboard
+ * folded onto it changes its answer between one focus and the next, and a
+ * value captured when an effect was set up would be stale.
+ */
+export function mediaMatches(query: string): boolean {
+  return matches(query);
+}
+
 function supported(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function';
 }

@@ -10,10 +10,13 @@ import type { SourcePosition } from '@/features/registry/types';
  * Newline handling counts a lone "\n" and a "\r\n" pair as one line break, so
  * a CRLF file does not report columns that are one too high.
  */
-export function positionFromOffset(source: string, offset: number): SourcePosition {
+export function positionFromOffset(source: string, offset: number, firstLine = 1): SourcePosition {
   const clamped = Math.max(0, Math.min(offset, source.length));
 
-  let line = 1;
+  // `firstLine` exists for callers that have already consumed a prefix of the
+  // real document - CSV strips Excel's `sep=;` line before parsing - and would
+  // otherwise report every position one line too high.
+  let line = Math.max(1, firstLine);
   let lineStart = 0;
 
   for (let index = 0; index < clamped; index += 1) {

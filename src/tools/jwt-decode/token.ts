@@ -172,5 +172,17 @@ export function describeClaims(
     expiresAt: asIso(exp),
     expired: exp === null ? false : nowSec > exp + toleranceSec,
     notYetValid: nbf === null ? false : nowSec + toleranceSec < nbf,
+    /*
+     * WHEN THESE ANSWERS WERE TRUE.
+     *
+     * `expired` is a verdict about a moment, and the moment is this one. A
+     * consumer that says "expires in 5 minutes" has to say it relative to the
+     * clock that produced the verdict rather than to its own - otherwise a tab
+     * left open for an hour renders a countdown that disagrees with the
+     * `expired` flag sitting beside it. It also means anything rendering this
+     * needs no clock of its own, which is what keeps a view a pure function of
+     * its input.
+     */
+    checkedAt: nowMs,
   };
 }

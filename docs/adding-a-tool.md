@@ -76,7 +76,14 @@ export const caseConvertTool = defineTool({
     },
   ],
 
-  outputs: [{ id: 'output', label: 'Converted', types: ['text'] }],
+  outputs: [
+    {
+      id: 'output',
+      label: 'Converted',
+      types: ['text'],
+      description: 'The text, in the chosen case.',
+    },
+  ],
 
   optionsSchema: caseOptionsSchema,
   defaultOptions: caseDefaultOptions,
@@ -116,6 +123,38 @@ export const caseConvertTool = defineTool({
 const erased: ErasedTool = eraseTool(caseConvertTool);
 export default erased;
 ```
+
+### The rules the port set holds itself to
+
+`ports.test.ts` asserts all of these for every tool at once, so a new tool that
+breaks one fails the suite rather than the reviewer's memory. The reasoning for
+each is in
+[architecture.md](architecture.md#the-conventions-and-what-each-one-is-worth).
+
+- **The first output is `output`.** A node summarises its first declared output
+  as "the tool's answer", and that only means anything if the set agrees.
+- **One input is called `input`; several are each named.**
+- **Every port carries a description.** It is the only documentation of a port
+  that reaches a person: an input's is its editor's placeholder — or, on a port
+  that cannot take text, the instruction above its file control — and an
+  output's is shown in the Ports panel on the tool page.
+- **A label fits in about eleven characters.** The label box on a node is 84px
+  at 10px uppercase. Go past thirteen and it is mostly ellipsis.
+- **No label appears twice on one tool**, or a node shows the same word on both
+  sides with nothing to tell them apart.
+- **A port that reads a document accepts `bytes` as well as `text`**, and
+  decodes them through [`lib/text.ts`](../src/lib/text.ts) — strictly, so bytes
+  that are not text say so instead of being processed as mojibake. A port that
+  takes a short literal (a token, a colour) does not.
+- **A data type earns its place when a port carries it.** Adding a member to
+  `DATA_TYPES` for a tool you are about to write is fine; leaving one there for
+  a tool nobody wrote is a permanent tax on every switch over `ToolValue`.
+
+A port id is a persisted identifier — it is two of the four fields of every
+edge, a key of `CanvasNode.inputs`, and it travels in share links — so renaming
+one later means a migration in
+[`retiredPorts.ts`](../src/features/canvas/retiredPorts.ts) plus a version bump
+on both routes. Labels are free to change. Pick ids you can live with.
 
 `convert` is ordinary code and lives in its own file — `case.ts` — so it can be
 unit-tested without going near the registry.
@@ -231,9 +270,15 @@ having been edited.
 
 - Register a route. `/tools/:toolId` is generic.
 - Write any UI. `OptionField[]` is rendered by the shared runner and by the
-  node body.
+  node inspector.
+- Accept a file. Every unwired input port gets a file control on both routes,
+  built from the port's own types and the tool's `maxInputBytes` — a `bytes`
+  port takes any file, a text port takes a text-sniffed one and refuses the
+  rest, and both refusals happen at the moment of selection. See
+  [a file as an input](architecture.md#a-file-as-an-input).
 - Write a worker message type. The protocol is generic over the tool.
 - Handle cancellation, timeouts, size limits or progress. `execution` declares
   them and the engine enforces them.
 - Think about caching. The cache key is derived from the tool id, the options,
-  the typed input and the upstream keys.
+  the typed input, the identity of any file chosen for a port, and the upstream
+  keys.

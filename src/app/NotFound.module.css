@@ -113,6 +113,18 @@
   background-color: var(--pb-control-surface-hover);
 }
 
+/*
+ * `pointer: coarse` is the finger, not the screen size - a narrow window on a
+ * laptop keeps the dense instrument layout, a tablet does not. 44px is WCAG
+ * 2.5.5. These two links are the ONLY way off a 404, which makes them the worst
+ * place in the app to leave a 32px target.
+ */
+@media (pointer: coarse) {
+  .link {
+    block-size: 44px;
+  }
+}
+
 @media (forced-colors: active) {
   .panel {
     border-color: CanvasText;
