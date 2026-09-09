@@ -60,6 +60,28 @@ worker or anything visual.** jsdom has no layout engine, no Worker, no
 `OffscreenCanvas` and no pointer events, so the unit suite is structurally
 unable to see most of what that script checks.
 
+## Where work lands
+
+**Work lands on `main`. A branch is created only when you are asked for one.**
+
+This is a standing rule rather than a preference, and it exists because the
+failure it prevents is silent. Twice now a change has been finished on an
+unrequested branch, pushed, and then left there: no pull request, nothing
+merged, and `main` still green — because CI on `main` was passing on a tree
+that did not contain the work. A red build tells you something is wrong. A
+green build over work that was never merged tells you nothing at all, and the
+first person to notice is whoever eventually asks why a fix they remember
+watching land is not in the app.
+
+So:
+
+- Commit to `main` and push. The six gates are the check, and they run before
+  the commit rather than after it in review.
+- If you are asked for a branch, or for a pull request, make one. Delete it
+  once it has merged.
+- If you find finished work sitting on a branch, say so before merging it.
+  Unexpected work in the tree is worth a sentence even when it is green.
+
 ## Conventions
 
 ### Commits
