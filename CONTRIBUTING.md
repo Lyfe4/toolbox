@@ -98,6 +98,15 @@ them.
   The wrapper configures `jitless: true`, because Zod's default code generation
   needs `eval` and the CSP does not allow it.
 
+**TypeScript is held at 6 on purpose.** typescript-eslint refuses to load
+against TS 7 — `typescript-eslint does not support TS 7.0` — which takes out
+`pnpm lint` in its entirety. The trap is that `tsc -b` passes on TS 7, so the
+typecheck gate goes green and the failure surfaces one gate later looking like
+a lint problem rather than a compiler one.
+[typescript-eslint#10940](https://github.com/typescript-eslint/typescript-eslint/issues/10940)
+tracks support for TS ≥ 7.1. Move both in the same commit when it lands; until
+then a TypeScript major is a red build, not a review question.
+
 ### Tests
 
 A test should correspond to something that could plausibly break, and its name
