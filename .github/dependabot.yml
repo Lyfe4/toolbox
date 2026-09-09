@@ -5,15 +5,49 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+
+    # `@types/node` describes a runtime we do not run. `.nvmrc` and
+    # `netlify.toml` both say 22, and CI installs the version in `.nvmrc`, so a
+    # major bump here lets `vite.config.ts` and `vite/` typecheck against APIs
+    # the build does not have - a green `tsc -b` that means nothing. It had
+    # drifted two majors ahead before anyone noticed. Lift this in the same
+    # change that moves `.nvmrc`, not before.
+    ignore:
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+
     groups:
-      # One PR per ecosystem rather than a dozen, so CI runs once and the
-      # toolchain moves as a unit.
+      # Minor and patch only, deliberately.
+      #
+      # Grouping on `dependency-type` alone once produced a single PR carrying
+      # four majors and eight small bumps. Two packages in it were broken, and
+      # they held the other ten hostage; worse, the group's red tick said
+      # nothing about which package was at fault, so the only way to find out
+      # was to take the group apart by hand.
+      #
+      # Excluding majors leaves them ungrouped, which is Dependabot's way of
+      # saying "one PR each". A major is the update most likely to need a
+      # decision, so it is the one that should arrive alone.
       dev-dependencies:
         dependency-type: development
+        update-types: ['minor', 'patch']
       production-dependencies:
         dependency-type: production
+        update-types: ['minor', 'patch']
 
   - package-ecosystem: github-actions
     directory: /
+    # Monthly. The three actions this workflow uses release majors months
+    # apart, so a weekly poll is noise against a file that changes twice a year.
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      # Everything in one PR, majors included - the opposite of the npm rule
+      # above, because the failure mode is different. All three `uses:` lines
+      # sit within seven lines of each other in one workflow, so separate PRs
+      # go stale against each other and each has to be re-checked for
+      # conflicts. And a major here is a runner or runtime bump, not an API
+      # our own code calls: the changelog is short and the blast radius is the
+      # workflow itself.
+      actions:
+        patterns: ['*']

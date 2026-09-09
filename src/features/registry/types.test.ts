@@ -36,6 +36,17 @@ function textValue(text: string): ToolValue {
  * the line below it ever starts compiling. That is how the port/run contract
  * is proved - not by a runtime check, but by demonstrating that the wrong
  * implementation is rejected by tsc.
+ *
+ * Two of them probe a property read, and the `void` in front of it is
+ * load-bearing rather than decoration: it is the thing that makes a bare
+ * property read a legal STATEMENT, which is all these lines need to be. Drop
+ * it and the line is an expression statement, which `no-unused-expressions`
+ * rejects; assign it to a local instead and `noUnusedLocals` rejects that for
+ * never being read. typescript-eslint 8.69.0 broadened
+ * `no-meaningless-void-operator` to report `void` on any non-call expression,
+ * so both lines carry a disable. It is a narrower change than contorting a
+ * fixture to satisfy a linter, and `reportUnusedDisableDirectives` deletes it
+ * for us on the day the rule narrows again.
  * ========================================================================== */
 
 // A tool whose input port declares bytes cannot be implemented as if it were text.
@@ -60,11 +71,11 @@ defineTool({
   },
   run: ({ inputs }) => {
     // @ts-expect-error a 'bytes' port has no `text` property
+    // eslint-disable-next-line @typescript-eslint/no-meaningless-void-operator
     void inputs.data.text;
 
     // The correct property is available without a cast.
     const right: Uint8Array = inputs.data.bytes;
-    void right;
 
     return ok({ out: { type: 'text', text: String(right.length) } as const });
   },
@@ -116,6 +127,7 @@ defineTool({
   },
   run: ({ inputs }) => {
     // @ts-expect-error `extra` may be undefined because the port is optional
+    // eslint-disable-next-line @typescript-eslint/no-meaningless-void-operator
     void inputs.extra.text;
 
     return ok({ out: { type: 'text', text: inputs.extra?.text ?? '' } as const });

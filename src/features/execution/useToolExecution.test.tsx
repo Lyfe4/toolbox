@@ -5,7 +5,7 @@ import type { ToolOutputs, ToolResult } from '@/features/registry/types';
 
 import { ExecutionEngineProvider, useToolExecution } from './useToolExecution';
 
-import type { ExecuteOptions, ExecutionEngine } from './engine';
+import type { ExecutionEngine } from './engine';
 
 /**
  * An engine whose runs settle only when the test says so, in any order.
@@ -20,12 +20,14 @@ function deferredEngine() {
   const settlers: ((result: ToolResult<ToolOutputs>) => void)[] = [];
 
   const engine: ExecutionEngine = {
-    execute: (options: ExecuteOptions) =>
+    // Deliberately reads no options. The abort signal is one of them, and a
+    // synchronous main-thread tool cannot be interrupted from outside: it
+    // keeps going and settles whenever it finishes. `ExecutionEngine` on the
+    // binding above is what checks the shape, so declaring no parameter at all
+    // is still the same engine.
+    execute: () =>
       new Promise<ToolResult<ToolOutputs>>((resolve) => {
         settlers.push(resolve);
-        // The abort is observed but deliberately ignored, which is exactly
-        // what a synchronous main-thread tool does.
-        void options;
       }),
     warmUp: () => undefined,
     prefetch: () => undefined,
