@@ -19,10 +19,44 @@ import type { ThemedToken, ThemeName } from './types';
  * presets pass; the editor proves the same thing about a theme in progress,
  * with the same code.
  *
- * WHAT IS MEASURED. The 33 pairs below are the design system's load-bearing
+ * WHAT IS MEASURED. The 38 pairs below are the design system's load-bearing
  * relationships: every combination in which one token is read against another.
- * `--pb-border-subtle` is deliberately absent - it draws decorative rules
- * inside a panel and carries no meaning, so 1.4.11 does not apply to it.
+ *
+ * WHAT IS DELIBERATELY ABSENT, and why each one is a decision rather than an
+ * oversight. The list was assembled early and audited again once the signal
+ * washes and the accent wash had picked up text; these are what that audit
+ * looked at and left out.
+ *
+ *   `--pb-border-subtle` draws decorative rules inside a panel and carries no
+ *   meaning, so 1.4.11 does not apply to it.
+ *
+ *   `--pb-ink-disabled` on `--pb-control-surface-disabled` is 2.4-2.9:1 in
+ *   every preset, and that is the point rather than a bug: 1.4.3 exempts an
+ *   inactive component outright, and Button keeps the disabled BORDER
+ *   perceivable instead - see the note in Button.module.css. Listing it would
+ *   put a permanent failure in front of every theme author for a rule that
+ *   does not apply.
+ *
+ *   A signal WASH against the panel behind it (`--pb-signal-warn-surface` on
+ *   `--pb-surface-raised`) is 1.2-2.6:1. The washes never carry the boundary:
+ *   the JWT verdict blocks and the theme editor's warning draw a
+ *   `--pb-signal-*` rule down their leading edge, and THAT pair passes. The
+ *   wash is reinforcement.
+ *
+ *   `--pb-border-hairline` on `--pb-surface-overlay` is 2.9:1 in phosphor and
+ *   blueprint, and no overlay uses it: every popover, tooltip, toast and
+ *   select menu draws its outer edge with `--pb-border-strong`, which is
+ *   listed and passes.
+ *
+ *   A canvas node's 1px `--pb-border-hairline` edge against
+ *   `--pb-surface-sunken` is 2.52:1 in vellum, and the two surfaces are only
+ *   1.35:1 apart, so the border is the whole boundary. Left out because 1.4.11
+ *   asks for what is REQUIRED to identify a component, and a node is a titled
+ *   box with a status light in it - identifiable without its edge, the same
+ *   argument that excludes border-subtle. Raising it means either restyling
+ *   every node (`--pb-border-strong` clears 3:1 in all four) or moving
+ *   vellum's greys, and that is a design call rather than a pair to add
+ *   quietly. Recorded here so the next person reaches it as a decision.
  */
 
 export type ContrastKind = 'text' | 'non-text';
@@ -144,6 +178,53 @@ export const CONTRAST_PAIRS: readonly ContrastPair[] = [
     kind: 'text',
   },
 
+  /*
+   * TEXT PRINTED ON A COLOURED WASH.
+   *
+   * `--pb-signal-on-surface` exists because muted ink on the warn wash fails
+   * AA in graphite - found in a real engine, on the JWT verdict chip, because
+   * jsdom's axe pass cannot compute a colour. The token was the fix and the
+   * fix was never asserted: Button's danger hover, the theme editor's warning
+   * and all three JWT verdicts print it on one of the three washes, and
+   * nothing measured any of them until now.
+   */
+  {
+    label: 'Text on the success wash',
+    foreground: 'signal-on-surface',
+    background: 'signal-ok-surface',
+    kind: 'text',
+  },
+  {
+    label: 'Text on the warning wash',
+    foreground: 'signal-on-surface',
+    background: 'signal-warn-surface',
+    kind: 'text',
+  },
+  {
+    label: 'Text on the error wash',
+    foreground: 'signal-on-surface',
+    background: 'signal-error-surface',
+    kind: 'text',
+  },
+  /*
+   * `--pb-accent-subtle` is "a wash of the accent behind something", and the
+   * something has text on it: the tool page's drop zone turns this colour
+   * while a file is over it, with its hint and its type badge on top.
+   *
+   * SECONDARY INK, NOT MUTED, and that is a fix rather than a choice of pair.
+   * Muted ink on this wash measures 3.32:1 in graphite and 3.80:1 in vellum -
+   * a live AA failure on the shipped default, invisible to the suite because
+   * the pairing was not listed. The drop zone steps its two muted strings up
+   * to secondary ink while it is active, which is what jwt.module.css already
+   * does on the signal washes for the identical reason.
+   */
+  {
+    label: 'Text on an accent wash',
+    foreground: 'ink-secondary',
+    background: 'accent-subtle',
+    kind: 'text',
+  },
+
   /* --- Boundaries and indicators ----------------------------------------- */
   {
     label: 'Panel edge',
@@ -205,6 +286,18 @@ export const CONTRAST_PAIRS: readonly ContrastPair[] = [
     label: 'Selection bar',
     foreground: 'accent',
     background: 'surface-overlay',
+    kind: 'non-text',
+  },
+  /*
+   * The Toggle's thumb inside its own switched-on track. The thumb is what
+   * says which way the switch is thrown, and it sits on the accent wash
+   * rather than on any surface in the list above - so this is the one pair
+   * that decides whether an "on" toggle can be read as on.
+   */
+  {
+    label: 'Accent mark on its own wash',
+    foreground: 'accent',
+    background: 'accent-subtle',
     kind: 'non-text',
   },
 ];

@@ -18,7 +18,7 @@ import { otherInputBytes } from './fileInputs';
 import styles from './inspector.module.css';
 import { summariseValue } from './resultSummary';
 
-import type { CanvasNode, NodeId } from './types';
+import type { CanvasNode, EdgeId, NodeId } from './types';
 
 /**
  * THE NODE INSPECTOR
@@ -63,8 +63,23 @@ export interface InspectorNode {
   readonly run: NodeRunState;
   /** Input ports with nothing wired in: the ones that take typed text. */
   readonly typedInputPorts: readonly string[];
-  /** For each wired input port, what is feeding it, as a sentence. */
-  readonly wiredFrom: Readonly<Record<string, string>>;
+  /**
+   * For each wired input port, what is feeding it and which wire that is.
+   *
+   * The id is here so the panel can offer to REMOVE the wire it is describing.
+   * That is the only route to disconnecting one that needs no aim: selecting a
+   * wire on the plane means hitting a curve, and no keystroke selects one at
+   * all - so before this, "remove the existing wire first" was advice a
+   * keyboard user could not follow.
+   */
+  readonly wiredFrom: Readonly<Record<string, WiredSource>>;
+}
+
+/** What is feeding one input port, and the wire that carries it. */
+export interface WiredSource {
+  readonly edgeId: EdgeId;
+  /** "Base64 · Encoded" - the source tool and its port, for a sentence. */
+  readonly label: string;
 }
 
 /** Mirrors `InspectorPhase` in Canvas.tsx; only the two live states arrive. */
@@ -102,6 +117,14 @@ export interface NodeInspectorProps {
    * at the call sites below.
    */
   readonly onOptionChange: (nodeId: NodeId, key: string, value: unknown, coalesce: boolean) => void;
+  /**
+   * Remove the wire feeding one input port.
+   *
+   * `description` is passed rather than looked up because the panel has
+   * already worded it for the sentence above the button, and two places
+   * wording the same wire is two places to keep in step.
+   */
+  readonly onDisconnect: (edgeId: EdgeId, description: string) => void;
   readonly onClose: () => void;
   /** Escape inside the panel: hand focus back to the node it is showing. */
   readonly onEscape: () => void;
@@ -119,6 +142,7 @@ export function NodeInspector({
   onInputChange,
   onFileChange,
   onOptionChange,
+  onDisconnect,
   onClose,
   onEscape,
   onOrphaned,
@@ -321,6 +345,7 @@ export function NodeInspector({
                 wiredFrom={target.wiredFrom}
                 onInputChange={onInputChange}
                 onFileChange={onFileChange}
+                onDisconnect={onDisconnect}
                 onReject={(message) => {
                   notify({ title: 'File rejected', description: message, tone: 'error' });
                 }}
@@ -414,13 +439,15 @@ function InputSection({
   wiredFrom,
   onInputChange,
   onFileChange,
+  onDisconnect,
   onReject,
 }: {
   readonly node: CanvasNode;
   readonly typedInputPorts: readonly string[];
-  readonly wiredFrom: Readonly<Record<string, string>>;
+  readonly wiredFrom: Readonly<Record<string, WiredSource>>;
   readonly onInputChange: (nodeId: NodeId, portId: string, value: string) => void;
   readonly onFileChange: (nodeId: NodeId, portId: string, loaded: LoadedFile | null) => void;
+  readonly onDisconnect: (edgeId: EdgeId, description: string) => void;
   readonly onReject: (message: string) => void;
 }) {
   const entry = getManifestEntry(node.toolId);
@@ -440,10 +467,38 @@ function InputSection({
            * wins over both everywhere else in the engine too - drawing a
            * control whose contents the run would ignore is the same defect in
            * a different costume.
+           *
+           * WHAT IT HAS INSTEAD IS THE WAY OUT.
+           *
+           * `checkConnection` refuses a second wire into an occupied input and
+           * says "remove the existing wire first". Until now that sentence
+           * described something only a pointer could do: a wire is a curve on
+           * a plane with no chrome of its own, and NO keystroke selects one -
+           * so the advice was unfollowable from a keyboard and fiddly with a
+           * finger. This is the same removal with no aiming in it, offered at
+           * the one place in the application that already knows which wire is
+           * in the way.
+           *
+           * The accessible name says both ends. "Disconnect", read out of a
+           * list of controls on a node with two occupied inputs, does not say
+           * which one - the same reason the node's own button is `Connect from
+           * <tool>` rather than `Connect`.
            */
           return (
-            <p key={port.id} className={styles.hint}>
-              {named ? `${port.label}: ` : ''}Wired from {wired}.
+            <p key={port.id} className={styles.wiredRow}>
+              <span className={styles.hint}>
+                {named ? `${port.label}: ` : ''}Wired from {wired.label}.
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Disconnect ${port.label} from ${wired.label}`}
+                onClick={() => {
+                  onDisconnect(wired.edgeId, `${port.label} from ${wired.label}`);
+                }}
+              >
+                Disconnect
+              </Button>
             </p>
           );
         }

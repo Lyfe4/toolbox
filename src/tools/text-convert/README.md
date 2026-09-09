@@ -523,7 +523,7 @@ tag, so a fenced code block inside `<details>` stays a fenced code block.
 ## Known limitations
 
 Every one of these is asserted in
-[`hardening.test.ts`](hardening.test.ts) against its **current, wrong**
+[`hardening.test.ts`](../../lib/markup/hardening.test.ts) against its **current, wrong**
 behaviour, so an upstream fix shows up as a failing test with the file and
 line to go and delete.
 

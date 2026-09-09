@@ -21,20 +21,6 @@
 
 /* --- Report or raw ------------------------------------------------------ */
 
-.json {
-  inline-size: 100%;
-  min-block-size: 200px;
-  resize: vertical;
-  font-variant-ligatures: none;
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--pb-space-sm);
-}
-
 /* --- Notes -------------------------------------------------------------- */
 
 .notes {

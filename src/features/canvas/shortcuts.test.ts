@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { SHORTCUT_GROUPS, SHORTCUTS, shortcutRowKey, type Shortcut } from './shortcuts';
+import {
+  SHORTCUT_GROUPS,
+  SHORTCUTS,
+  shortcutRowKey,
+  TOUCH_ROUTES,
+  type Shortcut,
+} from './shortcuts';
 
 /**
  * THE REFERENCE IS GENERATED, SO A DUPLICATE IN THE ARRAY IS A DUPLICATE ROW.
@@ -36,5 +42,38 @@ describe('the shortcut list', () => {
     for (const shortcut of SHORTCUTS) {
       expect(SHORTCUT_GROUPS).toContain(shortcut.group);
     }
+  });
+});
+
+/**
+ * THE ROUTES WITH NO KEY.
+ *
+ * A separate list because a gesture has no keystroke to print, and the same
+ * identity rules apply for the same reason: the overlay renders one row per
+ * entry keyed on the gesture, so two entries sharing a gesture is a dropped
+ * row, and an empty action is a row that says nothing.
+ */
+describe('the routes that need no keyboard', () => {
+  it('names each gesture once', () => {
+    const gestures = TOUCH_ROUTES.map((route) => route.gesture);
+    expect(new Set(gestures).size).toBe(TOUCH_ROUTES.length);
+  });
+
+  it('says what each one does', () => {
+    for (const route of TOUCH_ROUTES) {
+      expect(route.gesture.trim()).not.toBe('');
+      expect(route.action.trim()).not.toBe('');
+    }
+  });
+
+  /*
+   * The three gaps this list was written for. Named individually rather than
+   * counted: a list that lost the Delete row would still be "eight routes".
+   */
+  it('covers deleting a node, deleting a wire and selecting everything', () => {
+    const actions = TOUCH_ROUTES.map((route) => route.action).join(' | ');
+    expect(actions).toContain('Delete');
+    expect(actions).toContain('Select all');
+    expect(actions).toContain('Remove the wire');
   });
 });

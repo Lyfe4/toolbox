@@ -231,13 +231,6 @@
   font-variant-ligatures: none;
 }
 
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--pb-space-sm);
-}
-
 .aside {
   margin: 0;
   font-size: var(--pb-label-size);

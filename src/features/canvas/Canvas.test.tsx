@@ -9,7 +9,7 @@ import { expectNoAxeViolations } from '@/lib/testing/axe';
 
 import { Canvas } from './Canvas';
 import { useCanvasStore } from './graphStore';
-import { SHORTCUTS } from './shortcuts';
+import { SHORTCUT_GROUPS, SHORTCUTS } from './shortcuts';
 import { EMPTY_GRAPH } from './types';
 import { DEFAULT_VIEWPORT, useViewportStore } from './viewportStore';
 
@@ -618,13 +618,32 @@ describe('shortcuts reference', () => {
     await user.click(screen.getByRole('button', { name: /Shortcuts/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Keyboard shortcuts' });
 
-    const rendered = within(dialog)
-      .getAllByRole('row')
-      .filter((row) => row.querySelector('td') !== null)
-      .map((row) => {
-        const cells = within(row).getAllByRole('cell');
-        return `${cells[0]?.textContent ?? ''}|${cells[1]?.textContent ?? ''}`;
-      });
+    /*
+     * SCOPED TO THE TABLES THAT LIST KEYS, by their caption.
+     *
+     * The dialog carries a fourth table now - "Without a keyboard", whose
+     * Keys column holds a gesture rather than a keystroke - and this used to
+     * gather every row in the dialog, so it counted those too and failed by
+     * eight. Scoping by caption is what keeps it an assertion about the
+     * keyboard map rather than about however many tables the panel happens to
+     * have; `overlays.test.tsx` holds the touch table to its own list.
+     */
+    const keyRows = within(dialog)
+      .getAllByRole('table')
+      .filter((table) => {
+        const caption = table.querySelector('caption')?.textContent ?? '';
+        return (SHORTCUT_GROUPS as readonly string[]).includes(caption);
+      })
+      .flatMap((table) =>
+        within(table)
+          .getAllByRole('row')
+          .filter((row) => row.querySelector('td') !== null),
+      );
+
+    const rendered = keyRows.map((row) => {
+      const cells = within(row).getAllByRole('cell');
+      return `${cells[0]?.textContent ?? ''}|${cells[1]?.textContent ?? ''}`;
+    });
 
     const expected = SHORTCUTS.map((shortcut) => `${shortcut.keys.join(' + ')}|${shortcut.action}`);
 

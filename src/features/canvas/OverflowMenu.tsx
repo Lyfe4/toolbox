@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import { Button } from '@/components/Button';
 
@@ -48,9 +56,20 @@ export function OverflowMenu({ label, items }: OverflowMenuProps) {
     if (returnFocus) triggerRef.current?.focus();
   }, []);
 
-  /* Focus the first item when the menu opens, so the keyboard has somewhere
-     to be. Nothing to restore on close: `close` handles that itself. */
-  useEffect(() => {
+  /*
+   * Focus the first item when the menu opens, so the keyboard has somewhere to
+   * be. Nothing to restore on close: `close` handles that itself.
+   *
+   * A LAYOUT EFFECT, which is the third time that correction has been made in
+   * this feature - twice in Canvas.tsx, and see the long note there on `Enter`
+   * into the inspector. A passive effect runs after the browser has painted,
+   * so the move lands in a later task than the press that asked for it, and
+   * anything the user does in between has its focus taken away with no error
+   * and no trace. This one is smaller than a `requestAnimationFrame` and it is
+   * the same defect; a layout effect runs synchronously after the commit that
+   * mounted the menu, inside the click that opened it.
+   */
+  useLayoutEffect(() => {
     if (!open) return;
     menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
   }, [open]);
