@@ -1051,6 +1051,7 @@ const RUNNER_PROBE = () => {
           // sticking moves down the document as the page scrolls; one that is
           // merely in view does not.
           documentTop: Math.round(rail.getBoundingClientRect().top + window.scrollY),
+          height: Math.round(rail.getBoundingClientRect().height),
         }
       : null,
     scroller: scroller
@@ -1060,8 +1061,30 @@ const RUNNER_PROBE = () => {
           focusableInside: scroller.querySelectorAll(
             'button, input, select, textarea, [tabindex]:not([tabindex="-1"])',
           ).length,
+          /*
+           * The scroller's own height against the height of the ONE panel
+           * inside it. These used to differ by 392px on hash - a 694px box
+           * around 302px of options - because the rail was `block-size: 100%`
+           * of a region held open to a whole viewport. That gap is the void
+           * that made the run button look unmoored from the settings it
+           * applies, and it is the thing that must stay at zero.
+           */
+          height: Math.round(scroller.getBoundingClientRect().height),
+          contentHeight: Math.round(
+            scroller.firstElementChild?.getBoundingClientRect().height ?? 0,
+          ),
+          /*
+           * THE SCROLLPORT'S BOTTOM, WHICH IS NOT THE PANEL'S. Once the
+           * options scroll, the Options panel's own rect runs past the box
+           * clipping it - so "how far below the options is Run" measured
+           * against the panel reads -162px on text-convert's Markdown layout,
+           * where the truth is that Run is one gap below the visible end of
+           * the options. This is the edge a person sees.
+           */
+          bottom: Math.round(scroller.getBoundingClientRect().bottom + window.scrollY),
         }
       : null,
+    layoutHeight: Math.round(layout.getBoundingClientRect().height),
     innerHeight: window.innerHeight,
     innerWidth: window.innerWidth,
     docScrollWidth: document.documentElement.scrollWidth,
@@ -1293,13 +1316,17 @@ async function checkRunnerLayout(browser, label) {
       /*
        * AND ON SCREEN BEFORE ANYTHING HAS BEEN SCROLLED.
        *
-       * The rail's height comes from the region, and the region is at least a
-       * viewport tall - but it starts below the site header and the tool's own
-       * heading, so its last hundred-odd pixels are below the fold on arrival
-       * and the run button was in them. Measured at 1280x800: the card sat at
-       * 901..959 in an 800px window. `.runCard` is sticky to the block end,
-       * which pushes it up to the fold and leaves it alone once the rail
-       * itself sticks.
+       * This used to be bought with a `position: sticky` on the run card, back
+       * when the rail was held open to a full viewport and its last row was
+       * therefore below the fold on every page - the card sat at 901..959 in
+       * an 800px window and the sticky pushed it up to the fold. Both are gone:
+       * the rail is as tall as its options, so on every tool in the set the
+       * card's own resting place is already on screen. Regex declares the most
+       * options of any of them and ends at 755 in an 800px window.
+       *
+       * The assertion is unchanged and is now met by the layout rather than by
+       * a rescue, which is why it is worth keeping - it is what would notice a
+       * rail that grew past the fold again.
        */
       if (width >= 1000) {
         check(
@@ -1391,6 +1418,53 @@ async function checkRunnerLayout(browser, label) {
           `ports ${String(ports.left)}..${String(ports.right)} against ${String(
             input.left,
           )}..${String(options.right)}`,
+        );
+
+        /* -- THE HEIGHT NOBODY ASKED FOR -------------------------------- */
+        /*
+         * `.layout` used to carry `min-block-size: calc(100dvh - lg * 2)` and
+         * the rail `block-size: 100%`, so every tool page was a viewport tall
+         * whether or not it had anything in it. The purpose was to hold Run
+         * still and it worked; the price was the shape of the page. Measured
+         * in the production build at 1280x800 with nothing run: a 768px grid
+         * on every tool, a 694px options scroller around 302px of options, and
+         * a 416px Output panel around one sentence - 600px on image.
+         *
+         * Both assertions below are the same claim from two sides: the page is
+         * as tall as the things on it and no taller. Neither is expressible in
+         * jsdom, where every box is zero by zero, and the declarations that
+         * would bring the height back are two lines that read as tidying up -
+         * so `ToolRunner.layout.test.tsx` guards the source text and this
+         * guards the result.
+         */
+        const column = output.bottom - input.top;
+        const railHeight = probe.rail?.height ?? 0;
+        check(
+          label,
+          `the grid is as tall as its tallest column and no taller at ${at}`,
+          Math.abs(probe.layoutHeight - Math.max(column, railHeight)) <= 2,
+          `grid ${String(probe.layoutHeight)}, content column ${String(column)}, rail ${String(
+            railHeight,
+          )}`,
+        );
+
+        /*
+         * AND THE RAIL RESERVES NOTHING AROUND THE OPTIONS. When the options
+         * fit - which is every real tool at this height - the scroller is
+         * exactly its content, so the run card sits one gap below the last
+         * option instead of several hundred pixels below it.
+         */
+        check(
+          label,
+          `the options scroller is exactly its content when it fits at ${at}`,
+          probe.scroller !== null &&
+            (probe.scroller.scrolls ||
+              Math.abs(probe.scroller.height - probe.scroller.contentHeight) <= 1),
+          probe.scroller === null
+            ? 'no scroller'
+            : `${String(probe.scroller.height)} around ${String(
+                probe.scroller.contentHeight,
+              )}, scrolls=${String(probe.scroller.scrolls)}`,
         );
       }
     } finally {
@@ -1669,37 +1743,45 @@ async function checkRunnerLayout(browser, label) {
       );
 
       /*
-       * AND RUN STANDS STILL.
+       * AND THE CAP IS WHAT BOUNDS IT.
        *
-       * The rail used to be as tall as its own contents, so its last row moved
-       * whenever the options did - `text-convert` reveals and hides fields as its
-       * target format changes, so the primary action moved under the cursor of
-       * anyone using it. The rail is as tall as the region now and the options
-       * take the difference by scrolling, so Run's position is a function of the
-       * viewport alone.
+       * This asserted "Run does not move when the option count changes under
+       * it", and that was true: `.layout` reserved a viewport of height and the
+       * rail filled it, so the rail's last row was in the same place whatever
+       * the options did. The reserved height is gone - it made every tool page
+       * a screen tall around nothing - and Run moves with the options again,
+       * deliberately. See the note on `.controls` in runner.module.css.
        *
-       * Measured at the same scroll position with the fixture on and off, which
-       * is a bigger change in option height than any tool could produce.
+       * What Run may NOT do is keep moving, and what the page may NOT do is
+       * keep growing. The rail is capped at the viewport and the options take
+       * the rest by scrolling, so past that cap a taller options panel changes
+       * nothing whatsoever. That is the claim worth holding for a tool nobody
+       * has written, and doubling an already absurd panel is how to state it:
+       * 2400px against 4800px is a bigger step than the entire tool set spans,
+       * and both must draw the identical page.
        */
       await sweepPage.evaluate(() => {
         window.scrollTo(0, 0);
       });
       await sweepPage.waitForTimeout(150);
       const withTall = await sweepPage.evaluate(RUNNER_PROBE);
+      await sweepPage.evaluate(TALL_OPTIONS_FIXTURE, 4800);
+      await sweepPage.waitForTimeout(150);
+      const withTaller = await sweepPage.evaluate(RUNNER_PROBE);
       await sweepPage.evaluate(CLEAR_TALL_OPTIONS);
       await sweepPage.waitForTimeout(150);
       const withDeclared = await sweepPage.evaluate(RUNNER_PROBE);
 
       check(
         label,
-        'Run does not move when the option count changes under it',
+        'past the rail cap, a taller options panel cannot move Run any further',
         withTall?.run != null &&
-          withDeclared?.run != null &&
-          withTall.run.top === withDeclared.run.top &&
-          withTall.run.bottom === withDeclared.run.bottom,
-        `${String(withDeclared?.run?.top)}..${String(withDeclared?.run?.bottom)} declared against ${String(
-          withTall?.run?.top,
-        )}..${String(withTall?.run?.bottom)} with a 2400px panel`,
+          withTaller?.run != null &&
+          withTall.run.top === withTaller.run.top &&
+          withTall.run.bottom === withTaller.run.bottom,
+        `${String(withTall?.run?.top)}..${String(withTall?.run?.bottom)} at 2400px against ${String(
+          withTaller?.run?.top,
+        )}..${String(withTaller?.run?.bottom)} at 4800px`,
       );
 
       /*
@@ -1709,13 +1791,32 @@ async function checkRunnerLayout(browser, label) {
        */
       check(
         label,
-        'the tall panel scrolls inside the rail rather than growing the page',
+        'and cannot grow the page any further either',
         withTall?.scroller?.scrolls === true &&
           withDeclared?.scroller?.scrolls === false &&
-          withTall.docHeight === withDeclared.docHeight,
+          withTall.docHeight === withTaller?.docHeight,
         `scrolls ${String(withTall?.scroller?.scrolls)} against ${String(
           withDeclared?.scroller?.scrolls,
-        )}, page ${String(withTall?.docHeight)} against ${String(withDeclared?.docHeight)}`,
+        )}, page ${String(withTall?.docHeight)} at 2400px against ${String(
+          withTaller?.docHeight,
+        )} at 4800px`,
+      );
+
+      /*
+       * STATED IN ABSOLUTE TERMS TOO, because "the two absurd panels agree"
+       * would still pass if the cap itself were enormous. What a tall options
+       * panel costs the page is the rail growing to its cap and no more, so the
+       * whole cost is bounded by one viewport.
+       */
+      check(
+        label,
+        'and the whole cost of a tall options panel is under one viewport',
+        withTall != null &&
+          withDeclared != null &&
+          withTall.docHeight - withDeclared.docHeight <= withTall.innerHeight,
+        `${String(withDeclared?.docHeight)} to ${String(withTall?.docHeight)} in ${String(
+          withTall?.innerHeight,
+        )}px`,
       );
     } finally {
       await sweepContext.close().catch(() => {});
@@ -1769,6 +1870,212 @@ async function checkRunnerLayout(browser, label) {
     }
   } finally {
     await shortContext.close().catch(() => {});
+  }
+
+  /* -- 6. Run travels with the options, and stays reachable -------------- */
+
+  /*
+   * THE PROPERTY THAT REPLACED "RUN DOES NOT MOVE".
+   *
+   * It used to not move, and the mechanism was a reserved viewport: `.layout`
+   * held every tool page open to a full screen so the rail's last row was
+   * always in the same place. That bought stillness for one button on one tool
+   * and charged every page of every tool a screen of empty height for it -
+   * and it left the button 200-400px of bare background away from the options,
+   * which is its own defect.
+   *
+   * The rail is now as tall as what is in it, so the card is one gap below the
+   * last option and travels with it. `text-convert` is the only tool that
+   * moves it: its conditional fields make three different option panels, and
+   * this walks all three and asserts what actually matters about each - the
+   * button is ON SCREEN, and it is attached to the options rather than adrift
+   * from them.
+   *
+   * Markdown is the one layout in the whole set whose options are tall enough
+   * to push the card past the fold, so it is where the third assertion looks:
+   * the card must not be lifted back over the options to fix that. A
+   * `position: sticky` on the card used to do exactly that, and because the
+   * card is opaque and the box below it is a SCROLLING options list, it hid
+   * the last 159px of one - three fields you could scroll to and not see.
+   */
+  const targetContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const targetPage = await targetContext.newPage();
+
+  try {
+    await targetPage.goto(`${ORIGIN}/tools/text-convert`, { waitUntil: 'networkidle' });
+    await targetPage
+      .getByRole('heading', { level: 1, name: 'Text convert' })
+      .waitFor({ timeout: 15_000 });
+    await targetPage.getByRole('combobox', { name: 'Target format' }).waitFor({ timeout: 15_000 });
+
+    const seen = [];
+    for (const target of ['HTML', 'Markdown', 'Plain text (strip formatting)']) {
+      await targetPage.getByRole('combobox', { name: 'Target format' }).click();
+      await targetPage.getByRole('option', { name: target }).click();
+      await targetPage.evaluate(() => {
+        window.scrollTo(0, 0);
+      });
+      await targetPage.waitForTimeout(200);
+
+      const probe = await targetPage.evaluate(RUNNER_PROBE);
+      seen.push({
+        target,
+        run: probe?.run?.viewportTop ?? null,
+        /*
+         * Against the SCROLLPORT's bottom rather than the Options panel's, and
+         * in document coordinates so a stuck rail cannot flatter it. The
+         * Markdown layout is the one that makes the difference matter: its
+         * options are taller than the cap, so the panel's rect runs past the
+         * box clipping it and the panel-relative answer is -162.
+         */
+        gap:
+          probe?.run != null && probe.scroller != null
+            ? probe.run.top - probe.scroller.bottom
+            : null,
+        height: probe?.innerHeight ?? 0,
+      });
+    }
+
+    /*
+     * NOT "ON SCREEN AT REST", WHICH WOULD BE FALSE AND SHOULD BE.
+     *
+     * Two of the three layouts put Run on screen without scrolling; Markdown's
+     * options are tall enough that it rests at 914 in an 800px window. That is
+     * the documented consequence of taking the run card's sticky away, and a
+     * check that demanded otherwise would be demanding the defect back - the
+     * sticky is what put an opaque card over a scrolling options list.
+     *
+     * What is worth holding is that the button is never stranded: one screen of
+     * scrolling reaches it in the worst layout the tool set can produce.
+     */
+    check(
+      label,
+      'Run is at most one screen below the fold in any of text-convert’s layouts',
+      seen.every((entry) => entry.run !== null && entry.run >= 0 && entry.run < entry.height * 2),
+      seen.map((entry) => `${entry.target} at ${String(entry.run)}`).join(', '),
+    );
+    /*
+     * AND IT IS ATTACHED TO THEM. One grid gap plus the card's own border and
+     * padding separates the visible end of the options from the button, and it
+     * is the SAME distance in all three layouts - which is the whole difference
+     * between a control that travels with its panel and one adrift in reserved
+     * space. Measured at 29px; asserted as a bound and an agreement rather than
+     * as that number, because the chrome is a border and a padding rather than
+     * a token this script can read.
+     */
+    const gaps = seen.map((entry) => entry.gap);
+    check(
+      label,
+      'and it stays attached to the options rather than adrift below them',
+      gaps.every((gap) => gap !== null && gap > 0 && gap < 64) &&
+        Math.max(...gaps) - Math.min(...gaps) <= 2,
+      gaps.join(', '),
+    );
+    /*
+     * A POSITIVE GAP IS ALSO THE NO-OVERLAP CLAIM, and it is the half that
+     * caught a defect rather than confirming one. Measured against the
+     * SCROLLPORT's bottom edge, a negative gap means the card is sitting on top
+     * of the options - which is what the card's old `position: sticky` did on
+     * this exact layout, by -159px, over a list that scrolls. Stated separately
+     * from the bound above so a failure says which of the two things went
+     * wrong.
+     */
+    check(
+      label,
+      'and never on top of them, however tall the options are',
+      gaps.every((gap) => gap !== null && gap > 0),
+      gaps.join(', '),
+    );
+  } finally {
+    await targetContext.close().catch(() => {});
+  }
+
+  /* -- 7. A short result is drawn in a short box ------------------------- */
+
+  /*
+   * THE OUTPUT TEXTAREA USED TO HAVE THE INPUT EDITOR'S FLOOR.
+   *
+   * Both were `.editor`, and `.editor` is 200px because an input is a place to
+   * put something that is not there yet. An output already knows how much of
+   * it there is, so hash's sixty-four-character digest and colour's seven-
+   * character `#3366cc` were each drawn in a 200px box - on the two tools
+   * whose entire result is one short string, the box around it was the
+   * largest thing on the page.
+   *
+   * `.result` asks for `field-sizing: content` and clamps it, with a `rows`
+   * count as the fallback for an engine that does not have it. Which of the
+   * two answered is not the point and is not asserted; that the box is the
+   * size of the text is. jsdom cannot see either - it has no layout engine -
+   * so `OutputPanel.test.tsx` holds the `rows` arithmetic and this holds the
+   * height.
+   *
+   * The bound is stated against the OLD floor rather than as a pixel target,
+   * because the exact height is a font metric and this is not a screenshot
+   * test. Anything at or above 200px means the floor is back.
+   */
+  const resultContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const resultPage = await resultContext.newPage();
+
+  try {
+    await resultPage.goto(`${ORIGIN}/tools/hash`, { waitUntil: 'networkidle' });
+    await resultPage.getByRole('heading', { level: 1, name: 'Hash' }).waitFor({ timeout: 15_000 });
+    await resultPage.locator('textarea:not([readonly])').first().fill('hello world');
+    await resultPage.getByRole('button', { name: 'Run' }).click();
+    await resultPage.getByRole('textbox', { name: 'Hash Digest' }).waitFor({ timeout: 20_000 });
+    await resultPage.waitForTimeout(200);
+
+    const result = await resultPage.evaluate(() => {
+      const box = document.querySelector('textarea[readonly]');
+      const editor = document.querySelector('textarea:not([readonly])');
+      const output = document.querySelector('[class*="_output_"]');
+      if (!box || !editor || !output) return null;
+      return {
+        text: box.value.length,
+        boxHeight: Math.round(box.getBoundingClientRect().height),
+        editorHeight: Math.round(editor.getBoundingClientRect().height),
+        panelHeight: Math.round(output.getBoundingClientRect().height),
+      };
+    });
+
+    check(
+      label,
+      'a one-line digest is not drawn in the 200px box the input editor uses',
+      result !== null && result.text === 64 && result.boxHeight < 120,
+      result === null
+        ? 'no result box'
+        : `${String(result.text)} characters in ${String(result.boxHeight)}px`,
+    );
+    /*
+     * And the panel around it followed. It was 416px on this page - a whole
+     * viewport's surplus handed to the one region set to stretch into it.
+     */
+    check(
+      label,
+      'and the Output panel around it is the size of the result',
+      result !== null && result.panelHeight < 220,
+      result === null ? 'no output panel' : `${String(result.panelHeight)}px`,
+    );
+    /*
+     * THE OTHER HALF OF THE SAME RULE, because the two floors are decided by
+     * document order rather than by specificity and one gate should notice if
+     * that order ever flips. `.editor` and `.result` are each one class deep,
+     * exactly like `.textarea` in TextInput.module.css whose own floor they
+     * override - the build links the runner's chunk last and they win.
+     *
+     * `pnpm dev` injects them the other way round, where `.textarea`'s 80px
+     * beats both and every box on the page is the wrong size. Nothing in the
+     * unit suite can see it, and it is convincing enough to have been read as
+     * dead code. So the input's floor is asserted against the build here,
+     * beside the output's.
+     */
+    check(
+      label,
+      'while the input editor keeps the 200px floor written for it',
+      result !== null && result.editorHeight >= 200,
+      result === null ? 'no input editor' : `${String(result.editorHeight)}px`,
+    );
+  } finally {
+    await resultContext.close().catch(() => {});
   }
 }
 

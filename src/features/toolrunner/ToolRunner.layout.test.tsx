@@ -67,6 +67,34 @@ const runnerCss =
   )[0] ?? '';
 
 /**
+ * Every declaration block written for `.name`, comments stripped.
+ *
+ * Scanned rather than matched with a regex because a class appears more than
+ * once - `.controls` is declared at the base width and again inside the media
+ * query - and both bodies have to be seen. Prettier normalises the selector to
+ * `.name {`, which is what makes the literal search safe: `.output {` cannot
+ * pick up `.outputLabel {`.
+ */
+function rulesFor(name: string): string {
+  const declarations = runnerCss.replaceAll(/\/\*[\s\S]*?\*\//g, '');
+  const bodies: string[] = [];
+
+  for (let from = 0; ;) {
+    const open = declarations.indexOf(`.${name} {`, from);
+    if (open === -1) break;
+    const brace = declarations.indexOf('{', open);
+    const close = declarations.indexOf('}', brace);
+    bodies.push(declarations.slice(brace + 1, close));
+    from = close + 1;
+  }
+
+  // A class that has stopped existing would make every assertion below pass by
+  // matching nothing, which is the one way this helper could lie.
+  if (bodies.length === 0) throw new Error(`no rule for .${name} in runner.module.css`);
+  return bodies.join('\n');
+}
+
+/**
  * THE ORDER OF THE PAGE, WHICH IS THE WHOLE POINT OF ITS LAYOUT.
  *
  * The options used to come after the output in source order, and the CSS then
@@ -456,4 +484,163 @@ describe('the run control', () => {
       'Ports',
     ]);
   });
+});
+
+/* ========================================================================== *
+ * THE HEIGHT THE PAGE DOES NOT RESERVE
+ * ========================================================================== */
+
+/**
+ * THE PAGE USED TO BE A VIEWPORT TALL WHETHER OR NOT IT HAD ANYTHING IN IT.
+ *
+ * `.layout` carried `min-block-size: calc(100dvh - var(--pb-space-lg) * 2)`
+ * and the rail carried `block-size: 100%`, and between them they held every
+ * tool page open to a full screen. The purpose was to hold Run still - a
+ * region that is never shorter than a full-height rail is a region whose last
+ * row is always in the same place - and it worked. What it cost is what the
+ * page looked like: measured in the production build at 1280x800 with nothing
+ * run yet, EVERY tool had a 768px grid, a 694px options scroller around 302px
+ * of options, and a 416px Output panel around one sentence. Image's was 600px.
+ *
+ * BOTH ARE GONE AND RUN MOVES AGAIN. That is the trade, not an oversight: the
+ * rail is a sticky unit of options-then-button, so the button is one gap below
+ * the last option and travels when the options change height. Exactly one tool
+ * does that - `text-convert`, whose conditional fields put the button at 536,
+ * 669 or 914 depending on the target format. Reserving a screen of height on
+ * every page of every tool to hold one button still on one of them, and
+ * leaving that button 200-400px of bare background away from the settings it
+ * applies, was the more expensive half of the bargain.
+ *
+ * What replaces the stillness is asserted rather than assumed, in
+ * `cross-browser-check.mjs` and against all three of text-convert's layouts:
+ * Run is one gap below the options, never on top of them, and never more than
+ * a screen from the fold.
+ *
+ * What did NOT depend on the reserved height, and is unchanged: row one is
+ * `min-content`, so the Output panel's top is the input's height alone, and
+ * `.optionsScroll` is a scroll container whose min-content contribution in the
+ * scrolling axis is zero, so a tall options panel cannot size the grid's rows.
+ *
+ * These are text assertions for the same reason the reordering guard above is
+ * one: jsdom has no layout engine, every box in it is zero by zero, and the
+ * thing that would bring the defect back is a one-line declaration that reads
+ * like a tidy-up. The heights themselves are measured in
+ * `scripts/cross-browser-check.mjs`.
+ */
+describe('the reserved viewport height', () => {
+  it('is not given to the grid, at any width', () => {
+    expect(rulesFor('layout')).not.toMatch(/min-block-size/);
+  });
+
+  /*
+   * The rail may be CAPPED by the viewport - it has to be, or a tall options
+   * panel would put Run somewhere no scroll can reach - but it may not be
+   * SIZED by it. `max-block-size` bounds a box; `block-size` and
+   * `min-block-size` invent one.
+   */
+  it('is not given to the rail either, which may be capped but not filled', () => {
+    const rail = rulesFor('controls');
+    expect(rail).toMatch(/max-block-size:\s*calc\(100dvh/);
+    expect(rail).not.toMatch(/(^|[;\s])block-size:/);
+    expect(rail).not.toMatch(/min-block-size:/);
+  });
+
+  /*
+   * And the Output panel still stretches. That is not the reserved height
+   * coming back: it is where the surplus goes when the rail genuinely is the
+   * taller of the two columns, which is a real relationship between the
+   * things on the page rather than an invented one. Without it that surplus
+   * would be bare page background between the result and the ports footnote.
+   */
+  it('leaves the output stretching into whatever surplus the rail creates', () => {
+    expect(rulesFor('output')).toMatch(/align-self:\s*stretch/);
+  });
+
+  /*
+   * THE RAIL IS THE ONLY THING ON THIS PAGE ALLOWED TO PIN.
+   *
+   * The run card used to pin too - `position: sticky; inset-block-end` - to
+   * lift it to the fold from a resting place the reserved height had put below
+   * one. The card is opaque and the box it lifted over is `.optionsScroll`, so
+   * on the shipped build it covered the last 159px of a SCROLLING options list
+   * on text-convert's Markdown layout. Three fields you could scroll to and
+   * not see.
+   *
+   * Reintroducing it is a two-line change that would look like restoring a
+   * convenience, and every symptom of it is geometric. So the rule is stated
+   * where it can be read: one sticky in this stylesheet, and it is the rail's.
+   */
+  it('pins the rail and nothing else, so no control can lift over the options', () => {
+    const declarations = runnerCss.replaceAll(/\/\*[\s\S]*?\*\//g, '');
+    expect(declarations.match(/position:\s*sticky/g) ?? []).toHaveLength(1);
+    expect(rulesFor('controls')).toMatch(/position:\s*sticky/);
+  });
+});
+
+/* ========================================================================== *
+ * ONE NAME PER THING
+ * ========================================================================== */
+
+describe('an output port label', () => {
+  /*
+   * BASE64 DECLARES ITS SINGLE OUTPUT AS "Output", under a panel whose heading
+   * is "Output" - two labels for one value, and the same duplication on five
+   * of the nine tools. The input editors above already followed the rule this
+   * now follows: name a port only where the name distinguishes something.
+   */
+  it(
+    'is not printed under a panel heading that already says it',
+    async () => {
+      const user = userEvent.setup();
+      renderRunner(base64);
+
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: 'Mode' })).toBeInTheDocument();
+      }, IMPORT_TIMEOUT);
+
+      await user.type(screen.getByRole('textbox', { name: 'Base64 input' }), 'hi');
+      await user.click(screen.getByRole('button', { name: 'Run' }));
+      await waitFor(() => {
+        expect(screen.getByRole('textbox', { name: 'Base64 Output' })).toBeInTheDocument();
+      }, IMPORT_TIMEOUT);
+
+      // The panel heading, and nothing else on the page saying the same word.
+      expect(screen.getAllByText('Output')).toHaveLength(1);
+      // Still reachable by name, because the accessible name of the box is
+      // built from the port label whether or not it is drawn.
+      expect(screen.getByRole('textbox', { name: 'Base64 Output' })).toBeInTheDocument();
+    },
+    SLOW_TEST,
+  );
+
+  /*
+   * AND IT IS STILL DRAWN WHERE IT DISTINGUISHES SOMETHING. Diff emits two -
+   * the unified patch and the notes - and a page that showed both without
+   * saying which was which would be worse than the duplication this removes.
+   */
+  it(
+    'is printed for every port when a tool has more than one',
+    async () => {
+      const user = userEvent.setup();
+      const diff = getManifestEntry('diff');
+      renderRunner(diff);
+
+      await waitFor(() => {
+        expect(screen.getByRole('textbox', { name: 'Diff Original input' })).toBeInTheDocument();
+      }, IMPORT_TIMEOUT);
+
+      await user.type(screen.getByRole('textbox', { name: 'Diff Original input' }), 'a');
+      await user.type(screen.getByRole('textbox', { name: 'Diff Changed input' }), 'b');
+      await user.click(screen.getByRole('button', { name: 'Run' }));
+
+      await waitFor(() => {
+        for (const port of diff.outputs) {
+          expect(screen.getByText(port.label)).toBeInTheDocument();
+        }
+      }, IMPORT_TIMEOUT);
+
+      expect(diff.outputs.length).toBeGreaterThan(1);
+    },
+    SLOW_TEST,
+  );
 });

@@ -158,3 +158,68 @@ describe('comparisonFor', () => {
     expect(comparisonFor(null)).toBeNull();
   });
 });
+
+/* ========================================================================== *
+ * HOW BIG THE BOX IS
+ * ========================================================================== */
+
+/**
+ * A TEXT RESULT USED TO BE DRAWN IN A 200px BOX WHATEVER IT WAS.
+ *
+ * The output textarea shared `.editor` with the input editors, and an input's
+ * floor is right for an input - it is a place to put something that is not
+ * there yet. An output already knows how much of it there is, so the same rule
+ * drew colour's `#3366cc`, seven characters, in a box 200px tall and 560px
+ * wide, and hash's sixty-four-character digest in the same one. On the two
+ * tools whose entire result is one short string, the box was the largest thing
+ * on the page.
+ *
+ * `field-sizing: content` is the accurate half of the fix and jsdom cannot see
+ * it - it has no layout engine, so nothing here is a height. What jsdom CAN
+ * see is the `rows` attribute, which is the fallback for engines without
+ * `field-sizing` and the only half that is computed in JavaScript. The
+ * stylesheet clamps both paths to the same floor and the same cap; the real
+ * heights are measured in `scripts/cross-browser-check.mjs`.
+ */
+describe('OutputView: a text result is sized by the text', () => {
+  const rowsOf = (text: string): number => {
+    const { unmount } = renderValue({ type: 'text', text });
+    const rows = screen.getByRole('textbox').getAttribute('rows');
+    unmount();
+    return Number(rows);
+  };
+
+  it('asks for two rows for a one-line result rather than a fixed floor', () => {
+    // A digest and a converted colour are each one line, and they are the two
+    // cases the old floor was worst for.
+    expect(rowsOf('b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380bee9068bf7ace2efcde9')).toBe(2);
+    expect(rowsOf('#3366cc')).toBe(2);
+  });
+
+  it('grows with the lines, so a small structure is drawn small', () => {
+    expect(rowsOf('{\n  "a": 1,\n  "b": 2\n}')).toBe(4);
+    expect(rowsOf(Array.from({ length: 9 }, (_, i) => `line ${String(i)}`).join('\n'))).toBe(9);
+  });
+
+  /*
+   * THE CAP IS WHAT STOPS THIS BEING A WORSE PROBLEM THAN THE ONE IT FIXES.
+   * A 4,000-line result asking for 4,000 rows would be a textarea taller than
+   * the document. Twenty rows is where a result stops being something you read
+   * in place and starts being something you copy or download.
+   */
+  it('stops at twenty rows however long the result is', () => {
+    expect(rowsOf(Array.from({ length: 4000 }, () => 'x').join('\n'))).toBe(20);
+  });
+
+  /*
+   * The one case `rows` gets wrong, recorded so the next reader knows it is
+   * known. A 40 kB base64 string is ONE line to a newline count and forty
+   * screens to a browser, so the fallback path asks for the floor and gets a
+   * scrollbar. `field-sizing: content` measures the wrapped height and gets it
+   * right; this is the price of the path that does not have it, and a
+   * scrollbar is the correct failure rather than a wrong height.
+   */
+  it('counts newlines rather than wrapped lines, which is why it is the fallback', () => {
+    expect(rowsOf('x'.repeat(40_000))).toBe(2);
+  });
+});

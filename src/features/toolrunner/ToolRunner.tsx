@@ -328,14 +328,20 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
             change a flag, then reach the button, without going back up the page
             - and `ToolRunner.layout.test.tsx` asserts that tab order.
 
-            The other thing wrong with it was that Run MOVED: the rail's height
-            was the options' height, so its last row shifted whenever a
-            conditional option appeared or went. That was never a fact about
-            where Run sits in the source, and moving it would not have fixed it.
-            It is fixed in the stylesheet, by giving the rail the region's height
-            rather than its own content's - see the note on `.controls`.
+            AND IT TRAVELS WITH THE OPTIONS, which is a decision rather than a
+            defect left in place. The rail is as tall as what is in it, so this
+            card is one gap below the visible end of the options and moves when
+            they do - on `text-convert`, the only tool with conditional fields,
+            between 536 and 914 at 1280x800. Holding it still cost a reserved
+            viewport on every page of every tool, and the arithmetic of that
+            trade is written down on `.controls` in runner.module.css.
+
+            NO CLASS OF ITS OWN. It had one, and its only declaration was a
+            `position: sticky` that pushed the card up over a SCROLLING options
+            list - see `.controls`. Nothing styles this card now beyond its
+            being a Panel, so naming it would be naming nothing.
           */}
-          <Panel className={styles.runCard}>
+          <Panel>
             <div className={styles.actions}>
               <div className={styles.row}>
                 <Button
@@ -406,7 +412,23 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
                 if (!value) return null;
                 return (
                   <div key={output.id} className={styles.stack}>
-                    <p className={styles.hint}>{output.label}</p>
+                    {/*
+                      NAMED ONLY WHEN THERE IS MORE THAN ONE, the same rule the
+                      input editors above already follow. With a single output
+                      the panel heading says "Output" and this line said
+                      "Digest" directly under it - two labels for one value, on
+                      five of the nine tools. Colour and diff have two outputs
+                      each and genuinely need telling apart, so the label stays
+                      where it distinguishes something.
+
+                      Nothing is lost by dropping it: the Ports footnote names
+                      every port on the page, and `OutputView`'s accessible
+                      name is built from the port label either way, so a screen
+                      reader still hears "Hash Digest" on the box itself.
+                    */}
+                    {entry.outputs.length > 1 ? (
+                      <p className={styles.hint}>{output.label}</p>
+                    ) : null}
                     <OutputView
                       value={value}
                       label={`${entry.name} ${output.label}`}

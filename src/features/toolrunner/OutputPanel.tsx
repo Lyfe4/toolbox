@@ -170,11 +170,27 @@ export function OutputView({
   }
 
   switch (value.type) {
-    case 'text':
+    case 'text': {
+      /*
+       * THE BOX IS SIZED BY WHAT IS IN IT, and `rows` is the fallback half of
+       * how. `.result` asks for `field-sizing: content`, which is the accurate
+       * answer because it measures wrapped height; `rows` is what an engine
+       * without it uses, and it can only count newlines - so a single enormous
+       * base64 line asks for the floor and gets a scrollbar, which is the right
+       * failure. Both are clamped by the stylesheet, so neither path can
+       * produce a box taller than the cap.
+       *
+       * The floor of two is not cosmetic: a one-row textarea beside a Copy
+       * button reads as a text input somebody is expected to type into. It
+       * matches the floor `.result` clamps the measured path to.
+       */
+      const rows = Math.min(Math.max(value.text.split('\n').length, 2), 20);
+
       return (
         <div className={styles.stack}>
           <TextArea
-            className={styles.editor}
+            className={styles.result}
+            rows={rows}
             aria-label={label}
             value={value.text}
             readOnly
@@ -206,6 +222,7 @@ export function OutputView({
           </div>
         </div>
       );
+    }
 
     case 'bytes': {
       /*

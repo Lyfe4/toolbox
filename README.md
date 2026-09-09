@@ -584,10 +584,19 @@ So the fix is not z-index, and could not have been: the rail was never escaping
 its bounds. The grid now holds only the three regions the rail travels beside,
 and everything a tool page renders below them is a sibling in the page's flow —
 outside the rail's containing block, whatever its height and however tall the
-options panel is. Two other defects went with the same span: the surplus height
-a spanning item distributes across `auto` rows was putting 80px of nothing
-between the input and the output, and the rail being as tall as its own contents
-meant the Run button moved every time a conditional option appeared under it.
+options panel is. Another defect went with the same span: the surplus height a
+spanning item distributes across `auto` rows was putting 80px of nothing between
+the input and the output, which `min-content minmax(0, 1fr)` fixed by giving
+row one the input's height exactly.
+
+**The third thing that came off that span has since been undone on purpose.**
+Run was held still by reserving a viewport of height on `.layout`, and the price
+was every tool page being a screen tall whether or not it had anything on it —
+a 416px Output panel around one sentence, and 200–400px of bare background
+between the options and the button. The rail is as tall as its contents again,
+Run travels with the options, and what is asserted instead is that it is on
+screen and one gap below them. See
+[architecture.md](docs/architecture.md#the-height-the-page-does-not-reserve).
 
 ### What reading the ports as a set found
 

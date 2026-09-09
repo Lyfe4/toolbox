@@ -124,17 +124,21 @@
    * now exactly the input's height and row two absorbs the whole surplus, where
    * it is invisible because the Output panel stretches into it.
    *
-   * `min-block-size` IS WHAT MAKES RUN STAND STILL. It is the same viewport
-   * arithmetic the rail is capped by, so the region is never shorter than a
-   * full-height rail; the rail therefore always fills its area, and the row
-   * that holds Run sits at a fixed distance from the rail's top. Derived from
-   * the viewport, not from any tool's option count - which is the only way it
-   * can hold for a tool that has not been written.
+   * THERE IS NO `min-block-size` HERE, AND THERE WAS. It read
+   * `calc(100dvh - var(--pb-space-lg) * 2)`, and its purpose was to hold Run
+   * still: a region never shorter than a full-height rail is a region whose
+   * last row is always in the same place. It worked. What it cost, measured in
+   * the production build at 1280x800 with nothing run yet, was every tool page
+   * reserving a viewport of height it had no content for - a 768px grid on
+   * every tool, a 694px options scroller around 302px of options, and a 416px
+   * Output panel around one sentence, 600px of it on image.
+   *
+   * IT IS GONE AND RUN MOVES AGAIN, AND THAT IS THE TRADE. The arithmetic is
+   * on `.controls` below, with the rail height that decides it.
    */
   .layout {
     grid-template-columns: minmax(0, 1fr) 300px;
     grid-template-rows: min-content minmax(0, 1fr);
-    min-block-size: calc(100dvh - var(--pb-space-lg) * 2);
   }
 
   .input {
@@ -160,23 +164,73 @@
    * permission, and it holds for any section any future tool renders below the
    * fold, because such a section is not in here at all.
    *
-   * `block-size: 100%` FILLS THE AREA, which is what decouples Run's position
-   * from the options. The rail used to be as tall as its own contents, so its
-   * last row moved every time a conditional option appeared - `text-convert`
-   * reveals and hides fields as its target format changes, so the button moved
-   * under the cursor of anyone using it. Now the rail is as tall as the region,
-   * the region is at least a viewport tall (see `.layout`), and the options
-   * take the difference by scrolling.
+   * THE RAIL IS AS TALL AS WHAT IS IN IT, capped at the viewport. It used to
+   * be `block-size: 100%` of a region held open to a full viewport by
+   * `.layout`, and that pairing is what put 200-400px of nothing between the
+   * last option and the run card - on hash, 392px of it. The card was then
+   * sticky to the block end to rescue the button from the bottom of a region
+   * that had been made tall enough to hide it. Two mechanisms, the second
+   * compensating for the first.
    *
-   * A TALL OPTIONS PANEL CANNOT SIZE THE GRID'S ROWS, and the reason is one
-   * layer down rather than here. `.optionsScroll` is a scroll container, and a
-   * scroll container's min-content contribution in the scrolling axis is zero -
-   * so the rail's own contribution is the run card and a gap, whatever the
-   * options do. Measured: a 2400px options panel leaves the row tracks
-   * byte-identical. An `overflow: hidden` on the rail itself would do the same
-   * job and cost more than it is worth - it would make the rail a scrollport,
-   * and `.runCard`'s sticky would then be relative to the rail rather than to
-   * the page, which is the one thing it must not be.
+   * A TALL OPTIONS PANEL CANNOT SIZE THE GRID'S ROWS BY ITS OWN HEIGHT.
+   * `.optionsScroll` is a scroll container, and a scroll container's
+   * min-content contribution in the scrolling axis is zero, so the rail's
+   * contribution to row sizing is the run card and a gap whatever the options
+   * do - what the options can do is push the rail up to the cap above, and no
+   * further. Measured: a 2400px panel and a 4800px one draw the identical page.
+   * The Output panel's top is row one's height either way, which is the
+   * input's alone.
+   *
+   * THAT BOUND USED TO BE ZERO RATHER THAN A VIEWPORT, and the difference is
+   * the reserved height going: a page already forced to 100dvh could not be
+   * made taller by anything. It is bounded rather than free now - a 2400px
+   * panel takes a jwt page from 1077 to 1353 and stops there - which is the
+   * honest shape of a two-column layout whose second column is the tall one.
+   *
+   * WHAT THE RAIL'S HEIGHT DOES DECIDE IS WHERE THE RUN CARD SITS, and that is
+   * the cost of taking the reserved height away. The card is the rail's last
+   * row, so it is always one gap below the visible end of the options and it
+   * travels when they change height. One tool changes them: `text-convert`
+   * reveals and hides fields as its target format changes, and at 1280x800 the
+   * button sits at 536 for HTML, 669 for plain text and 914 for Markdown.
+   *
+   * That is worth paying. Holding it still cost a reserved viewport on every
+   * page of every tool, to steady one button on one tool when one control is
+   * changed - and what it bought was a button 200-400px of bare page background
+   * away from the settings it applies, which is a primary action attached to
+   * nothing. What is asserted in its place, for all three of text-convert's
+   * layouts, is that the button is one gap below the options, never on top of
+   * them, and never more than a screen from the fold.
+   *
+   * THE CARD HAD A CLASS OF ITS OWN AND IT IS GONE, along with the only thing
+   * in it: `position: sticky; inset-block-end: var(--pb-space-lg)`, which
+   * pushed the card up to the fold when the reserved height had put its resting
+   * place below one. The card is opaque and the box below it is
+   * `.optionsScroll`. Measured on the shipped build at 1280x800 with
+   * text-convert set to Markdown: the scroller ran to 885, the card sat at
+   * 726..784, and the last 159px of a SCROLLING options list was underneath it.
+   * Three fields you could scroll to and not see. On the other tools the
+   * reserved height left their scrollers mostly empty, so the card was floating
+   * over nothing and nobody saw it.
+   *
+   * Nothing replaces it. A rail is only taller than the space below the page
+   * heading if its options genuinely are, and at 1280x800 exactly one layout in
+   * the set reaches that - Markdown above, where the button rests at 914 in an
+   * 800px window, about 120px of scrolling away. A button one small scroll away
+   * is a smaller cost than a button that hides the settings it applies.
+   *
+   * IN THAT ONE STATE THE RAIL DOES NOT STICK EITHER, and the reason is worth
+   * knowing rather than fixing: sticky needs slack between the box and its
+   * containing block, and there the rail IS the tallest thing in the grid, so
+   * it is exactly as tall as the block bounding it and has nowhere to travel.
+   * That can only happen while there is no result - which is also when there is
+   * nothing for the rail to stay beside. The moment a result gives the content
+   * column height, the rail has travel again and pins.
+   *
+   * `overflow: hidden` here would do the same job as that scroll container and
+   * is still not worth it: it would make the rail a scrollport, and a rail that
+   * scrolls is a rail whose options and whose run button can be scrolled apart
+   * from each other inside a page that already scrolls.
    *
    * NO z-index. There was one, and it was doing nothing except making an
    * overlap survivable instead of impossible. A rail that cannot reach any
@@ -189,7 +243,6 @@
     position: sticky;
     inset-block-start: var(--pb-space-lg);
 
-    block-size: 100%;
     max-block-size: calc(100dvh - var(--pb-space-lg) * 2);
 
     /*
@@ -197,32 +250,6 @@
      * take the scroll and the run card does not.
      */
     grid-template-rows: minmax(0, 1fr) auto;
-  }
-
-  /*
-   * THE RUN CARD, PINNED TO THE BOTTOM OF THE VIEWPORT RATHER THAN OFF IT.
-   *
-   * The rail's height comes from the region and the region is at least a
-   * viewport tall, which is what stops the options moving this card - but the
-   * region does not START at the top of the viewport. It starts below the site
-   * header and the tool's own heading, so its last hundred-odd pixels are
-   * below the fold before anything has been scrolled, and the run button was
-   * in them. Measured at 1280x800: the card sat at 901..959 in an 800px
-   * window, so the primary action was invisible on arrival.
-   *
-   * Sticky to the block END, so the card is pushed UP when its resting place
-   * is below the fold and left alone when it is not. From the moment the rail
-   * itself sticks the two agree exactly - the rail's bottom is then
-   * `100dvh - lg`, which is where this puts the card anyway - so there is no
-   * jump between the two states.
-   *
-   * This is why the rail must not be `overflow: hidden`: sticky is relative to
-   * the nearest scrollport, and making the rail one would scope this to a box
-   * that never scrolls, where it would do nothing at all.
-   */
-  .runCard {
-    position: sticky;
-    inset-block-end: var(--pb-space-lg);
   }
 
   .optionsScroll {
@@ -233,11 +260,17 @@
   }
 
   /*
-   * STRETCHED, so the surplus row two absorbs from the rail is the result area
-   * rather than bare page. `.layout` sets `align-items: start`, which is right
-   * for everything else in the grid and wrong here: it would have left the
-   * Output panel its content height with a viewport's worth of nothing under
-   * it, which is what the phantom gap looked like from the other side.
+   * STRETCHED, so whatever surplus row two absorbs from the rail is the result
+   * area rather than bare page. `.layout` sets `align-items: start`, which is
+   * right for everything else in the grid and wrong here: it would leave the
+   * Output panel its content height with an unexplained gap under it, inside
+   * the grid, between the result and the ports footnote.
+   *
+   * The surplus is now only ever the amount by which the rail is taller than
+   * the input plus the result - a real relationship between two columns, not
+   * a viewport this rule was papering over. It is at its largest on an idle
+   * regex page, where eight option fields make the rail the tallest thing on
+   * screen; it is zero the moment there is a result of any size.
    */
   .output {
     grid-column: 1;
@@ -428,14 +461,56 @@
 /* --- Output ------------------------------------------------------------- */
 
 /*
- * The big monospace box, used for both the input editors and a text result.
- * Named for what it is rather than for where it sits: it was `.output` while
- * also being every input's class, and `.output` is now the grid area.
+ * THE INPUT EDITOR. A floor of 200px, because an input is a place to put
+ * something that is not there yet - a box sized to its emptiness would be a
+ * box you have to grow before you can use it.
  */
 .editor {
   inline-size: 100%;
   min-block-size: 200px;
   resize: vertical;
+  font-variant-ligatures: none;
+}
+
+/*
+ * A TEXT RESULT IS AS TALL AS THE TEXT, AND IT USED TO SHARE `.editor`.
+ *
+ * The same 200px floor was therefore applied to output, where it is exactly
+ * wrong: an output already knows how much of it there is. Colour's `#3366cc` -
+ * seven characters - was drawn in a 200px box 560px wide, and hash's
+ * sixty-four in the same one. On the two tools whose whole result is one short
+ * string, the box around it was the largest thing on the page.
+ *
+ * `field-sizing: content` is the mechanism where it is supported, and it
+ * measures the WRAPPED height, which is why the `rows` attribute in
+ * OutputPanel is the fallback rather than the other way round: a 40 kB base64
+ * line is one line to `rows` and forty screens to the browser. The clamp is
+ * here in either path, so the two agree about the floor and the cap.
+ *
+ * The floor is BELOW `.textarea`'s own, which is two and a half controls and
+ * was written for something you type into. A digest and a converted colour are
+ * each one line, and at 80px the box was still twice the text; a control and a
+ * half is enough that a one-line result reads as a readout rather than as a
+ * slot, and small enough that the result is the biggest thing in it.
+ *
+ * 520px is the cap the diff scroller already uses: past that a result is
+ * something you copy or download rather than read through a window.
+ *
+ * BOTH FLOORS BEAT `.textarea`'s BY DOCUMENT ORDER RATHER THAN BY SPECIFICITY,
+ * and `pnpm dev` disagrees with the build about which order that is. A CSS
+ * module is one class deep, so `.result` and `.textarea` tie; the build links
+ * the runner's chunk after the one holding TextInput and this wins, while the
+ * dev server injects them the other way round and it loses. Read in the dev
+ * server alone, this rule and `.editor`'s 200px both look like dead code -
+ * which is what they were mistaken for. `checkRunnerLayout` measures both
+ * against the BUILD, so a chunk order that flipped would fail a gate rather
+ * than quietly resize every box on the page.
+ */
+.result {
+  inline-size: 100%;
+  field-sizing: content;
+  min-block-size: calc(var(--pb-control-height-md) * 1.5);
+  max-block-size: 520px;
   font-variant-ligatures: none;
 }
 

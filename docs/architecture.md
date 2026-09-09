@@ -2021,16 +2021,16 @@ reach the button, scroll back down past them to see the result. It also means
 that on a wide screen — where the rail is sticky — Run is on screen however far
 down a long result you have scrolled, which it was not before.
 
-**It sits in a card, and it has not moved in the DOM.** It used to be the
-rail's bare tail: a button, a cancel button and a progress bar directly on the
-page background, on a surface where every other region is a bordered module. It
-is a `Panel` now, untitled — `Panel` claims a named region only when it has a
-title, and a fifth unnamed region in the landmark list would be noise while
-"Run" as a heading above a button labelled Run is worse than no heading at all.
-Its source position is unchanged, because that was never the problem: what was
-wrong is that it _moved_, and that was a fact about the rail's height rather
-than about where the button sits. Moving it before the options would have fixed
-the jumping and broken the loop the order exists for.
+**It sits in a card.** It used to be the rail's bare tail: a button, a cancel
+button and a progress bar directly on the page background, on a surface where
+every other region is a bordered module. It is a `Panel` now, untitled — `Panel`
+claims a named region only when it has a title, and a fifth unnamed region in
+the landmark list would be noise while "Run" as a heading above a button
+labelled Run is worse than no heading at all.
+
+**And it travels with the options**, which is a decision rather than a leftover
+— see [the height the page does not
+reserve](#the-height-the-page-does-not-reserve).
 
 **The rail is sticky above the breakpoint, and scrolls independently when it
 has to.** It spans both content rows, so `sticky` has somewhere to travel; it
@@ -2075,31 +2075,29 @@ structural rather than measured — anything a future tool renders below the fol
 is outside the rail's containing block, because it is outside that grid, whatever
 its height and however tall the options panel is.
 
-Two more things fell out of the same span:
+One more thing fell out of the same span. **Two `auto` rows split the rail's
+surplus height between them**, which put 80px of nothing between the Input and
+Output panels on a JWT page and moved the Output panel's top whenever an option
+appeared. The rows are `min-content minmax(0, 1fr)` now: row one is exactly the
+input's height, so an option appearing or going cannot shift where the result
+starts, and row two absorbs whatever surplus there is, where it is invisible
+because the Output panel stretches into it.
 
-- **Two `auto` rows split the rail's surplus height between them**, which put
-  80px of nothing between the Input and Output panels on a JWT page and moved
-  the Output panel's top whenever an option appeared. The rows are
-  `min-content minmax(0, 1fr)` now: row one is exactly the input's height and
-  row two absorbs the whole surplus, where it is invisible because the Output
-  panel stretches into it. The result area being large before a run is the right
-  reading of that space anyway.
-- **Run stood still.** The rail used to be as tall as its own contents, so its
-  last row moved every time a conditional option appeared — `text-convert`
-  reveals and hides fields as its target format changes, so the primary action
-  moved under the cursor of anyone using it. The rail now takes the region's
-  height (`block-size: 100%`, with `.layout` given a `min-block-size` of the
-  same viewport arithmetic the rail is capped by), so the row holding Run is a
-  fixed distance from the rail's top and the options take the difference by
-  scrolling. Derived from the viewport, never from a tool's option count, which
-  is the only way it can hold for a tool that has not been written.
-
-**`overflow: hidden` on the rail is load-bearing, not hygiene.** A scroll
-container's min-content contribution in the scrolling axis is zero, so it is
-what stops a tall options panel sizing the grid's rows — without it a tool
-declaring forty fields would inflate row two and hand the Output panel several
-thousand pixels of empty card. Measured both ways: a 2400px options panel
-leaves the row tracks byte-identical with it, and grows them without it.
+**`.optionsScroll` being a scroll container is load-bearing, not hygiene.** A
+scroll container's min-content contribution in the scrolling axis is zero, so it
+is what stops a tall options panel sizing the grid's rows by its own height —
+without it a tool declaring forty fields would inflate row two and hand the
+Output panel several thousand pixels of empty card. What such a panel can do is
+push the rail up to its viewport cap and no further: measured, a 2400px options
+panel and a 4800px one draw the identical page, and the first takes a JWT page
+from 1077px to 1353px and stops. That bound used to be zero rather than a
+viewport, because a page already forced to `100dvh` could not be made taller by
+anything — bounded rather than free is the honest shape of a two-column layout
+whose second column is the tall one. It has to be
+that box rather than the rail: `overflow: hidden` on the rail would make the
+rail itself a scrollport, and a rail that scrolls is one whose options and whose
+run button can be scrolled apart from each other inside a page that already
+scrolls.
 
 And **the `z-index` is gone**. It was on the rail, and it was never the fix — it
 decided which of two boxes painted on top of a collision rather than preventing
@@ -2121,6 +2119,120 @@ paints over.
 > container that never scrolls never moves. The rail was pinned to `<main>`
 > instead of to the viewport and scrolled away with the page. `clip` clips
 > exactly the same pixels and establishes no scroll container.
+
+### The height the page does not reserve
+
+`.layout` carried `min-block-size: calc(100dvh - var(--pb-space-lg) * 2)` and
+the rail carried `block-size: 100%`. Between them they held every tool page open
+to a full screen, and the reason was Run: a region that is never shorter than a
+full-height rail is a region whose last row is always in the same place, so no
+option appearing above the button could move it.
+
+It worked. Here is what it cost, measured in the production build at 1280×800
+with nothing run yet:
+
+| Tool  | Grid  | Options scroller | Options inside it | Output panel |
+| ----- | ----- | ---------------- | ----------------- | ------------ |
+| Hash  | 768px | 694px            | 302px             | 416px        |
+| Regex | 768px | 694px            | 490px             | 416px        |
+| JWT   | 768px | 694px            | 418px             | 416px        |
+| Image | 768px | 694px            | 302px             | 600px        |
+
+Three things follow from that table, and all three are what the page looked
+like. Every tool page was the same height whatever was on it. The Output panel
+was several hundred pixels of bordered nothing around the sentence "No output
+yet", and on the tools whose result is one short string it stayed that way after
+a run. And the rail carried 200–400px of bare page background between the last
+option and the run card, so the primary action was a box attached to nothing —
+which then needed `position: sticky` on its block end to rescue it from a fold
+the reserved height had put it below. Two mechanisms, the second compensating
+for the first.
+
+**Both are gone. The grid is as tall as its tallest column and no taller**, and
+`checkRunnerLayout` asserts exactly that at seven widths, along with the options
+scroller being exactly its content whenever the options fit.
+
+**The consequence is that Run moves again, and that is the trade.** The rail is
+one sticky unit — the options, then the card — so the card is one gap below the
+last option and travels when the options change height. One tool changes it:
+`text-convert` reveals and hides fields as its target format changes, which puts
+the button at 536 for HTML, 669 for plain text and 914 for Markdown.
+
+**And the run card's `position: sticky` went with it, which fixed a defect
+rather than causing one.** Its job was to push the card up to the fold when the
+reserved height had put its resting place below one — which was every tool page.
+But the card is opaque, and the box it was pushed up over is `.optionsScroll`.
+Measured on the shipped build at 1280×800 with text-convert set to Markdown: the
+scroller ran to 885, the card sat at 726..784, and the last 159px of a
+_scrolling_ options list was underneath it — three fields you could scroll to
+and not see. On the other tools the reserved height left the scroller mostly
+empty, so the card was floating over nothing and nobody saw it.
+
+Nothing replaces it. A rail is only taller than the space below the page heading
+if its options genuinely are, which at 1280×800 is text-convert's Markdown
+layout and nothing else; there the button rests at 914 in an 800px window, about
+120px of scrolling away. A button one small scroll away is a smaller cost than a
+button that hides the settings it applies, and `checkRunnerLayout` now asserts
+that the gap between the options and the button is positive in all three
+layouts.
+
+In that one state the rail does not stick either, and the reason is worth
+knowing rather than fixing: `sticky` needs slack between the box and its
+containing block, and a rail that is the tallest thing in the grid is exactly as
+tall as the block bounding it. That can only happen while there is no result —
+which is also when there is nothing for the rail to stay beside. As soon as a
+result gives the content column height, the rail has travel again and pins,
+which is the case `checkRunnerLayout` measures on a 600-row diff.
+
+The arithmetic is not close. The reserved height charged every page of every
+tool a screen of dead space in order to hold one button still on one tool when
+one control is changed — and what it bought was a button pinned to the far side
+of a gap, which is not the same thing as a button you can find. What is asserted
+in its place is the property that actually matters, for all three of
+text-convert's layouts: **Run is one gap below the options, never on top of
+them, and never more than a screen from the fold.** A control that travels with
+the panel it belongs to is legible when it moves.
+
+Two things that did _not_ depend on the reserved height, and are unchanged: row
+one is `min-content`, so the Output panel's top is the input's height alone, and
+`.optionsScroll` is a scroll container, so a tall options panel cannot size the
+grid's rows.
+
+### A result is drawn the size of the result
+
+The output textarea shared `.editor` with the input editors, so it inherited a
+200px floor. That floor is right for an input — an input is a place to put
+something that is not there yet, and a box sized to its emptiness is one you
+have to grow before you can use it. It is exactly wrong for an output, which
+already knows how much of it there is. Colour's `#3366cc`, seven characters, was
+drawn in a box 200px tall and 560px wide, and hash's sixty-four-character digest
+in the same one. On the two tools whose entire result is one short string, the
+box around the result was the largest thing on the page.
+
+`.result` is its own class now and asks for `field-sizing: content`, clamped to
+a floor of one and a half controls and to the 520px cap the diff scroller
+already uses. Past that cap a result is something you copy or download rather
+than read through a window.
+
+**`rows` is the fallback and not the mechanism**, and the order matters.
+`field-sizing` measures the _wrapped_ height, which is the accurate answer; a
+`rows` count can only count newlines, so a 40 kB base64 string is one line to it
+and forty screens to the browser. Where `field-sizing` is unavailable the box
+asks for the floor and gets a scrollbar, which is the correct failure rather
+than a wrong height. Both paths are clamped by the same stylesheet, so the two
+agree about the floor and the cap. `OutputPanel.test.tsx` holds the `rows`
+arithmetic, because jsdom can see an attribute and cannot see a height;
+`checkRunnerLayout` holds the height.
+
+**An output port is named only where the name distinguishes something.** Base64
+declares its single output as "Output", under a panel heading that says
+"Output" — two labels for one value, and the same duplication on five of the
+nine tools. The input editors already followed this rule. Colour and diff
+declare two outputs each and keep their labels, because there the name is the
+only thing telling the swatch from the converted string. Nothing is lost by
+dropping the rest: the Ports footnote names every port on the page, and the
+accessible name of the output box is built from the port label whether or not it
+is drawn above it.
 
 ### Output views are chosen by the port, except for bytes
 
