@@ -22,7 +22,7 @@ import { useMediaQuery } from '@/lib/useMediaQuery';
 
 import { useAttachmentStore } from './attachmentStore';
 import styles from './canvas.module.css';
-import { CanvasNodeView, portKey } from './CanvasNodeView';
+import { CanvasNodeView, NODE_ACTION_ATTRIBUTE, portKey } from './CanvasNodeView';
 import { CommandDialog, type DialogGroup, type DialogOption } from './CommandDialog';
 import {
   checkConnection,
@@ -725,6 +725,20 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
      * showing "no node selected", which reads as the feature not working.
      */
     if (target.closest('[data-canvas-chrome]')) return;
+
+    /*
+     * A NODE'S OWN CONTROL IS NOT THE NODE.
+     *
+     * Below this line a press inside a node begins a move and captures the
+     * pointer on this root, and a captured pointer retargets its pointerup
+     * AND its click to the capture element - so the button's click would never
+     * be dispatched and the node would slide a pixel instead. Same shape as
+     * the chrome check above, different exit: the chrome is outside the graph
+     * and must not disturb the selection, whereas this control only exists on
+     * a node that is already the sole selection, so there is nothing left to
+     * select and nothing to preserve.
+     */
+    if (target.closest(`[${NODE_ACTION_ATTRIBUTE}]`)) return;
 
     const nodeElement = target.closest('[data-node-id]');
     const nodeId = nodeElement?.getAttribute('data-node-id') ?? null;
@@ -1539,6 +1553,40 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
 
     if (editing) return;
 
+    /*
+     * ENTER AND SPACE BELONG TO WHATEVER CONTROL HAS FOCUS.
+     *
+     * This region claims every single letter, and that claim was reaching
+     * controls rendered INSIDE it. Two consequences, one of them shipped:
+     *
+     *   Space was cancelled on the way to every button in the toolbar. A
+     *   button is activated by Space on keyup, and the browser only gets
+     *   there if the keydown's default action was not prevented - so "Add
+     *   tool", "Fit", "Undo", "Redo", "Share" and "Shortcuts" could all be
+     *   focused, all looked focused, and none of them could be pressed with
+     *   the key half the world presses buttons with. Enter escaped it only by
+     *   accident: its branch returns early when no NODE has focus.
+     *
+     *   And Enter would have taken the node's own Connect button away as soon
+     *   as it existed, opening the inspector instead of connecting.
+     *
+     * Only these two keys, and only for a control. An arrow key still nudges
+     * the node whose button has focus, because a button does nothing with an
+     * arrow key and a focus ring somewhere inside a node should not stop the
+     * node moving.
+     *
+     * PORTS ARE EXCLUDED BY NAME. They are <button>s with `tabIndex={-1}`,
+     * reachable only by pointer - and a click focuses them in most engines,
+     * so after a drag the focus can genuinely be sitting on one. Yielding
+     * Enter to a port would mean Enter did nothing at all there, where today
+     * it opens the inspector on the port's node.
+     */
+    const control =
+      target instanceof HTMLElement
+        ? target.closest('button:not([data-port-id]), a[href], [role="menuitem"], select, summary')
+        : null;
+    if (control !== null && (event.key === 'Enter' || event.key === ' ')) return;
+
     const state = store.getState();
     const focused = focusedNodeId();
     const targets = focused ? [focused] : state.selection.nodes;
@@ -2343,6 +2391,15 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
                 }
                 connectedPorts={connectedPorts.get(id) ?? emptySet}
                 onPortPointerDown={onPortPointerDown}
+                soleSelected={selection.nodes.length === 1 && selectedNodes.has(id)}
+                /*
+                 * The identical callback the `C` branch of `onKeyDown` calls.
+                 * Passing the function rather than reimplementing the two
+                 * steps is the whole of "one flow, two entrances", and it is
+                 * asserted: a test drives both routes and compares the wire
+                 * each produces.
+                 */
+                onConnect={beginConnectFrom}
               />
             );
           })}

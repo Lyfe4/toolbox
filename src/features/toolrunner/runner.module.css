@@ -234,6 +234,34 @@
 }
 
 /*
+ * THE WASH CANNOT KEEP THE PANEL'S MUTED INK.
+ *
+ * `--pb-accent-subtle` under `--pb-ink-muted` is 3.32:1 in graphite and 3.80:1
+ * in vellum - below AA, on the shipped default, for as long as a file is held
+ * over the zone. It was invisible to every gate: jsdom's axe pass cannot
+ * compute a colour, the real-engine axe pass cannot hold a drag open, and
+ * `CONTRAST_PAIRS` did not list the pairing, so nothing was looking.
+ *
+ * Secondary ink clears it in all four presets, and stepping the ink up with
+ * the surface is what jwt.module.css already does on the signal washes for the
+ * identical reason - a coloured surface is not the panel, so it does not
+ * inherit the panel's ink. The badge's hairline outline follows its text for
+ * the same reason it does there: on this wash a hairline is not a boundary.
+ *
+ * The pair that IS now listed is `--pb-ink-secondary` on
+ * `--pb-accent-subtle`, so a custom theme is held to the relationship that
+ * actually exists rather than to one this rule has removed.
+ */
+.dropZoneActive .hint,
+.dropZoneActive .fileBadge {
+  color: var(--pb-ink-secondary);
+}
+
+.dropZoneActive .fileBadge {
+  border-color: currentcolor;
+}
+
+/*
  * The real <input type="file"> is hidden but still focusable and still the
  * control being operated - the styled <label> is its label, so clicking the
  * label and pressing Enter on the focused input do exactly the same thing.

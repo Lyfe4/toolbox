@@ -47,7 +47,12 @@ export const SHORTCUTS: readonly Shortcut[] = [
     action: "Show or hide the inspector - a node's input, options and output",
     group: 'Building',
   },
-  { keys: ['C'], action: 'Connect from the focused node, without dragging', group: 'Building' },
+  {
+    keys: ['C'],
+    action:
+      'Connect from the focused node, without dragging - the same flow the node’s Connect button opens',
+    group: 'Building',
+  },
   { keys: ['Escape'], action: 'Cancel the current dialog, drag or connection', group: 'Building' },
   { keys: ['?'], action: 'Show this list', group: 'Building' },
   /*
@@ -76,7 +81,8 @@ export function shortcutRowKey(shortcut: Shortcut): string {
 
 /** One-line summary used as the canvas's accessible description. */
 export const CANVAS_DESCRIPTION =
-  'Node canvas. Press K to add a tool, Tab to move between nodes, C to connect from the focused node, ' +
+  'Node canvas. Press K to add a tool, Tab to move between nodes, C to connect from the focused node - ' +
+  'a selected node also carries a Connect button, which opens the same flow - ' +
   'Enter or I to open the inspector where a node’s input, options and output live, ' +
   'arrow keys to move it, Delete to remove it, and question mark for the full list of shortcuts. ' +
   'Every action here is also available on the Tools page.';

@@ -92,7 +92,7 @@ the same question.
 ## Contrast is measured once, by one implementation
 
 `themes.contrast.test.ts` holds the four presets to WCAG AA by resolving the
-real CSS and measuring 33 pairs. A theme the user builds cannot be held to
+real CSS and measuring 38 pairs. A theme the user builds cannot be held to
 anything by a test, because it does not exist when the test runs — so the
 editor measures it live, continuously, as tokens change.
 
@@ -103,6 +103,20 @@ live in [`features/theme/contrast.ts`](../src/features/theme/contrast.ts), and
 the test imports them. `contrast.test.ts` closes the loop directly: each preset
 loaded into the editor as a custom theme must produce the same ratios,
 pair for pair, that the preset test asserts.
+
+**The list is audited, not assembled once.** It was written early, and
+pairings have been added to the design system since without anything noticing:
+`--pb-signal-on-surface` was introduced precisely because muted ink on the warn
+wash failed AA in graphite, and then nothing measured the token against any of
+the three washes it exists for. The same audit found a live failure —
+`--pb-ink-muted` on `--pb-accent-subtle` is 3.32:1 in graphite and 3.80:1 in
+vellum, which is what the tool page's drop zone read as while a file was held
+over it. The fix was in the component, not the theme: a coloured wash does not
+inherit the panel's ink, exactly as the JWT verdict blocks already establish.
+The header of [`contrast.ts`](../src/features/theme/contrast.ts) records what
+the audit looked at and deliberately left out, and why each one is a decision
+rather than an oversight — a disabled control has no contrast requirement at
+all, and a wash that only reinforces a rule is not what carries the boundary.
 
 Two smaller decisions inside it:
 
@@ -126,7 +140,7 @@ cannot be measured. See the header of
 Saving a failing theme is allowed. It is the user's project and the user's
 choice. Applying one raises a warning toast naming the number of pairs below
 the minimum, and the editor's summary line carries a signal colour, a rule down
-its leading edge and the words "5 of 33 pairs fail WCAG AA" — so the state is
+its leading edge and the words "5 of 38 pairs fail WCAG AA" — so the state is
 carried by three things, none of which is colour alone.
 
 ## The editor is painted by the theme it edits

@@ -712,8 +712,126 @@ connection count, status, result summary and selection, and the tab order is
 the DOM order, computed spatially. The
 [inspector](#the-node-inspector) is a landmark outside that region, so a text
 field in it never has to compete with the canvas for a keystroke. See the
-[keyboard map](../README.md#the-canvas) in the README and
-[the connect flow](#) below.
+[keyboard map](../README.md#accessibility) and
+[the connect flow](../README.md#connecting-two-tools-without-a-pointer) in the
+README; the flow has two entrances - `C` on a focused node, and the node's own
+Connect button - and they are the same flow, not two.
+
+### One flow, two entrances
+
+The connect flow had a pointer route — drag a port — and a keyboard route,
+`C` on a focused node. `C` is also the **documented way to read a port label
+the node has truncated**, because a node is 224px wide, a port label is capped
+at 84px of it, and the chooser lists every port by its full name. The port
+tooltip is deliberately not that fallback: it opens on hover and on focus, and
+[`PortButton`](../src/features/canvas/PortButton.tsx) explains why it does not
+open on tap — a port's primary gesture is dragging a wire out of it, and a card
+appearing under the finger that starts the drag is in the way.
+
+Which left the fallback unreachable on the device where labels truncate most.
+Nothing was blocked: a finger can drag a wire, fiddly but workable, and pinch
+makes it easy. The escape hatch was simply fiction.
+
+A node that is the sole selection now draws a **`Connect` button**, and it is
+handed `beginConnectFrom` — the identical function the `C` branch of the key
+handler calls. Not a second implementation of "which port, then which
+partner": `nodeActions.test.tsx` walks both entrances over one graph and
+compares the wire each produces, for the reason
+[`firstRefusedEdge`](#checkconnection-now-guards-the-two-routes-from-outside-this-session)
+exists — two routes to one graph that agree today are two routes that disagree
+later.
+
+**Below the node, not in it.** Every shared control grows to 44px on a coarse
+pointer, and a node has no band that can absorb that: the header is 24px, the
+footer is 24px, and both are numbers `nodeHeight` adds up in `geometry.ts` to
+place the wire anchors. A finger-sized button in either would repeat the Panel
+title-bar defect the mobile audit already found — a button drawing through its
+own container's border — and move every wire landing on the node besides. It is
+absolutely positioned outside the node's box, so it is not in the node's layout
+at all and its height is nobody else's business.
+
+The cost of that is honest and small: the canvas root clips, so a node whose
+bottom edge is off screen has its button off screen too. That is the same
+condition under which the node's own footer is already unreadable, so it is not
+a new class of unreachable — if you can see the whole node you can see its
+button, and `checkTouch` measures exactly that after a Fit.
+
+**Only when it is the sole selection.** Not `selected`: three selected nodes
+would draw three buttons each offering to connect "from" one node while Delete
+and the arrow keys acted on all three. And not _always_, because 224px of node
+is not somewhere to put permanent chrome — scoping it to the selection is what
+paid for hanging it outside the box, since at most one is ever on the plane.
+Tapping a node already selects it, so this is the second tap of a two-tap
+gesture rather than a mode to discover.
+
+**At every pointer type, not only a coarse one.** `pointer: coarse` is not "no
+keyboard" — it is true of a tablet with a keyboard folded onto it and false of a
+mouse user who has never opened the shortcut list, and connecting was
+undiscoverable for the second group too. Scoping to the selection had already
+paid for the space, so a media query would only have hidden the fix from half
+the people it is for, and put a JavaScript copy of a breakpoint beside a CSS
+one — see [the note on `railFits`](#a-phone-where-a-side-panel-and-a-canvas-cannot-both-have-the-screen)
+for what that costs.
+
+**Straight into the flow, not into a menu of node actions.** A menu was the
+obvious alternative, because it would have closed three gaps rather than one:
+Delete and Duplicate are still keyboard-only. It was rejected on the geometry.
+A popup anchored to a node lives inside the pan-and-zoom plane, so it scales
+with the plane, and the root clips it — and the toolbar's own overflow menu
+carries a written note about being anchored to the _bar_ rather than to its
+trigger precisely because a panel hung off a small control escaped the viewport
+on both sides. A node is smaller than that trigger and can be anywhere. Delete
+and Duplicate need a home that is not inside a transformed plane, and picking
+one is a separate decision from making the connect flow reachable.
+
+**Called `Connect`, with a word and not only a glyph.** An unlabelled icon
+carrying information is the one thing the rules here refuse outright — it is why
+a paperclip badge was rejected for the file summary on a node. The accessible
+name is `Connect from <tool>`, because "Connect" read out of a list of controls
+does not say connect _what_; the visible text stays `Connect`, which is what
+keeps 2.5.3 Label in Name satisfied.
+
+**Two things had to be fixed for the tap to work at all**, and neither was
+visible to jsdom:
+
+- A pointerdown inside a node begins a move and **captures the pointer on the
+  canvas root**, and a captured pointer retargets its own `pointerup` and its
+  `click` to the capture element — so the button's click would never have been
+  dispatched. The root already had this escape hatch for the toolbar
+  (`data-canvas-chrome`); the node's own control has its own
+  (`data-node-action`), because the two want different things afterwards: a
+  press on the toolbar must not disturb the selection, while this control only
+  exists on a node that is already the sole selection.
+- `pointerdown` on a chooser row was cancelled unconditionally, to keep focus
+  in the search field. **WebKit routes a cancelled `pointerdown` down the same
+  path as a cancelled `touchstart` and suppresses the synthesised click**, so
+  every tap on a tool in the palette or a port in the connect flow did nothing
+  at all. It survived because the harness pressed those rows with
+  `locator.click()`, which is a mouse even in a context built with `hasTouch`;
+  `checkTouch` now taps one with the real touchscreen, where the engine decides
+  whether a click follows.
+
+And one that was not about the tap at all. The canvas is a
+`role="application"` region, so it claims every single letter — and that claim
+reached controls rendered inside it. `Enter` would have taken the Connect
+button away and opened the inspector instead, and `Space` had **already** been
+cancelling on the way to every button in the toolbar: a `<button>` is activated
+by `Space` on keyup only if the keydown's default action survived, so "Add
+tool", "Fit", "Undo", "Redo", "Share" and "Shortcuts" could each be focused and
+none could be pressed with it. Those two keys now belong to whatever control
+has focus. Only those two: an arrow key still nudges the node whose button has
+focus, because a button does nothing with an arrow key. Ports are excluded by
+name — they are `<button>`s with `tabIndex={-1}` that a click still focuses,
+and yielding `Enter` to one would mean `Enter` did nothing there.
+
+**What a touch user still cannot reach.** The keyboard map covers undo, redo,
+fit, the palette, delete, duplicate, select-all and the reference overlay.
+Undo, redo, fit, the palette and the overlay all have visible controls.
+**Delete, Duplicate and Select-all do not** — on a phone you can add nodes to a
+canvas and never remove one. That is a larger hole than the connect flow was,
+and it is deliberately not fixed here: Delete needs somewhere to live that is
+not a popup inside a transformed plane, and a destructive control needs its
+undo to be more visible than the third item of an overflow menu.
 
 ### Announcements are a log, not a variable
 

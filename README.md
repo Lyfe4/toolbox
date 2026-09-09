@@ -184,6 +184,14 @@ hides the inspector, `Enter` opens it on the focused node and moves into it,
 `Escape` steps back out to the node, arrows move the selection by 8px,
 `Ctrl/Cmd+Z` undoes, `F` fits, `0` resets zoom.
 
+`Enter` and `Space` are the two keys the canvas does **not** claim when a
+control inside it has focus. It is a `role="application"` region, so every
+single letter reaches its own handler — and that claim was cancelling `Space`
+on the way to every button in the toolbar, since a `<button>` is activated by
+`Space` on keyup only if the keydown's default action survived. Every other
+key still belongs to the canvas: an arrow key nudges the node whose button has
+focus, because a button does nothing with an arrow key.
+
 The rail's divider is a **focusable separator** with arrow keys that resize by
 one grid step and Home/End for the extremes — a handle only a pointer can move
 is a preference only a pointer user has. It draws a one-pixel rule and is
@@ -211,6 +219,26 @@ This is the least common thing here, so it is worth spelling out.
    being offered and then refused.
 5. **Enter.** Focus returns to the canvas and the live region says what
    happened.
+
+**And a selected node carries a `Connect` button, which opens the same flow at
+step 2.** It exists because step 2 was a keystroke, and a phone has no
+keystrokes: dragging a wire from a port works with a finger, so nothing was
+blocked, but this flow is also **the documented way to read a port label the
+node has had to truncate** — and 224px of node truncates labels most on exactly
+the device that had no way in. The button is handed the same function `C` is
+bound to, so the two are one flow with two entrances rather than two routes
+that agree until one of them changes; a test drives both and compares the wire
+each produces.
+
+It appears **only on the node that is the only thing selected**, and at every
+pointer type. Only-when-selected is what pays for it: a node is 224px wide and
+permanent chrome on every one of them is a cost everybody carries forever,
+where this is at most one control on the plane. Every pointer type rather than
+coarse-only because `pointer: coarse` is not "no keyboard" — it is true of a
+tablet with a keyboard folded onto it and false of a mouse user who has never
+opened the shortcut list, and connecting was undiscoverable for the second
+group too. The reasoning, and what was rejected, is in
+[architecture.md](docs/architecture.md#one-flow-two-entrances).
 
 Each node is a focusable `role="group"` whose accessible name states its tool,
 position, connection count, status, what it produced and selection: _"Base64,
@@ -244,16 +272,16 @@ do — in `pnpm check:browsers`. All four themes are held to WCAG AA by a test
 that resolves the real CSS and measures each pair.
 
 A theme somebody builds themselves cannot be held to that by a test, because it
-does not exist when the test runs — so the theme editor measures the same 33
+does not exist when the test runs — so the theme editor measures the same 38
 pairs live, with the same code the test uses, and says which pair is failing
 against which. Saving a failing theme is allowed; it is the user's choice. The
-state is carried by a signal colour, a rule and the words "5 of 33 pairs fail
+state is carried by a signal colour, a rule and the words "5 of 38 pairs fail
 WCAG AA", so it does not depend on being able to see the colour it is warning
 about.
 
 ## Testing
 
-2,506 tests across 97 files. The count is not the interesting part; what the
+2,563 tests across 99 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Conformance, measured against the specifications

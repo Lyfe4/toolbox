@@ -272,6 +272,137 @@ describe('gestures that do not end tidily', () => {
   });
 });
 
+/* ========================================================================== *
+ * Reaching the connect flow with a finger
+ * ========================================================================== */
+
+describe('a node’s own Connect button', () => {
+  /**
+   * The button exists because `C` did not, on a phone.
+   *
+   * WHAT THIS CAN CHECK. A press on it must not be read as a press on the
+   * node: below that branch the root begins a move and captures the pointer,
+   * and a captured pointer retargets its own pointerup AND its click to the
+   * capture element - so in a real engine the button's click would never be
+   * dispatched. jsdom implements neither capture retargeting nor layout, so
+   * what is observable here is the MOVE not starting; the retargeting itself
+   * is asserted against Firefox and WebKit in `checkTouch`.
+   */
+  it('does not start a node move when a finger lands on it', async () => {
+    renderCanvas();
+    act(() => {
+      useCanvasStore.getState().select({ nodes: ['a'], edges: [] });
+    });
+
+    const button = await screen.findByRole('button', { name: 'Connect from Base64' });
+    const before = useCanvasStore.getState().graph.nodes.a?.position;
+
+    pointer('pointerdown', 140, 260, { target: button });
+    /*
+     * Checked WHILE THE FINGER IS DOWN. `endMove` clears `pendingMove` and
+     * pushes nothing when the position has not changed, so a drag that began
+     * and was tidied up on lift is indistinguishable afterwards from one that
+     * never began - and a drag that began is a drag that took the press.
+     */
+    expect(useCanvasStore.getState().pendingMove).toBeNull();
+    pointer('pointerup', 140, 260, { target: button });
+
+    expect(useCanvasStore.getState().pendingMove).toBeNull();
+    expect(useCanvasStore.getState().graph.nodes.a?.position).toEqual(before);
+    // And the canvas did not pan out from under the finger either.
+    expect(viewport()).toEqual(DEFAULT_VIEWPORT);
+  });
+
+  it('opens the chooser on a tap', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    act(() => {
+      useCanvasStore.getState().select({ nodes: ['a'], edges: [] });
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Connect from Base64' }));
+    await screen.findByRole('dialog', { name: /Connect from which port/ });
+  });
+});
+
+describe('tapping a row in a chooser', () => {
+  /**
+   * THE ONE THAT WOULD HAVE MADE THE WHOLE ROUTE POINTLESS.
+   *
+   * A dialog row commits through a delegated `click`, and `pointerdown` on it
+   * used to be cancelled unconditionally to keep focus in the search field.
+   * WebKit routes a cancelled `pointerdown` through the same path as a
+   * cancelled `touchstart` and suppresses the synthesised click - so every tap
+   * on a tool in the palette, or a port in the connect flow, would have done
+   * nothing at all.
+   *
+   * It survived because the harness pressed these rows with `locator.click()`,
+   * which is a mouse even in a context built with `hasTouch`. Asserted here as
+   * the property rather than the outcome, because "was the default action
+   * left alone" is exactly what decides whether the click arrives, and jsdom
+   * has no synthesised-click behaviour of its own to observe.
+   */
+  async function openPalette(): Promise<HTMLElement> {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(screen.getByRole('button', { name: /Add tool/ }));
+    await screen.findByRole('dialog', { name: 'Add a tool' });
+    return screen.getByTestId('dialog-option-base64');
+  }
+
+  /** Dispatches one pointerdown and reports whether it was cancelled. */
+  function pressedAndCancelled(target: EventTarget, pointerType: string): boolean {
+    const event = new PointerEvent('pointerdown', {
+      pointerId: 7,
+      pointerType,
+      isPrimary: true,
+      clientX: 10,
+      clientY: 10,
+      button: 0,
+      buttons: 1,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      target.dispatchEvent(event);
+    });
+    return event.defaultPrevented;
+  }
+
+  it('leaves a finger’s press alone, so the click that commits it survives', async () => {
+    const row = await openPalette();
+    expect(pressedAndCancelled(row, 'touch')).toBe(false);
+  });
+
+  /*
+   * The other half, and the reason the cancel is there at all: with a mouse
+   * the press must not move focus out of the combobox, because focus staying
+   * in the input is the whole pattern. An UNKNOWN pointerType takes this
+   * branch too - Playwright's Firefox reports an empty string for synthesised
+   * mouse input, and the consequences are not symmetrical: cancelling for a
+   * finger loses the tap, while not cancelling for a mouse only lets focus
+   * leave the field.
+   */
+  it('still cancels a mouse press, and anything it cannot identify', async () => {
+    const row = await openPalette();
+    expect(pressedAndCancelled(row, 'mouse')).toBe(true);
+    expect(pressedAndCancelled(row, '')).toBe(true);
+  });
+
+  it('adds the tool when a real tap runs through to the click', async () => {
+    const row = await openPalette();
+    expect(pressedAndCancelled(row, 'touch')).toBe(false);
+
+    act(() => {
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+
+    await waitFor(() => {
+      expect(useCanvasStore.getState().graph.nodeOrder).toHaveLength(2);
+    });
+  });
+});
+
 describe('while a dialog is open', () => {
   it('does not pan on a one-finger drag', async () => {
     const user = userEvent.setup();

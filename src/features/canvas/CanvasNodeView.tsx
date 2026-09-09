@@ -1,5 +1,6 @@
 import { memo } from 'react';
 
+import { Button } from '@/components/Button';
 import { PortIcon, SignalIcon, SlidersIcon } from '@/components/Icon';
 import type { NodeRunState, NodeRunStatus } from '@/features/execution/graph';
 import { getManifestEntry, type ToolCategory, type ToolManifestEntry } from '@/features/registry';
@@ -22,12 +23,26 @@ import { PortButton } from './PortButton';
 import { PORT_GLYPH_SIZE } from './PortGlyph';
 import { summariseOutputs } from './resultSummary';
 
-import type { CanvasNode, PortRef } from './types';
+import type { CanvasNode, NodeId, PortRef } from './types';
 
 /** How a port is keyed in the state sets below: "input:document". */
 export function portKey(side: PortSide, portId: string): string {
   return `${side}:${portId}`;
 }
+
+/**
+ * The attribute the canvas root's pointer handler looks for.
+ *
+ * A pointerdown anywhere inside a node starts a MOVE and captures the pointer
+ * on the canvas root, and a captured pointer retargets its own pointerup and
+ * its click to the capture element - so a button drawn inside a node is a
+ * button whose click never arrives. The root already has this exact escape
+ * hatch for the toolbar (`data-canvas-chrome`); this is the node's, and it is
+ * a separate one because the two want different things afterwards: a press on
+ * the toolbar must not touch the selection, and a press on a node's own
+ * control is a press on an already-selected node.
+ */
+export const NODE_ACTION_ATTRIBUTE = 'data-node-action';
 
 /** Inputs first, then outputs: the order the two stacks appear down the node. */
 const PORT_SIDES: readonly PortSide[] = ['input', 'output'];
@@ -119,6 +134,23 @@ export interface CanvasNodeViewProps {
   readonly refusedPort: string | null;
   readonly connectedPorts: ReadonlySet<string>;
   readonly onPortPointerDown: (ref: PortRef, side: PortSide) => void;
+  /**
+   * Whether this node is the ONLY thing selected.
+   *
+   * Not `selected`, and the difference is what keeps the control honest. With
+   * three nodes selected, three nodes would each draw a button whose menu of
+   * one acts on all three - so the affordance appears exactly when there is
+   * one node for it to be about.
+   */
+  readonly soleSelected: boolean;
+  /**
+   * Opens the connect flow on this node.
+   *
+   * The SAME callback `C` is bound to, passed straight through. The tap and
+   * the keystroke are one route with two entrances rather than two routes that
+   * happen to agree today - see the note on the button below.
+   */
+  readonly onConnect: (nodeId: NodeId) => void;
 }
 
 /**
@@ -142,6 +174,8 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   refusedPort,
   connectedPorts,
   onPortPointerDown,
+  soleSelected,
+  onConnect,
 }: CanvasNodeViewProps) {
   const entry: ToolManifestEntry = getManifestEntry(node.toolId);
   const Glyph = CATEGORY_GLYPHS[entry.category] ?? SignalIcon;
@@ -368,6 +402,70 @@ export const CanvasNodeView = memo(function CanvasNodeView({
         <span>{STATUS_LABEL[run.status]}</span>
         <span>{counted(connections, 'wire')}</span>
       </div>
+
+      {/*
+        THE ONE THING ON A NODE A FINGER CAN PRESS.
+        ───────────────────────────────────────────
+        Wiring two tools together had a pointer route (drag a port) and a
+        keyboard route (`C`), and `C` was also the documented way to read a
+        port label the node had truncated. A phone has no `C`, so on the one
+        device where labels truncate most the documented fallback did not
+        exist. Dragging works on touch, so nothing was blocked - the escape
+        hatch was simply fiction.
+
+        IT CALLS `onConnect`, WHICH IS `beginConnectFrom`, WHICH IS WHAT `C`
+        CALLS. One flow, two entrances. Anything else would be a second
+        implementation of "which port, then which partner", and this
+        repository has a written history of two routes to one graph drifting
+        apart - see `firstRefusedEdge` in connections.ts.
+
+        WHY IT IS OUTSIDE THE NODE'S BOX. Every shared control grows to 44px on
+        a coarse pointer (WCAG 2.5.5), and the mobile audit already found what
+        that does inside a 24px bar: Panel's title bar overflowed and drew
+        through its own border. The header here is that same 24px, the footer
+        another, and `nodeHeight` is arithmetic in geometry.ts that the wire
+        anchors share - so growing any band of a node moves every wire that
+        lands on it. Hung below the node on `position: absolute`, the button
+        can be as big as a finger needs without being in the node's layout at
+        all.
+
+        WHY ONLY WHEN SOLE-SELECTED, rather than always. A node is 224px and
+        permanent chrome on every one of them is a cost paid forever by
+        everybody; scoped to the selection it is at most one control on the
+        plane, which is also what makes hanging it outside the box safe to do.
+        Tapping a node already selects it, so this is the second tap of a
+        two-tap gesture rather than a mode to discover.
+
+        WHY NOT ONLY ON A COARSE POINTER, which was the other obvious scope.
+        `pointer: coarse` is not "no keyboard" - it is true of a tablet with a
+        keyboard attached and false of a mouse user who has never read the
+        shortcut list, and connecting was undiscoverable for the second group
+        too. Scoping it to the selection had already paid for the space; a
+        media query would only have hidden the fix from half the people it is
+        for, and put a JavaScript copy of a breakpoint next to a CSS one, which
+        this file's neighbour has a bug written up about.
+
+        WHY A WORD AND NOT JUST THE GLYPH. An unlabelled icon carrying
+        information is the one thing the rules here refuse outright - it is why
+        a paperclip badge was rejected for the file summary above. The
+        accessible name names the tool as well, because "Connect" read out of
+        context does not say connect WHAT.
+      */}
+      {soleSelected ? (
+        <div className={styles.nodeActions} {...{ [NODE_ACTION_ATTRIBUTE]: '' }}>
+          <Button
+            size="sm"
+            variant="ghost"
+            className={styles.nodeAction}
+            aria-label={`Connect from ${entry.name}`}
+            onClick={() => {
+              onConnect(node.id);
+            }}
+          >
+            <PortIcon size={12} /> Connect
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 });

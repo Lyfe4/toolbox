@@ -387,7 +387,7 @@ describe('contrast', () => {
     renderEditor();
     await createTheme(user);
 
-    expect(screen.getByText('All 33 pairs meet WCAG AA.')).toBeInTheDocument();
+    expect(screen.getByText('All 38 pairs meet WCAG AA.')).toBeInTheDocument();
   });
 
   it('names what fails and what it fails against', async () => {
@@ -407,7 +407,7 @@ describe('contrast', () => {
     // The verdict, the two tokens, the measured ratio and the bar it missed.
     expect(within(row).getByText('Fail.')).toBeInTheDocument();
     expect(row.textContent).toMatch(/1\.\d\d:1, needs 4\.5:1/);
-    expect(screen.getByText(/of 33 pairs fail WCAG AA/)).toBeInTheDocument();
+    expect(screen.getByText(/of 38 pairs fail WCAG AA/)).toBeInTheDocument();
   });
 
   it('announces the state once the user has stopped, not on every change', async () => {
@@ -445,7 +445,7 @@ describe('contrast', () => {
 
     await user.clear(tokenInput('ink-primary'));
     await user.type(tokenInput('ink-primary'), '#0c0d12');
-    await screen.findByText(/of 33 pairs fail WCAG AA/);
+    await screen.findByText(/of 38 pairs fail WCAG AA/);
 
     await user.click(screen.getByRole('button', { name: 'Save theme' }));
 
@@ -631,7 +631,7 @@ describe('accessibility', () => {
 
     await user.clear(tokenInput('ink-primary'));
     await user.type(tokenInput('ink-primary'), '#0c0d12');
-    await screen.findByText(/of 33 pairs fail WCAG AA/);
+    await screen.findByText(/of 38 pairs fail WCAG AA/);
 
     /*
      * The colour-contrast rule is off under jsdom in every axe run here -

@@ -263,6 +263,26 @@ export function CommandDialog({
    * `pointerdown` is cancelled so the press never moves focus out of the
    * input: this is a combobox, and focus staying put is the whole pattern.
    *
+   * NOT FOR A FINGER, THOUGH, and that is not a refinement - it is the
+   * difference between this dialog working on a phone and doing nothing at
+   * all. WebKit routes a cancelled `pointerdown` through the same path as a
+   * cancelled `touchstart` and suppresses the synthesised `click`, so the
+   * delegated `onClick` below - the only thing that commits a row - never
+   * fires. Every tap on a tool in the palette or a port in the connect flow
+   * would be swallowed silently.
+   *
+   * It went unseen because the harness pressed these rows with
+   * `locator.click()`, which is a mouse even in a context built with
+   * `hasTouch`. `checkTouch` now taps one with real touch pointer events.
+   *
+   * An UNKNOWN pointerType takes the mouse branch, the same way
+   * `isDirectPointer` in Canvas.tsx does and for the same reason written up
+   * there: Playwright's Firefox reports an empty string for synthesised mouse
+   * input. The consequences are not symmetrical either - cancelling for a
+   * mouse that turns out to be a finger loses the tap, while not cancelling
+   * for a finger that turns out to be a mouse only lets focus leave the search
+   * field, and the row still commits.
+   *
    * The hover uses pointermove, not pointerenter. Enter also fires when the
    * list scrolls under a stationary cursor, which would yank the highlight
    * away from someone using the keyboard. Move only fires when the pointer
@@ -278,6 +298,7 @@ export function CommandDialog({
     };
 
     const onPointerDown = (event: PointerEvent): void => {
+      if (event.pointerType === 'touch') return;
       if (optionIdFrom(event.target) !== null) event.preventDefault();
     };
 

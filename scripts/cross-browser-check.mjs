@@ -1876,10 +1876,19 @@ async function checkThemeEditor(browser, label) {
       .getByText(/pairs? fail WCAG AA/)
       .first()
       .textContent();
+    /*
+     * The TOTAL is not asserted here, and the 33 that used to be written into
+     * this pattern is why: the list in `contrast.ts` grew by five pairs and
+     * this line then failed in both engines over a change that had nothing to
+     * do with what it is checking. The count is held to the real list by
+     * `editor.test.tsx`, which can import it. What this check is for is that
+     * the number the ENGINE renders is a real measurement of the colours the
+     * engine is painting - which is the next assertion's other half.
+     */
     check(
       label,
       'the contrast readout reports a theme the user has just broken',
-      /\d+ of 33 pairs fail WCAG AA/.test(summary ?? ''),
+      /\d+ of \d+ pairs fail WCAG AA/.test(summary ?? ''),
       summary ?? 'absent',
     );
 
@@ -3049,8 +3058,52 @@ async function checkTouch(engine, label) {
       `${duringDialog} -> ${await plane()}`,
     );
 
-    await page.getByTestId('dialog-option-base64').click();
-    await page.waitForTimeout(300);
+    /* -- Tapping a row in a chooser -------------------------------------- */
+
+    /*
+     * THE TAP THAT NOTHING WAS TESTING.
+     *
+     * A dialog row commits through a delegated `click`, and `pointerdown` on
+     * it was cancelled unconditionally to keep focus in the search field.
+     * WebKit routes a cancelled `pointerdown` down the same path as a
+     * cancelled `touchstart` and suppresses the synthesised click - so every
+     * tap on a tool in the palette, or on a port in the connect flow, would do
+     * nothing at all. The whole of the touch route into connecting depends on
+     * this one behaviour.
+     *
+     * `page.touchscreen.tap` rather than a dispatched PointerEvent, and
+     * deliberately so: a synthesised `click` would bypass the engine's own
+     * click suppression, which is the exact thing under test. This is the one
+     * place in this function where the ENGINE has to decide whether a click
+     * follows the press.
+     */
+    const tapCentre = async (locator) => {
+      /*
+       * Scrolled into view FIRST. A tap goes to a viewport coordinate, and the
+       * option list is its own scroll container - so a row below the fold has
+       * a bounding box outside the visible area and the tap lands on whatever
+       * is really there. Observed as the palette staying open and every later
+       * check failing on a scrim intercepting its clicks.
+       */
+      await locator.scrollIntoViewIfNeeded().catch(() => {});
+      const box = await locator.boundingBox();
+      if (!box) return false;
+      await page.touchscreen.tap(
+        Math.round(box.x + box.width / 2),
+        Math.round(box.y + box.height / 2),
+      );
+      return true;
+    };
+
+    const tapped = await tapCentre(page.getByTestId('dialog-option-base64'));
+    await page.waitForTimeout(400);
+
+    check(
+      label,
+      'a finger can tap a row in the tool palette',
+      tapped && (await page.locator('[data-node-id]').count()) === 1,
+      `tapped=${String(tapped)}, nodes=${String(await page.locator('[data-node-id]').count())}`,
+    );
 
     /* -- Fit, on the bar rather than behind the overflow menu ------------- */
 
@@ -3183,6 +3236,169 @@ async function checkTouch(engine, label) {
     });
     // Below 16px, iOS Safari zooms the viewport on focus and never zooms back.
     check(label, 'an inspector field will not make iOS zoom in', field >= 16, `${String(field)}px`);
+
+    /*
+     * LAST IN THIS FUNCTION, AND THAT IS DELIBERATE.
+     *
+     * It is the only block here that leaves the graph changed - a second node
+     * and a wire - and the first version of it sat in the middle, where the
+     * inspector-field check above then found a node whose only input was
+     * occupied and reported 0px. A new check that quietly rearranges the
+     * fixture for the checks after it is worse than no check.
+     *
+     * The inspector is closed first: at 390px it is a sheet across the bottom
+     * of the workspace, which is exactly where a node sits after a Fit.
+     */
+    await setInspector(page, false);
+    /* -- Wiring two tools together with nothing but a finger ------------- */
+
+    /*
+     * THE ROUTE THIS SECTION EXISTS FOR.
+     *
+     * The connect dialog is reached by pressing `C` on a focused node, and `C`
+     * was also the documented way to read a port label the node had truncated.
+     * A phone has no `C`. Dragging a wire from a port does work with a finger,
+     * so nothing was blocked - but the documented escape hatch did not exist
+     * on the one device where labels truncate most.
+     *
+     * A selected node now carries a Connect button, and every claim about it
+     * needs a real engine:
+     *
+     *   The button is drawn OUTSIDE the node's box, below it, because it grows
+     *   to 44px on a coarse pointer and the node's header and footer are 24px
+     *   bands that `nodeHeight` adds up to place the wire anchors. Whether it
+     *   then lands inside the canvas is layout, which jsdom has none of.
+     *
+     *   A press inside a node captures the pointer on the canvas root, and a
+     *   captured pointer retargets its own pointerup AND its click to the
+     *   capture element. jsdom implements no capture retargeting, so "the
+     *   button's click actually arrives" is only answerable here.
+     *
+     *   And the press must not be read as the start of a node drag.
+     */
+    await page.getByRole('button', { name: 'Add tool' }).click();
+    await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+    await tapCentre(page.getByTestId('dialog-option-hash'));
+    await page.waitForTimeout(400);
+    await page.getByRole('button', { name: 'Fit' }).click();
+    await page.waitForTimeout(300);
+
+    /*
+     * WHICHEVER NODE IS ACTUALLY UNDER THE FINGER, and it is worth being
+     * careful here rather than assuming. `freeSpot` cascades a new node by
+     * 32px down and right, so the second node covers the first one's centre
+     * - a tap aimed at the centre of the first box lands on the second,
+     * which paints on top. The first version of this called the locator
+     * `base64Node` and then reported a chooser full of Hash's ports.
+     *
+     * So the node under test is read back FROM the button, which is the only
+     * thing that knows which node the selection landed on.
+     */
+    await tapCentre(page.locator('[data-node-id]').first());
+    await page.waitForTimeout(300);
+
+    const connect = page.getByRole('button', { name: /^Connect from/ });
+    check(
+      label,
+      'selecting a node with a finger reveals its Connect button',
+      (await connect.count()) === 1,
+      `${String(await connect.count())} buttons`,
+    );
+
+    /*
+     * Big enough for a finger AND on screen. The first half the generic scan
+     * below would catch; the second it would not - the button hangs below the
+     * node and the canvas root clips (`overflow: hidden`, load-bearing for the
+     * plane), so a node near the bottom edge would have its control cut off.
+     * Measured after Fit, which is where a graph actually sits.
+     */
+    const connectBox = await connect.boundingBox();
+    const frame = page.viewportSize();
+    check(
+      label,
+      'the node Connect button is finger-sized and inside the canvas',
+      connectBox !== null &&
+        connectBox.height >= 44 &&
+        connectBox.y >= 0 &&
+        connectBox.y + connectBox.height <= (frame?.height ?? 0) + 1,
+      connectBox
+        ? `${String(Math.round(connectBox.height))}px tall at y ${String(Math.round(connectBox.y))} in ${String(frame?.height ?? 0)}px`
+        : 'no box',
+    );
+
+    /**
+     * The accessible name of the node the Connect button belongs to.
+     *
+     * A node's name carries its position - "Base64, at 16, 408, ..." - which
+     * is how a move that should not have happened shows up. Resolved through
+     * the button rather than by index, so it is the node the press was
+     * actually about.
+     */
+    const nodeName = async () =>
+      page.evaluate(
+        () =>
+          document
+            .querySelector('[data-node-action]')
+            ?.closest('[data-node-id]')
+            ?.getAttribute('aria-label') ?? '',
+      );
+    const beforeTap = await nodeName();
+
+    await tapCentre(connect);
+    await page.waitForTimeout(400);
+
+    const chooser = page.getByRole('dialog', { name: /Connect from which port/ });
+    check(
+      label,
+      'tapping it opens the chooser rather than being eaten by the pointer capture',
+      (await chooser.count()) === 1,
+      `${String(await chooser.count())} dialogs`,
+    );
+
+    check(
+      label,
+      'tapping it does not drag the node it belongs to',
+      (await nodeName()) === beforeTap,
+      `${beforeTap} -> ${await nodeName()}`,
+    );
+
+    /*
+     * And through to a wire, by tap alone. The port rows in this dialog carry
+     * each port's FULL label, which is the truncation fallback the button was
+     * built to make reachable - so a tap has to be able to get here and read
+     * them, not merely open the box.
+     */
+    const portRows = page.locator('[role="dialog"] [role="option"]');
+    const firstPort = await portRows.first().textContent();
+    await tapCentre(portRows.first());
+    await page.waitForTimeout(400);
+
+    const partners = page.locator('[role="dialog"] [role="option"]');
+    const tappedPartner = (await partners.count()) > 0 && (await tapCentre(partners.first()));
+    await page.waitForTimeout(500);
+
+    /*
+     * COUNTED BY EDGE ID. Every path in the plane was the first version, and
+     * it is not a wire count at all: each port draws its glyph as SVG inside
+     * the plane, so it read 10 with no wires on the canvas and the check
+     * would have passed having connected nothing. `data-edge-id` is the wire
+     * layer's own hook - the one its click delegation uses - and each wire
+     * draws two paths under one id, hence the set.
+     */
+    const wires = await page.evaluate(
+      () =>
+        new Set(
+          [...document.querySelectorAll('[data-edge-id]')].map(
+            (element) => element.getAttribute('data-edge-id') ?? '',
+          ),
+        ).size,
+    );
+    check(
+      label,
+      'a finger can wire two tools together end to end',
+      tappedPartner && wires === 1,
+      `from "${(firstPort ?? '').trim().slice(0, 40)}", ${String(wires)} wire(s)`,
+    );
   } finally {
     await context.close().catch(() => {});
     // This function owns its browser: it needs Gecko prefs the shared one does
@@ -3875,6 +4091,59 @@ async function checkSoftKeyboard(engine, label) {
         sheet.activeTop >= -1 &&
         sheet.activeBottom <= sheet.height + 1,
       `sheet ${String(sheet.top)}..${String(sheet.bottom)}, field ${String(sheet.activeTop)}..${String(sheet.activeBottom)} in ${String(sheet.height)}px`,
+    );
+
+    /* -- And a dialog stays above it too --------------------------------- */
+
+    /*
+     * THE OTHER THING A KEYBOARD COVERS.
+     *
+     * Every dialog on this route focuses its search field on open, which on a
+     * phone raises the keyboard - and the scrim is `position: fixed` against
+     * the LAYOUT viewport, which a keyboard does not shrink. So the bottom of
+     * the list sat behind the keyboard, and because the list is the one
+     * scrolling region, scrolling to its end scrolled rows into the covered
+     * space. On the connect flow that is the port you were reaching for.
+     *
+     * DRIVEN BY WRITING THE PROPERTY, not by producing a keyboard. What is
+     * under test here is the WIRING - that the scrim subtracts
+     * `--keyboard-inset` and the dialog is measured against what is left. The
+     * arithmetic that produces the number is unit-tested in
+     * keyboardInset.test.ts, and no engine Playwright drives can open a real
+     * keyboard at all (see the skip at the top of this function), so pretending
+     * otherwise would be a greener check that meant less.
+     */
+    await page.setViewportSize({ width: 390, height: 780 });
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: 'Add tool' }).click();
+    await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+
+    const dialogBox = async () =>
+      page.evaluate(() => {
+        const box = document.querySelector('[role="dialog"]')?.getBoundingClientRect();
+        return box ? { top: Math.round(box.top), bottom: Math.round(box.bottom) } : null;
+      });
+
+    const unshrunk = await dialogBox();
+
+    await page.evaluate(() => {
+      document
+        .querySelector('[data-testid="canvas-workspace"]')
+        ?.style.setProperty('--keyboard-inset', '336px');
+    });
+    await page.waitForTimeout(200);
+    const shrunk = await dialogBox();
+
+    check(
+      label,
+      'a dialog is measured against the space a keyboard leaves, not the layout viewport',
+      unshrunk !== null &&
+        shrunk !== null &&
+        shrunk.bottom <= 780 - 336 + 1 &&
+        shrunk.bottom < unshrunk.bottom,
+      unshrunk && shrunk
+        ? `${String(unshrunk.bottom)}px -> ${String(shrunk.bottom)}px, keyboard starts at 444px`
+        : 'no dialog',
     );
 
     /* -- A tool page needs none of this ---------------------------------- */

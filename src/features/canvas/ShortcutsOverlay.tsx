@@ -150,6 +150,25 @@ export function ShortcutsOverlay({ onClose }: ShortcutsOverlayProps) {
               then outputs. Drag from either end.
             </p>
 
+            {/*
+              THE THREE WAYS IN, SAID ONCE.
+
+              The table above can only list a key, and two of the three routes
+              have no key: dragging a port, and the Connect button a selected
+              node carries. That button exists because `C` is also the
+              documented way to read a port label the node has truncated, and a
+              phone has no `C` - so on the device where labels truncate most
+              the fallback was unreachable. All three end in the same chooser,
+              which is where a full port label can be read.
+            */}
+            <p className={styles.legendFlow}>
+              To connect: <strong>drag</strong> from a port, press{' '}
+              <kbd className={styles.kbd}>C</kbd> on a focused node, or select a node and press its{' '}
+              <strong>Connect</strong> button. All three open the same chooser, which lists every
+              port by its <strong>full name</strong> &mdash; which is how to read a label the node
+              has had to cut short.
+            </p>
+
             <ul className={styles.legendList}>
               <li className={styles.legendItem}>
                 <PortGlyph types={['text']} connected={false} className={styles.legendGlyph} />

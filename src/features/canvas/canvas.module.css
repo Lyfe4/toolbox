@@ -346,6 +346,64 @@
   color: var(--pb-ink-muted);
 }
 
+/*
+ * THE NODE'S OWN CONTROL, HUNG BELOW THE NODE RATHER THAN INSIDE IT.
+ *
+ * Every shared control grows to 44px on a coarse pointer, and the node has no
+ * band that can absorb that: the header is 24px, the footer is 24px, and both
+ * are numbers `nodeHeight` adds up in geometry.ts to place the wire anchors.
+ * Putting a finger-sized button in either would repeat the Panel title-bar
+ * defect (a button drawing through its own container's border) and move every
+ * wire that lands on the node besides.
+ *
+ * Absolutely positioned, so it is not in the node's flex column at all: the
+ * button may be any height it likes and the node's geometry does not know it
+ * exists. `100%` is the PADDING box, which is one border short of the node's
+ * bottom edge - so the calc is what puts a real gap there rather than the
+ * button's top border landing on the node's own and reading as a smudge.
+ *
+ * WHAT THIS ACCEPTS. A node whose bottom edge is off the canvas has its button
+ * off the canvas too, because the root clips (`overflow: hidden`, load-bearing
+ * for the plane). That is the same condition under which the node's own footer
+ * is already unreadable, so it is not a new class of unreachable - if you can
+ * see the whole node you can see its button - and the fix for both is the pan
+ * or the Fit the toolbar already offers.
+ *
+ * NOT z-indexed. `.nodeSelected` already raises the whole node, and this only
+ * ever exists on the sole-selected node, so it rides on that - one place
+ * deciding the stacking rather than two that can disagree.
+ */
+.nodeActions {
+  position: absolute;
+  inset-block-start: calc(100% + var(--pb-space-xs));
+  inset-inline-end: 0;
+  display: flex;
+}
+
+/*
+ * A raised slab rather than a bare ghost button. The ghost variant is
+ * transparent, and transparent over a canvas means the grid rules and any wire
+ * behind it read straight through the label. This is the same fill the node's
+ * header uses, so the control reads as part of the node it hangs off.
+ */
+.nodeAction {
+  background-color: var(--pb-surface-overlay);
+  border-color: var(--pb-border-hairline);
+  color: var(--pb-ink-secondary);
+  cursor: pointer;
+}
+
+.nodeAction:is(:hover, :focus-visible) {
+  color: var(--pb-ink-primary);
+  border-color: var(--pb-border-strong);
+}
+
+@media (forced-colors: active) {
+  .nodeAction {
+    border-color: ButtonText;
+  }
+}
+
 /* --- Ports -------------------------------------------------------------- */
 
 /*
@@ -673,19 +731,50 @@
 
 /* --- Dialogs (palette, connect, shortcuts) ------------------------------ */
 
+/*
+ * THE KEYBOARD INSET IS PART OF THIS BOX, NOT AN AFTERTHOUGHT.
+ *
+ * A dialog here focuses its search field on open, which on a phone raises the
+ * on-screen keyboard - and the scrim is `position: fixed` against the LAYOUT
+ * viewport, which a keyboard does not shrink. So the bottom of the list sat
+ * behind the keyboard, and because the list is the one scrolling region,
+ * scrolling to its end scrolled rows into the space the keyboard was covering.
+ *
+ * `--keyboard-inset` is measured by `useKeyboardInset` and written on the
+ * workspace element, which is an ancestor of this one - custom properties
+ * inherit through the DOM whether or not a box is fixed. Zero with a mouse, by
+ * construction: the hook asks `(pointer: coarse)` each time it runs rather
+ * than at bind time, so a panel never jumps because a window was resized.
+ *
+ * Taken as padding on the scrim rather than off the dialog's own height, so
+ * the dialog is measured against the space that is actually visible - hence
+ * `100%` in the `min()` below, which is this grid area rather than the
+ * viewport.
+ *
+ * AND THE ROW TRACK HAS TO BE DECLARED FOR THAT TO MEAN ANYTHING. Measured, in
+ * Chromium at 375x812, with the first version of this: the padding applied and
+ * the dialog did not move a pixel. An implicit grid row is `auto`, which is
+ * sized BY its item - so a percentage block-size on the item resolves against
+ * an indefinite containing block, which CSS says is `none`, and `min(70vh,
+ * none)` is just 70vh. `minmax(0, 1fr)` makes the track the free space, which
+ * is definite, so `100%` is a number. The item still aligns to the start of
+ * it, so nothing about where the dialog sits changes.
+ */
 .scrim {
   position: fixed;
   inset: 0;
   z-index: var(--pb-z-overlay);
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   place-items: start center;
   padding-block-start: 12vh;
+  padding-block-end: var(--keyboard-inset, 0px);
   background-color: rgb(0 0 0 / 45%);
 }
 
 .dialog {
   inline-size: min(560px, calc(100vw - var(--pb-space-2xl)));
-  max-block-size: 70vh;
+  max-block-size: min(70vh, 100%);
   display: flex;
   flex-direction: column;
 
