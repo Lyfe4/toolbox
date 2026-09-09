@@ -6,7 +6,7 @@ import { DATA_TYPES } from '@/features/registry';
 
 import styles from './canvas.module.css';
 import { PortGlyph } from './PortGlyph';
-import { SHORTCUT_GROUPS, SHORTCUTS } from './shortcuts';
+import { SHORTCUT_GROUPS, SHORTCUTS, shortcutRowKey } from './shortcuts';
 
 /** What each data type actually carries, in a few words. */
 const TYPE_MEANING: Record<(typeof DATA_TYPES)[number], string> = {
@@ -99,8 +99,21 @@ export function ShortcutsOverlay({ onClose }: ShortcutsOverlayProps) {
                 </tr>
               </thead>
               <tbody>
+                {/*
+                  KEYED ON THE BINDING, NOT ON WHAT IT DOES.
+
+                  Two entries here read "Pan the canvas" - Space-drag and
+                  middle-drag - so a key built from the action alone collided,
+                  and React logged "two children with the same key" out of
+                  every test that opens this dialog. Both rows still rendered,
+                  because the list never changes after mount; the moment it
+                  did, one of them would have been dropped or duplicated. What
+                  makes a row unique is the KEYS it lists, which is also what
+                  makes it a different shortcut. `shortcuts.test.ts` asserts
+                  the whole array is unique under exactly this identity.
+                */}
                 {SHORTCUTS.filter((shortcut) => shortcut.group === group).map((shortcut) => (
-                  <tr key={`${group}-${shortcut.action}`}>
+                  <tr key={shortcutRowKey(shortcut)}>
                     <td className={styles.shortcutKeys}>
                       {shortcut.keys.map((key, index) => (
                         <span key={key}>

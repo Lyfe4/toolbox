@@ -342,7 +342,25 @@ describe('building and running a pipeline from the keyboard', () => {
     await connect(/Base64/);
     await connect(/Structured data/);
 
-    expect(useCanvasStore.getState().graph.edgeOrder).toHaveLength(2);
+    /*
+     * THE CHAIN IT ASKED FOR, not merely two wires.
+     *
+     * A count is satisfied by any two legal wires, and the keyboard flow can
+     * produce a completely different graph without producing an illegal one -
+     * a stolen focus once built Structured data -> Hash -> Base64 here, which
+     * has two edges, refuses nothing, and simply runs the pipeline backwards.
+     * That went unnoticed until the assertion at the bottom timed out fifteen
+     * seconds later against the execution engine, which had done nothing
+     * wrong. Naming the wires fails in the right place, immediately.
+     */
+    const built = useCanvasStore.getState().graph;
+    const toolOf = (id: string): string | undefined => built.nodes[id]?.toolId;
+    expect(
+      built.edgeOrder.map((id) => {
+        const edge = built.edges[id];
+        return `${toolOf(edge?.from.nodeId ?? '') ?? '?'} -> ${toolOf(edge?.to.nodeId ?? '') ?? '?'}`;
+      }),
+    ).toEqual(['base64 -> structured-data', 'structured-data -> hash']);
 
     // Typing into the source is what turns a wired-up shape into a run.
     const [sourceId] = useCanvasStore.getState().graph.nodeOrder;

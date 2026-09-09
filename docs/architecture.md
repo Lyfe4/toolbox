@@ -1015,6 +1015,37 @@ three — see below. It is a layout effect now, which runs synchronously after
 the commit that mounted the panel, in the same task as the keystroke: there is
 no window to lose and no frame to guess at.
 
+**And the palette had the same defect, which is why this section says the rule
+rather than the case.** Choosing a tool moved focus onto the new node one
+animation frame later, for the same defensible reason — the node is added to
+the store, so it is not in the DOM when the handler returns — and with the same
+consequence: add a tool, move to another node, and the late frame takes that
+node away from you, so the next keystroke acts on the one the palette added.
+`C` connects from it, an arrow key moves it, `Delete` deletes it, and none of
+those is an error anywhere.
+
+It surfaced as a unit test building a keyboard three-node chain **backwards**,
+failing fifteen seconds later against the executor, which had run the graph it
+was given correctly. Reproduced by making that frame 18 ms late — which is only
+what CPU load does to it — and reproduced exactly: the same wiring, the same
+`blocked, Waiting upstream` on the head of the chain, the same
+`Pipeline finished. 3 blocked.`
+
+The correction is the one above. `addTool` records a request in state and a
+layout effect performs the move, so React commits the new node and the effect in
+one pass and the focus lands after the node exists and before the task ends. The
+request carries a sequence number as well as the id, because adding the same
+tool again after an undo would otherwise be a changed nothing and no effect at
+all.
+
+Where each half is asserted follows from what each half is. That focus lands on
+the right element, and lands **before anything else can run**, is a scheduling
+question and is asserted in the unit suite, driven with `fireEvent` so there is
+no `await` for a late move to catch up inside. That the element is really
+mounted by the time the effect looks for it is a question about React's commit
+in an engine, and `check:browsers` asks it — a miss there would leave focus on
+the canvas root with nothing on screen to say so.
+
 The rail's size handle is the ARIA window-splitter pattern: a **focusable**
 separator with a value, arrow keys that resize by one grid step, and Home/End
 for the extremes. A handle only a pointer can move is a preference only a

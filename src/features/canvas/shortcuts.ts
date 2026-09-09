@@ -61,6 +61,19 @@ export const SHORTCUTS: readonly Shortcut[] = [
 
 export const SHORTCUT_GROUPS = ['Moving around', 'Editing', 'Building'] as const;
 
+/**
+ * What makes one row of the reference distinct from another.
+ *
+ * The group and the KEYS, not the action: two bindings can do the same thing
+ * and be different shortcuts - Space-drag and middle-drag both pan - and a
+ * row identified by its action put those two under one id. React noticed
+ * before anybody else did. The action is kept in the identity as well, so a
+ * genuine duplicate binding is a collision rather than a silent merge.
+ */
+export function shortcutRowKey(shortcut: Shortcut): string {
+  return `${shortcut.group}|${shortcut.keys.join('+')}|${shortcut.action}`;
+}
+
 /** One-line summary used as the canvas's accessible description. */
 export const CANVAS_DESCRIPTION =
   'Node canvas. Press K to add a tool, Tab to move between nodes, C to connect from the focused node, ' +

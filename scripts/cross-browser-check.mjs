@@ -611,6 +611,39 @@ async function checkInspector(browser, label) {
     await page.getByRole('button', { name: 'Add tool' }).click();
     await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
     await page.getByTestId('dialog-option-regex-tester').click();
+
+    /*
+     * FOCUS FOLLOWS THE TOOL THE PALETTE JUST ADDED, IN A REAL ENGINE.
+     *
+     * The node is created in the store, so it is not in the DOM when the
+     * palette's handler returns - which is why the move used to be deferred to
+     * an animation frame, and why deferring it was the same defect already
+     * written up against `Enter` into the inspector: a late frame lands in the
+     * middle of whatever the user did next and takes focus off the node they
+     * had chosen. It is a layout effect now, which runs after the commit that
+     * mounted the node and before the task ends.
+     *
+     * The interleaving is asserted in the unit suite, where the choice can be
+     * driven synchronously; a harness that round-trips between every step
+     * cannot hold that window open on demand. What this adds is that the
+     * element really is mounted by the time the effect looks for it - a
+     * question about React's commit in an engine, where a miss would leave
+     * focus on the canvas root and no error anywhere.
+     */
+    const afterAdd = await page.evaluate(() => ({
+      node: document.activeElement?.getAttribute('data-node-id') ?? null,
+      what:
+        document.activeElement?.getAttribute('aria-label') ??
+        document.activeElement?.tagName ??
+        'nothing',
+    }));
+    check(
+      label,
+      'choosing a tool in the palette leaves focus on the node it added',
+      afterAdd.node !== null,
+      afterAdd.what,
+    );
+
     await page.waitForTimeout(500);
 
     /*

@@ -1369,6 +1369,37 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
    * Adding tools
    * ---------------------------------------------------------------------- */
 
+  /**
+   * MOVING FOCUS ONTO A NODE THAT DOES NOT EXIST YET.
+   *
+   * The node is added to the store, so it is not in the DOM until React has
+   * rendered it - which is the whole reason this was ever deferred. A frame is
+   * the wrong way to wait for a render: it waits for LONGER than the render
+   * takes, and everything that happens in the surplus gets its focus stolen.
+   *
+   * The request is state instead, so React commits the new node and this
+   * layout effect in the same pass and the move happens synchronously after
+   * it, before the task the keystroke started can end. That is the same
+   * correction already applied to `Enter` into the inspector, one screen up.
+   *
+   * The sequence number IS the request: adding the same tool twice after an
+   * undo would otherwise be one changed id and no effect.
+   */
+  const [nodeFocusRequest, setNodeFocusRequest] = useState<{
+    readonly id: NodeId;
+    readonly seq: number;
+  } | null>(null);
+
+  const requestNodeFocus = useCallback((id: NodeId) => {
+    setNodeFocusRequest((previous) => ({ id, seq: (previous?.seq ?? 0) + 1 }));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!nodeFocusRequest) return;
+    const selector = `[data-node-id="${nodeFocusRequest.id}"]`;
+    rootRef.current?.querySelector<HTMLElement>(selector)?.focus();
+  }, [nodeFocusRequest]);
+
   const addTool = useCallback(
     (toolId: ToolId) => {
       const root = rootRef.current;
@@ -1389,13 +1420,25 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
           freeSpot(store.getState().graph, { x: centre.x - NODE_WIDTH / 2, y: centre.y - 60 }),
         );
 
-      // Focus follows the new node, so the next keystroke acts on it.
-      requestAnimationFrame(() => {
-        const element = rootRef.current?.querySelector<HTMLElement>(`[data-node-id="${id}"]`);
-        element?.focus();
-      });
+      /*
+       * Focus follows the new node, so the next keystroke acts on it - asked
+       * for here, PERFORMED by the layout effect above, in the same task.
+       *
+       * This used to be a `requestAnimationFrame`, and it was the second
+       * instance of the defect already written up against the inspector: a
+       * deferred focus move lands in the middle of whatever happened next.
+       * Add a tool, then immediately Tab to another node and press a key, and
+       * the late frame takes focus off the node the user had chosen and puts
+       * it on the one the palette just added - so the keystroke acts on the
+       * wrong node, silently and plausibly. `C` starts a connection from it,
+       * an arrow key moves it, Delete deletes it. Reproduced with the frame
+       * made 18ms late: a three-node chain built entirely from the keyboard
+       * came out wired backwards - Hash into Base64 - and nothing on screen
+       * said so, because every wire in it is legal.
+       */
+      requestNodeFocus(id);
     },
-    [store],
+    [store, requestNodeFocus],
   );
 
   const addPreset = useCallback(

@@ -253,7 +253,7 @@ about.
 
 ## Testing
 
-2,265 tests across 90 files. The count is not the interesting part; what the
+2,506 tests across 97 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Conformance, measured against the specifications
@@ -605,6 +605,64 @@ kind that only ever show up as a wait:
 
 The reasoning, the measurements and what was looked at and found sound are in
 [architecture.md](docs/architecture.md#what-the-intermittent-worker-wedge-failure-actually-was).
+
+### The same defect, a second time, one screen further up
+
+CI failed on a unit test that builds a three-node chain entirely from the
+keyboard and then runs it. The chain came out **wired backwards** — Structured
+data → Hash → Base64 — and the assertion that noticed was the one fifteen
+seconds later, about the pipeline, which had executed that graph perfectly
+correctly. The head node reported `blocked, Waiting upstream`, which is what a
+node says when something is wired _into_ it, on the one node in the chain that
+was supposed to have nothing above it.
+
+The cause was the deferred focus move written up above, in a second place that
+never got the fix. **Choosing a tool in the palette moved focus onto the new
+node one animation frame later.** The node is created in the store, so it is
+not in the DOM when the palette's handler returns — which is a real problem,
+and a frame is the wrong answer to it, because a frame waits for longer than
+the render takes and everything in the surplus gets its focus stolen. Add a
+tool, move to another node, press a key, and the late frame puts you back on
+the tool you just added: `C` connects from it, an arrow key moves it, `Delete`
+deletes it.
+
+**A user on a slow machine hits this**, and it is worse for them than for the
+test, because nothing about it looks like a failure. Every wire the wrong node
+produces is a legal wire, so there is no refusal, no toast and no error — just
+a pipeline that runs the wrong way round and a node reporting that it is
+waiting for something upstream of the first tool in the chain.
+
+Measured: with that frame made 18 ms late — which is only what CPU load does to
+it — the keyboard flow built `Hash → Base64` instead of `Base64 → Structured
+data`, reproducing CI's DOM and its announcer text (`Pipeline finished. 3
+blocked.`) exactly. It is a layout effect now, like its twin: React commits the
+new node and the effect in the same pass, so the move happens after the node
+exists and before the task the keystroke started can end.
+
+Three tests came out of it, and the shape of the old ones is the point:
+
+- The test that covered this asserted focus **eventually** reached the new
+  node, through a `waitFor`. That is true of a move deferred by any amount, so
+  it was never going to fail. It is asserted synchronously now, and the
+  interleaving itself is driven with `fireEvent` rather than `userEvent` —
+  every `await` in a user-event helper is a place where a late move can quietly
+  catch up and pass.
+- The keyboard pipeline test asserted **two edges**, which any two legal wires
+  satisfy. It names the chain now, so a mis-wire fails where it happens instead
+  of fifteen seconds downstream against the executor.
+- `Enter` on a node with no text editor was asserted to land "somewhere in the
+  panel" — the exact wording this repository already knew was satisfied by the
+  bug. It names the file chooser now.
+
+And a duplicate React key found in the same log: `Space + drag` and
+`Middle-drag` both read "Pan the canvas", and the shortcuts reference keyed its
+rows on the action, so two rows shared `Moving around-Pan the canvas` and React
+warned out of every test file that opens the dialog. Both rows did render — the
+list is fixed at mount, and a duplicate key only drops or duplicates a child
+once the list changes — so the visible damage was nil and the latent damage was
+not. Rows are keyed on the binding now, and `shortcuts.test.ts` asserts the
+array itself is unique under that identity, because the reference is generated
+from the array the canvas binds.
 
 ### What adding a file input found
 

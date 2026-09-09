@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -9,6 +9,7 @@ import { expectNoAxeViolations } from '@/lib/testing/axe';
 
 import { Canvas } from './Canvas';
 import { useCanvasStore } from './graphStore';
+import { SHORTCUTS } from './shortcuts';
 import { EMPTY_GRAPH } from './types';
 import { DEFAULT_VIEWPORT, useViewportStore } from './viewportStore';
 
@@ -200,9 +201,94 @@ describe('adding tools', () => {
 
     const id = useCanvasStore.getState().graph.nodeOrder[0] ?? '';
     expect(useCanvasStore.getState().selection.nodes).toEqual([id]);
-    await waitFor(() => {
-      expect(screen.getByTestId(`node-${id}`)).toHaveFocus();
+    /*
+     * No `waitFor`. It was one, and a wait cannot tell "focused now" from
+     * "focused at some point later" - which is exactly the difference this
+     * area has now got wrong twice. The tight assertion below is the one that
+     * fails against a deferred move.
+     */
+    expect(screen.getByTestId(`node-${id}`)).toHaveFocus();
+  });
+
+  /*
+   * FOCUS MOVES IN THE SAME TASK AS THE KEYSTROKE THAT ASKED FOR IT.
+   *
+   * Deliberately driven with `fireEvent` rather than `userEvent`: the point of
+   * the assertion is that NOTHING runs between choosing the tool and focus
+   * landing on it, and every `await` in a userEvent helper is a place where a
+   * deferred move could quietly catch up and pass this anyway.
+   *
+   * Against the `requestAnimationFrame` this replaced, focus here is still on
+   * the canvas root, where `closeOverlay` put it.
+   */
+  it('focuses the new node in the same task as the keystroke, not a frame later', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+
+    await user.click(screen.getByRole('button', { name: /Add tool/ }));
+    await user.type(await screen.findByRole('combobox', { name: 'Search tools' }), 'base');
+
+    const dialog = screen.getByRole('dialog');
+    fireEvent.keyDown(dialog, { key: 'Enter' });
+
+    const id = useCanvasStore.getState().graph.nodeOrder[0] ?? '';
+    expect(screen.getByTestId(`node-${id}`)).toHaveFocus();
+  });
+
+  /*
+   * THE DEFECT THAT WAS SHIPPING, stated as the thing a user does.
+   *
+   * Add a tool, then move to another node and act on it. A focus move deferred
+   * to a frame arrives in the middle of that and takes the node the user chose
+   * away from them, so the next keystroke acts on the tool they just added
+   * instead - `C` connects from it, an arrow key moves it, Delete deletes it.
+   *
+   * Nothing about it is visible as an error: every one of those is a legal
+   * thing to do to a node. It surfaced as a keyboard-built three-node chain
+   * coming out wired backwards, fifteen seconds later, against the pipeline.
+   *
+   * `fireEvent` again, so the frame is still owed at the moment focus moves
+   * away; the two frames afterwards are where the old version came to collect.
+   */
+  it('does not take focus back from wherever the user moved next', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await addTool(user, 'base');
+    const first = useCanvasStore.getState().graph.nodeOrder[0] ?? '';
+
+    await user.click(screen.getByRole('button', { name: /Add tool/ }));
+    await user.type(await screen.findByRole('combobox', { name: 'Search tools' }), 'hash');
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Enter' });
+
+    act(() => {
+      screen.getByTestId(`node-${first}`).focus();
     });
+    await new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(resolve);
+      });
+    });
+
+    expect(screen.getByTestId(`node-${first}`)).toHaveFocus();
+
+    /*
+     * And the keystroke that follows acts on THAT node, which is the only
+     * reason any of this matters. Read off the finished wire rather than the
+     * dialog: the dialog lists port labels and never names the node, which is
+     * precisely why connecting from the wrong one looks like nothing at all.
+     */
+    await user.keyboard('c');
+    await screen.findByRole('dialog', { name: /Connect from which port/ });
+    await user.keyboard('{Enter}');
+    await screen.findByRole('dialog', { name: /Connect to which input/ });
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(useCanvasStore.getState().graph.edgeOrder).toHaveLength(1);
+    });
+    const graph = useCanvasStore.getState().graph;
+    const edge = graph.edges[graph.edgeOrder[0] ?? ''];
+    expect(edge?.from.nodeId).toBe(first);
   });
 
   it('closes the palette on Escape without adding anything', async () => {
@@ -514,6 +600,36 @@ describe('shortcuts reference', () => {
     expect(within(dialog).getByText(/Connect from the focused node/)).toBeInTheDocument();
     expect(within(dialog).getByText(/Open the tool palette/)).toBeInTheDocument();
     expect(within(dialog).getByText(/Move to the next node/)).toBeInTheDocument();
+  });
+
+  /*
+   * EVERY binding, once each - not three named ones.
+   *
+   * The three above are a spot check, and a spot check is what let two rows
+   * share a React key for as long as neither was one of the three. This reads
+   * the whole array back off the rendered table, so a row that is dropped,
+   * duplicated or never written is a failure here rather than a warning in
+   * somebody else's log.
+   */
+  it('renders one row per binding, and no row twice', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+
+    await user.click(screen.getByRole('button', { name: /Shortcuts/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Keyboard shortcuts' });
+
+    const rendered = within(dialog)
+      .getAllByRole('row')
+      .filter((row) => row.querySelector('td') !== null)
+      .map((row) => {
+        const cells = within(row).getAllByRole('cell');
+        return `${cells[0]?.textContent ?? ''}|${cells[1]?.textContent ?? ''}`;
+      });
+
+    const expected = SHORTCUTS.map((shortcut) => `${shortcut.keys.join(' + ')}|${shortcut.action}`);
+
+    expect(rendered).toHaveLength(expected.length);
+    expect([...rendered].sort()).toEqual([...expected].sort());
   });
 
   it('is also reachable from a visible control', async () => {

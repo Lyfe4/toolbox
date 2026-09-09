@@ -949,7 +949,7 @@ describe('the keyboard path', () => {
    * something rather than nowhere. Image convert is that node: its input is
    * `bytes`.
    */
-  it('falls back to the first control when the node has no text editor', async () => {
+  it('lands on the file chooser when the node has no text editor', async () => {
     const user = userEvent.setup();
     seed([node('a', 'image-convert')]);
     renderCanvas();
@@ -958,8 +958,18 @@ describe('the keyboard path', () => {
     await user.keyboard('{Enter}');
 
     const panel = screen.getByTestId('node-inspector');
-    expect(panel.contains(document.activeElement)).toBe(true);
     expect(within(panel).queryByRole('textbox')).not.toBeInTheDocument();
+    /*
+     * The chooser BY NAME, not "somewhere in the panel". That looser wording
+     * is the assertion that was true of the bug this whole path exists to
+     * prevent - focus on the button that closes the inspector satisfies it
+     * perfectly well - so it is worth no more here than it was there. The
+     * chooser is second in the priority list precisely because a bytes-only
+     * port has no editor and its chooser is what stepping into the input has
+     * to mean; asserting the element makes that a contract rather than a
+     * happy accident of document order.
+     */
+    expect(document.activeElement).toBe(panel.querySelector('[data-file-input]'));
   });
 
   it('returns to the node on Escape', async () => {
