@@ -2551,6 +2551,15 @@ the worker gets a structured clone because
 output is built beside that clone. 256 MB is where three times that stops being
 something a laptop shrugs at.
 
+**A transport stream costs a fourth copy**, which is the one number in this
+paragraph that changed after it was written. Its frames are not contiguous in
+the file — one picture is spread across dozens of 188-byte packets, each with a
+header in the middle of it — so the samples that get written have to be
+gathered into a buffer of their own before they can be indexed at all. That
+buffer is sized from a measuring pass over the packets rather than grown, so
+the peak is knowable rather than whatever the allocator arrived at, but it is
+still a fourth copy of the input.
+
 The consequence is worth stating as a limitation rather than as a setting: about
 four minutes of 1080p phone video fits, and a two-gigabyte film does not — which
 is exactly the file somebody means when they say a video will not play. No
@@ -2562,6 +2571,20 @@ That is a redesign of the value model, in the same class as the liveness
 deadline and the second worker the
 [feasibility investigation](video-convert-feasibility.md) costed for
 transcoding, and it is not paid for by anything this version does.
+
+**Adding MPEG-TS and AVI made this more pressing rather than less, and that is
+worth recording where the decision lives rather than only in the tool's own
+README.** Every file those two readers exist for is normally over the limit: a
+DivX film is 700 MB to 1.4 GB, an hour of tuner recording is 2 to 4 GB, AVCHD
+clips are split at 2 GB by the format, and an OpenDML AVI exists _because_ the
+format cannot address past 2 GB. Only the short end of each fits — a screen
+recording, a camcorder clip of a few minutes, an HLS segment. So the share of
+real inputs this limitation refuses went up with the coverage, and the value
+model is now the largest single thing standing between this tool and the files
+it was built for. It was not fixed here because it is a change to every tool's
+contract rather than to one tool, and because doing it badly — a streaming
+`ToolValue` that some tools handle and others quietly buffer — would be worse
+than the honest ceiling.
 
 **Progress is not reported through a pipeline.** `runPipeline` passes no
 `onProgress`, so a tool that reports progress shows none on the canvas. No

@@ -3,9 +3,31 @@ import { describe, expect, it } from 'vitest';
 
 import type { ToolResult } from '@/features/registry/types';
 
-import { avcConfig, ebml, makeMatroska, makeMp4, mp4Box, sampleBytes } from './fixtures';
+import { describeAvc, describeHevc, splitAnnexB } from './annexb';
+import { readAvi } from './avi';
+import {
+  annexB,
+  avcConfig,
+  avcPps,
+  avcSlice,
+  avcSps,
+  avcSpsHigh,
+  ebml,
+  hevcPps,
+  hevcSlice,
+  hevcSps,
+  hevcVps,
+  makeAvi,
+  makeMatroska,
+  makeMp4,
+  mp4Box,
+  makeTransportStream,
+  mpegAudioFrameBytes,
+  sampleBytes,
+} from './fixtures';
 import { readIsoBmff } from './isobmff';
 import { readMatroska } from './matroska';
+import { readMpegTs } from './mpegts';
 import { remux } from './remux';
 
 /**
@@ -18,9 +40,9 @@ import { remux } from './remux';
  * 1.6 GB before it ran, and the README documented it as a strength.
  *
  * The difference here is that this tool has no library between it and the
- * file. Every byte of an MP4 or a Matroska file is parsed by code in this
- * directory, so a hostile file's whole surface is ours. Three properties have
- * to hold whatever it says, and each has its own section below:
+ * file. Every byte of all four containers is parsed by code in this directory,
+ * so a hostile file's whole surface is ours. Three properties have to hold
+ * whatever it says, and each has its own section below:
  *
  *   1. IT RETURNS. No parser here may loop, recurse without bound, or spend
  *      time proportional to a number the file chose rather than to the number
@@ -388,7 +410,385 @@ describe('a Matroska file that lies about its own shape', () => {
 });
 
 /* ========================================================================== *
- * 5. The properties, over inputs nobody wrote down
+ * 5. A transport stream that lies about its own shape
+ * ========================================================================== */
+
+/**
+ * THE TWO NEW SURFACES, AND WHY THEY ARE NOT THE SAME AS THE FIRST TWO.
+ *
+ * The properties above are unchanged and still apply. What is new with these
+ * two containers is a third thing to be adversarial ABOUT, on top of "it
+ * returns" and "it does not allocate on trust":
+ *
+ *   THEY ASSEMBLE. An MP4 or a Matroska sample is a contiguous run of the
+ *   input, so the worst a hostile index can do is point at the wrong bytes -
+ *   which the truncation check catches. A transport stream's frames are
+ *   gathered into a buffer this tool allocates, and an AVI's audio likewise.
+ *   So a hostile file gets to choose HOW MUCH IS COPIED, which is a new lever
+ *   and the one the cases below mostly pull.
+ *
+ * And a fourth, particular to Annex B: the bit reader over a parameter set is
+ * the only place in this tool that consumes a variable-length code, and an
+ * exp-Golomb reader over a long run of zero bytes is a scan of the whole
+ * buffer for every field it reads.
+ */
+describe('a transport stream that lies about its own shape', () => {
+  const goodUnit = {
+    pid: 0x0100,
+    payload: annexB(avcSps(), avcPps(), avcSlice(5, 1, 400)),
+    pts: 0,
+    dts: 0,
+  };
+  const validTs = makeTransportStream({
+    streams: [{ pid: 0x0100, streamType: 0x1b }],
+    units: [goodUnit],
+  });
+
+  it('refuses an adaptation field longer than the packet that holds it', () => {
+    // 183 is the largest an adaptation field can be in a packet that also has
+    // payload. A field claiming more would make the payload start inside the
+    // NEXT packet, so the packet is skipped rather than read across.
+    const damaged = new Uint8Array(validTs);
+    for (let at = 0; at + 188 <= damaged.length; at += 188) {
+      if (((damaged[at + 3] ?? 0) >> 4) % 4 !== 3) continue;
+      damaged[at + 4] = 0xff;
+    }
+    expect(() => remux(damaged, 'container')).not.toThrow();
+  });
+
+  it('does not resynchronise onto a sync byte inside the video', () => {
+    /*
+     * A transport stream whose packet grid stops lining up is a file with
+     * bytes missing from the middle. Hunting for the next plausible 0x47
+     * finds one inside compressed video within a few hundred bytes, and a
+     * reader that does it carries on confidently through nonsense and reports
+     * success - so losing the grid is treated as damage and said so.
+     */
+    const damaged = new Uint8Array(validTs);
+    const lastPacket = Math.floor((damaged.length - 188) / 188) * 188;
+    damaged[lastPacket] = 0x00;
+
+    const done = remux(damaged, 'container');
+    if (done.ok) {
+      expect(done.value.notes.some((note) => note.title.includes('damaged'))).toBe(true);
+    }
+  });
+
+  it('refuses a program map table whose section length runs past four kilobytes', () => {
+    // The length is twelve bits, so the format bounds it - but the section
+    // reader has to hold the bound itself, since a reader that trusts the
+    // field accumulates until the file ends.
+    const damaged = new Uint8Array(validTs);
+    const at = 188 + 4 + 1; // the second packet's pointer field, then table_id
+    damaged[at + 1] = 0xbf;
+    damaged[at + 2] = 0xff;
+    expect(() => remux(damaged, 'container')).not.toThrow();
+  });
+
+  it('answers for a corrupted transport stream, whatever the damage', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: validTs.byteLength - 1 }),
+        fc.integer({ min: 0, max: 255 }),
+        (at, value) => {
+          const damaged = withBytesAt(validTs, at, [value]);
+          const started = Date.now();
+          const done = remux(damaged, 'container');
+          expect(Date.now() - started).toBeLessThan(500);
+          // A repackage copies, so it can never honestly produce meaningfully
+          // more media than it was given - and for this container that bound
+          // covers the assembly buffer as well as the output.
+          if (done.ok) {
+            expect(done.value.bytes.byteLength).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
+          }
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
+
+  it('reads or refuses any bytes laid out on a packet grid', () => {
+    /*
+     * The detector is periodicity rather than a signature, so this is the
+     * fuzz that actually reaches the reader: a run of bytes with 0x47 forced
+     * into every packet position gets past the front door however hostile the
+     * rest of it is.
+     */
+    fc.assert(
+      fc.property(fc.uint8Array({ minLength: 188 * 6, maxLength: 188 * 8 }), (noise) => {
+        const grid = new Uint8Array(noise);
+        for (let at = 0; at + 188 <= grid.length; at += 188) grid[at] = 0x47;
+        expect(() => readMpegTs(grid)).not.toThrow();
+      }),
+      { numRuns: 200 },
+    );
+  });
+});
+
+/* ========================================================================== *
+ * 6. A parameter set that is not one
+ * ========================================================================== */
+
+describe('a parameter set that cannot be parsed', () => {
+  it('drops a video track whose parameter set is a run of zeros', () => {
+    /*
+     * The shape an exp-Golomb reader is worst at. A leading-zero count is
+     * unbounded in principle, so a field read from a long run of zero bytes
+     * scans the whole buffer - and there are a dozen such fields between the
+     * front of an SPS and the picture size, which makes it quadratic in the
+     * length of a parameter set the FILE chose. The reader caps the run at
+     * thirty-two and marks itself overrun instead.
+     */
+    const source = makeTransportStream({
+      streams: [{ pid: 0x0100, streamType: 0x1b }],
+      units: [
+        {
+          pid: 0x0100,
+          payload: annexB(
+            new Uint8Array([0x67, ...new Array<number>(3000).fill(0)]),
+            avcPps(),
+            avcSlice(5, 1, 200),
+          ),
+          pts: 0,
+          dts: 0,
+        },
+      ],
+    });
+
+    const started = Date.now();
+    const done = remux(source, 'container');
+    expect(Date.now() - started).toBeLessThan(500);
+
+    /*
+     * And the refusal says the right thing about it, which is a separate
+     * assertion from the timing and was wrong first time round. "This stream
+     * carries no frames" describes the READER: the frames are all there, and
+     * what is missing is the parameter set. That distinction is worth a branch
+     * because it is the most likely thing to be wrong with a real capture -
+     * a transport stream repeats its parameter sets every second or so, so a
+     * short clip cut out of the middle of one can genuinely have none.
+     */
+    expect(done.ok).toBe(false);
+    if (done.ok) return;
+    expect(done.error.message).toContain('never says how to decode itself');
+    expect(done.error.detail).toContain('longer piece of the same recording');
+  });
+
+  it('refuses the parameter set directly too, so the refusal is about the input', () => {
+    // Called without a container around it, because `remux` refuses so much
+    // before a parser is reached that the case above proves less than it looks.
+    const zeros = new Uint8Array([0x67, ...new Array<number>(3000).fill(0)]);
+    expect(describeAvc([zeros], [avcPps()])).toBeNull();
+    // And a real one succeeds, so the null above is a fact about those bytes.
+    expect(describeAvc([avcSps()], [avcPps()])?.width).toBe(640);
+  });
+
+  it('refuses an H.265 parameter set that parsed into nonsense', () => {
+    /*
+     * `describeHevc` is the most delicate function in the tool and the only one
+     * with no way to check its answer except against a decoder, so it is
+     * asserted directly as well as through a container.
+     *
+     * The three cases are the three ways it can be handed something it must
+     * not describe: no picture parameter set to go with it, a parameter set
+     * too short to hold a profile-tier-level at all, and - the one a bounds
+     * check cannot catch - one long enough to parse, whose fields come out
+     * beyond the ranges the standard allows. A bit reader that has lost its
+     * place still returns numbers, and nothing about them says so.
+     */
+    expect(describeHevc([], [hevcSps()], [])).toBeNull();
+    expect(describeHevc([], [new Uint8Array([0x42, 0x01, 0x01])], [hevcPps()])).toBeNull();
+    expect(
+      describeHevc(
+        [],
+        [new Uint8Array([0x42, 0x01, ...new Array<number>(40).fill(0xff)])],
+        [hevcPps()],
+      ),
+    ).toBeNull();
+
+    // And a real one is described, so the nulls above are about those bytes.
+    const described = describeHevc([hevcVps()], [hevcSps()], [hevcPps()]);
+    expect([described?.width, described?.height]).toEqual([1280, 720]);
+  });
+
+  it('refuses a parameter set whose fields parse and are nonsense', () => {
+    /*
+     * The case a bounds check cannot catch. A bit reader that has lost its
+     * place still returns numbers, and there is nothing about them that says
+     * so - which is why every value is range-checked against the standard's
+     * own ranges. A chroma format of six is how a lost reader announces
+     * itself, and accepting it would write an `hvcC` a decoder refuses out of
+     * a file that parsed perfectly.
+     */
+    fc.assert(
+      fc.property(fc.uint8Array({ minLength: 8, maxLength: 60 }), (tail) => {
+        const source = makeTransportStream({
+          streams: [{ pid: 0x0100, streamType: 0x24 }],
+          units: [
+            {
+              pid: 0x0100,
+              payload: annexB(
+                new Uint8Array([0x42, 0x01, ...tail]),
+                hevcPps(),
+                hevcSlice(19, 1, 100),
+              ),
+              pts: 0,
+              dts: 0,
+            },
+          ],
+        });
+        expect(() => remux(source, 'container')).not.toThrow();
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  it('does not walk a scaling list a corrupt profile field asked for', () => {
+    // A High-profile SPS may carry twelve variable-length scaling lists, and
+    // the flag that introduces them is one bit. Flipping it on a parameter set
+    // that has none makes the reader walk lists made of whatever follows.
+    const sps = avcSpsHigh();
+    const flipped = new Uint8Array(sps);
+    flipped[5] = 0xff;
+
+    const source = makeTransportStream({
+      streams: [{ pid: 0x0100, streamType: 0x1b }],
+      units: [
+        { pid: 0x0100, payload: annexB(flipped, avcPps(), avcSlice(5, 1, 200)), pts: 0, dts: 0 },
+      ],
+    });
+
+    const started = Date.now();
+    expect(() => remux(source, 'container')).not.toThrow();
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it('does not spend the file on a stream of nothing but start codes', () => {
+    /*
+     * `00 00 01` repeated is eighty million legal NAL units in a 256 MB file,
+     * every one of them zero bytes long. The walk advances, so it terminates -
+     * and terminating is not the same as answering, which is what the node
+     * bound is for.
+     */
+    const codes = new Uint8Array(60_000);
+    for (let at = 0; at + 3 <= codes.length; at += 3) codes.set([0, 0, 1], at);
+
+    const source = makeTransportStream({
+      streams: [{ pid: 0x0100, streamType: 0x1b }],
+      units: [{ pid: 0x0100, payload: codes, pts: 0, dts: 0 }],
+    });
+
+    const started = Date.now();
+    expect(() => remux(source, 'container')).not.toThrow();
+    expect(Date.now() - started).toBeLessThan(1000);
+    // Every unit is zero bytes long, so none of them survives the trim - and
+    // a NAL unit of no length is a sample of no length, which an MP4 writes
+    // out perfectly happily as a frame that shows nothing.
+    expect(splitAnnexB(codes, 0, codes.length)).toHaveLength(0);
+  });
+});
+
+/* ========================================================================== *
+ * 7. An AVI that lies about its own shape
+ * ========================================================================== */
+
+describe('an AVI that lies about its own shape', () => {
+  const validAvi = makeAvi({
+    streams: [
+      {
+        kind: 'auds',
+        formatTag: 0x0055,
+        scale: 1,
+        rate: 44_100,
+        chunks: [mpegAudioFrameBytes(1), mpegAudioFrameBytes(2)],
+      },
+    ],
+  });
+
+  it('refuses a chunk that runs past the list containing it', () => {
+    const at = indexOfTag(validAvi, 'movi');
+    const damaged = withBytesAt(validAvi, at + 4, [0xff, 0xff, 0xff, 0x7f]);
+    expect(() => remux(damaged, 'container')).not.toThrow();
+  });
+
+  it('does not size the audio buffer from a length the file made up', () => {
+    /*
+     * The lever this container gives a hostile file. An AVI's audio is
+     * gathered before it is split on frame headers, because a frame straddles
+     * chunks - so the buffer is the sum of the chunk sizes, and a chunk that
+     * declares more than the file holds would size it from a number nothing
+     * checked. The size comes from the WALK, which cannot exceed the enclosing
+     * list, rather than from any single declaration.
+     */
+    const at = indexOfTag(validAvi, '00wb');
+    const damaged = withBytesAt(validAvi, at + 4, [0x00, 0x00, 0x00, 0x40]);
+    const done = remux(damaged, 'audio');
+    if (done.ok) {
+      expect(done.value.bytes.byteLength).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
+    }
+  });
+
+  it('refuses an index entry count the file has no room for', () => {
+    const at = indexOfTag(validAvi, 'idx1');
+    const damaged = withBytesAt(validAvi, at + 4, [0xff, 0xff, 0xff, 0x0f]);
+    expect(() => remux(damaged, 'container')).not.toThrow();
+  });
+
+  it('answers for a corrupted AVI, whatever the damage', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: validAvi.byteLength - 1 }),
+        fc.integer({ min: 0, max: 255 }),
+        (at, value) => {
+          const damaged = withBytesAt(validAvi, at, [value]);
+          const started = Date.now();
+          const done = remux(damaged, 'audio');
+          expect(Date.now() - started).toBeLessThan(500);
+          if (done.ok) {
+            expect(done.value.bytes.byteLength).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
+          }
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
+
+  it('reads or refuses any bytes claiming to be a RIFF AVI', () => {
+    fc.assert(
+      fc.property(fc.uint8Array({ minLength: 16, maxLength: 400 }), (tail) => {
+        const avi = new Uint8Array([
+          0x52,
+          0x49,
+          0x46,
+          0x46,
+          0xff,
+          0xff,
+          0xff,
+          0x00,
+          0x41,
+          0x56,
+          0x49,
+          0x20,
+          ...tail,
+        ]);
+        expect(() => readAvi(avi)).not.toThrow();
+      }),
+      { numRuns: 300 },
+    );
+  });
+
+  it('answers for an AVI cut short at any point', () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 0, max: validAvi.byteLength }), (length) => {
+        expect(() => remux(validAvi.subarray(0, length), 'audio')).not.toThrow();
+      }),
+      { numRuns: 200 },
+    );
+  });
+});
+
+/* ========================================================================== *
+ * 8. The properties, over inputs nobody wrote down
  * ========================================================================== */
 
 describe('the properties that must hold for any bytes at all', () => {

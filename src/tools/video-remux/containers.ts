@@ -99,6 +99,44 @@ export const LIMITS = {
    * something has not really refused it.
    */
   maxNodes: 4_000_000,
+
+  /**
+   * How far into a file the transport-stream detector may look.
+   *
+   * Twenty-one 188-byte packets. This is not a safety bound - the scan is
+   * already trivially bounded - it is a CONSISTENCY bound, and it belongs to
+   * `lib/sniff` rather than to this tool. A file's type is decided there from
+   * a 4096-byte slice, so that a 200 MB video dropped on a text-only port can
+   * be refused without being read into memory, and `fileInput.test.ts` asserts
+   * that the slice and the whole file produce an identical verdict. A detector
+   * that looked past 4096 bytes would be able to disagree with itself between
+   * those two calls, which presents as a file accepted on one route and
+   * refused on the other.
+   */
+  tsScanBytes: 4096,
+
+  /**
+   * Elementary streams tracked while reading a transport stream.
+   *
+   * A broadcast multiplex carries a dozen programmes and a hundred streams,
+   * and a recording of one carries the handful the recorder kept. This is the
+   * number of PIDs a reader will hold state for at once; past it, the extra
+   * ones are ignored and named. It is separate from `maxTracks` because that
+   * counts tracks OFFERED to the user and this counts streams SEEN in a
+   * multiplex, which in a broadcast capture is much the larger number.
+   */
+  maxElementaryStreams: 64,
+
+  /**
+   * Chunks read from an AVI's `movi` list when there is no index to use.
+   *
+   * An AVI with a usable `idx1` is bounded by that table's own length. One
+   * without it is walked chunk by chunk, and a two-hour film is a quarter of a
+   * million chunks - so the walk needs a ceiling that is not derived from
+   * anything the file said. Two million is past any real file that fits inside
+   * this tool's input limit.
+   */
+  maxAviChunks: 2_000_000,
 } as const;
 
 /* ========================================================================== *
@@ -134,6 +172,11 @@ export type CodecId =
   | 'vorbis'
   | 'flac'
   | 'ac3'
+  | 'mp2'
+  | 'mpeg4part2'
+  | 'mpeg2video'
+  | 'mjpeg'
+  | 'pcm'
   | 'subtitle'
   | 'unknown';
 
@@ -184,6 +227,60 @@ export const CODECS: Readonly<Record<CodecId, CodecFacts>> = {
     label: 'Dolby Digital',
     carried: false,
     refusal: 'AC-3 needs a sample entry this version does not write.',
+  },
+  /*
+   * THE FIVE REFUSALS THAT ARRIVED WITH AVI AND MPEG-TS.
+   *
+   * Every one of them is the same refusal the WebM codecs above get, for the
+   * same reason: an MP4 could legally hold the stream, and the resulting file
+   * would play in strictly fewer places than the file it came from.
+   *
+   * That is worth being precise about, because it is not obvious and it is the
+   * whole reason reading AVI does not amount to converting AVI. MPEG-4 Part 2
+   * has a settled MP4 sample entry - `mp4v`, object type 0x20 - and an
+   * `mp4v` file is played by no browser, by no iPhone, and by no Apple device
+   * since Perian stopped shipping. VLC plays it, and VLC already played the
+   * AVI. So "convert this DivX film to MP4" is a request a REMUXER cannot
+   * grant, and the honest answer names the codec instead of producing a file
+   * that has moved the problem rather than solved it.
+   *
+   * MPEG-2 video and Motion JPEG are the same argument with older files, and
+   * uncompressed PCM is that argument plus a file three times the size. Layer
+   * II audio is the one that costs a real European DVB capture its sound: it
+   * is what essentially every broadcaster there uses, `esds` object type 0x69
+   * would carry it, and almost nothing outside VLC decodes Layer II out of an
+   * MP4. Layer III in the same file travels, because the layer is in each
+   * frame header and the reader looks.
+   */
+  mp2: {
+    label: 'MPEG audio Layer II',
+    carried: false,
+    refusal:
+      'Layer II is what broadcast television uses. An MP4 can hold it and almost nothing outside VLC will decode it from there, so the sound would be lost on the players most likely to be the reason you are converting.',
+  },
+  mpeg4part2: {
+    label: 'MPEG-4 Part 2 (DivX or Xvid)',
+    carried: false,
+    refusal:
+      'This is the codec in most AVI films, and it is the reason they do not play. An MP4 can legally hold it, and no browser and no Apple device will decode it from there - so a repackage would move the problem rather than fix it. Nothing short of re-encoding helps, which this tool does not do.',
+  },
+  mpeg2video: {
+    label: 'MPEG-2 video',
+    carried: false,
+    refusal:
+      'DVD and broadcast video. An MP4 can hold it and no browser plays it, so repackaging would not gain you a player.',
+  },
+  mjpeg: {
+    label: 'Motion JPEG',
+    carried: false,
+    refusal:
+      'A run of JPEG stills, which is what older cameras recorded to AVI. No browser plays it inside an MP4.',
+  },
+  pcm: {
+    label: 'uncompressed audio',
+    carried: false,
+    refusal:
+      'Uncompressed sound has no settled place in an MP4 that ordinary players read, and carrying it would make the file several times larger for no gain.',
   },
   subtitle: {
     label: 'Subtitles',
@@ -287,9 +384,32 @@ export interface SourceTrack {
   readonly matrix: Uint8Array | null;
   readonly edits: readonly Edit[];
   readonly samples: SampleTable;
+  /**
+   * The buffer this track's sample offsets point into, or null for the file.
+   *
+   * WHY A TRACK CAN HAVE ITS OWN BYTES. Repackaging an MP4 or a Matroska file
+   * never needs this: a sample is a contiguous run of bytes in the input, so
+   * the writer copies straight out of the file it was handed. Neither of the
+   * two containers added later can promise that.
+   *
+   *   - In MPEG-TS one frame is sprayed across dozens of 188-byte packets,
+   *     each with its own four-byte header in the middle of it. There is no
+   *     contiguous run to point at; the frame has to be gathered up first.
+   *   - In both TS and AVI, H.264 and H.265 arrive as Annex B - NAL units
+   *     separated by start codes - and an MP4 wants them length-prefixed. The
+   *     coded pictures are identical either way, but the four bytes in front
+   *     of each one are not, so the sample that gets written is not the sample
+   *     that was read.
+   *
+   * Per TRACK rather than per file, because a reader should not have to copy a
+   * stream it is about to refuse. An AVI holding Xvid video and MP3 sound
+   * assembles the MP3 - whose frames straddle chunk boundaries - and leaves
+   * the Xvid pointing at the original file, where it costs nothing.
+   */
+  readonly media: Uint8Array | null;
 }
 
-export type ContainerId = 'mp4' | 'matroska';
+export type ContainerId = 'mp4' | 'matroska' | 'mpegts' | 'avi';
 
 export interface SourceFile {
   readonly container: ContainerId;
@@ -323,6 +443,25 @@ export interface SourceFile {
    * was read.
    */
   readonly problem: string | null;
+  /**
+   * True when the samples were re-framed on the way out rather than copied.
+   *
+   * THE ONE SENTENCE IN THIS TOOL'S PITCH THAT TWO CONTAINERS MADE UNTRUE.
+   * "The frames are copied across byte for byte" is exact for MP4 and for
+   * Matroska, and it is not exact for MPEG-TS or for H.264 in an AVI: those
+   * store Annex B, where a NAL unit is introduced by a `00 00 01` start code
+   * and the sequence and picture parameter sets sit in the stream itself. An
+   * MP4 wants each NAL unit preceded by its length and the parameter sets
+   * hoisted into `avcC`. So every coefficient and every macroblock survives
+   * untouched - this is still not a decode, and still cannot be lossy - but
+   * the bytes around them are rewritten and a byte-for-byte assertion over the
+   * whole sample would be false.
+   *
+   * Carried out to the report rather than left in a comment, because a claim
+   * this tool makes about itself everywhere else has to stop being made on the
+   * files where it does not hold.
+   */
+  readonly reframed: boolean;
 }
 
 /* ========================================================================== *
@@ -354,11 +493,91 @@ export function detectContainer(bytes: Uint8Array): ContainerId | null {
   if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
     return 'matroska';
   }
+  // RIFF, four bytes of length, `AVI `. Matching the `AVI ` alone would claim
+  // any file with those bytes in that position, and the RIFF header is the
+  // entire reason they are there - the same shape the WebP signature in
+  // `lib/sniff` had to be corrected into.
+  if (tagAt(bytes, 0, 4) === 'RIFF' && tagAt(bytes, 8, 4) === 'AVI ') return 'avi';
   // ISO base media: the first box is conventionally `ftyp`. QuickTime files
   // written before ftyp existed start with `moov`, `mdat` or `wide`, and
   // several cameras still write them, so those are accepted too.
   const first = tagAt(bytes, 4, 4);
   if (first === 'ftyp' || first === 'moov' || first === 'mdat' || first === 'wide') return 'mp4';
+  if (detectTransportStream(bytes) !== null) return 'mpegts';
+  return null;
+}
+
+/* ========================================================================== *
+ * MPEG-TS, the one container with no magic number
+ * ========================================================================== */
+
+/**
+ * How a transport stream is laid out on disk, when it is one.
+ *
+ * MPEG-TS IS THE ONE CONTAINER HERE THAT CANNOT BE RECOGNISED BY A SIGNATURE,
+ * and that is a property of the format rather than an omission. It was
+ * designed to be broadcast, so there is no header and no beginning: a receiver
+ * tunes in partway through and finds its footing from the fact that every
+ * packet starts with 0x47 and every packet is the same length. A file is
+ * whatever the recorder had buffered when it started writing, so it can begin
+ * mid-packet, and the first byte is 0x47 only by luck.
+ *
+ * So detection is PERIODICITY rather than a prefix, and the three numbers are
+ * the three shapes this actually comes in:
+ *
+ *   - 188 is the packet, and a plain `.ts` from a tuner or from ffmpeg.
+ *   - 192 is 188 with a four-byte arrival timestamp in front of every packet,
+ *     which is BDAV - and which is what `.m2ts` and `.mts` are. Every AVCHD
+ *     camcorder writes this, so leaving it out would refuse the single largest
+ *     group of files this reader exists for while accepting the format they
+ *     are technically in.
+ *   - 204 is 188 with sixteen bytes of Reed-Solomon parity after it, which is
+ *     what some DVB capture cards hand over unprocessed.
+ *
+ * The scan is bounded to `tsScanBytes` and NOT to the whole file, and that
+ * bound is load-bearing for a reason outside this tool: `lib/sniff` decides a
+ * file's type from a 4096-byte slice so that a 200 MB file can be refused by a
+ * text-only port without being read, and `fileInput.test.ts` asserts that the
+ * slice and the whole file give the same answer. A scan that read further here
+ * could disagree with itself between those two calls.
+ */
+export interface TransportLayout {
+  /** 188, 192 or 204. */
+  readonly packetSize: number;
+  /** Where the first whole packet begins - its 0x47, not the BDAV prefix. */
+  readonly firstSync: number;
+}
+
+const TS_PACKET_SIZES: readonly number[] = [188, 192, 204];
+
+export function detectTransportStream(bytes: Uint8Array): TransportLayout | null {
+  const window = Math.min(bytes.length, LIMITS.tsScanBytes);
+
+  for (let start = 0; start < window && start < 208; start += 1) {
+    if (bytes[start] !== 0x47) continue;
+    for (const packetSize of TS_PACKET_SIZES) {
+      /*
+       * Five packets in a row, which is the number that stops a coincidence.
+       * One 0x47 is a 1-in-256 accident; two at the right distance happens in
+       * any large binary. Five costs 940 bytes to check and is inside the
+       * smallest sensible fragment of a transport stream, which carries a
+       * program table in its first few packets and therefore several packets.
+       */
+      let matched = 0;
+      while (matched < 5) {
+        const at = start + matched * packetSize;
+        if (at >= window) break;
+        if (bytes[at] !== 0x47) break;
+        matched += 1;
+      }
+      // Fewer than five only counts when the WINDOW ran out rather than the
+      // pattern - a 400-byte fragment holding two good packets is still a
+      // transport stream, and the reader will say what it could get from it.
+      const ran = start + matched * packetSize >= window;
+      if (matched >= 5 || (matched >= 2 && ran)) return { packetSize, firstSync: start };
+    }
+  }
+
   return null;
 }
 
@@ -376,7 +595,7 @@ export function refuseUnknownContainer<T>(bytes: Uint8Array): ToolResult<T> {
   }
   return fail('unsupported-type', 'That does not look like a video file.', {
     detail:
-      'The container is read from the bytes, never from the name. This tool reads MP4, MOV, M4A, 3GP and Matroska (MKV and WebM).',
+      'The container is read from the bytes, never from the name. This tool reads MP4, MOV, M4A and 3GP, Matroska (MKV and WebM), MPEG transport streams (TS, M2TS and MTS) and AVI.',
   });
 }
 

@@ -11,13 +11,13 @@ real device or a real application. Every step has an observable answer; if a
 step does not tell you pass or fail, it is a bad step and should be rewritten
 rather than skipped.
 
-| Check                                                     | Needs                       | Time   |
-| --------------------------------------------------------- | --------------------------- | ------ |
-| [Safari itself](#1-safari-itself)                         | A Mac, or an iPhone or iPad | 6 min  |
-| [A real on-screen keyboard](#2-a-real-on-screen-keyboard) | A phone                     | 4 min  |
-| [A backgrounded tab](#3-a-backgrounded-tab)               | Any browser                 | 2 min  |
-| [Rich text in Word](#4-rich-text-in-word)                 | Word, Google Docs, Outlook  | 10 min |
-| [A repackaged video plays](#5-a-repackaged-video-plays)   | QuickTime, VLC, a phone     | 8 min  |
+| Check                                                     | Needs                           | Time   |
+| --------------------------------------------------------- | ------------------------------- | ------ |
+| [Safari itself](#1-safari-itself)                         | A Mac, or an iPhone or iPad     | 6 min  |
+| [A real on-screen keyboard](#2-a-real-on-screen-keyboard) | A phone                         | 4 min  |
+| [A backgrounded tab](#3-a-backgrounded-tab)               | Any browser                     | 2 min  |
+| [Rich text in Word](#4-rich-text-in-word)                 | Word, Google Docs, Outlook      | 10 min |
+| [A repackaged video plays](#5-a-repackaged-video-plays)   | QuickTime, VLC, Safari, a phone | 20 min |
 
 ---
 
@@ -181,63 +181,167 @@ The document to convert and the seven things to look at are in
 
 ## 5. A repackaged video plays
 
-**Why a human.** `check:browsers` asserts that the compressed frames come out
-of the video tool byte for byte and that the index round-trips through the
-tool's own reader. That is a real assertion about a real answer, and it is not
-the question a person has. **Nobody has ever played a file this tool produced.**
+**Why a human.** `check:browsers` asserts that the compressed pictures come out
+of the video tool unchanged and that the index round-trips through the tool's
+own reader. That is a real assertion about a real answer, and it is not the
+question a person has.
 
-There is a second reason, and it is the one worth being uncomfortable about:
-every fixture in the suite is hand-built, so **no file written by a real
-encoder has ever been read by it**. The MP4 builder in `fixtures.ts` goes out
-of its way to do what our writer does not — `mdat` first, a 32-bit `stco`,
-several samples per chunk, a QuickTime version-1 audio entry — because a
-fixture produced by the code under test proves only that the code agrees with
-itself. It is still not a camera.
+**What has changed since this list was last written.** Exactly one file this
+tool produced has been played: a `.mov` off one phone, which came out the right
+way up, scrubbed correctly and kept its sound in step. That is the whole of the
+evidence that the writer, the rotation matrix and the timing tables work on
+anything a real encoder wrote.
 
-**Do these six in order.** You need one file off a phone and one `.mkv` from
-anywhere. Under 256 MB, or the tool refuses it at the moment you choose it —
-which is itself step 6.
+Two new readers — MPEG-TS and AVI — put that back where it was, and they are
+more exposed than the first two were. **Every fixture behind them is hand-built,
+including the H.264 and H.265 parameter sets, which are written out bit by bit
+through the real syntax so that the sizes the reader reports are sizes an
+encoder would have written rather than ones this repository invented.** It is
+still not a camcorder.
 
-1. **A phone video, repackaged.** Record ten seconds on a phone **holding it
-   upright**, get the `.mov` onto the machine, open `/tools/video-remux`,
-   choose it, and press Run. Download the result and open it in QuickTime or
-   VLC.
-   - _Pass:_ it plays, the picture is **the right way up**, and the sound is in
-     step with it.
-   - _Fail (the one this step exists for):_ it plays **on its side**. That is
-     the display matrix not surviving the repackage, and it is the exact shape
-     of failure this repository keeps writing down — correct in every
-     measurable respect and obviously wrong to a person.
-   - _Fail:_ the sound drifts out of step as it goes.
+They are also the first place this tool **rewrites bytes**. H.264 in a
+transport stream is Annex B, and an MP4 wants length-prefixed NAL units with
+the parameter sets hoisted into `avcC`. Every coded picture is copied verbatim;
+the framing around it is not. So there is a new class of failure available here
+that the first two containers did not have, and it is the one the steps below
+are ordered by.
 
-2. **The same file in Safari.** Drag the result into a Safari window.
-   - _Pass:_ it plays. Safari is the strictest reader of an MP4 in common use,
-     and it is also the one WebKit-via-Playwright is least like.
-   - _Fail:_ a black frame, or a download prompt instead of a player.
+### In priority order
 
-3. **Scrubbing.** Drag the playhead to the middle and let go, three times.
+The list is ordered by **how bad the failure is if it is wrong**, not by how
+likely it is — and the first four are all shapes that produce a file which
+plays. Each names the failure it exists to catch, because that is what made
+the rotation case worth having.
+
+You need: a `.ts` or `.m2ts`/`.mts` from a real device (OBS, a camcorder, a
+tuner), an old `.avi` film, and QuickTime or VLC, plus Safari and a phone.
+Under 256 MB, or the tool refuses it at the moment you choose it — which is
+step 11.
+
+1. **A transport stream, in Safari.** Repackage a `.ts` or `.mts` holding
+   H.264, download the result, and drag it into a Safari window. Do this
+   **before** trying VLC, and the order is the point.
+   - _Pass:_ it plays, with picture.
+   - _Fail (the one this step exists for):_ **a black frame with sound, or a
+     "cannot play" message, in Safari — and the same file plays perfectly in
+     VLC.** That is the `avcC` being wrong. VLC reads the parameter sets out of
+     the samples and barely consults the configuration record; Safari will not
+     start a decoder without it. So this failure presents as a Safari bug and
+     is not one, and checking VLC first is how you would fail to find it.
+   - _Fail:_ it plays and the picture is a green or grey smear that resolves
+     after a second. That is a wrong profile or level rather than a wrong
+     record — the decoder started on the wrong assumptions.
+
+2. **The same file in a browser, and look at its SIZE.** Open the result in
+   Chrome or Firefox and check the video is laid out at its real dimensions.
+   - _Pass:_ the picture fills the space it should, and right-clicking it
+     reports the resolution you expect (1920×1080, not 1920×1088 and not
+     1920×1084).
+   - _Fail (the one this step exists for):_ **the video element occupies no
+     space at all — nothing renders, and there is no error in the console.** A
+     transport stream states no picture size anywhere, so a `tkhd` of 0×0 is
+     what a reader that did not parse the parameter set writes. QuickTime plays
+     such a file perfectly, because it reads the size out of the stream, so
+     this is invisible to any check that uses a desktop player.
+   - _Fail:_ 1080p reports as **1084** tall. That is the frame cropping being
+     subtracted as pixels rather than as chroma samples, and it stretches every
+     frame by a hair.
+
+3. **Sound in step from the FIRST frame.** Play the repackaged transport stream
+   from the very beginning and watch someone speaking, or watch a hand clap.
+   Then jump to the middle and watch again.
+   - _Pass:_ lips and sound agree at the start and stay agreeing.
+   - _Fail (the one this step exists for):_ **the sound is out of step by a
+     fixed fraction of a second, consistently, all the way through.** A
+     transport stream's streams do not start together — audio commonly leads
+     video, and a tuner recording can have half a second between them — and an
+     MP4's sample table has no field for "this track starts late". The offset
+     is written as an edit list instead, and a player that got it or a writer
+     that lost it both produce a film that plays at the right length with the
+     sound displaced. This looks like a bad encode, not like a bad remux, which
+     is why it is this high.
+   - _Fail:_ the sound drifts progressively further out as it goes. That is the
+     audio frame-time projection rather than the offset.
+
+4. **An AVI's soundtrack, at the right pitch and the right length.** Take an
+   old `.avi` film, set the operation to **Extract the audio track**, and play
+   the `.mp3` in a music player. Check its length against the film's.
+   - _Pass:_ it plays end to end, at the right pitch, and is the same length as
+     the film.
+   - _Fail (the one this step exists for):_ **it is the right length and the
+     wrong speed, or it clicks every few hundred milliseconds.** An AVI's
+     interleaver chose its chunk sizes and the codec did not, so an MP3 frame
+     routinely finishes in the chunk after the one it started in. A reader that
+     took a chunk as a frame produces audio that is all there and wrong.
+   - _Fail:_ it is a fraction of the length it should be. That is frames being
+     skipped at the chunk boundaries rather than reassembled.
+
+5. **And the AVI's refusal is the right refusal.** Set the operation back to
+   **Repackage as MP4** and run it on the same film.
+   - _Pass:_ it is refused, and the message **names the codec** — "MPEG-4
+     Part 2 (DivX or Xvid)" or "Motion JPEG" — and says that extracting the
+     audio will work.
+   - _Fail:_ it succeeds and hands you an `.m4a`. That is a feature going in
+     and a soundtrack coming out under the label "Repackaged", which is the
+     specific thing `refuseAudioOnlyRepackage` exists to prevent.
+   - _Fail:_ it says "that does not look like a video file", which means the
+     container was not recognised at all.
+
+6. **Scrubbing a transport stream.** Drag the playhead into the middle of the
+   repackaged `.ts` and let go, three times.
    - _Pass:_ it lands and resumes within a moment each time.
-   - _Fail:_ it jumps to the start, or stalls. That is the sync-sample table:
-     an absent `stss` means "every frame is seekable", which is a plausible
-     wrong answer that plays perfectly from the beginning.
+   - _Fail:_ it jumps to the start, or stalls, or lands on a smear that clears
+     after a second. Only IDR frames are marked seekable, deliberately —
+     over-reporting produces a file that plays perfectly from the beginning and
+     cannot be scrubbed, and this is the step that would find it.
 
-4. **An `.mkv`, repackaged.** One with H.264 and AAC in it — a WebM will be
-   refused, correctly, and tells you why. Play the result.
-   - _Pass:_ it plays, in step, with the same running time as the original.
-   - _Fail:_ the picture stutters or the frames are subtly out of order. That
-     is the decode-time reconstruction, which is the one thing in this tool
-     that is inference rather than transcription.
+7. **HEVC, if you can get it.** A newer camcorder or phone recording to
+   `.m2ts`, or an H.265 `.ts` from a tuner. Repackage it and play it in
+   QuickTime **and** in Safari.
+   - _Pass:_ both play it.
+   - _Fail:_ VLC plays it and Safari and QuickTime do not. That is `hvcC`, and
+     it is the least-supported thing in this tool: twelve bytes of
+     profile-tier-level behind variable-length fields, checkable against
+     nothing but a decoder. If this fails, `readHevcSps` is where to look, and
+     the sub-layer flag loop is the most likely line.
 
-5. **The audio out of it.** Set the operation to **Extract the audio track**
-   and run it on the same file. Play the `.m4a` in a music player.
-   - _Pass:_ it plays end to end, at the right pitch and the right length.
-   - _Fail:_ it is the right length and the wrong speed, or a fraction of the
-     length it should be. Both are lacing: several audio frames share one
-     Matroska block, and a reader that mishandles that produces audio that is
-     all there and wrong.
+8. **An AVCHD camcorder clip, unmodified.** If you have a camcorder, take an
+   `.mts` straight off the card without letting any software touch it.
+   - _Pass:_ it is read at all.
+   - _Fail:_ "that does not look like a video file". Those files are 192-byte
+     packets — 188 plus a four-byte arrival timestamp — and this is the check
+     that the stride detection is right on a real one.
 
-6. **Something too big.** Choose a file over 256 MB.
-   - _Pass:_ it is refused **at the moment you choose it**, naming the file,
-     its size and the limit, before anything is read.
-   - _Fail:_ the app thinks about it, then refuses. That means the limit is
-     being applied after the read rather than before it.
+9. **A phone video, repackaged.** The original check, kept because it is the
+   only one that has ever passed on a real file and because a regression in it
+   would be silent. Record ten seconds on a phone **holding it upright**, get
+   the `.mov` onto the machine, repackage it, and open the result in QuickTime
+   or VLC.
+   - _Pass:_ it plays, the picture is **the right way up**, and the sound is in
+     step.
+   - _Fail:_ it plays **on its side**. That is the display matrix not surviving
+     the repackage — correct in every measurable respect and obviously wrong to
+     a person.
+
+10. **An `.mkv`, repackaged.** One with H.264 and AAC in it. Play the result.
+    - _Pass:_ it plays, in step, with the same running time as the original.
+    - _Fail:_ the picture stutters or the frames are subtly out of order. That
+      is the decode-time reconstruction, which for Matroska is inference rather
+      than transcription — and note that a transport stream needs none of it,
+      so a fault here is Matroska-only.
+
+11. **Something too big.** Choose a file over 256 MB — which any real DivX film
+    or hour of tuner recording will be.
+    - _Pass:_ it is refused **at the moment you choose it**, naming the file,
+      its size and the limit, before anything is read.
+    - _Fail:_ the app thinks about it, then refuses. That means the limit is
+      being applied after the read rather than before it.
+
+12. **On a phone, and watch the memory.** Repackage a transport stream of
+    100 MB or more on a phone.
+    - _Pass:_ it completes.
+    - _Fail:_ the tab reloads or the run dies. A transport stream is held
+      **four** times over rather than three — page, worker clone, assembly
+      buffer, output — because its frames are not contiguous in the file and
+      have to be gathered before they can be indexed. That arithmetic is read
+      off the engine and has never been measured on a device.

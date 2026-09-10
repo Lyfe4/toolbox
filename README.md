@@ -423,9 +423,9 @@ conversion — including the one silent loss that is not fixable here.
 ### What a video tool cost, and what it did not
 
 [Video](src/tools/video-remux/README.md) changes a container without
-re-encoding: an `.mkv` or a `.mov` becomes an `.mp4`, or its audio track comes
-out on its own. The frames are copied across byte for byte, so nothing here
-decodes a pixel and nothing here can be lossy.
+re-encoding: an `.mkv`, a `.mov` or a `.ts` becomes an `.mp4`, or its audio
+track comes out on its own. Nothing here decodes a pixel and nothing here can
+be lossy.
 
 **It was measured before it was built.**
 [docs/video-convert-feasibility.md](docs/video-convert-feasibility.md) is an
@@ -439,19 +439,31 @@ So this is the remuxing half, shipped on its own.
 investigation. That recommendation was for a remuxer that could _also_
 transcode, and removing the transcoding removes the argument for the payload:
 ffmpeg's 30.7 MiB is libx264, libx265, libvpx, LAME and the rest — **encoders**,
-all of them — and a remuxer runs none. Both containers are parsed and the MP4 is
-written in TypeScript, in **35.6 kB raw / 12.8 kB gzipped**, about one
-five-hundredth of the 6.9 MiB brotli payload. It needs no service worker, no
+all of them — and a remuxer runs none. All four containers are parsed and the
+MP4 is written in TypeScript, in **68.2 kB raw / 23.6 kB gzipped**, about one
+three-hundredth of the 6.9 MiB brotli payload. It needs no service worker, no
 Cache Storage, and no CSP exception — `'wasm-unsafe-eval'`, which had been
 carried since the project began for "the WASM-backed tools to come", is gone
 from the policy with it.
 
-The trade is coverage, and it is stated rather than discovered: two container
-families rather than every one ever written, and H.264, H.265, AAC and MP3
-rather than every codec. A WebM is **refused**, because VP9 and Opus inside an
-MP4 make a file that fewer players accept than the one it came from.
+The trade is coverage, and it is stated rather than discovered: four containers
+rather than every one ever written, and H.264, H.265, AAC and MP3 rather than
+every codec. A WebM is **refused**, because VP9 and Opus inside an MP4 make a
+file that fewer players accept than the one it came from — and a DivX film is
+refused for the same reason, which is most of why reading AVI is worth less
+than reading MPEG-TS.
 
-Three things came out of building it that the investigation had not found:
+**Two more containers, chosen unevenly on purpose.** MPEG-TS was worth building
+because almost every real `.ts` holds H.264 with AAC — exactly what this
+carries — inside a wrapper no browser opens: a screen recording, an AVCHD
+camcorder clip, a tuner recording. AVI was built knowing that **most real AVI
+files would be read and then refused**, because their video is MPEG-4 Part 2 or
+Motion JPEG and neither can travel into an MP4 that plays anywhere the AVI did
+not. What it buys instead is a refusal that names the codec — the actual answer
+to "why won't this play" — and the soundtrack, extracted exactly, because that
+audio is MP3.
+
+Five things came out of building it that the investigation had not found:
 
 - **The files people most want to remux do not fit in memory.** The 92.6 MiB
   clip it measured generalises badly: the archetypal "won't play" file is a
@@ -468,6 +480,17 @@ Three things came out of building it that the investigation had not found:
   header; everything else in the file describes a landscape video. A rebuilt
   header without it produces a repackage that is correct in every measurable
   respect and plays on its side.
+- **"Byte for byte" stopped being true, and had to be narrowed rather than
+  stretched.** H.264 in a transport stream is Annex B — start codes, with the
+  parameter sets repeated inside the stream — and an MP4 wants length-prefixed
+  units with those hoisted into `avcC`. Every coded picture is still the
+  encoder's own, byte for byte; the framing around it is rewritten, and the
+  result says so.
+- **Two containers state no picture size at all**, and a `tkhd` of 0×0 plays
+  perfectly in QuickTime and occupies no space in a browser — no error and
+  nothing rendered. So the size is parsed out of the parameter set, cropping
+  included, which for 1080p means knowing that the crop is counted in chroma
+  samples and the number in the file is 4 rather than 8.
 
 **Malformed input was part of the first version rather than a follow-up**,
 because the investigation named it as its own largest gap: every file its spike
@@ -1014,9 +1037,9 @@ whether or not they ever open the route it belongs to. Asserting it is what
 makes "no precache exclusion is needed here" a checked statement rather than an
 assumption.
 
-For scale, the video tool — two container parsers and an MP4 writer — is
-**35.6 kB raw, 12.8 kB gzipped** in a lazy chunk, against the 6.9 MiB brotli
-the ffmpeg route would have cost.
+For scale, the video tool — four container parsers, a bitstream re-framer and
+an MP4 writer — is **68.2 kB raw, 23.6 kB gzipped** in a lazy chunk, against
+the 6.9 MiB brotli the ffmpeg route would have cost.
 
 The node inspector reuses the tool runner's options panel and output views, so
 those moved into a chunk both routes share rather than being duplicated:

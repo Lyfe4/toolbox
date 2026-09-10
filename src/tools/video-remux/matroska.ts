@@ -753,6 +753,9 @@ export function readMatroska(bytes: Uint8Array): ToolResult<SourceFile> {
       // it, so a rotated MKV is a case this tool has never seen.
       matrix: null,
       edits: [],
+      // Matroska stores H.264 and H.265 exactly as an MP4 does, so a block's
+      // bytes go into the output untouched and there is nothing to assemble.
+      media: null,
       samples: table,
     };
   });
@@ -796,5 +799,6 @@ export function readMatroska(bytes: Uint8Array): ToolResult<SourceFile> {
     tracks,
     metadata,
     problem: walk.problem,
+    reframed: false,
   });
 }

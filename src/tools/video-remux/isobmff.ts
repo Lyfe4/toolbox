@@ -720,6 +720,9 @@ function readTrack(
     codecPrivate: null,
     matrix,
     edits: readEdits(bytes, trak, walk),
+    // An ISO base media sample IS a contiguous run of the input, which is what
+    // makes this the one format the writer can copy straight out of.
+    media: null,
     samples,
   };
 }
@@ -892,5 +895,6 @@ export function readIsoBmff(bytes: Uint8Array): ToolResult<SourceFile> {
     tracks,
     metadata: readMetadata(bytes, moovChildren, trakBoxes, walk, creationTime),
     problem: walk.problem,
+    reframed: false,
   });
 }

@@ -99,6 +99,92 @@ describe('sniffBytes', () => {
   });
 });
 
+describe('the two video containers with no signature to match', () => {
+  /** A grid of `count` 188-byte packets, each starting with a sync byte. */
+  function packetGrid(count: number, stride = 188): Uint8Array {
+    const out = new Uint8Array(count * stride);
+    for (let index = 0; index < out.length; index += 1) out[index] = (index * 7 + 3) & 0x3f;
+    for (let index = 0; index < count; index += 1) out[index * stride] = 0x47;
+    return out;
+  }
+
+  it('recognises an AVI by its RIFF header rather than by the type alone', () => {
+    // The same shape the WebP signature had to be corrected into: matching the
+    // `AVI ` at byte 8 on its own would claim any file with those four bytes
+    // in that position, and the RIFF header is why they are there.
+    const avi = bytesOf(
+      0x52,
+      0x49,
+      0x46,
+      0x46,
+      0x24,
+      0x10,
+      0x00,
+      0x00,
+      0x41,
+      0x56,
+      0x49,
+      0x20,
+      0x4c,
+      0x49,
+      0x53,
+      0x54,
+    );
+    expect(sniffBytes(avi).mediaType).toBe('video/x-msvideo');
+
+    // And a WAV, which is RIFF with a different type, is not an AVI.
+    const wav = new Uint8Array(avi);
+    wav.set([0x57, 0x41, 0x56, 0x45], 8);
+    expect(sniffBytes(wav).mediaType).not.toBe('video/x-msvideo');
+  });
+
+  it('recognises a transport stream by periodicity, since it has no header', () => {
+    /*
+     * The one format here that cannot be a signature. A transport stream was
+     * designed to be tuned into rather than opened, so it has no header at all
+     * - only the fact that every packet is 188 bytes and starts with 0x47.
+     */
+    expect(sniffBytes(packetGrid(8)).mediaType).toBe('video/mp2t');
+    expect(sniffBytes(packetGrid(8)).label).toBe('MPEG transport stream');
+  });
+
+  it('recognises the AVCHD stride, which is what a camcorder writes', () => {
+    // 192 bytes: a packet with a four-byte arrival timestamp in front of it.
+    expect(sniffBytes(packetGrid(8, 192)).mediaType).toBe('video/mp2t');
+    // And 204, which is a packet followed by error-correction parity.
+    expect(sniffBytes(packetGrid(8, 204)).mediaType).toBe('video/mp2t');
+  });
+
+  it('does not call a single stray sync byte a transport stream', () => {
+    // 0x47 is one byte in 256, so it turns up in any large binary. Five in a
+    // row at the right distance is what stops that being a false positive.
+    const one = new Uint8Array(4000);
+    for (let index = 0; index < one.length; index += 1) one[index] = (index * 11 + 5) & 0x3f;
+    one[0] = 0x47;
+    one[188] = 0x47;
+    expect(sniffBytes(one).mediaType).not.toBe('video/mp2t');
+  });
+
+  it('gives the same answer for the first 4 kB as for the whole file', () => {
+    /*
+     * THE CONSTRAINT THAT DECIDED THE WINDOW, and it belongs to `fileInput`
+     * rather than to this file. A file's type is decided there from a 4096-byte
+     * slice, so that a 200 MB video dropped on a text-only port can be refused
+     * without being read into memory. A periodicity check that looked further
+     * than the slice does could give one answer to the slice and another to the
+     * file - which presents as a file accepted on one route and refused on the
+     * other, with nothing in either message to explain it.
+     *
+     * The grid here is deliberately broken PAST the window, which is the case
+     * that separates a bounded check from an unbounded one.
+     */
+    const long = packetGrid(60);
+    for (let at = 5000; at < long.length; at += 1) long[at] = 0x11;
+    expect(sniffBytes(long.subarray(0, 4096))).toEqual(sniffBytes(long));
+    expect(sniffBytes(long).mediaType).toBe('video/mp2t');
+  });
+});
+
 describe('formatBytes', () => {
   it('scales its unit', () => {
     expect(formatBytes(512)).toBe('512 B');

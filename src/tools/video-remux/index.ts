@@ -59,7 +59,8 @@ export const videoRemuxTool = defineTool({
       label: 'Video',
       types: ['bytes'],
       required: true,
-      description: 'An MP4, MOV, M4V, 3GP or Matroska file. The container is read from the bytes.',
+      description:
+        'MP4, MOV, M4V, 3GP, Matroska (MKV or WebM), an MPEG transport stream (TS, M2TS or MTS) or AVI. The container is read from the bytes, never from the name.',
     },
   ],
 

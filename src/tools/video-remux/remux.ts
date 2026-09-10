@@ -1,20 +1,23 @@
 import { fail, ok, type Bytes, type ToolResult } from '@/features/registry/types';
 
+import { readAvi } from './avi';
 import {
   CODECS,
   detectContainer,
   refuseUnknownContainer,
+  type ContainerId,
   type SourceFile,
   type SourceTrack,
 } from './containers';
 import { readIsoBmff } from './isobmff';
 import { readMatroska } from './matroska';
 import { buildSampleEntry, mediaSize, writeMp4, type OutputTrack } from './mp4writer';
+import { readMpegTs } from './mpegts';
 
 /**
  * TURNING ONE CONTAINER INTO ANOTHER, AND SAYING WHAT THAT COST.
  *
- * The conversion itself is short, because the two readers and the writer have
+ * The conversion itself is short, because the four readers and the writer have
  * already done the work. What lives here is the part that decides WHICH
  * streams travel, and - the longer half - the part that says out loud what did
  * not.
@@ -75,6 +78,8 @@ const CONTAINER_NAMES: Readonly<Record<string, string>> = {
   m4a: 'M4A',
   mp3: 'MP3',
   matroska: 'Matroska',
+  mpegts: 'MPEG-TS',
+  avi: 'AVI',
 };
 
 /** `1:02:03`, `2:07`, `0:04`. The way a player writes it, not a number of ms. */
@@ -100,6 +105,31 @@ function trackSeconds(track: SourceTrack): number | null {
   if (samples.count === 0 || track.timescale <= 0) return null;
   const end = (samples.dts[samples.count - 1] ?? 0) + samples.lastDuration;
   return end / track.timescale;
+}
+
+/* ========================================================================== *
+ * Which reader
+ * ========================================================================== */
+
+/**
+ * One reader per container family, chosen from the bytes.
+ *
+ * All four produce the same `SourceFile`, which is what keeps everything below
+ * this line ignorant of which format it came from - the selection, the notes,
+ * the refusals and the report are written once. What differs between them is
+ * how much of a `SourceFile` a format can actually fill in, and the two later
+ * arrivals fill in less: neither states its own duration and neither has
+ * anywhere to put a rotation. They are also the two that can hand over a
+ * buffer of their own instead of pointing into the input - always for a
+ * transport stream, whose frames are not contiguous in the file at all, and
+ * for an AVI only where a track's samples had to be re-framed or its audio
+ * gathered across chunk boundaries.
+ */
+function readContainer(container: ContainerId, bytes: Uint8Array): ToolResult<SourceFile> {
+  if (container === 'mp4') return readIsoBmff(bytes);
+  if (container === 'matroska') return readMatroska(bytes);
+  if (container === 'mpegts') return readMpegTs(bytes);
+  return readAvi(bytes);
 }
 
 /* ========================================================================== *
@@ -173,6 +203,50 @@ function refuseSelection<T>(file: SourceFile, operation: Operation): ToolResult<
   });
 }
 
+/**
+ * Why a film cannot be repackaged into its own soundtrack.
+ *
+ * THE CASE THIS EXISTS FOR arrived with the AVI reader. Ask to repackage a
+ * DivX film as MP4 and the video is refused - MPEG-4 Part 2 cannot usefully
+ * travel - while the MP3 audio can, so the selection above happily keeps one
+ * track and the writer happily produces a perfectly good `.m4a`. The user
+ * asked for their film and got its soundtrack, with a warning above it.
+ *
+ * Handing back an audio file IS right when the video was dropped because the
+ * FILE is broken - a track whose decoder configuration an encoder never
+ * finished writing is a track nobody can play in any container, and salvaging
+ * the sound is better than refusing the lot. That case still works, and a test
+ * pins it.
+ *
+ * It is wrong when the video was dropped because of its CODEC, and the reason
+ * is the difference between the two answers. "Your video is Xvid; a container
+ * change cannot convert a codec; extract the audio if that is what you want"
+ * tells somebody what happened and what to do. An `.m4a` labelled Repackaged
+ * tells them the tool worked.
+ *
+ * A file with no video in it at all - an `.m4a`, a radio recording - is
+ * untouched by any of this: nothing was dropped, so there is nothing to refuse.
+ */
+function refuseAudioOnlyRepackage<T>(
+  file: SourceFile,
+  kept: readonly SourceTrack[],
+  operation: Operation,
+): ToolResult<T> | null {
+  if (operation !== 'container') return null;
+  if (kept.some((track) => track.kind === 'video')) return null;
+
+  const video = file.tracks.filter((track) => track.kind === 'video');
+  const refused = video.filter((track) => !CODECS[track.codec].carried);
+  if (refused.length === 0 || refused.length !== video.length) return null;
+
+  const first = refused[0]?.codec ?? 'unknown';
+  const names = [...new Set(refused.map((track) => CODECS[track.codec].label))];
+
+  return fail('unsupported-type', `That file’s video is ${names.join(' and ')}.`, {
+    detail: `${CODECS[first].refusal ?? ''} The sound in it can travel, so "Extract the audio track" will work on this file - but repackaging it would hand you the soundtrack of a video, labelled as though the video had been converted.`,
+  });
+}
+
 /* ========================================================================== *
  * Metadata, which is the part a repackage silently discards
  * ========================================================================== */
@@ -233,6 +307,7 @@ function toOutputTrack(track: SourceTrack): OutputTrack | null {
     matrix: track.matrix,
     edits: track.edits,
     samples: track.samples,
+    media: track.media,
   };
 }
 
@@ -240,12 +315,15 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
   const container = detectContainer(bytes);
   if (container === null) return refuseUnknownContainer(bytes);
 
-  const read = container === 'mp4' ? readIsoBmff(bytes) : readMatroska(bytes);
+  const read = readContainer(container, bytes);
   if (!read.ok) return read;
   const file = read.value;
 
   const { kept, dropped } = selectTracks(file, operation);
   if (kept.length === 0) return refuseSelection(file, operation);
+
+  const refusedVideo = refuseAudioOnlyRepackage<RemuxOutcome>(file, kept, operation);
+  if (refusedVideo !== null) return refusedVideo;
 
   const notes: RemuxNote[] = [];
 
@@ -287,6 +365,14 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
     });
   }
 
+  if (file.reframed && operation === 'container') {
+    notes.push({
+      level: 'info',
+      title: 'The pictures were copied and their framing was rebuilt',
+      body: 'This container stores H.264 the way a broadcast does: each piece of the picture introduced by a start code, with the decoder configuration repeated through the stream. An MP4 puts a length in front of each piece and states the configuration once. So every coded picture in the result is the encoder’s own, byte for byte - nothing was decoded and nothing can be lossy - but the few bytes around each one were rewritten, which is the one place in this tool where that is true.',
+    });
+  }
+
   if (kept.some((track) => track.matrix !== null)) {
     notes.push({
       level: 'info',
@@ -306,12 +392,16 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
       });
     }
 
+    // The track's own buffer where it has one: an MP3 lifted out of a
+    // transport stream or an AVI was gathered by the reader, because its
+    // frames were never a contiguous run of the file to begin with.
+    const from = only.media ?? bytes;
     const out = new Uint8Array(total);
     let at = 0;
     for (let index = 0; index < only.samples.count; index += 1) {
-      const from = only.samples.offset[index] ?? 0;
+      const start = only.samples.offset[index] ?? 0;
       const size = only.samples.size[index] ?? 0;
-      out.set(bytes.subarray(from, from + size), at);
+      out.set(from.subarray(start, start + size), at);
       at += size;
     }
 
@@ -380,10 +470,19 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
   const out = writeMp4({
     source: bytes,
     tracks,
-    // The movie timescale is carried from the source so a copied edit list
-    // still means what it meant. Matroska has no movie timescale and no edit
-    // lists, and 1000 is what its own timestamps are already in.
-    timescale: file.container === 'mp4' ? file.timescale : 1000,
+    /*
+     * The movie timescale is carried from the source so a copied edit list
+     * still means what it meant. Matroska has no movie timescale and no edit
+     * lists, and 1000 is what its own timestamps are already in.
+     *
+     * A transport stream DOES need this to be its own clock, and that is not
+     * cosmetic: its reader writes an edit list per track to hold the offset
+     * between the streams, and those segment durations are stated in movie
+     * ticks. A movie timescale of 1000 against edits computed in 90 kHz would
+     * delay every track by ninety times too much - a film that starts with a
+     * minute of nothing.
+     */
+    timescale: file.container === 'matroska' ? 1000 : file.timescale,
     majorBrand: audioOnly ? 'M4A ' : 'isom',
     compatibleBrands: audioOnly
       ? ['M4A ', 'isom', 'iso2', 'mp41']

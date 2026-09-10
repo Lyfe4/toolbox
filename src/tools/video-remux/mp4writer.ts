@@ -311,6 +311,17 @@ export interface OutputTrack {
   readonly matrix: Uint8Array | null;
   readonly edits: readonly Edit[];
   readonly samples: SampleTable;
+  /**
+   * The buffer this track's sample offsets point into, or null for the input.
+   *
+   * Every sample of an MP4 or a Matroska source is a contiguous run of bytes
+   * in the file that was handed in, so those tracks leave this null and the
+   * writer copies straight out of the input. A transport stream's frames are
+   * spread across hundreds of packets and its H.264 needs re-framing on the
+   * way out, so its reader hands over a buffer it assembled - see
+   * `SourceTrack.media`.
+   */
+  readonly media: Uint8Array | null;
 }
 
 /** Three five-bit letters packed into sixteen bits. `und` where unknown. */
@@ -514,6 +525,27 @@ function mediaDuration(samples: SampleTable): number {
   return (samples.dts[samples.count - 1] ?? 0) + samples.lastDuration;
 }
 
+/**
+ * How long a track lasts once its edit list has had its say, in movie ticks.
+ *
+ * `tkhd` and `mvhd` hold PRESENTATION durations, and an edit list is what
+ * makes those differ from the media duration - it is the box that says a track
+ * starts late, or stops early, or repeats. So where there is one, the answer is
+ * the sum of its segments and not the length of the media.
+ *
+ * The case that needs it is a transport stream, whose reader writes an empty
+ * edit in front of each track to hold the offset between the streams. Reading
+ * the media duration there reports a track shorter than it is by exactly that
+ * offset, and a player that believes `mvhd` stops the film a fraction of a
+ * second early - which is invisible, until it is the last word of a sentence.
+ */
+function presentationDuration(track: OutputTrack, timescale: number): number {
+  if (track.edits.length > 0) {
+    return track.edits.reduce((total, edit) => total + Math.max(0, edit.segmentDuration), 0);
+  }
+  return Math.round((mediaDuration(track.samples) / Math.max(1, track.timescale)) * timescale);
+}
+
 function editList(edits: readonly Edit[]): Uint8Array | null {
   if (edits.length === 0) return null;
   const table = new Uint8Array(edits.length * 12);
@@ -539,7 +571,7 @@ function buildTrak(options: MovieOptions, index: number, offsets: readonly numbe
   const track = tracks[index];
   if (track === undefined) return new Uint8Array(0);
 
-  const duration = Math.round((mediaDuration(track.samples) / track.timescale) * timescale);
+  const duration = presentationDuration(track, timescale);
 
   const tkhd = fullBox(
     'tkhd',
@@ -646,7 +678,7 @@ function buildMoov(options: MovieOptions): Uint8Array {
 
   const movieDuration = Math.max(
     0,
-    ...tracks.map((track) => (mediaDuration(track.samples) / track.timescale) * timescale),
+    ...tracks.map((track) => presentationDuration(track, timescale)),
   );
 
   return box(
@@ -658,7 +690,7 @@ function buildMoov(options: MovieOptions): Uint8Array {
       u32(0),
       u32(0),
       u32(timescale),
-      u32(Math.round(movieDuration)),
+      u32(movieDuration),
       u32(0x00010000), // rate: 1.0
       u16(0x0100), // volume: 1.0
       u16(0),
@@ -721,10 +753,13 @@ export function writeMp4(options: WriteOptions): Bytes {
   for (const chunk of chunks) {
     const track = tracks[chunk.track];
     if (track === undefined) continue;
+    // Per track, because the two containers that cannot promise a sample is a
+    // contiguous run of the input hand over a buffer of their own instead.
+    const from = track.media ?? source;
     for (let index = 0; index < chunk.count; index += 1) {
-      const from = track.samples.offset[chunk.first + index] ?? 0;
+      const start = track.samples.offset[chunk.first + index] ?? 0;
       const size = track.samples.size[chunk.first + index] ?? 0;
-      out.set(source.subarray(from, from + size), at);
+      out.set(from.subarray(start, start + size), at);
       at += size;
     }
   }

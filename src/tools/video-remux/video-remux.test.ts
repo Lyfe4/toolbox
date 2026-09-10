@@ -413,11 +413,15 @@ describe('extracting the audio track', () => {
     if (!done.ok) throw new Error(done.error.message);
     expect(done.value.notes.some((note) => note.title.includes('VP9'))).toBe(false);
 
-    // And the same file, repackaged, does say so - which is what makes the
-    // silence above a decision rather than a dropped message.
+    // And the same file, repackaged, names VP9 as the reason it will not be -
+    // which is what makes the silence above a decision rather than a dropped
+    // message. It is a refusal rather than a note because handing back the
+    // soundtrack of a video the user asked to repackage is the wrong answer to
+    // a question they did not ask: see `refuseAudioOnlyRepackage`.
     const asVideo = remux(source, 'container');
-    if (!asVideo.ok) throw new Error(asVideo.error.message);
-    expect(asVideo.value.notes.some((note) => note.title.includes('VP9'))).toBe(true);
+    expect(asVideo.ok).toBe(false);
+    if (asVideo.ok) return;
+    expect(asVideo.error.message).toContain('VP9');
   });
 
   it('refuses a file with no audio in it, rather than producing an empty one', () => {

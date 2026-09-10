@@ -9008,6 +9008,137 @@ function makeTinyMp4() {
   return { bytes: Buffer.from([...ftyp, ...mdat, ...moov]), media: Buffer.from(media) };
 }
 
+/**
+ * A TINY MPEG TRANSPORT STREAM, BUILT HERE, RE-FRAMED IN A REAL WORKER.
+ *
+ * This exists for one thing the MP4 fixture above cannot reach. Repackaging an
+ * MP4 or a Matroska file copies each sample as a contiguous run of the input;
+ * a transport stream has no such run, so its reader ASSEMBLES - it gathers a
+ * frame out of the packets carrying it, rewrites the Annex B framing into
+ * length prefixes, and hands the writer a buffer of its own.
+ *
+ * That is a second code path through the worker boundary, and it is the one
+ * that allocates. It is also where the picture size comes from: a transport
+ * stream states none anywhere, so 640 by 480 in the report below is the
+ * sequence parameter set having been read bit by bit, in this engine, through
+ * exponential-Golomb codes. A `tkhd` of 0 by 0 plays perfectly in a desktop
+ * player and occupies no space in a browser, which is exactly the sort of
+ * failure only a real engine can be asked about.
+ *
+ * The parameter sets are the bytes the tool's own fixtures produce, quoted
+ * here rather than imported: this script drives the built application and has
+ * no access to the source tree it was built from.
+ */
+function makeTinyTs() {
+  const SPS = [0x67, 0x42, 0x00, 0x1e, 0xda, 0x02, 0x80, 0xf6, 0x40];
+  const PPS = [0x68, 0xce, 0x3c, 0x80];
+  // One IDR slice with distinguishable contents and no two consecutive zeros,
+  // so nothing in it can be mistaken for a start code.
+  const idr = [0x65];
+  for (let index = 0; index < 400; index += 1) idr.push((index * 7 + 11) & 0xff);
+
+  const startCode = [0, 0, 0, 1];
+  const accessUnit = [...startCode, ...SPS, ...startCode, ...PPS, ...startCode, ...idr];
+
+  /** A PSI section: table id, a 12-bit length, the body, then a zero CRC. */
+  const section = (tableId, body) => {
+    const length = body.length + 4;
+    return [tableId, 0xb0 | ((length >> 8) & 0x0f), length & 0xff, ...body, 0, 0, 0, 0];
+  };
+
+  const PMT_PID = 0x1000;
+  const VIDEO_PID = 0x0100;
+
+  const pat = section(0x00, [
+    0x00,
+    0x01, // transport_stream_id
+    0xc1, // version 0, current
+    0x00,
+    0x00,
+    0x00,
+    0x01, // programme 1
+    0xe0 | ((PMT_PID >> 8) & 0x1f),
+    PMT_PID & 0xff,
+  ]);
+
+  const pmt = section(0x02, [
+    0x00,
+    0x01, // programme number
+    0xc1,
+    0x00,
+    0x00,
+    0xe0 | 0x10,
+    0x00, // PCR pid
+    0xf0,
+    0x00, // no programme descriptors
+    0x1b, // stream type: H.264
+    0xe0 | ((VIDEO_PID >> 8) & 0x1f),
+    VIDEO_PID & 0xff,
+    0xf0,
+    0x00, // no stream descriptors
+  ]);
+
+  /** A 33-bit timestamp in the five-byte form a PES header uses. */
+  const stamp = (prefix, value) => [
+    (prefix << 4) | ((Math.floor(value / 2 ** 30) & 0x07) << 1) | 1,
+    Math.floor(value / 2 ** 22) & 0xff,
+    ((Math.floor(value / 2 ** 15) & 0x7f) << 1) | 1,
+    Math.floor(value / 2 ** 7) & 0xff,
+    ((value & 0x7f) << 1) | 1,
+  ];
+
+  const pes = [
+    0,
+    0,
+    1,
+    0xe0, // video stream id
+    0,
+    0, // a declared length of zero, which is what a video PES writes
+    0x80,
+    0xc0, // both timestamps present
+    10,
+    ...stamp(3, 0),
+    ...stamp(1, 0),
+    ...accessUnit,
+  ];
+
+  /*
+   * The packets, each padded to 188 bytes with a stuffing adaptation field -
+   * which is what a real muxer writes for the tail of every frame, and the
+   * shape a reader skipping the field by the wrong amount gets wrong.
+   */
+  const packets = [];
+  const emit = (pid, payload) => {
+    let at = 0;
+    let first = true;
+    while (at < payload.length) {
+      const take = Math.min(184, payload.length - at);
+      const stuffing = 184 - take;
+      const packet = [
+        0x47,
+        (first ? 0x40 : 0) | ((pid >> 8) & 0x1f),
+        pid & 0xff,
+        (stuffing > 0 ? 0x30 : 0x10) | (packets.length & 0x0f),
+      ];
+      if (stuffing === 1) packet.push(0);
+      else if (stuffing > 1) {
+        packet.push(stuffing - 1, 0x00);
+        for (let index = 0; index < stuffing - 2; index += 1) packet.push(0xff);
+      }
+      packet.push(...payload.slice(at, at + take));
+      packets.push(...packet);
+      at += take;
+      first = false;
+    }
+  };
+
+  emit(0, [0x00, ...pat]);
+  emit(PMT_PID, [0x00, ...pmt]);
+  emit(VIDEO_PID, pes);
+
+  return { bytes: Buffer.from(packets), slice: Buffer.from(idr) };
+}
+
 async function checkVideoRemux(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 
@@ -9160,6 +9291,70 @@ async function checkVideoRemux(browser, label) {
       'extracting audio from a file with none says so rather than producing nothing',
       noAudio.code.includes('invalid-input'),
       noAudio.code.trim(),
+    );
+
+    /* -- 4. A transport stream, which is the assembling path -------------- */
+
+    /*
+     * A SECOND CODE PATH THROUGH THE SAME BOUNDARY, and the reason it is worth
+     * a real engine rather than only a unit test.
+     *
+     * The MP4 above is copied: each sample is a contiguous run of the input,
+     * and the writer reads straight out of the bytes the worker was handed. A
+     * transport stream has no such run - one picture is spread across the
+     * packets carrying it - so its reader gathers the frame, rewrites the
+     * Annex B framing into length prefixes, and hands the writer a buffer of
+     * its own. That is an allocation inside the worker, in a shape the other
+     * three containers never take.
+     */
+    const stream = makeTinyTs();
+    const streamFile = { name: 'capture.ts', mimeType: 'video/mp2t', buffer: stream.bytes };
+    const remuxed = await run(streamFile, 'Repackage as MP4');
+    const streamOut = Buffer.from(remuxed.encoded ?? '', 'base64');
+
+    check(
+      label,
+      'a transport stream is assembled into an MP4 through the worker',
+      streamOut.length > 0 && remuxed.report?.to?.format === 'MP4 · H.264',
+      `${String(streamOut.length)} bytes, ${String(remuxed.report?.to?.format)}`,
+    );
+
+    /*
+     * THE PICTURE SIZE, WHICH IS THE ONE THING ONLY A BROWSER CAN BE WRONG
+     * ABOUT. A transport stream states no size anywhere, so this number is the
+     * sequence parameter set having been walked through its exponential-Golomb
+     * codes in this engine. A reader that skipped it writes a `tkhd` of 0 by 0,
+     * which a desktop player renders perfectly - it reads the size out of the
+     * stream - and which a browser lays out at zero pixels with no error at
+     * all. Forty macroblocks by thirty map units is 640 by 480.
+     */
+    check(
+      label,
+      'and its picture size is read out of the parameter set, since nothing states it',
+      remuxed.report?.to?.width === 640 && remuxed.report?.to?.height === 480,
+      `${String(remuxed.report?.to?.width)} x ${String(remuxed.report?.to?.height)}`,
+    );
+
+    /*
+     * The narrow version of the claim the MP4 check makes broadly. "Byte for
+     * byte" is false for this container by design - the framing around each
+     * coded picture is rewritten - so what has to survive is one level down:
+     * the NAL unit payload itself, unchanged, behind a four-byte length.
+     */
+    check(
+      label,
+      'every coded picture survives the re-framing unchanged',
+      streamOut.includes(stream.slice),
+      streamOut.includes(stream.slice)
+        ? 'the slice is byte-identical inside its length prefix'
+        : 'the coded picture did not survive',
+    );
+
+    check(
+      label,
+      'and the result says the framing was rebuilt rather than claiming byte for byte',
+      (remuxed.report?.notes ?? []).some((note) => note.title.includes('framing was rebuilt')),
+      JSON.stringify((remuxed.report?.notes ?? []).map((note) => note.title)),
     );
   } finally {
     await context.close().catch(() => {});

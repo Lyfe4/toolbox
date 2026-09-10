@@ -84,6 +84,18 @@ const SIGNATURES: readonly Signature[] = [
     mediaType: 'video/x-matroska',
     label: 'Matroska or WebM video',
   },
+  /*
+   * RIFF, four bytes of length, `AVI `. The same shape as the WebP signature
+   * above and for the same reason: matching the `AVI ` alone would claim any
+   * file with those four bytes eight in, and the RIFF header is why they are
+   * there.
+   */
+  {
+    bytes: [0x52, 0x49, 0x46, 0x46, null, null, null, null, 0x41, 0x56, 0x49, 0x20],
+    offset: 0,
+    mediaType: 'video/x-msvideo',
+    label: 'AVI video',
+  },
   {
     bytes: [0x25, 0x50, 0x44, 0x46],
     offset: 0,
@@ -147,11 +159,63 @@ function looksLikeText(bytes: Uint8Array): boolean {
   return suspicious / window.length < 0.05;
 }
 
+/**
+ * An MPEG transport stream, which has no signature to match.
+ *
+ * The one format here that cannot be a `Signature`, and not for want of
+ * trying: a transport stream is a grid of 188-byte packets each beginning with
+ * 0x47, with no header at all, because it was designed to be tuned into rather
+ * than opened. So "what this is" is a statement about PERIODICITY, which the
+ * table above cannot express - the answer needs three candidate strides and
+ * several packets of each.
+ *
+ * The window matters and is deliberately the same 4096 bytes the text
+ * heuristic uses. `loadFileForPort` sniffs a 4 kB slice so that a 200 MB file
+ * can be refused by a text-only port without being read into memory, and
+ * `fileInput.test.ts` asserts the slice and the whole file agree - so a check
+ * that looked further here could give one answer to the slice and another to
+ * the file, which presents as a file accepted on one route and refused on the
+ * other.
+ *
+ * 192 is the stride an AVCHD camcorder writes (`.m2ts`, `.mts`): 188 with a
+ * four-byte arrival timestamp in front. 204 is 188 followed by sixteen bytes
+ * of error-correction parity, which some capture cards do not strip.
+ *
+ * AND YES, THIS IS THE SAME ARITHMETIC AS `detectTransportStream` IN THE VIDEO
+ * TOOL, on purpose. Importing that one would be the obvious tidy-up and would
+ * pull `video-remux/containers.ts` - its limits, its codec table, its whole
+ * module graph - into the chunk this file lives in, which is loaded by the
+ * canvas rather than by a tool. That is the regression the worker-entry
+ * budget was added for, one directory along: a lazy tool arriving in an eager
+ * chunk with every gate still green. Two copies of twelve lines is the cheaper
+ * of the two prices, and `sniff.test.ts` holds this one to the same answers.
+ */
+function looksLikeTransportStream(bytes: Uint8Array): boolean {
+  const window = Math.min(bytes.length, 4096);
+  for (let start = 0; start < window && start < 208; start += 1) {
+    if (bytes[start] !== 0x47) continue;
+    for (const stride of [188, 192, 204]) {
+      let matched = 0;
+      while (matched < 5 && start + matched * stride < window) {
+        if (bytes[start + matched * stride] !== 0x47) break;
+        matched += 1;
+      }
+      const ranOut = start + matched * stride >= window;
+      if (matched >= 5 || (matched >= 2 && ranOut)) return true;
+    }
+  }
+  return false;
+}
+
 export function sniffBytes(bytes: Uint8Array): SniffResult {
   for (const signature of SIGNATURES) {
     if (matches(bytes, signature)) {
       return { mediaType: signature.mediaType, label: signature.label, isProbablyText: false };
     }
+  }
+
+  if (looksLikeTransportStream(bytes)) {
+    return { mediaType: 'video/mp2t', label: 'MPEG transport stream', isProbablyText: false };
   }
 
   if (hasTextBom(bytes)) {
