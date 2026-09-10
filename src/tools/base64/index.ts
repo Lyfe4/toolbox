@@ -59,8 +59,6 @@ export const base64Tool = defineTool({
     // Worker, not main: this accepts files up to 32 MB and encoding one on the
     // main thread would drop frames.
     strategy: 'worker',
-    requiresWasm: false,
-    wasmModules: [],
     requiresOffscreenCanvas: false,
     reportsProgress: false,
     timeoutMs: 15_000,

@@ -2775,6 +2775,13 @@ async function checkDeployment(label, rules) {
   );
 
   const global = headersFor(rules, '/');
+  /*
+   * COOP and COEP are kept for reasons that are NOT the reason they were set -
+   * multi-threaded WASM, which the feasibility investigation measured as
+   * unusable and which this app now ships none of. The reasoning is written
+   * out in public/_headers; this loop is what stops the decision being
+   * reversed by accident, in either direction.
+   */
   for (const [name, expected] of [
     ['Cross-Origin-Opener-Policy', 'same-origin'],
     ['Cross-Origin-Embedder-Policy', 'require-corp'],
@@ -2789,6 +2796,26 @@ async function checkDeployment(label, rules) {
     "the document keeps connect-src 'none'",
     (global['Content-Security-Policy'] ?? '').includes("connect-src 'none'"),
     global['Content-Security-Policy']?.slice(0, 60) ?? 'absent',
+  );
+
+  /*
+   * NO EVAL-LIKE SOURCE, of any kind, in script-src.
+   *
+   * `'unsafe-eval'` has never been there. `'wasm-unsafe-eval'` was, set "for
+   * the WASM-backed tools to come", and nothing ever compiled a module - the
+   * video tool parses containers in TypeScript. A relaxation carried for a
+   * consumer that never arrived is the same defect as an affordance for
+   * behaviour that does not exist, and this one sat in the security policy,
+   * where the cost of the habit is highest. Asserting the absence is what
+   * makes the removal a decision rather than a thing that drifts back in with
+   * the first dependency that wants it.
+   */
+  const scriptSrc = /script-src ([^;]*)/.exec(global['Content-Security-Policy'] ?? '')?.[1] ?? '';
+  check(
+    label,
+    'script-src grants no eval-like source, wasm included',
+    scriptSrc !== '' && !scriptSrc.includes('unsafe-eval'),
+    scriptSrc.slice(0, 70) || 'no script-src found',
   );
 
   /*

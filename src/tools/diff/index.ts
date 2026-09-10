@@ -101,8 +101,6 @@ export const diffTool = defineTool({
 
   execution: {
     strategy: 'worker',
-    requiresWasm: false,
-    wasmModules: [],
     requiresOffscreenCanvas: false,
     reportsProgress: false,
     // Myers is O(ND); two large and wholly different files are the slow case,

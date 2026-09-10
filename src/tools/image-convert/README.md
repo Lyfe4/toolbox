@@ -220,8 +220,9 @@ requiresOffscreenCanvas: true;
 
 `resolveExecutionMeta` in the engine reads it and downgrades the tool to
 `strategy: 'main'` when the API is missing, where `convert.ts` falls back to a
-DOM `<canvas>` and `toBlob`. This follows the precedent already set by
-`requiresWasm`: a capability the tool needs is metadata, not a runtime probe.
+DOM `<canvas>` and `toBlob`. A capability the tool needs is metadata rather
+than a runtime probe, because by the time `run` executes the context has
+already been chosen and cannot be changed.
 
 The two branches are genuinely different APIs — `convertToBlob` returns a
 promise, `toBlob` takes a callback — which is why they are not unified behind

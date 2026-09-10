@@ -133,9 +133,6 @@ describe.each(ids)('tool %s', (id) => {
     const tool = await loadTool(id);
     expect(tool.execution.timeoutMs).toBeGreaterThan(0);
     expect(tool.execution.maxInputBytes).toBeGreaterThan(0);
-    // Nothing needs WASM yet; the shape exists but must stay unused for now.
-    expect(tool.execution.requiresWasm).toBe(false);
-    expect(tool.execution.wasmModules).toEqual([]);
   });
 });
 

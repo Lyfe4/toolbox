@@ -62,8 +62,6 @@ defineTool({
   optionFields: [],
   execution: {
     strategy: 'main',
-    requiresWasm: false,
-    wasmModules: [],
     requiresOffscreenCanvas: false,
     reportsProgress: false,
     timeoutMs: 1000,
@@ -94,8 +92,6 @@ defineTool({
   optionFields: [],
   execution: {
     strategy: 'main',
-    requiresWasm: false,
-    wasmModules: [],
     requiresOffscreenCanvas: false,
     reportsProgress: false,
     timeoutMs: 1000,
@@ -118,8 +114,6 @@ defineTool({
   optionFields: [],
   execution: {
     strategy: 'main',
-    requiresWasm: false,
-    wasmModules: [],
     requiresOffscreenCanvas: false,
     reportsProgress: false,
     timeoutMs: 1000,
@@ -222,8 +216,6 @@ describe('eraseTool', () => {
     optionFields: [{ key: 'upper', label: 'Upper case', control: 'toggle' }],
     execution: {
       strategy: 'main',
-      requiresWasm: false,
-      wasmModules: [],
       requiresOffscreenCanvas: false,
       reportsProgress: false,
       timeoutMs: 1000,

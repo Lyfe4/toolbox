@@ -81,8 +81,6 @@ export const regexTesterTool = defineTool({
 
   execution: {
     strategy: 'worker',
-    requiresWasm: false,
-    wasmModules: [],
     requiresOffscreenCanvas: false,
     reportsProgress: false,
     /*

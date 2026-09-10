@@ -59,8 +59,6 @@ export const colorConvertTool = defineTool({
 
   execution: {
     strategy: 'main',
-    requiresWasm: false,
-    wasmModules: [],
     requiresOffscreenCanvas: false,
     reportsProgress: false,
     timeoutMs: 5_000,

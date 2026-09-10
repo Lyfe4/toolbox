@@ -23,9 +23,18 @@
   #                           origin. The catch-all that makes the rest additive.
   # script-src                Own scripts only, plus the exact hash of the one
   #                           inline bootstrap script. No 'unsafe-inline', so an
-  #                           injected <script> or onclick= cannot execute.
-  #                           'wasm-unsafe-eval' permits WebAssembly compilation
-  #                           (and only that) for the WASM-backed tools to come.
+  #                           injected <script> or onclick= cannot execute - and
+  #                           NO eval-like source of any kind, which now includes
+  #                           'wasm-unsafe-eval'. That was set "for the WASM-backed
+  #                           tools to come" and nothing ever compiled a module:
+  #                           the video tool reads and writes container boxes in
+  #                           TypeScript, and the feasibility investigation's own
+  #                           measurements are why it does. A relaxation carried
+  #                           for a consumer that never arrived is the same defect
+  #                           as an affordance for behaviour that does not exist,
+  #                           and this one was in the security policy. Re-adding
+  #                           it is one token, in a commit that names what needs
+  #                           it - which is the right place for that decision.
   # style-src 'self'          Stylesheets come from our own bundle, plus the
   #                           exact hash of the preview frame's stylesheet.
   #                           Still no 'unsafe-inline', so a style="" attribute
@@ -44,9 +53,17 @@
   # font-src 'self'           Self-hosted fonts only. No Google Fonts, no CDN.
   # connect-src 'none'        The zero-network guarantee: fetch, XHR, WebSocket,
   #                           EventSource and sendBeacon are all refused.
-  #                           NOTE: when ffmpeg.wasm lands this may have to
-  #                           become 'self' so its .wasm payload can be fetched
-  #                           from our own origin. It must never widen further.
+  #                           This used to carry a note saying a WASM payload
+  #                           might one day force it to 'self'. It will not:
+  #                           docs/video-convert-feasibility.md measured, in
+  #                           three engines under these exact headers, that a
+  #                           service worker can put a payload in Cache Storage
+  #                           and a page can read it back with caches.match()
+  #                           while its own policy stays 'none' - because a
+  #                           cache read is not a fetch. The note is gone rather
+  #                           than softened: a standing "this may have to widen"
+  #                           in the one directive the whole product rests on is
+  #                           an invitation, and the answer is now known.
   # worker-src 'self'         Heavy processing moves to Web Workers. Same-origin
   #                           worker scripts only - an inline/blob: worker would
   #                           be a way to run unreviewed code, so it stays out.
@@ -66,16 +83,40 @@
   #                           It is harmless in production (https) and the
   #                           cross-browser harness drops it for http, but it
   #                           is worth knowing before debugging it twice.
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {{INLINE_SCRIPT_HASHES}}; style-src 'self' {{INLINE_STYLE_HASHES}}; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; worker-src 'self'; child-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; manifest-src 'self'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' {{INLINE_SCRIPT_HASHES}}; style-src 'self' {{INLINE_STYLE_HASHES}}; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; worker-src 'self'; child-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; manifest-src 'self'; upgrade-insecure-requests
 
   # --- Cross-origin isolation ---------------------------------------------------
-  # Together these two put the page in a "cross-origin isolated" state, which is
-  # the precondition for SharedArrayBuffer and therefore for multi-threaded
-  # WASM (ffmpeg.wasm). Set now, before any code exists, so nothing is ever
-  # built against the assumption that isolation is off - turning it on later
-  # tends to break every third-party embed at once.
-  # COOP  severs the window.opener relationship with cross-origin openers.
-  # COEP  refuses cross-origin subresources unless they explicitly opt in.
+  # KEPT, AND NOT FOR THE REASON IT WAS SET.
+  #
+  # These were set as the precondition for SharedArrayBuffer and therefore for
+  # multi-threaded ffmpeg.wasm, and that reason is now measured and dead:
+  # docs/video-convert-feasibility.md found @ffmpeg/core-mt commits a fixed
+  # 1 GiB SharedArrayBuffer at load - half the single-threaded core's ceiling -
+  # and then hung on its first exec. Nothing in this app has ever constructed a
+  # SharedArrayBuffer, and the video tool ships no WASM at all.
+  #
+  # They stay because each earns its place on its own, without isolation:
+  #
+  # COOP  same-origin severs the window.opener relationship. That is an
+  #       anti-XS-Leak header in the same family as frame-ancestors 'none'
+  #       above, and it would be worth serving on a site that had never heard
+  #       of threads.
+  # COEP  require-corp refuses every cross-origin subresource that has not
+  #       opted in. This app loads none - the fonts are self-hosted, there is
+  #       no CDN and no third party of any kind - so it costs exactly nothing
+  #       and turns "we do not load anything cross-origin" from a claim about
+  #       package.json into something the network stack enforces. That is the
+  #       same bargain as connect-src 'none', one directive along.
+  #
+  # And what isolation itself still buys, now that threads do not:
+  # performance.measureUserAgentSpecificMemory() is gated on it. That is the
+  # measurement the feasibility investigation most wanted and could not get -
+  # it named "no single total-memory figure" as its second-least-confident
+  # finding - so removing these headers would close a door on the one open
+  # question about this feature's real cost.
+  #
+  # scripts/cross-browser-check.mjs asserts both are served, so this is a
+  # decision that fails loudly if someone quietly reverses it.
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
 

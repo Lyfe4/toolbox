@@ -66,8 +66,6 @@ export const structuredDataTool = defineTool({
 
   execution: {
     strategy: 'worker',
-    requiresWasm: false,
-    wasmModules: [],
     requiresOffscreenCanvas: false,
     reportsProgress: false,
     timeoutMs: 15_000,

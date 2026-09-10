@@ -359,11 +359,29 @@ export type OptionField<TOptions> =
  */
 export type ExecutionStrategy = 'worker' | 'main';
 
+/*
+ * A FIELD EARNS ITS PLACE WHEN SOMETHING READS IT.
+ *
+ * `requiresWasm: boolean` and `wasmModules: string[]` were declared here and
+ * set on all nine tools, and nothing in `src/`, `scripts/` or `vite/` ever
+ * read either one. They were exactly what `image` and `datetime` were before
+ * the port audit removed them: a distinction the type system carried and
+ * nothing acted on, plus a line every future tool author had to copy without
+ * being able to find out what it did.
+ *
+ * The video feasibility investigation named them as the one thing that would
+ * give them a job, and then the tool that was built does not need one - it
+ * reads and writes container boxes in TypeScript rather than shipping a codec.
+ * So they are deleted on the audit's own reasoning. Re-adding them is nine
+ * lines and a consumer; carrying them was a tax on every tool for a consumer
+ * that never arrived.
+ *
+ * `requiresOffscreenCanvas` is the counter-example and the reason the shape is
+ * worth having at all: the engine really does read it, and really does choose
+ * a different execution context because of it.
+ */
 export interface ExecutionMeta {
   readonly strategy: ExecutionStrategy;
-  /** Declared shape for WASM-backed tools. Nothing needs this yet. */
-  readonly requiresWasm: boolean;
-  readonly wasmModules: readonly string[];
   /**
    * True when the tool's worker path needs `OffscreenCanvas`.
    *

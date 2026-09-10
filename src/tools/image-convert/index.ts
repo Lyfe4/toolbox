@@ -80,8 +80,6 @@ export const imageConvertTool = defineTool({
 
   execution: {
     strategy: 'worker',
-    requiresWasm: false,
-    wasmModules: [],
     /** Downgrades to the main thread when the browser lacks OffscreenCanvas. */
     requiresOffscreenCanvas: true,
     reportsProgress: false,

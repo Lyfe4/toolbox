@@ -9,9 +9,9 @@ import { z } from 'zod';
  * first time that schema parses something. It is a real speed-up, and it is
  * also `eval` by another name - which our Content-Security-Policy forbids:
  *
- *     script-src 'self' 'wasm-unsafe-eval' 'sha256-…'
+ *     script-src 'self' 'sha256-…'
  *
- * There is no `'unsafe-eval'` in there and there is not going to be. Zod
+ * There is no eval-like source in there at all and there is not going to be. Zod
  * handles the refusal gracefully and falls back to its interpreted path, so
  * everything still works - but every browser logs a CSP violation on the first
  * parse, and a console full of security warnings is exactly how a real one

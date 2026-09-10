@@ -95,8 +95,6 @@ function createClock() {
 
 const WORKER_META: ExecutionMeta = {
   strategy: 'worker',
-  requiresWasm: false,
-  wasmModules: [],
   requiresOffscreenCanvas: false,
   reportsProgress: true,
   timeoutMs: 5000,

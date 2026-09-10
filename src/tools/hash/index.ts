@@ -66,8 +66,6 @@ export const hashTool = defineTool({
 
   execution: {
     strategy: 'worker',
-    requiresWasm: false,
-    wasmModules: [],
     requiresOffscreenCanvas: false,
     reportsProgress: false,
     timeoutMs: 30_000,

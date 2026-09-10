@@ -93,8 +93,6 @@ export const caseConvertTool = defineTool({
     // Main thread: this is a string transform on text a person typed. A worker
     // would cost more in postMessage than the work itself.
     strategy: 'main',
-    requiresWasm: false,
-    wasmModules: [],
     requiresOffscreenCanvas: false,
     reportsProgress: false,
     timeoutMs: 5_000,
@@ -177,8 +175,7 @@ unit-tested without going near the registry.
   ],
   outputs: [{ id: 'output', label: 'Converted', types: ['text'] }],
   execution: {
-    strategy: 'main', requiresWasm: false, wasmModules: [],
-    requiresOffscreenCanvas: false, reportsProgress: false,
+    strategy: 'main', requiresOffscreenCanvas: false, reportsProgress: false,
     timeoutMs: 5_000, maxInputBytes: 2 * 1024 * 1024,
   },
 },

@@ -65,8 +65,6 @@ export const TOOL_MANIFEST = [
     ],
     execution: {
       strategy: 'worker',
-      requiresWasm: false,
-      wasmModules: [],
       requiresOffscreenCanvas: false,
       reportsProgress: false,
       timeoutMs: 15_000,
@@ -104,8 +102,6 @@ export const TOOL_MANIFEST = [
     ],
     execution: {
       strategy: 'worker',
-      requiresWasm: false,
-      wasmModules: [],
       requiresOffscreenCanvas: false,
       reportsProgress: false,
       timeoutMs: 15_000,
@@ -137,8 +133,6 @@ export const TOOL_MANIFEST = [
     ],
     execution: {
       strategy: 'worker',
-      requiresWasm: false,
-      wasmModules: [],
       requiresOffscreenCanvas: false,
       reportsProgress: false,
       timeoutMs: 30_000,
@@ -172,8 +166,6 @@ export const TOOL_MANIFEST = [
     secretOptionKeys: ['key'],
     execution: {
       strategy: 'worker',
-      requiresWasm: false,
-      wasmModules: [],
       requiresOffscreenCanvas: false,
       reportsProgress: false,
       timeoutMs: 10_000,
@@ -219,8 +211,6 @@ export const TOOL_MANIFEST = [
     ],
     execution: {
       strategy: 'worker',
-      requiresWasm: false,
-      wasmModules: [],
       requiresOffscreenCanvas: false,
       reportsProgress: false,
       timeoutMs: 20_000,
@@ -259,8 +249,6 @@ export const TOOL_MANIFEST = [
     ],
     execution: {
       strategy: 'worker',
-      requiresWasm: false,
-      wasmModules: [],
       requiresOffscreenCanvas: false,
       reportsProgress: false,
       timeoutMs: 2_000,
@@ -306,8 +294,6 @@ export const TOOL_MANIFEST = [
     ],
     execution: {
       strategy: 'main',
-      requiresWasm: false,
-      wasmModules: [],
       requiresOffscreenCanvas: false,
       reportsProgress: false,
       timeoutMs: 5_000,
@@ -346,8 +332,6 @@ export const TOOL_MANIFEST = [
     ],
     execution: {
       strategy: 'worker',
-      requiresWasm: false,
-      wasmModules: [],
       requiresOffscreenCanvas: true,
       reportsProgress: false,
       timeoutMs: 60_000,
@@ -405,8 +389,6 @@ export const TOOL_MANIFEST = [
     ],
     execution: {
       strategy: 'worker',
-      requiresWasm: false,
-      wasmModules: [],
       requiresOffscreenCanvas: false,
       reportsProgress: false,
       timeoutMs: 15_000,

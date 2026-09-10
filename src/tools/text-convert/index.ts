@@ -116,8 +116,6 @@ export const textConvertTool = defineTool({
      * one rather than DOMPurify: there is no `document` in here.
      */
     strategy: 'worker',
-    requiresWasm: false,
-    wasmModules: [],
     requiresOffscreenCanvas: false,
     reportsProgress: false,
     timeoutMs: 15_000,
