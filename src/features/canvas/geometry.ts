@@ -339,14 +339,26 @@ function wireControl(from: Point, to: Point): number {
  * can therefore only ever measure as slightly FURTHER away than it is, never
  * nearer.
  *
- * The count is measured rather than guessed. `wireHit.test.ts` walks points
- * off the drawn path across the whole plane this canvas can address and holds
- * the error under half a pixel; at 24 segments the worst case was 1.0px, which
- * is small but is not the "well under a pixel" the first version of this
- * comment claimed. Forty-eight is still nothing on a press - this runs once
- * per pointerdown, not once per frame.
+ * The count is measured rather than guessed, and it has now been measured
+ * twice - the second time because the first number was very slightly wrong in
+ * a way only a property test could show. Worst case over a dense sweep of the
+ * whole plane this canvas can address, at the corner that maximises it (a wire
+ * running fully backwards from one extreme to the other, near its far end):
+ *
+ *     24 segments -> 1.0 px      48 -> 0.62 px      96 -> 0.084 px
+ *
+ * FORTY-EIGHT WAS CHOSEN FOR A BOUND IT DOES NOT ACTUALLY MEET. The comment
+ * here claimed "under half a pixel" and `wireHit.test.ts` asserted it, and the
+ * truth was 0.62 - so the property passed on most runs and failed on the ones
+ * where fast-check happened to reach the corner. About one run in six, on a
+ * test whose failure said nothing about what was wrong. A threshold a
+ * randomised test lands exactly on is a threshold that fails forever at some
+ * rate, and the fix is the number rather than the tolerance.
+ *
+ * Ninety-six meets it with six times the margin, and costs nothing worth
+ * counting: this runs once per pointerdown, not once per frame.
  */
-const WIRE_SAMPLES = 48;
+const WIRE_SAMPLES = 96;
 
 /** A point on the cubic {@link wirePath} draws, at parameter `t` in [0, 1]. */
 function wirePointAt(from: Point, to: Point, t: number): Point {

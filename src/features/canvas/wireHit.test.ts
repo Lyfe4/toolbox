@@ -102,6 +102,15 @@ describe('distance to a wire', () => {
    * `WIRE_SAMPLES`: at 24 segments it failed here with a worst case of 1.0px
    * on a 1200px wire, which is exactly the kind of quiet inaccuracy a
    * hand-written three-point test cannot find.
+   *
+   * AND IT IS WHAT CAUGHT THE SECOND VERSION OF THE SAME MISTAKE. Forty-eight
+   * segments was then chosen for this bound and does not meet it - the real
+   * worst case is 0.62px, at a wire running fully backwards between opposite
+   * corners, near its far end. So this passed on most runs and failed on the
+   * ones where fast-check reached that corner: about one in six, with a
+   * message about a number rather than about a wire. The count is 96 now,
+   * measured at 0.084px, and the bound below is unchanged because it is the
+   * property a caller depends on rather than a description of the sampling.
    */
   it('reports a point taken off the curve as being on the curve', () => {
     fc.assert(
@@ -122,7 +131,7 @@ describe('distance to a wire', () => {
            * `pointOnDrawnCurve` reads the four control points out of the `d`
            * attribute `wirePath` emits and evaluates the cubic at `t`, so the
            * point is on the curve the browser will paint. `distanceToWire`
-           * measures against its own 48-segment polyline. What is being bounded
+           * measures against its own 96-segment polyline. What is being bounded
            * is the gap between those two - the error the approximation
            * introduces - over the whole plane rather than at the three points a
            * hand-written case can name.
