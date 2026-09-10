@@ -1,11 +1,16 @@
 /**
- * Fails the build when the initial JavaScript payload, or the worker entry
- * chunk, grows past its budget.
+ * Fails the build when any of four measured payloads grows past its budget:
+ * the initial JavaScript, the worker entry chunk, the largest single lazy
+ * chunk, and everything the service worker precaches.
  *
  * "Initial" means what the browser must download before it can render the first
  * route: the entry module plus every chunk index.html tells it to preload. Code
- * behind a dynamic import - a lazy route, a tool - is deliberately not counted,
- * because that is the whole point of splitting it out.
+ * behind a dynamic import - a lazy route, a tool - is deliberately not counted
+ * THERE, because that is the whole point of splitting it out. It is counted by
+ * the third and fourth budgets instead, which is the gap those two exist for:
+ * "not on the critical path" is not the same as "free", and until they were
+ * added the largest artefact in the build was the one thing with no ceiling on
+ * it at all.
  *
  * Run with `pnpm bundle:check` after a build. CI runs it too.
  */
@@ -42,6 +47,50 @@ const BUDGET_BYTES = 380 * 1024;
  * without leaving room for a library to reappear inside it.
  */
 const WORKER_BUDGET_BYTES = 32 * 1024;
+
+/**
+ * Raw ceiling for the LARGEST SINGLE LAZY CHUNK.
+ *
+ * A third budget, because neither of the first two can see one. `bundle:check`
+ * measured what index.html loads and what the worker entry costs, and a lazy
+ * chunk is by construction neither - so the biggest file in the build was the
+ * only one with no ceiling on it. That is the same shape as the regression the
+ * worker budget was added for, one level along: something large arrives, every
+ * gate stays green, and the cost lands on whoever opens the route.
+ *
+ * The number is measured rather than chosen. The largest lazy chunk today is
+ * `pipelines` at 414.2 kB - the Markdown/HTML unified pipelines behind
+ * text-convert - and 512 kB is about 24% of headroom over it. Raise it in a
+ * commit that says what got bigger and why anybody should carry it.
+ *
+ * WHAT THIS IS NOT A SUBSTITUTE FOR. A chunk under the ceiling is not thereby
+ * worth its weight; it is only not a surprise. The judgement about whether a
+ * route should cost half a megabyte at all is still a judgement.
+ */
+const LAZY_CHUNK_BUDGET_BYTES = 512 * 1024;
+
+/**
+ * Raw ceiling for EVERYTHING THE SERVICE WORKER PRECACHES.
+ *
+ * The fourth budget, and the one with a person on the other end of it.
+ * `vite/plugins/service-worker.ts` walks the finished build and precaches
+ * every file with `cache.addAll`, which is all-or-nothing by design - so this
+ * total is what a FIRST-TIME VISITOR downloads at service-worker install,
+ * whether or not they ever open the route that needed it, and one flaky byte
+ * fails the whole install and costs the app offline support entirely rather
+ * than costing it one route.
+ *
+ * That is what makes "no precache exclusion is needed here" a checked
+ * statement rather than an assumption. An exclusion mechanism plus runtime
+ * caching is the answer for an asset measured in tens of megabytes; it is
+ * machinery for behaviour that does not exist while the whole build is two.
+ * If this budget ever has to be raised past a few megabytes, the answer is
+ * probably the exclusion rather than the raise.
+ *
+ * Measured at 2310.8 kB when this was written, which is two builds of the app
+ * - the document's chunks and the worker's - plus the fonts and the icons.
+ */
+const PRECACHE_BUDGET_BYTES = 3 * 1024 * 1024;
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const distDir = join(repoRoot, 'dist');
@@ -160,8 +209,96 @@ if (workerRaw > WORKER_BUDGET_BYTES) {
   process.exit(1);
 }
 
+/*
+ * The largest lazy chunk: every emitted .js under /assets/ that index.html
+ * does NOT load eagerly. No exclusion list - the worker entry is in here too,
+ * measured against its own budget above and against this one as well, because
+ * a name-based exemption is a thing to maintain and this is a ceiling nothing
+ * legitimate goes near.
+ */
+const lazyChunks = readdirSync(assetsDir)
+  .filter((name) => name.endsWith('.js'))
+  .map((name) => ({ url: `/assets/${name}`, raw: statSync(join(assetsDir, name)).size }))
+  .filter((chunk) => !urls.includes(chunk.url))
+  .toSorted((a, b) => b.raw - a.raw);
+
+if (lazyChunks.length === 0) {
+  console.error('\nbundle-budget: FAIL - no lazy chunks found in dist/assets.');
+  console.error('Every tool and every route is meant to be one. Has code splitting broken?');
+  process.exit(1);
+}
+
+console.warn('\nLargest lazy chunks:');
+for (const chunk of lazyChunks.slice(0, 3)) {
+  const gzip = gzipSync(readFileSync(join(assetsDir, chunk.url.slice('/assets/'.length)))).length;
+  console.warn(
+    `  ${chunk.url.padEnd(44)} ${kb(chunk.raw).padStart(10)}  ${kb(gzip).padStart(10)} gz`,
+  );
+}
+console.warn(`  ${'BUDGET (each)'.padEnd(44)} ${kb(LAZY_CHUNK_BUDGET_BYTES).padStart(10)}`);
+
+const biggest = lazyChunks[0];
+
+if (biggest.raw > LAZY_CHUNK_BUDGET_BYTES) {
+  console.error(
+    `\nbundle-budget: FAIL - ${biggest.url} is ${kb(biggest.raw)}, over the ${kb(
+      LAZY_CHUNK_BUDGET_BYTES,
+    )} per-chunk budget by ${kb(biggest.raw - LAZY_CHUNK_BUDGET_BYTES)}.`,
+  );
+  console.error('A lazy chunk is off the critical path, which is not the same as free:');
+  console.error('somebody opens that route, and the service worker precaches it for everybody.');
+  process.exit(1);
+}
+
+/*
+ * The precache total, read out of the EMITTED sw.js rather than re-derived by
+ * walking dist a second time.
+ *
+ * Two walks with two exclusion lists is exactly the drift this repository keeps
+ * finding, so the answer here is the list the plugin actually wrote. A parse
+ * that fails is a FAILURE rather than a skip: a check that quietly stops
+ * measuring anything is worse than no check, because the green line still
+ * appears underneath it.
+ */
+const swSource = readFileSync(join(distDir, 'sw.js'), 'utf8');
+const precacheLine = swSource.split('\n').find((line) => line.startsWith('const PRECACHE'));
+const openParen = precacheLine === undefined ? -1 : precacheLine.indexOf('JSON.parse(');
+const closeParen = precacheLine === undefined ? -1 : precacheLine.lastIndexOf('")');
+
+if (precacheLine === undefined || openParen === -1 || closeParen === -1) {
+  console.error('\nbundle-budget: FAIL - could not read the precache list out of dist/sw.js.');
+  console.error('vite/plugins/service-worker.ts writes it; this check measures what it wrote.');
+  process.exit(1);
+}
+
+const precache = JSON.parse(
+  JSON.parse(precacheLine.slice(openParen + 'JSON.parse('.length, closeParen + 1)),
+);
+
+let precacheRaw = 0;
+for (const url of precache) precacheRaw += statSync(join(distDir, url.replace(/^\//, ''))).size;
+
+console.warn('\nService-worker precache:');
+console.warn(
+  `  ${`${String(precache.length)} files, fetched at install by every first visitor`.padEnd(44)} ${kb(precacheRaw).padStart(10)}`,
+);
+console.warn(`  ${'BUDGET'.padEnd(44)} ${kb(PRECACHE_BUDGET_BYTES).padStart(10)}`);
+
+if (precacheRaw > PRECACHE_BUDGET_BYTES) {
+  console.error(
+    `\nbundle-budget: FAIL - the precache is ${kb(precacheRaw)}, over the ${kb(
+      PRECACHE_BUDGET_BYTES,
+    )} budget by ${kb(precacheRaw - PRECACHE_BUDGET_BYTES)}.`,
+  );
+  console.error('cache.addAll is all-or-nothing, so this is what offline support costs to set up');
+  console.error('- and one failed byte of it costs offline support entirely, not one route.');
+  process.exit(1);
+}
+
 console.warn(
   `\nbundle-budget: OK - ${kb(BUDGET_BYTES - totalRaw)} of initial headroom, ${kb(
     WORKER_BUDGET_BYTES - workerRaw,
-  )} of worker headroom.`,
+  )} of worker headroom, ${kb(LAZY_CHUNK_BUDGET_BYTES - biggest.raw)} on the largest lazy chunk, ${kb(
+    PRECACHE_BUDGET_BYTES - precacheRaw,
+  )} of precache headroom.`,
 );
