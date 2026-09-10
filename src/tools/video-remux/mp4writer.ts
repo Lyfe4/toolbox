@@ -253,6 +253,23 @@ export function buildSampleEntry(entry: BuiltEntry): Uint8Array | null {
   }
 
   if (entry.codec === 'aac' || entry.codec === 'mp3') {
+    /*
+     * AAC needs its AudioSpecificConfig and MP3 does not, which is not a
+     * quirk: an MP3 frame header states its own sample rate, layer and channel
+     * mode, so the stream describes itself and there is nothing for the
+     * container to add. AAC's does not, and a decoder handed an `esds` with no
+     * DecoderSpecificInfo has no way to start.
+     *
+     * A handful of older Matroska files leave `CodecPrivate` off an AAC track
+     * and expect a player to infer the config from the codec id, the sample
+     * rate and the channel count. That inference is exact for plain AAC-LC and
+     * WRONG for the SBR variants, where it produces audio at half pitch and
+     * twice the length - which plays, and is the kind of plausible wrong
+     * answer nobody reports. So the track is refused instead, and the result
+     * says which track and why.
+     */
+    if (entry.codec === 'aac' && (config === null || config.byteLength === 0)) return null;
+
     return box(
       'mp4a',
       zeros(6),

@@ -356,6 +356,25 @@ describe('a Matroska file that lies about its own shape', () => {
     expect(read.value.tracks[0]?.width).toBe(320);
   });
 
+  it('drops AAC with no configuration, and keeps MP3 which needs none', () => {
+    /*
+     * Not symmetry for its own sake: an MP3 frame header states its own sample
+     * rate, layer and channel mode, so the stream describes itself. AAC's does
+     * not. Inferring the missing config from the codec id is exact for plain
+     * AAC-LC and wrong for the SBR variants, where it yields audio at half
+     * pitch and twice the length - which plays, and is the shape of wrong
+     * answer nobody reports.
+     */
+    const withoutConfig = (codecId: string) =>
+      makeMatroska({
+        tracks: [{ number: 1, kind: 'audio', codecId, channels: 2, sampleRate: 44_100 }],
+        blocks: [{ track: 1, time: 0, frames: [sampleBytes(7, 96)] }],
+      });
+
+    expect(expectRefused(remux(withoutConfig('A_AAC'), 'container'))).toContain('how to decode');
+    expect(remux(withoutConfig('A_MPEG/L3'), 'container').ok).toBe(true);
+  });
+
   it('drops a stream that never says how to decode it', () => {
     // A track entry with no CodecPrivate. Writing the sample entry anyway
     // produces a file that looks complete and plays nothing at all.
