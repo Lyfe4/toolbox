@@ -99,6 +99,15 @@ for one, so carrying them all would multiply the size of the file with nothing
 able to reach the extras. The first video track and the first audio track go,
 and every track left behind is named on the result with its language.
 
+**A stream that never says how to decode it is dropped, not written.** H.264
+and H.265 need their configuration record and AAC needs its
+AudioSpecificConfig; a Matroska file that omits one expects a player to infer
+it, which is exact for plain AAC-LC and wrong for the SBR variants — audio at
+half pitch and twice the length, which plays, and is the kind of wrong answer
+nobody reports. MP3 is the exception and not an inconsistency: an MP3 frame
+header states its own sample rate, layer and channel mode, so the stream
+describes itself.
+
 **Two things are deliberately not read.** A **fragmented** MP4 keeps its index
 in movie fragments spread through the file rather than in one table at the
 front; it is refused by name, because "no `moov`" would be a true message about

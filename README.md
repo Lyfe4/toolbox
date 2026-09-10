@@ -990,11 +990,33 @@ in this file have numbers behind them.
 
 |                                          | Raw      | Gzipped  |
 | ---------------------------------------- | -------- | -------- |
-| Initial JavaScript                       | 329.3 kB | 106.6 kB |
+| Initial JavaScript                       | 329.9 kB | 106.8 kB |
 | Budget (enforced by `pnpm bundle:check`) | 380.0 kB | —        |
 
 Every tool, the canvas, the styleguide and the tool pages are lazy chunks and
-none of them are in that figure.
+none of them are in that figure. **Three more budgets are, though**, and two of
+them were added because the first two could not see what they measure:
+
+| Measured                                    | Now       | Budget |
+| ------------------------------------------- | --------- | ------ |
+| The worker entry chunk                      | 3.1 kB    | 32 kB  |
+| The largest single lazy chunk (`pipelines`) | 414.2 kB  | 512 kB |
+| Everything `sw.js` precaches                | 2381.6 kB | 3 MB   |
+
+The last two are the newest. `bundle:check` measured what index.html loads and
+what the worker entry costs, and a lazy chunk is by construction neither — so
+the largest artefact in the build was the only one with no ceiling on it, which
+is the same shape as the regression the worker budget was added for. The
+precache total is the half with a person on the other end: the service worker
+walks the whole build and fetches it with `cache.addAll`, which is
+all-or-nothing, so that figure is what a **first-time visitor** downloads
+whether or not they ever open the route it belongs to. Asserting it is what
+makes "no precache exclusion is needed here" a checked statement rather than an
+assumption.
+
+For scale, the video tool — two container parsers and an MP4 writer — is
+**35.6 kB raw, 12.8 kB gzipped** in a lazy chunk, against the 6.9 MiB brotli
+the ffmpeg route would have cost.
 
 The node inspector reuses the tool runner's options panel and output views, so
 those moved into a chunk both routes share rather than being duplicated:

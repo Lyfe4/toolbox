@@ -34,14 +34,14 @@ failure is a failure — there is no "warning" tier.
 pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build && pnpm bundle:check
 ```
 
-| Gate                | What it protects                                                                                                                  |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm typecheck`    | `tsc -b` across both projects. No `any`, no `!`, no suppressed errors.                                                            |
-| `pnpm lint`         | ESLint with `--max-warnings 0`, type-aware rules on. Also bans `eval`, `new Function`, `innerHTML` and `dangerouslySetInnerHTML`. |
-| `pnpm format:check` | Prettier. Formatting is not a review topic.                                                                                       |
-| `pnpm test`         | Vitest, including axe on every component and route.                                                                               |
-| `pnpm build`        | The production build, including the CSP hash and service worker plugins.                                                          |
-| `pnpm bundle:check` | The initial JS payload against a 380 kB budget.                                                                                   |
+| Gate                | What it protects                                                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm typecheck`    | `tsc -b` across both projects. No `any`, no `!`, no suppressed errors.                                                                     |
+| `pnpm lint`         | ESLint with `--max-warnings 0`, type-aware rules on. Also bans `eval`, `new Function`, `innerHTML` and `dangerouslySetInnerHTML`.          |
+| `pnpm format:check` | Prettier. Formatting is not a review topic.                                                                                                |
+| `pnpm test`         | Vitest, including axe on every component and route.                                                                                        |
+| `pnpm build`        | The production build, including the CSP hash and service worker plugins.                                                                   |
+| `pnpm bundle:check` | Four payloads against four budgets: the initial JS, the worker entry, the largest lazy chunk, and everything the service worker precaches. |
 
 A pre-commit hook runs ESLint and Prettier on staged files. It is a
 convenience, not the gate — run the six before opening a pull request.
