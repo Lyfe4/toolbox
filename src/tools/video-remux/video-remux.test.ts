@@ -387,6 +387,39 @@ describe('extracting the audio track', () => {
     expect([...done.value.bytes]).toEqual([...frames.flatMap((frame) => [...frame])]);
   });
 
+  it('says nothing about a picture when the picture was never wanted', () => {
+    // A VP9 video track cannot be repackaged, and on an audio extraction that
+    // is not a loss anybody is experiencing. Warning about it would be noise
+    // on a result that was never going to have a picture in it.
+    const source = makeMatroska({
+      tracks: [
+        { number: 1, kind: 'video', codecId: 'V_VP9', width: 640, height: 480 },
+        {
+          number: 2,
+          kind: 'audio',
+          codecId: 'A_AAC',
+          codecPrivate: aacConfig(),
+          channels: 2,
+          sampleRate: 44_100,
+        },
+      ],
+      blocks: [
+        { track: 1, time: 0, frames: [sampleBytes(71, 200)] },
+        { track: 2, time: 0, frames: [sampleBytes(72, 90)] },
+      ],
+    });
+
+    const done = remux(source, 'audio');
+    if (!done.ok) throw new Error(done.error.message);
+    expect(done.value.notes.some((note) => note.title.includes('VP9'))).toBe(false);
+
+    // And the same file, repackaged, does say so - which is what makes the
+    // silence above a decision rather than a dropped message.
+    const asVideo = remux(source, 'container');
+    if (!asVideo.ok) throw new Error(asVideo.error.message);
+    expect(asVideo.value.notes.some((note) => note.title.includes('VP9'))).toBe(true);
+  });
+
   it('refuses a file with no audio in it, rather than producing an empty one', () => {
     const source = makeMp4({ tracks: [videoTrack] });
     const done = remux(source, 'audio');

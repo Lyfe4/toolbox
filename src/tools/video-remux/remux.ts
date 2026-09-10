@@ -252,6 +252,11 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
   /* -- What is not coming, named one reason at a time --------------------- */
 
   for (const track of dropped) {
+    // Nothing is said about a picture when the user asked for the sound. It is
+    // not a loss they are experiencing, and a warning that a VP9 video track
+    // did not come along is noise on a result that was never going to have one.
+    if (operation === 'audio' && track.kind !== 'audio') continue;
+
     const facts = CODECS[track.codec];
     const kind = track.kind === 'other' ? 'A' : `A ${track.kind}`;
     const language = track.language === null ? '' : ` in ${track.language}`;
@@ -264,7 +269,6 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
       });
       continue;
     }
-    if (operation === 'audio' && track.kind !== 'audio') continue;
     notes.push({
       level: 'warn',
       title: `A second ${track.kind} track${language} was dropped`,
