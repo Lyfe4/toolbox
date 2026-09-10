@@ -8,11 +8,24 @@ import { expectNoAxeViolations } from '@/lib/testing/axe';
 
 import { ThemeEditor } from './ThemeEditor';
 import { serialiseTheme, THEME_FILE_KIND } from './themeFile';
+import { CONTRAST_PAIRS } from '../contrast';
 import { CUSTOM_THEME_STORAGE_KEY } from '../customThemes';
 import { useThemeStore } from '../store';
 import { useThemeSync } from '../useTheme';
 
 import type { CustomTheme } from '../types';
+
+/*
+ * Taken from the list rather than written as a number.
+ *
+ * The readout's job is to report how many of the pairs the design system
+ * actually measures are failing, so a literal here would have to be edited
+ * every time a pair is added - and an assertion you edit to make it pass is
+ * not an assertion. The pair count moved once already, when a canvas node's
+ * edge was added.
+ */
+const PAIR_COUNT = CONTRAST_PAIRS.length;
+const FAILURE_READOUT = new RegExp(`of ${String(PAIR_COUNT)} pairs fail WCAG AA`);
 
 /**
  * The editor, mounted the way the styleguide mounts it, plus one real
@@ -387,7 +400,7 @@ describe('contrast', () => {
     renderEditor();
     await createTheme(user);
 
-    expect(screen.getByText('All 38 pairs meet WCAG AA.')).toBeInTheDocument();
+    expect(screen.getByText(`All ${String(PAIR_COUNT)} pairs meet WCAG AA.`)).toBeInTheDocument();
   });
 
   it('names what fails and what it fails against', async () => {
@@ -407,7 +420,7 @@ describe('contrast', () => {
     // The verdict, the two tokens, the measured ratio and the bar it missed.
     expect(within(row).getByText('Fail.')).toBeInTheDocument();
     expect(row.textContent).toMatch(/1\.\d\d:1, needs 4\.5:1/);
-    expect(screen.getByText(/of 38 pairs fail WCAG AA/)).toBeInTheDocument();
+    expect(screen.getByText(FAILURE_READOUT)).toBeInTheDocument();
   });
 
   it('announces the state once the user has stopped, not on every change', async () => {
@@ -445,7 +458,7 @@ describe('contrast', () => {
 
     await user.clear(tokenInput('ink-primary'));
     await user.type(tokenInput('ink-primary'), '#0c0d12');
-    await screen.findByText(/of 38 pairs fail WCAG AA/);
+    await screen.findByText(FAILURE_READOUT);
 
     await user.click(screen.getByRole('button', { name: 'Save theme' }));
 
@@ -631,7 +644,7 @@ describe('accessibility', () => {
 
     await user.clear(tokenInput('ink-primary'));
     await user.type(tokenInput('ink-primary'), '#0c0d12');
-    await screen.findByText(/of 38 pairs fail WCAG AA/);
+    await screen.findByText(FAILURE_READOUT);
 
     /*
      * The colour-contrast rule is off under jsdom in every axe run here -

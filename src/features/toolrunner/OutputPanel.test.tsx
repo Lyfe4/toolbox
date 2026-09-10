@@ -139,7 +139,37 @@ describe('comparisonFor', () => {
       blob: expect.any(File) as File,
       label: 'PNG image',
       byteLength: 4,
+      // Four bytes that sniff as a PNG and are not one. A header that cannot
+      // be read is reported as no ratio rather than as a guess: the preview
+      // then behaves exactly as it did before ratios existed.
+      ratio: null,
     });
+  });
+
+  /*
+   * AND MEASURES IT WHERE THE BYTES ARE.
+   *
+   * The comparison carries a `Blob` rather than a copy of the bytes - it hands
+   * over the `File` the browser is already holding, so that showing a
+   * thumbnail of a 40 MB photograph does not put 40 MB into React state. That
+   * leaves the preview with nothing to measure, so whoever still HAS the bytes
+   * has to do it, and this is the assertion that says so. Without it the
+   * "Before" image is the one that jumps into place a frame late.
+   */
+  it('reads the source aspect ratio here, where the bytes still exist', () => {
+    const wide = pngFixture({ width: 640, height: 160 });
+    const comparison = comparisonFor({
+      file: new File([wide], 'wide.png'),
+      sniff: { mediaType: 'image/png', label: 'PNG image', isProbablyText: false },
+      value: {
+        type: 'bytes',
+        bytes: wide,
+        mediaType: 'image/png',
+        filename: 'wide.png',
+      },
+    });
+
+    expect(comparison?.ratio).toBeCloseTo(4, 10);
   });
 
   it('offers nothing for a file that is not an image', () => {

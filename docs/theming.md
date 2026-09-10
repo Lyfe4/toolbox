@@ -92,7 +92,7 @@ the same question.
 ## Contrast is measured once, by one implementation
 
 `themes.contrast.test.ts` holds the four presets to WCAG AA by resolving the
-real CSS and measuring 38 pairs. A theme the user builds cannot be held to
+real CSS and measuring 39 pairs. A theme the user builds cannot be held to
 anything by a test, because it does not exist when the test runs — so the
 editor measures it live, continuously, as tokens change.
 
@@ -118,6 +118,21 @@ the audit looked at and deliberately left out, and why each one is a decision
 rather than an oversight — a disabled control has no contrast requirement at
 all, and a wash that only reinforces a rule is not what carries the boundary.
 
+**One of those decisions has since been reversed, which is the point of writing
+them down.** A canvas node's edge was `--pb-border-hairline`, measuring 2.52:1
+against `--pb-surface-sunken` in vellum. It was excluded on the argument that
+1.4.11 asks for what is _required_ to identify a component, and a node is a
+titled box with a status light in it — the same argument that excludes
+`--pb-border-subtle`. It does not hold on a canvas: the node's own fill is
+1.35:1 against the backdrop in vellum, so the border is the entire boundary;
+the boundary is what you grab to drag the node rather than decoration; and the
+title says a node is there without saying where it _ends_, which is the only
+question that matters where two nodes overlap. Nodes overlap constantly. The
+edge is `--pb-border-strong` now — 3.57:1 in vellum, 3.96–6.17:1 elsewhere —
+and the pair is in the list, so it is measured rather than argued about. The
+note that recorded the original decision is what made the reversal a five-minute
+job instead of a rediscovery.
+
 Two smaller decisions inside it:
 
 - **A translucent token has no ratio.** What `#ffffff80` reads against depends
@@ -140,7 +155,7 @@ cannot be measured. See the header of
 Saving a failing theme is allowed. It is the user's project and the user's
 choice. Applying one raises a warning toast naming the number of pairs below
 the minimum, and the editor's summary line carries a signal colour, a rule down
-its leading edge and the words "5 of 38 pairs fail WCAG AA" — so the state is
+its leading edge and the words "5 of 39 pairs fail WCAG AA" — so the state is
 carried by three things, none of which is colour alone.
 
 ## The editor is painted by the theme it edits

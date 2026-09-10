@@ -3,6 +3,8 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/Button';
 import type { Bytes } from '@/features/registry/types';
 import { formatBytes, sniffBytes } from '@/lib/sniff';
+import { inspectImage } from '@/tools/image-convert/inspect';
+import type { DecodableType } from '@/tools/image-convert/inspect';
 
 import styles from './image.module.css';
 import { ViewToggle } from './ViewToggle';
@@ -57,12 +59,65 @@ import { ViewToggle } from './ViewToggle';
  */
 const PREVIEW_LIMIT = 8 * 1024 * 1024;
 
-/** Media types this view is willing to hand to an `<img>`. */
-const PREVIEWABLE = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+/**
+ * Media types this view is willing to hand to an `<img>`.
+ *
+ * Held to `DecodableType` by `satisfies` rather than merely written to match
+ * it: this list and the image tool's header reader have to agree about which
+ * formats exist, and a format added to one and not the other should be a
+ * compile error rather than a preview that silently loses its reserved box.
+ */
+const PREVIEWABLE_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+] as const satisfies readonly DecodableType[];
+
+/** The sniffed type, when this view can draw it. Narrows; a Set cannot. */
+function previewableType(bytes: Bytes): DecodableType | null {
+  const { mediaType } = sniffBytes(bytes);
+  return PREVIEWABLE_TYPES.find((type) => type === mediaType) ?? null;
+}
 
 export function isPreviewableImage(bytes: Bytes): boolean {
-  const sniff = sniffBytes(bytes);
-  return sniff.mediaType !== null && PREVIEWABLE.has(sniff.mediaType);
+  return previewableType(bytes) !== null;
+}
+
+/**
+ * THE SHAPE OF THE PICTURE, KNOWN BEFORE IT IS DECODED.
+ *
+ * An `<img>` whose `src` has not finished loading has no intrinsic size, and
+ * this one is laid out `inline-size: 100%` with its height left to the
+ * picture - so it occupies ZERO height until the decode lands and then jumps
+ * to as much as 420px, on the frame after a run finishes. Everything below the
+ * preview moves under the cursor at the exact moment somebody is reaching for
+ * it. That was a real defect rather than a cosmetic one, and it survived for
+ * as long as it did because the CSS written to prevent it - a `.placeholder`
+ * block holding the panel open - was never named by any component, so it had
+ * never once been on an element. `cssModules.test.ts` asks the reverse
+ * question now and that is what turned it up.
+ *
+ * A reserved box of a FIXED height only moves the jump: a favicon would open a
+ * 420px hole and then collapse it. The box has to be the right size from the
+ * first frame, which means knowing the aspect ratio before the decode - and
+ * every format this view will preview states its own dimensions in its header,
+ * within the first few dozen bytes.
+ *
+ * `inspectImage` is the image tool's existing header reader, reused rather
+ * than reimplemented. It walks a bounded chunk or marker table, decompresses
+ * nothing, and returns nulls for anything it could not read - so a truncated
+ * or unusual file degrades to today's behaviour instead of failing.
+ */
+export function previewAspectRatio(bytes: Bytes): number | null {
+  const mediaType = previewableType(bytes);
+  if (mediaType === null) return null;
+
+  const { width, height } = inspectImage(bytes, mediaType);
+  if (width === null || height === null) return null;
+  if (width <= 0 || height <= 0) return null;
+
+  return width / height;
 }
 
 /**
@@ -92,10 +147,13 @@ function BlobImage({
   blob,
   alt,
   className,
+  ratio,
 }: {
   readonly blob: Blob;
   readonly alt: string;
   readonly className: string | undefined;
+  /** Width over height, from the file's own header. See previewAspectRatio. */
+  readonly ratio: number | null;
 }) {
   const ref = useRef<HTMLImageElement>(null);
 
@@ -120,7 +178,21 @@ function BlobImage({
    * Empty alt would be wrong: the image is the content, not decoration.
    */
 
-  return <img ref={ref} className={className} alt={alt} />;
+  /*
+   * The ratio is an INLINE STYLE rather than a class, because it is a
+   * measurement of this particular file and not a design decision - there is
+   * no set of ratios a stylesheet could enumerate. `undefined` when the header
+   * could not be read, which leaves the element exactly as it was before this
+   * existed: correct once loaded, and jumping to get there.
+   */
+  return (
+    <img
+      ref={ref}
+      className={className}
+      alt={alt}
+      style={ratio === null ? undefined : { aspectRatio: ratio }}
+    />
+  );
 }
 
 /** The source image this output was made from, when the page still has it. */
@@ -129,6 +201,16 @@ export interface ImageComparison {
   /** The sniffed label of the source, e.g. "PNG image". */
   readonly label: string;
   readonly byteLength: number;
+  /**
+   * Width over height, when the source's header could be read.
+   *
+   * Carried on the comparison rather than derived here, because this side is
+   * a `Blob` and not bytes: the File the browser is already holding is handed
+   * over as-is, precisely so that showing a thumbnail of a 40 MB photograph
+   * does not copy 40 MB into React state. Whoever DID have the bytes measures
+   * them; see `comparisonFor`.
+   */
+  readonly ratio: number | null;
 }
 
 interface FigureProps {
@@ -137,12 +219,13 @@ interface FigureProps {
   readonly facts: string;
   /** Named for the reader, not for the file: "Before" / "After". */
   readonly side: string | null;
+  readonly ratio: number | null;
 }
 
-function ImageFigure({ blob, caption, facts, side }: FigureProps) {
+function ImageFigure({ blob, caption, facts, side, ratio }: FigureProps) {
   return (
     <figure className={styles.figure}>
-      <BlobImage blob={blob} alt={caption} className={styles.image} />
+      <BlobImage blob={blob} alt={caption} className={styles.image} ratio={ratio} />
       <figcaption className={styles.caption}>
         {side === null ? null : <span className={styles.side}>{side}</span>}
         <span className={styles.facts}>{facts}</span>
@@ -177,6 +260,19 @@ export function ImageView({ bytes, label, filename, comparison, onDownload }: Im
   const blob = useMemo(() => new Blob([bytes], { type: mediaType }), [bytes, mediaType]);
   const facts = `${sniff.label} · ${formatBytes(bytes.byteLength)}`;
 
+  /*
+   * Memoised for the same reason as the Blob: a header walk per render would
+   * be pure waste, and the answer cannot change while the bytes do not.
+   *
+   * And skipped entirely while the preview is behind the size confirmation.
+   * There is no box to reserve until somebody asks for one, and the file that
+   * put them behind that button is the largest file this view ever sees -
+   * exactly the one whose header is least worth walking for nothing. Pressing
+   * the button recomputes it in the same render that mounts the image, so the
+   * box is still right on its first frame.
+   */
+  const ratio = useMemo(() => (show ? previewAspectRatio(bytes) : null), [bytes, show]);
+
   return (
     <section className={styles.wrapper} aria-label={label}>
       {comparison === null ? null : (
@@ -210,6 +306,7 @@ export function ImageView({ bytes, label, filename, comparison, onDownload }: Im
               caption={`${label}, before conversion`}
               facts={`${comparison.label} · ${formatBytes(comparison.byteLength)}`}
               side="Before"
+              ratio={comparison.ratio}
             />
           ) : null}
           <ImageFigure
@@ -218,6 +315,7 @@ export function ImageView({ bytes, label, filename, comparison, onDownload }: Im
             caption={view === 'compare' ? `${label}, after conversion` : label}
             facts={facts}
             side={view === 'compare' && comparison !== null ? 'After' : null}
+            ratio={ratio}
           />
         </div>
       ) : (

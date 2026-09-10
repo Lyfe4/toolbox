@@ -19,7 +19,7 @@ import type { ThemedToken, ThemeName } from './types';
  * presets pass; the editor proves the same thing about a theme in progress,
  * with the same code.
  *
- * WHAT IS MEASURED. The 38 pairs below are the design system's load-bearing
+ * WHAT IS MEASURED. The 39 pairs below are the design system's load-bearing
  * relationships: every combination in which one token is read against another.
  *
  * WHAT IS DELIBERATELY ABSENT, and why each one is a decision rather than an
@@ -48,15 +48,21 @@ import type { ThemedToken, ThemeName } from './types';
  *   select menu draws its outer edge with `--pb-border-strong`, which is
  *   listed and passes.
  *
- *   A canvas node's 1px `--pb-border-hairline` edge against
- *   `--pb-surface-sunken` is 2.52:1 in vellum, and the two surfaces are only
- *   1.35:1 apart, so the border is the whole boundary. Left out because 1.4.11
- *   asks for what is REQUIRED to identify a component, and a node is a titled
- *   box with a status light in it - identifiable without its edge, the same
- *   argument that excludes border-subtle. Raising it means either restyling
- *   every node (`--pb-border-strong` clears 3:1 in all four) or moving
- *   vellum's greys, and that is a design call rather than a pair to add
- *   quietly. Recorded here so the next person reaches it as a decision.
+ * WHAT WAS ONCE ABSENT AND IS NOW LISTED, because the decision went the other
+ * way on a second look. A canvas node's edge was `--pb-border-hairline`, which
+ * is 2.52:1 against `--pb-surface-sunken` in vellum. It was left out on the
+ * argument that 1.4.11 asks for what is REQUIRED to identify a component, and
+ * a node is a titled box with a status light in it - the same argument that
+ * excludes border-subtle.
+ *
+ * That argument does not survive contact with the canvas. The node's own fill
+ * is 1.35:1 against the backdrop in vellum, so the border is the entire
+ * boundary; the boundary is the drag target rather than decoration; and the
+ * title tells you a node is there without telling you where it ENDS, which is
+ * the only question that matters where two nodes overlap. Nodes overlap
+ * routinely. So the edge is now `--pb-border-strong` - 3.57:1 in vellum and
+ * 4.1-6.2:1 elsewhere - and the pair is measured below rather than argued
+ * about here. See the note on `.node` in canvas.module.css.
  */
 
 export type ContrastKind = 'text' | 'non-text';
@@ -242,6 +248,18 @@ export const CONTRAST_PAIRS: readonly ContrastPair[] = [
     label: 'Divider',
     foreground: 'border-strong',
     background: 'surface-base',
+    kind: 'non-text',
+  },
+  /*
+   * A node's edge on the canvas backdrop. The one pair in this list that is
+   * about a boundary somebody has to AIM at rather than merely read: a node is
+   * dragged by its edge, and its fill is 1.35:1 against the backdrop in
+   * vellum, so nothing else draws the shape. See the header of this file.
+   */
+  {
+    label: 'A node edge on the canvas',
+    foreground: 'border-strong',
+    background: 'surface-sunken',
     kind: 'non-text',
   },
   {

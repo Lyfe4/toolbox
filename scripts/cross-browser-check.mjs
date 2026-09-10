@@ -5084,11 +5084,59 @@ async function checkMobileLayout(engine, label) {
  *      regress into an annoyance: a canvas that jumped whenever a field was
  *      clicked would be worse than the bug being fixed.
  */
+/**
+ * FAKING THE ONE THING A KEYBOARD DOES THAT A WINDOW RESIZE DOES NOT.
+ *
+ * `visualViewport.height` is an accessor on the prototype, so an own property
+ * defined on the instance shadows it - and the app reads the instance. Setting
+ * one and firing the real `resize` event on the real `visualViewport` object
+ * puts the page in the state a keyboard puts it in: a visual viewport shorter
+ * than the layout viewport, which stays exactly where it was.
+ *
+ * That divergence is the whole point, and it is the one thing
+ * `page.setViewportSize` cannot produce. Shrinking the window moves BOTH
+ * viewports, so `innerHeight - visualViewport.bottom` is zero and the inset
+ * arithmetic computes nothing however far the window shrinks - the check that
+ * drove it that way was running the code down a branch that always returned 0.
+ *
+ * This is a simulation and is labelled as one: the geometry is real, the event
+ * is real, the code path is real, and the KEYBOARD is not. What it can prove
+ * that nothing here could before is that the sheet moves for the visual
+ * viewport specifically. An implementation reading `window.innerHeight` - the
+ * obvious wrong answer, and the one this file's arithmetic exists to avoid -
+ * passes a window-resize check and fails this one.
+ */
+async function openFakeKeyboard(page, coveredPx) {
+  await page.evaluate((covered) => {
+    const view = window.visualViewport;
+    if (!view) throw new Error('No visualViewport in this engine.');
+
+    const layout = window.innerHeight;
+    // Own properties shadow the prototype accessors. The layout viewport is
+    // deliberately left alone: that IS the difference being simulated.
+    Object.defineProperty(view, 'height', { configurable: true, get: () => layout - covered });
+    Object.defineProperty(view, 'offsetTop', { configurable: true, get: () => 0 });
+    view.dispatchEvent(new Event('resize'));
+  }, coveredPx);
+  await page.waitForTimeout(300);
+}
+
+async function closeFakeKeyboard(page) {
+  await page.evaluate(() => {
+    const view = window.visualViewport;
+    if (!view) return;
+    delete view.height;
+    delete view.offsetTop;
+    view.dispatchEvent(new Event('resize'));
+  });
+  await page.waitForTimeout(300);
+}
+
 async function checkSoftKeyboard(engine, label) {
   skip(
     label,
-    'a real on-screen keyboard does not cover a focused field',
-    'no engine Playwright drives can open one, and none can shrink the visual viewport independently of the layout viewport - the checks below shrink the WINDOW, which runs the same code on a different event',
+    'a real on-screen keyboard, opened by a real engine',
+    'neither engine Playwright drives can open one. The geometry a keyboard produces is simulated below by shadowing visualViewport.height and firing its real resize event, which is a different thing from a keyboard and proves strictly more than the window resize it replaced',
   );
 
   const browser = await launchTouchBrowser(engine);
@@ -5150,7 +5198,7 @@ async function checkSoftKeyboard(engine, label) {
       `overflow-y ${panel.overflowY}, field present ${String(panel.field)}`,
     );
 
-    /* -- And the sheet itself stays above a shrunken viewport -------------- */
+    /* -- And the sheet itself lifts clear of the keyboard ----------------- */
     /*
      * The half no browser can do for us. The sheet is anchored to the bottom
      * of the LAYOUT viewport and a keyboard shrinks the VISUAL one, so the
@@ -5158,36 +5206,117 @@ async function checkSoftKeyboard(engine, label) {
      * could not help. `useKeyboardInset` measures the difference and the sheet
      * sits that far up.
      *
-     * Driven by shrinking the WINDOW, which runs the same arithmetic on a
-     * different event - see the skip at the top of this function.
+     * WHY THIS IS NOT A WINDOW RESIZE ANY MORE. It used to be, and a window
+     * resize cannot see this: `page.setViewportSize` moves the layout viewport
+     * AND the visual one together, so `innerHeight - visualViewport.bottom` is
+     * zero and the inset is zero however small the window gets. The sheet
+     * stayed on screen because the bottom of the layout viewport had moved up
+     * with it, which is true of a sheet with no keyboard handling at all - so
+     * the check passed on an app that had never had this feature. Measured
+     * both ways below, so that is a number in the log rather than a claim.
      */
     await page.evaluate(() => {
       document.querySelector('[data-inspector-input]')?.focus();
     });
-    await page.setViewportSize({ width: 390, height: 780 - 336 });
-    await page.waitForTimeout(400);
 
-    const sheet = await page.evaluate(() => {
-      const box = document.querySelector('[data-testid="node-inspector"]').getBoundingClientRect();
-      const active = document.activeElement.getBoundingClientRect();
-      return {
-        top: Math.round(box.top),
-        bottom: Math.round(box.bottom),
-        tag: document.activeElement.tagName,
-        activeTop: Math.round(active.top),
-        activeBottom: Math.round(active.bottom),
-        height: window.innerHeight,
-      };
-    });
+    const readInset = () =>
+      page.evaluate(() => {
+        const panel = document.querySelector('[data-testid="node-inspector"]');
+        const workspace = document.querySelector('[data-testid="canvas-workspace"]');
+        const box = panel.getBoundingClientRect();
+        const active = document.activeElement.getBoundingClientRect();
+        /*
+         * Measured on the CLOSE BUTTON rather than on the sheet's top edge,
+         * because that is the thing that actually goes missing. The body
+         * scrolls, so anything in it can be scrolled back to; the head does
+         * not, so a sheet whose top is off-screen has taken the node's name
+         * and the only way to dismiss the panel with it.
+         */
+        const header =
+          panel.querySelector('[aria-label="Close the inspector"]')?.getBoundingClientRect() ??
+          null;
+        return {
+          inset: getComputedStyle(workspace).getPropertyValue('--keyboard-inset').trim(),
+          top: Math.round(box.top),
+          bottom: Math.round(box.bottom),
+          headerTop: header === null ? null : Math.round(header.top),
+          tag: document.activeElement.tagName,
+          activeTop: Math.round(active.top),
+          activeBottom: Math.round(active.bottom),
+          layout: window.innerHeight,
+          visual: Math.round(window.visualViewport.height),
+        };
+      });
+
+    const KEYBOARD_PX = 336;
+
+    // What the window resize this replaced was really producing.
+    await page.setViewportSize({ width: 390, height: 780 - KEYBOARD_PX });
+    await page.waitForTimeout(400);
+    const resized = await readInset();
     check(
       label,
-      'the inspector sheet stays inside a shrunken viewport, field and all',
-      sheet.bottom <= sheet.height + 1 &&
-        sheet.top >= -1 &&
-        sheet.tag === 'TEXTAREA' &&
-        sheet.activeTop >= -1 &&
-        sheet.activeBottom <= sheet.height + 1,
-      `sheet ${String(sheet.top)}..${String(sheet.bottom)}, field ${String(sheet.activeTop)}..${String(sheet.activeBottom)} in ${String(sheet.height)}px`,
+      'shrinking the WINDOW leaves the keyboard inset at zero, which is why it proved nothing',
+      resized.inset === '0px',
+      `inset ${resized.inset}, layout ${String(resized.layout)}px, visual ${String(resized.visual)}px`,
+    );
+
+    await page.setViewportSize({ width: 390, height: 780 });
+    await page.waitForTimeout(400);
+
+    // And what a keyboard produces: a short visual viewport inside a layout
+    // viewport that has not moved.
+    await openFakeKeyboard(page, KEYBOARD_PX);
+    const covered = await readInset();
+
+    check(
+      label,
+      'a visual viewport shorter than the layout one lifts the sheet by exactly the covered height',
+      covered.inset === `${String(KEYBOARD_PX)}px` &&
+        covered.layout === 780 &&
+        covered.visual === 780 - KEYBOARD_PX,
+      `inset ${covered.inset}, layout ${String(covered.layout)}px, visual ${String(covered.visual)}px`,
+    );
+
+    check(
+      label,
+      'the sheet and its focused field both sit above the keyboard',
+      covered.bottom <= covered.visual + 1 &&
+        covered.tag === 'TEXTAREA' &&
+        covered.activeTop >= -1 &&
+        covered.activeBottom <= covered.visual + 1,
+      `sheet ${String(covered.top)}..${String(covered.bottom)}, field ${String(covered.activeTop)}..${String(covered.activeBottom)} above ${String(covered.visual)}px`,
+    );
+
+    /*
+     * AND IS CAPPED TO THE ROOM LEFT, RATHER THAN MERELY MOVED INTO IT.
+     *
+     * This is the assertion that found the bug. Lifting a sheet taller than
+     * the space above the keyboard pushes its TOP off-screen, and the top is
+     * its header - the node name and the Close button. The body scrolls, so
+     * anything there can be scrolled back to; the header cannot, so it is the
+     * one part whose loss is permanent for as long as the keyboard is open.
+     */
+    check(
+      label,
+      'and the sheet is capped to the space left, so Close does not go off the top',
+      covered.top >= -1 && covered.headerTop !== null && covered.headerTop >= -1,
+      `sheet top ${String(covered.top)}, Close at ${String(covered.headerTop)}, band 0..${String(covered.visual)}px`,
+    );
+
+    /*
+     * AND IT GOES BACK. A sheet that stays lifted after the keyboard closes
+     * leaves a 336px gap under the panel for the rest of the session, which is
+     * the failure mode of writing an inset and forgetting to clear it - and it
+     * is invisible in a test that only ever opens one.
+     */
+    await closeFakeKeyboard(page);
+    const dismissed = await readInset();
+    check(
+      label,
+      'and drops back flush when the keyboard closes',
+      dismissed.inset === '0px' && dismissed.bottom <= dismissed.layout + 1,
+      `inset ${dismissed.inset}, sheet bottom ${String(dismissed.bottom)} in ${String(dismissed.layout)}px`,
     );
 
     /* -- And a dialog stays above it too --------------------------------- */
@@ -5202,13 +5331,12 @@ async function checkSoftKeyboard(engine, label) {
      * scrolling region, scrolling to its end scrolled rows into the covered
      * space. On the connect flow that is the port you were reaching for.
      *
-     * DRIVEN BY WRITING THE PROPERTY, not by producing a keyboard. What is
-     * under test here is the WIRING - that the scrim subtracts
-     * `--keyboard-inset` and the dialog is measured against what is left. The
-     * arithmetic that produces the number is unit-tested in
-     * keyboardInset.test.ts, and no engine Playwright drives can open a real
-     * keyboard at all (see the skip at the top of this function), so pretending
-     * otherwise would be a greener check that meant less.
+     * DRIVEN THROUGH THE WHOLE CHAIN, not by writing the property. This used
+     * to set `--keyboard-inset` by hand, which proved the scrim subtracts it
+     * and left the step before - that anything ever WRITES it - to a separate
+     * check. Shrinking the visual viewport instead exercises
+     * `visualViewport` -> `useKeyboardInset` -> the property -> the dialog's
+     * geometry as one thing, which is how it has to work on a phone.
      */
     await page.setViewportSize({ width: 390, height: 780 });
     await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
@@ -5223,13 +5351,9 @@ async function checkSoftKeyboard(engine, label) {
 
     const unshrunk = await dialogBox();
 
-    await page.evaluate(() => {
-      document
-        .querySelector('[data-testid="canvas-workspace"]')
-        ?.style.setProperty('--keyboard-inset', '336px');
-    });
-    await page.waitForTimeout(200);
+    await openFakeKeyboard(page, 336);
     const shrunk = await dialogBox();
+    await closeFakeKeyboard(page);
 
     check(
       label,
@@ -5293,8 +5417,12 @@ async function checkSoftKeyboard(engine, label) {
     await finePage.evaluate(() => {
       document.querySelector('[data-inspector-input]')?.focus();
     });
-    await finePage.setViewportSize({ width: 390, height: 780 - 336 });
-    await finePage.waitForTimeout(400);
+    /*
+     * The same shrink a coarse pointer gets, so the two differ only in the
+     * pointer. A window resize would have proved nothing here for the reason
+     * given above: it produces a zero inset whatever the pointer.
+     */
+    await openFakeKeyboard(finePage, 336);
 
     /*
      * THE HALF MOST LIKELY TO REGRESS INTO AN ANNOYANCE. With a mouse there is
@@ -5348,6 +5476,545 @@ async function checkSoftKeyboard(engine, label) {
  *   depends on `-webkit-line-clamp` behaving the same way in three engines,
  *   which is not something to take on trust.
  */
+/**
+ * A BACKGROUNDED TAB, WHICH IS TO SAY A CLAMPED CLOCK.
+ *
+ * Every deadline in the engine is a `window.setTimeout`, and browsers clamp
+ * those in a hidden tab - to a 1000ms floor, and after a few minutes to
+ * something far coarser. Leaving a run and switching away is therefore a
+ * timing case the app has and nothing had ever produced.
+ *
+ * PLAYWRIGHT CANNOT BACKGROUND A TAB. Bringing another page in the same
+ * context to the front leaves `document.visibilityState` at `visible` in both
+ * headless engines, with 300ms timers still arriving at ~310ms intervals -
+ * measured, both engines. That is a real limit, and it is not the end of the
+ * story, because what the app is exposed to is not hiddenness itself. It is
+ * LATE TIMERS. And a late timer can be produced exactly, in a real engine,
+ * against the real worker: replace `setTimeout` with one that will not fire
+ * before a floor, which is what the browser does and all that it does.
+ *
+ * So this check simulates the CAUSE and measures the real consequence. The
+ * floor is 3000ms rather than the browser's 1000ms so the ordering under test
+ * is unambiguous rather than a race: base64 finishes in single-digit
+ * milliseconds and its own 15s deadline is never reached, so every deadline
+ * that fires during this check fires LATE, after the result it was guarding
+ * has already arrived.
+ *
+ * WHAT IS BEING PROVED. The reasoning in the architecture notes is that
+ * clamping can only make a deadline late, and that a late deadline is a no-op
+ * because a settled request has already been removed from `pending` and its
+ * timer cleared. That is reasoning about code. Here it is a measurement:
+ *
+ *  1. A healthy node beside a wedging one still reports its own real result,
+ *     and is not blamed by a deadline that arrived late.
+ *  2. A wedged node still fails, rather than hanging forever because its
+ *     deadline was pushed past the point anyone was waiting.
+ *  3. Nothing throws while the clock is being stretched.
+ *
+ * `visibilityState` is shadowed as well, so any code reading it takes the
+ * hidden branch too. Nothing in the app currently does, and asserting that the
+ * override took is what stops this check quietly becoming a no-op.
+ */
+async function checkBackgroundedTab(browser, label) {
+  skip(
+    label,
+    'a genuinely hidden tab',
+    'neither headless engine reports one - visibilityState stays `visible` with another page fronted, and timers keep their requested interval. The clamped clock a hidden tab produces is simulated below, on the real worker',
+  );
+
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  const consoleErrors = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  page.on('pageerror', (error) => consoleErrors.push(String(error)));
+
+  try {
+    /*
+     * INSTALLED BEFORE ANY APPLICATION CODE RUNS. `addInitScript` lands in the
+     * page ahead of the bundle, so the engine picks up the clamped timer when
+     * it arms its first deadline rather than partway through a run.
+     */
+    await page.addInitScript(() => {
+      const FLOOR = 3000;
+      /*
+       * ANYTHING THE APP WOULD USE AS A DEADLINE, and nothing shorter.
+       *
+       * A real hidden tab clamps every timer including the very short ones,
+       * and clamping those here would take Playwright's own injected polling
+       * down with it - a harness that cannot drive the page proves nothing
+       * about the page. Every timer this check is about is far above the
+       * threshold: the regex deadline is 2000ms, base64's is 15000ms, and the
+       * pipeline's re-run debounce is 500ms. Sub-100ms timers are the
+       * harness's, not the engine's.
+       */
+      const real = window.setTimeout.bind(window);
+      window.setTimeout = (handler, delay, ...rest) => {
+        const requested = Number(delay) || 0;
+        return real(handler, requested >= 100 ? Math.max(FLOOR, requested) : requested, ...rest);
+      };
+
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      });
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    });
+
+    /*
+     * A base64 node beside a regex node given the alphabet-alternating pattern
+     * this file uses elsewhere - about 6.8s in WebKit and 7.0s in Firefox,
+     * better than three times the regex tool's 2s deadline in both. See the
+     * note on catastrophic backtracking in the limitations.
+     */
+    await page.goto(
+      `${ORIGIN}/?p=${shareParam({
+        v: 3,
+        n: [
+          ['n1', 'regex-tester', 0, 0, { pattern: WEDGE_PATTERN, mode: 'match' }],
+          ['n2', 'base64', 0, 320, { mode: 'decode' }],
+        ],
+        e: [],
+      })}`,
+      { waitUntil: 'networkidle' },
+    );
+    await page.locator('[data-testid="node-n2"]').waitFor({ timeout: 20_000 });
+
+    const hidden = await page.evaluate(() => document.visibilityState);
+    check(
+      label,
+      'the page reports itself hidden, so anything reading visibility is on that branch',
+      hidden === 'hidden',
+      hidden,
+    );
+
+    const clamped = await page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          const started = performance.now();
+          window.setTimeout(() => {
+            resolve(Math.round(performance.now() - started));
+          }, 200);
+        }),
+    );
+    check(
+      label,
+      'a deadline-sized timer arrives no sooner than the clamp, as it would in a hidden tab',
+      clamped >= 2900,
+      `${String(clamped)} ms for a 200 ms request`,
+    );
+
+    /*
+     * Typed through the inspector, which is where input lives - the same route
+     * checkPipeline uses, and the only one that reaches a node the rail may be
+     * covering.
+     */
+    const typeInto = async (id, value) => {
+      await page.locator(`[data-testid="node-${id}"]`).focus();
+      await page.keyboard.press('Enter');
+      const field = page.locator('[data-inspector-input]').first();
+      await field.waitFor({ timeout: 20_000 });
+      await field.fill(value);
+      await page.waitForTimeout(200);
+    };
+
+    // `data-status` carries the same value the run store holds.
+    const stateOf = (id) =>
+      page.locator(`[data-testid="node-${id}"]`).first().getAttribute('data-status');
+
+    const untilStatus = async (id, wanted, timeout) => {
+      const deadline = Date.now() + timeout;
+      for (;;) {
+        const status = await stateOf(id);
+        if (status === wanted || Date.now() > deadline) return status;
+        await page.waitForTimeout(150);
+      }
+    };
+
+    await typeInto('n1', `${'a'.repeat(40)}!`);
+    await typeInto('n2', 'eyJuYW1lIjoiYWRhIn0=');
+
+    /*
+     * Generous, and deliberately so: on a clamped clock every debounce and
+     * every deadline in the chain is stretched to the 3s floor, so the whole
+     * sequence takes several times what checkPipeline's equivalent does. That
+     * IS the condition under test.
+     */
+    const wedged = await untilStatus('n1', 'error', 90_000);
+    check(
+      label,
+      'a wedged node still fails on a clamped clock rather than hanging',
+      wedged === 'error',
+      `n1 is ${String(wedged)}`,
+    );
+
+    /*
+     * THE ONE THAT MATTERS. The healthy node's result arrives in a few
+     * milliseconds and its own 15s deadline is never reached - so if a late
+     * deadline could settle a request that had already answered, this is where
+     * it would show, as an `error` on a node that plainly succeeded. It is
+     * also the node the worker teardown takes down as a casualty, so it has to
+     * survive being replayed onto a fresh worker with every timer clamped.
+     */
+    const bystander = await untilStatus('n2', 'ok', 90_000);
+    check(
+      label,
+      'a healthy node beside it keeps its own result and is not blamed by a late deadline',
+      bystander === 'ok',
+      `n2 is ${String(bystander)}`,
+    );
+
+    check(
+      label,
+      'nothing throws while the clock is stretched',
+      consoleErrors.length === 0,
+      consoleErrors.slice(0, 2).join(' | '),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * TWO TABS OVER ONE localStorage KEY.
+ *
+ * The saved graph is a single key with no cross-tab coordination and nothing
+ * listening for `storage`, so the last tab to write wins and the other's work
+ * is gone on its next reload. That is documented as a known limitation and it
+ * is NOT fixed here: which tab should win, and what the other should be told,
+ * is a product decision rather than a defect to repair.
+ *
+ * What was missing is that it had never been reproduced. Two tabs are two
+ * pages in one browser context - which is exactly the scope localStorage has -
+ * so it was always reachable, and appears to have gone unreached because it
+ * was filed under "decided" rather than under "untested".
+ *
+ * Asserting the CURRENT behaviour is the point. An unmeasured limitation
+ * drifts: someone adds a `storage` listener, or moves the save, or changes the
+ * debounce, and the documented paragraph quietly stops describing the app.
+ * This goes red when that happens, which makes the change deliberate rather
+ * than silent - and if it is ever fixed on purpose, this is the check that
+ * says what the fix has to replace.
+ */
+async function checkTwoTabs(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+
+  try {
+    const first = await context.newPage();
+    const second = await context.newPage();
+
+    const addTool = async (page, testId) => {
+      await page.getByRole('button', { name: 'Add tool' }).click();
+      await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+      await page.getByTestId(testId).click();
+      // Past the 500ms save debounce, so the write has actually happened.
+      await page.waitForTimeout(1200);
+    };
+
+    /*
+     * By the node's TITLE rather than by an id: ids are allocated per tab, so
+     * both tabs call their one node `n1` and comparing ids would find them
+     * identical no matter which graph had won.
+     */
+    const toolsOn = (page) =>
+      page.evaluate(() =>
+        [...document.querySelectorAll('[data-node-id]')]
+          .map((node) => node.querySelector('[class*="nodeTitle"]')?.textContent ?? '')
+          .sort()
+          .join(','),
+      );
+
+    const savedTools = () =>
+      first.evaluate(() => {
+        const raw = window.localStorage.getItem('patchbay:graph:v3');
+        if (raw === null) return '';
+        const nodes = JSON.parse(raw).nodes ?? [];
+        return nodes
+          .map((node) => node.toolId ?? '')
+          .sort()
+          .join(',');
+      });
+
+    await first.goto(ORIGIN + '/', { waitUntil: 'networkidle' });
+    await second.goto(ORIGIN + '/', { waitUntil: 'networkidle' });
+
+    await addTool(first, 'dialog-option-base64');
+    await addTool(second, 'dialog-option-hash');
+
+    /*
+     * BOTH TABS ARE STILL RIGHT ABOUT THEMSELVES. Neither is told about the
+     * other and neither loses anything while it is open; the divergence is
+     * entirely in what was persisted.
+     */
+    check(
+      label,
+      'each tab still shows its own node, because nothing listens for `storage`',
+      (await toolsOn(first)) === 'Base64' && (await toolsOn(second)) === 'Hash',
+      `first [${await toolsOn(first)}], second [${await toolsOn(second)}]`,
+    );
+
+    check(
+      label,
+      'and the one saved key holds only the tab that wrote last',
+      (await savedTools()) === 'hash',
+      `[${await savedTools()}]`,
+    );
+
+    /*
+     * THE LOSS, MADE VISIBLE. The first tab reloads and comes back as the
+     * second tab's canvas. Its own node is not merged, not flagged and not
+     * recoverable - it is simply not there.
+     */
+    await first.reload({ waitUntil: 'networkidle' });
+    await first.locator('[data-node-id]').first().waitFor({ timeout: 10_000 });
+
+    check(
+      label,
+      'reloading the first tab silently replaces its canvas with the other one',
+      (await toolsOn(first)) === 'Hash',
+      `first added Base64 and came back as [${await toolsOn(first)}]`,
+    );
+
+    check(
+      label,
+      'and says nothing about it, which is the limitation rather than a bug',
+      (await first.getByText(/changed elsewhere|another tab/i).count()) === 0,
+      '',
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * WHAT ACTUALLY GOES ON THE CLIPBOARD, WRITTEN BY A REAL ENGINE.
+ *
+ * "It pastes into Word with the formatting intact" is a claim about three
+ * applications none of this can open, and that half stays manual - see
+ * `src/tools/text-convert/clipboard-check.md`, which is the ten-minute version.
+ *
+ * But the claim has a lower half that had never been checked anywhere, and it
+ * is the half every past bug here lived in:
+ *
+ *  - The HTML flavour was once the tool's sanitised output verbatim - a bare
+ *    `<table>` with no attributes - which is the borderless paste people
+ *    complain about. Nothing would notice it coming back.
+ *  - The plain flavour was once the HTML SOURCE, so every application that
+ *    asked for `text/plain` got a wall of angle brackets.
+ *  - `richTextDocument` runs on `DOMParser`, and the unit suite runs it on
+ *    jsdom's. The serialisation that reaches Word is the one a browser
+ *    produced, and it had never been read.
+ *  - `ClipboardItem` with two flavours at once is refused or restricted by
+ *    some builds. Firefox shipped it late and accepts a short list of types.
+ *
+ * All four are answerable here. The write is a REAL write - `navigator.
+ * clipboard.write`, wrapped so the payload can be read on its way past rather
+ * than replaced - so the engine either accepts the item or the check fails,
+ * and what is asserted afterwards is the bytes that actually went.
+ */
+async function checkRichTextClipboard(browser, label) {
+  skip(
+    label,
+    'pasting into Word, Google Docs and Outlook',
+    'no harness can open them. The payload they receive is asserted below, and the paste itself is the ten-minute manual pass in src/tools/text-convert/clipboard-check.md',
+  );
+
+  /*
+   * NO `permissions: ['clipboard-write']`. Firefox's Playwright build does not
+   * know that permission name and throws on the context rather than ignoring
+   * it. The write below is made from a real click, which is a trusted user
+   * gesture, over a 127.0.0.1 origin, which is a secure context - so it should
+   * be allowed on its merits; and where an engine refuses anyway, that is said
+   * as a skip rather than counted against the app.
+   */
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${ORIGIN}/tools/text-convert`, { waitUntil: 'networkidle' });
+    await page.getByRole('combobox', { name: 'Target format' }).waitFor({ timeout: 15_000 });
+
+    /*
+     * A WRAPPER, NOT A STUB. It forwards to the engine's own implementation
+     * and records what went past, so a browser that refuses the item still
+     * fails the check - which a stub would hide, and which is one of the four
+     * things worth knowing here.
+     */
+    await page.evaluate(() => {
+      const real = navigator.clipboard.write.bind(navigator.clipboard);
+      window.__clipboard = null;
+      navigator.clipboard.write = async (items) => {
+        const item = items[0];
+        const read = async (type) => {
+          if (!item.types.includes(type)) return null;
+          return (await item.getType(type)).text();
+        };
+        const captured = {
+          types: [...item.types],
+          html: await read('text/html'),
+          plain: await read('text/plain'),
+        };
+
+        /*
+         * Recorded BEFORE forwarding, and the forward's outcome recorded
+         * beside it. The payload is the app's, whatever the engine does with
+         * it - so a headless refusal costs the acceptance line and not the
+         * eight assertions about what was built. The error is re-thrown so
+         * the app takes its own failure path and the toast stays truthful.
+         */
+        window.__clipboard = captured;
+        try {
+          const result = await real(items);
+          window.__clipboard = { ...captured, refusal: null };
+          return result;
+        } catch (error) {
+          window.__clipboard = { ...captured, refusal: String(error) };
+          throw error;
+        }
+      };
+    });
+
+    /*
+     * The smallest document that exercises every past bug at once: a table
+     * with an aligned column (borders, header shading, alignment), a fenced
+     * block (background and monospace), and an em dash (the charset
+     * declaration).
+     */
+    const source = [
+      '| Tool | Cost |',
+      '| :--- | ---: |',
+      '| Hash | O(1) |',
+      '',
+      '```ts',
+      'const x = 1;',
+      '```',
+      '',
+      'An em dash — and a [link](https://example.org/).',
+      '',
+    ].join('\n');
+
+    await page.getByRole('combobox', { name: 'Target format' }).click();
+    await page.getByRole('option', { name: 'HTML' }).click();
+    await page.locator('textarea').first().fill(source);
+    await page.getByRole('button', { name: 'Run' }).click();
+
+    const richCopy = page.getByRole('button', { name: 'Copy as rich text' });
+    await richCopy.waitFor({ timeout: 20_000 });
+    await richCopy.click();
+
+    const written = await page.evaluate(() => window.__clipboard);
+
+    /*
+     * WHETHER THE ENGINE TOOK IT. A headless build that refuses clipboard
+     * access is a fact about the harness rather than about the app, so it is a
+     * skip - but a build that ACCEPTS the item has proved something worth
+     * having, because `ClipboardItem` with two flavours at once is exactly
+     * what older builds restricted.
+     */
+    if (written?.refusal) {
+      skip(
+        label,
+        'the engine accepting a two-flavour ClipboardItem',
+        `this build refused the write (${String(written.refusal).slice(0, 80)}); the payload it was given is still asserted below`,
+      );
+    } else {
+      check(label, 'the engine accepts a two-flavour ClipboardItem', written !== null, '');
+    }
+
+    check(
+      label,
+      'both flavours are written in one item, so one paste can choose',
+      written !== null &&
+        written.types.includes('text/html') &&
+        written.types.includes('text/plain'),
+      written === null ? 'nothing reached navigator.clipboard.write' : written.types.join(', '),
+    );
+
+    const html = written?.html ?? '';
+
+    /*
+     * A WHOLE DOCUMENT WITH A CHARSET. Word and Outlook read the payload as a
+     * document and guess an encoding when none is declared, which is how an em
+     * dash becomes three characters of mojibake.
+     */
+    check(
+      label,
+      'the HTML flavour is a document declaring its encoding, not a fragment',
+      html.startsWith('<!DOCTYPE html>') && html.includes('<meta charset="utf-8">'),
+      html.slice(0, 60),
+    );
+
+    /*
+     * INLINE STYLES, WHICH IS THE WHOLE REASON THIS MODULE EXISTS. A `<style>`
+     * block is discarded outright by Google Docs, so a stylesheet would arrive
+     * as nothing; the one thing all three targets honour is a `style`
+     * attribute on the element itself.
+     */
+    check(
+      label,
+      'the table carries borders as declarations AND as the legacy attribute',
+      /<table[^>]*border-collapse:collapse/.test(html) &&
+        /<table[^>]*border="1"/.test(html) &&
+        /<td[^>]*style="[^"]*border:1px solid/.test(html),
+      /<table[^>]*>/.exec(html)?.[0].slice(0, 90) ?? 'no table',
+    );
+
+    check(
+      label,
+      'the right-aligned column is aligned by declaration, which Google Docs needs',
+      /<td[^>]*style="[^"]*text-align:right/.test(html),
+      /<td[^>]*text-align:right[^>]*>/.exec(html)?.[0].slice(0, 90) ?? 'no aligned cell',
+    );
+
+    check(
+      label,
+      'the code block carries its own background and monospace font',
+      /<pre[^>]*style="[^"]*background-color:#f6f8fa/.test(html) &&
+        /<pre[^>]*style="[^"]*monospace/.test(html),
+      /<pre[^>]*>/.exec(html)?.[0].slice(0, 90) ?? 'no pre',
+    );
+
+    check(
+      label,
+      'no <style> element, which Google Docs discards, and no stylesheet link',
+      !/<style[\s>]/i.test(html) && !/<link[^>]*stylesheet/i.test(html),
+      '',
+    );
+
+    /*
+     * The em dash is written as a character rather than an entity, and the
+     * charset above is what carries it. An entity would survive too, so this
+     * asserts only that it is not mangled.
+     */
+    check(
+      label,
+      'an em dash survives the round trip through the engine serialiser',
+      html.includes('—') || html.includes('&mdash;'),
+      '',
+    );
+
+    /* -- And the plain flavour is text, not markup ------------------------ */
+
+    const plain = written?.plain ?? '';
+    check(
+      label,
+      'the plain flavour is readable text rather than the HTML source',
+      plain !== '' && !plain.includes('<td') && !plain.includes('<!DOCTYPE'),
+      plain.slice(0, 60).replace(/\n/g, '\\n'),
+    );
+    check(
+      label,
+      'and keeps the structure a reader needs - table rows and the link target',
+      plain.includes('Hash | O(1)') && plain.includes('https://example.org/'),
+      plain.slice(0, 120).replace(/\n/g, '\\n'),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 async function checkTruncation(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
@@ -5901,8 +6568,66 @@ async function checkOutputViews(browser, label) {
       mimeType: 'image/png',
       buffer: makeSwatchPng(),
     });
+
+    /*
+     * THE FRAME THE RESULT APPEARS ON, WATCHED FROM BEFORE IT HAPPENS.
+     *
+     * An `<img>` whose src has not decoded has no intrinsic size, and this one
+     * is laid out `inline-size: 100%` with its height left to the picture - so
+     * the panel used to be zero pixels tall and then up to 420px tall on the
+     * frame the decode landed, moving everything below it under the cursor at
+     * the moment somebody was reaching for it. `previewAspectRatio` reads the
+     * ratio out of the file header, before any decode, so the box is the right
+     * size from the first frame.
+     *
+     * This is the only place that can be checked. jsdom has no layout engine,
+     * so the height it reports is zero both before and after - which is a pass
+     * for the wrong reason. The observer fires on the mutation that ADDS the
+     * element and calls `getBoundingClientRect`, which forces layout while the
+     * decode is still outstanding.
+     */
+    await page.evaluate(() => {
+      window.__imageJump = null;
+      const observer = new MutationObserver(() => {
+        const image = document.querySelector('img[src^="blob:"]');
+        if (!image || window.__imageJump !== null) return;
+
+        observer.disconnect();
+        const before = image.getBoundingClientRect().height;
+        const ratio = getComputedStyle(image).aspectRatio;
+        void image
+          .decode()
+          .catch(() => undefined)
+          .then(() => {
+            window.__imageJump = {
+              ratio,
+              complete: image.complete,
+              before: Math.round(before),
+              after: Math.round(image.getBoundingClientRect().height),
+            };
+          });
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+
     await page.getByRole('button', { name: 'Run' }).click();
     await page.locator('img[src^="blob:"]').first().waitFor({ timeout: 30_000 });
+
+    await page.waitForFunction(() => window.__imageJump !== null, undefined, { timeout: 30_000 });
+    const jump = await page.evaluate(() => window.__imageJump);
+
+    check(
+      label,
+      'the preview box is the right height before the image has decoded, so nothing jumps',
+      jump !== null && jump.before > 0 && Math.abs(jump.after - jump.before) <= 1,
+      `${String(jump?.before)}px before the decode, ${String(jump?.after)}px after`,
+    );
+    check(
+      label,
+      'and it is the header that reserved it, not the loaded bitmap',
+      jump !== null && jump.ratio !== 'auto' && jump.ratio !== '',
+      `aspect-ratio ${String(jump?.ratio)}`,
+    );
 
     /** Every preview image, with the size the engine actually decoded. */
     const painted = () =>
@@ -6696,6 +7421,23 @@ async function runChecks(engine, label) {
       `worker=${wentThroughWorker}, offscreenCanvas=${offscreen.main}`,
     );
 
+    /*
+     * AND THE GAP THAT LEAVES, NAMED WHERE SOMEBODY WILL SEE IT.
+     *
+     * Playwright's WebKit has no OffscreenCanvas at all. Real Safari has had it
+     * since 16.4 - so the branch this engine takes here is NOT the branch a
+     * Safari user takes, and the worker path is proved only in Gecko. That is
+     * a real hole and it is easy to read the green line above as covering it,
+     * which is exactly why it gets its own line.
+     */
+    if (!offscreen.main) {
+      skip(
+        label,
+        'the worker path for image conversion in a WebKit',
+        'this build has no OffscreenCanvas, so it takes the fallback; real Safari has had OffscreenCanvas since 16.4 and takes the worker path, which is therefore proved only in Gecko. Six minutes on a Mac: docs/manual-checks.md',
+      );
+    }
+
     check(label, 'no console errors', consoleErrors.length === 0, consoleErrors.join(' | '));
   } finally {
     await context.close();
@@ -6721,6 +7463,9 @@ async function runChecks(engine, label) {
     await checkTouch(engine, label);
     await checkMobileLayout(engine, label);
     await checkSoftKeyboard(engine, label);
+    await checkBackgroundedTab(browser, label);
+    await checkTwoTabs(browser, label);
+    await checkRichTextClipboard(browser, label);
     await checkTruncation(browser, label);
     await checkPreviewSandbox(browser, label);
     await checkPipeline(browser, label);

@@ -121,6 +121,36 @@ export default tseslint.config(
           selector: "CallExpression[callee.name='Function']",
           message: 'Function() is eval by another name.',
         },
+
+        /*
+         * DEFERRED FOCUS. Five separate bugs in this repository have come from
+         * this one shape, and they were found one at a time over months
+         * because each looked like a different bug.
+         *
+         * A focus move deferred past the end of the task that asked for it -
+         * to a `requestAnimationFrame`, a `setTimeout`, or the post-paint half
+         * of a `useEffect` - lands in the middle of whatever the user did
+         * next, and takes focus off whatever they had just put it on. Nothing
+         * throws. Text struck in that window goes to the element that used to
+         * have focus, and there is no error for a keystroke that lands
+         * nowhere, so the symptom is always something else: a palette that
+         * opens missing the first letters of the word, an Enter that lands on
+         * "Close" and swallows what follows, a keyboard-built pipeline that
+         * comes out wired backwards because an arrow key acted on the node the
+         * palette had just added. All four of those were real here.
+         *
+         * `useLayoutEffect` runs synchronously after the commit, inside the
+         * task the keystroke started, so there is no window to lose. That is
+         * the fix in every one of the five cases, and it is the only reason
+         * those effects are layout effects - see the long note on `Enter` into
+         * the inspector in Canvas.tsx.
+         */
+        {
+          selector:
+            ":matches(CallExpression[callee.name='requestAnimationFrame'], CallExpression[callee.property.name='requestAnimationFrame'], CallExpression[callee.name='setTimeout'], CallExpression[callee.property.name='setTimeout'], CallExpression[callee.name='useEffect']) CallExpression[callee.property.name='focus']",
+          message:
+            'Focus moved after the task that asked for it steals focus from whatever the user did next, silently. Use useLayoutEffect, which runs inside that task. See the note in eslint.config.js.',
+        },
       ],
     },
   },

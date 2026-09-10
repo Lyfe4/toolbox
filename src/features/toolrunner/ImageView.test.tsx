@@ -4,9 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Bytes } from '@/features/registry/types';
 import { expectNoAxeViolations } from '@/lib/testing/axe';
-import { png as pngFixture } from '@/tools/image-convert/fixtures';
+import { jpeg as jpegFixture, png as pngFixture } from '@/tools/image-convert/fixtures';
 
-import { ImageView, isPreviewableImage, type ImageComparison } from './ImageView';
+import {
+  ImageView,
+  isPreviewableImage,
+  previewAspectRatio,
+  type ImageComparison,
+} from './ImageView';
 
 /**
  * The bug these tests exist to prevent is not a crash. It is the runner
@@ -73,8 +78,93 @@ function renderImage(
 
 /** A stand-in source image, as the runner supplies it from the chosen File. */
 function sourceOf(): ImageComparison {
-  return { blob: new Blob([png], { type: 'image/png' }), label: 'PNG image', byteLength: 2048 };
+  return {
+    blob: new Blob([png], { type: 'image/png' }),
+    label: 'PNG image',
+    byteLength: 2048,
+    ratio: previewAspectRatio(png),
+  };
 }
+
+describe('previewAspectRatio', () => {
+  /*
+   * THE JUMP THIS PREVENTS.
+   *
+   * An `<img>` whose src has not decoded yet has no intrinsic size, and this
+   * one is `inline-size: 100%` with its height left to the picture - so the
+   * panel was zero pixels tall and then up to 420px tall, one frame after a
+   * run finished, with everything below it moving under the cursor at the
+   * moment somebody was reaching for it.
+   *
+   * The reason it lasted is worth keeping: the stylesheet had a `.placeholder`
+   * block written to hold the box open, and no component had ever named it, so
+   * the rule had never once been on an element. Nothing failed, because a
+   * class nobody names produces no error.
+   *
+   * A fixed reserved height would only move the jump - a favicon would open a
+   * 420px hole and collapse it - so the box has to be right from the first
+   * frame, which means reading the ratio out of the header.
+   */
+  it('reads a landscape ratio out of a PNG header', () => {
+    expect(previewAspectRatio(pngFixture({ width: 800, height: 400 }))).toBeCloseTo(2, 10);
+  });
+
+  it('reads a portrait ratio out of a JPEG header', () => {
+    expect(previewAspectRatio(jpegFixture({ width: 300, height: 900 }))).toBeCloseTo(1 / 3, 10);
+  });
+
+  /*
+   * Degrading to null rather than to a guess. A wrong ratio is worse than
+   * none: none is today's jump, and a wrong one is a box that resizes to
+   * something ELSE once the picture arrives.
+   */
+  it('has no ratio for bytes that are not an image it previews', () => {
+    expect(previewAspectRatio(new Uint8Array([1, 2, 3, 4]))).toBeNull();
+  });
+
+  it('has no ratio for a header truncated before its dimensions', () => {
+    const truncated = pngFixture({ width: 8, height: 8 }).slice(0, 12);
+    expect(previewAspectRatio(truncated)).toBeNull();
+  });
+});
+
+describe('the reserved preview box', () => {
+  it('gives the result image its aspect ratio before anything has decoded', () => {
+    renderImage(pngFixture({ width: 800, height: 400 }));
+
+    // The style is on the element from the first render: nothing here has
+    // loaded, and jsdom never will.
+    expect(screen.getByRole('img')).toHaveStyle({ aspectRatio: '2' });
+  });
+
+  it('gives the compared source its own ratio rather than the result one', async () => {
+    const user = userEvent.setup();
+    renderImage(pngFixture({ width: 800, height: 400 }), {
+      blob: new Blob([png], { type: 'image/png' }),
+      label: 'PNG image',
+      byteLength: 2048,
+      ratio: previewAspectRatio(pngFixture({ width: 300, height: 900 })),
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Compare' }));
+
+    const [before, after] = screen.getAllByRole('img');
+    expect(before).toHaveStyle({ aspectRatio: String(1 / 3) });
+    expect(after).toHaveStyle({ aspectRatio: '2' });
+  });
+
+  it('leaves the element alone when the header cannot be read', () => {
+    /*
+     * A GIF this view will preview but whose header is a stub. The point is
+     * that an unreadable header costs the old behaviour and nothing more - no
+     * `aspect-ratio: NaN`, which would collapse the box permanently rather
+     * than for one frame.
+     */
+    renderImage(new Uint8Array([0x47, 0x49, 0x46, 0x38]));
+
+    expect(screen.getByRole('img').getAttribute('style')).toBeNull();
+  });
+});
 
 describe('isPreviewableImage', () => {
   /*

@@ -12,12 +12,11 @@ import { formatBytes } from '@/lib/sniff';
 
 import { FileDrop } from './FileDrop';
 import { copyRichText } from './HtmlView';
+import { previewAspectRatio, type ImageComparison } from './ImageView';
 import { OptionsPanel } from './OptionsPanel';
 import { ErrorReport, OutputView } from './OutputPanel';
 import { richTextDocument, richTextPlain } from './richText';
 import styles from './runner.module.css';
-
-import type { ImageComparison } from './ImageView';
 
 /**
  * Builds the value for a port from whatever the user supplied.
@@ -70,10 +69,30 @@ export function comparisonFor(file: LoadedFile | null): ImageComparison | null {
   if (file === null) return null;
   if (file.sniff.mediaType?.startsWith('image/') !== true) return null;
 
-  // The File itself, not its bytes: a File IS a Blob, the browser is already
-  // holding it, and copying tens of megabytes into React state to show a
-  // thumbnail would be the one genuinely expensive way to do this.
-  return { blob: file.file, label: file.sniff.label, byteLength: file.file.size };
+  /*
+   * The header is read HERE, where the bytes already exist.
+   *
+   * The blob handed over is the File itself, not a copy of its bytes: a File
+   * IS a Blob, the browser is already holding it, and copying tens of
+   * megabytes into React state to show a thumbnail would be the one genuinely
+   * expensive way to do this. That leaves the preview with nothing to measure,
+   * so the ratio travels with the comparison - which stops the "Before" image
+   * jumping into place a frame after the "After" one, the same defect
+   * `previewAspectRatio` exists to fix on the result side.
+   *
+   * `value` is what the file became on the port it was chosen for, and an
+   * image can only have been accepted by a port that takes bytes - but that is
+   * an inference about the registry rather than something this function knows,
+   * so it is checked instead of assumed.
+   */
+  const bytes = file.value.type === 'bytes' ? file.value.bytes : null;
+
+  return {
+    blob: file.file,
+    label: file.sniff.label,
+    byteLength: file.file.size,
+    ratio: bytes === null ? null : previewAspectRatio(bytes),
+  };
 }
 
 function busyLabel(state: ExecutionState): string {

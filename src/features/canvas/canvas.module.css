@@ -209,6 +209,38 @@
 
 /* --- Nodes -------------------------------------------------------------- */
 
+/*
+ * A NODE'S EDGE IS `--pb-border-strong`, NOT THE HAIRLINE EVERY OTHER PANEL USES.
+ *
+ * The hairline measures 2.52:1 against `--pb-surface-sunken` in vellum - below
+ * the 3:1 that SC 1.4.11 asks for - where it clears it in the other three
+ * presets. It was left alone for a while on the argument that a node is a
+ * titled box with a status light in it, so 1.4.11's "required to identify"
+ * does not bite; that is the same argument that excludes `--pb-border-subtle`,
+ * and on a node it does not hold up:
+ *
+ *  - The node's fill is 1.35:1 against the canvas backdrop in vellum, so the
+ *    BORDER is the entire boundary. There is nothing else drawing the shape.
+ *  - The boundary is not decoration here, it is the target. You grab a node by
+ *    its edge to drag it, and you aim at its ports.
+ *  - The title says a node is there. It does not say where it ENDS, which is
+ *    the only question that matters where two nodes overlap - and overlapping
+ *    is normal on a canvas.
+ *
+ * So it is a boundary a user has to perceive in order to operate the thing,
+ * which is what the criterion is about. `--pb-border-strong` clears 3:1 on the
+ * sunken surface in all four presets (3.57 vellum, 4.48 graphite, 6.17
+ * phosphor, 4.52 blueprint) and costs a barely perceptible thickening of the
+ * edge in the three that already passed. The alternative was moving vellum's
+ * greys, which changes every surface in the theme to fix one pair.
+ *
+ * The pair is in CONTRAST_PAIRS now, so it is measured rather than reasoned
+ * about - by themes.contrast.test.ts for the presets and by the live editor
+ * readout for a theme somebody builds.
+ *
+ * The header's own rule below stays hairline: it is a division INSIDE the
+ * node, against the node's own fill, and carries no boundary.
+ */
 .node {
   position: absolute;
   inline-size: 224px;
@@ -216,7 +248,7 @@
   flex-direction: column;
 
   background-color: var(--pb-surface-raised);
-  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border: var(--pb-border-width) solid var(--pb-border-strong);
   border-radius: var(--pb-radius-panel);
   cursor: grab;
   user-select: none;

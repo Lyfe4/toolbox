@@ -29,14 +29,26 @@ import type { RefObject } from 'react';
  * keyboard is covering, and the sheet sits that far up. Everything else -
  * revealing the focused field within the sheet - is the browser's again.
  *
- * WHAT THIS IS AND IS NOT TESTED AGAINST. Playwright has no soft keyboard, in
- * either engine - it cannot open one and cannot shrink the visual viewport
- * independently of the layout viewport, which is precisely what a keyboard
- * does on iOS. `check:browsers` therefore drives this by shrinking the window,
- * which runs the same code down the same branch with the same arithmetic, and
- * is NOT the same event. The arithmetic is unit-tested on its own; the wiring
- * is proved to fire; the actual keyboard is not, and saying so is more useful
- * than a green check that means less than it looks like.
+ * WHAT THIS IS AND IS NOT TESTED AGAINST. Playwright has no soft keyboard in
+ * either engine and cannot open one.
+ *
+ * It used to be driven by shrinking the WINDOW, on the claim that this was the
+ * same arithmetic on a different event. It was not the same arithmetic, and the
+ * reason is the whole point of this file: a window resize moves the layout
+ * viewport and the visual one TOGETHER, so `covered` below is zero however far
+ * the window shrinks. The check was exercising a branch that always returned 0,
+ * and it would have passed just as happily against a version of this file that
+ * did nothing at all.
+ *
+ * `check:browsers` now shadows `visualViewport.height` with an own property -
+ * the real accessor is on the prototype, and this reads the instance - and
+ * dispatches the real `resize` event on the real object. That produces the one
+ * condition a keyboard produces and a window resize cannot: a visual viewport
+ * genuinely shorter than a layout viewport that has not moved. The arithmetic
+ * is unit-tested, the sheet is measured lifting by exactly the covered height
+ * and dropping back afterwards, and the KEYBOARD is still not tested. Whether
+ * iOS fires this event when it opens one is in docs/manual-checks.md, which is
+ * four minutes with a phone.
  */
 
 export interface Band {

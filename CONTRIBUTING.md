@@ -60,6 +60,29 @@ worker or anything visual.** jsdom has no layout engine, no Worker, no
 `OffscreenCanvas` and no pointer events, so the unit suite is structurally
 unable to see most of what that script checks.
 
+### And four that need a person
+
+[`docs/manual-checks.md`](docs/manual-checks.md) — Safari itself, a real
+on-screen keyboard, a genuinely backgrounded tab, and pasting into Word. Each
+is a checklist with a pass and a fail per step, not a suggestion to try it on a
+phone. Run the relevant one before a release, and the keyboard one before any
+change to the inspector sheet.
+
+**Before adding to that file, try harder.** Two of its entries used to be three.
+The soft-keyboard check was driven by shrinking the window, described as the
+same arithmetic on a different event — and a window resize moves the layout and
+visual viewports together, so the inset it computed was zero every time and the
+check would have passed against a build with no keyboard handling at all.
+Shadowing `visualViewport.height` and firing its real `resize` event produces
+the condition a keyboard produces, and found a real bug on its first run. Two
+tabs racing over one `localStorage` key went the same way: two pages in one
+browser context _is_ a second tab.
+
+The rule that falls out of both: name the **mechanism** rather than the
+situation, and ask whether the mechanism can be produced on its own. A hidden
+tab cannot be created; late timers, which is the entirety of what a hidden tab
+does to this app, can be.
+
 ## Where work lands
 
 **Work lands on `main`. A branch is created only when you are asked for one.**
@@ -110,6 +133,32 @@ does not reintroduce the bug in six months.
 Where a line is load-bearing for a non-obvious reason, say so in the code. Most
 of the sharp edges in this repo are documented at the line that depends on
 them.
+
+### Moving focus
+
+**Never move focus from a `requestAnimationFrame`, a `setTimeout`, or a passive
+`useEffect`. Use `useLayoutEffect`.** A lint rule enforces this, and
+`src/lint/deferredFocus.test.ts` proves the rule still matches.
+
+This is a convention because it is the single most-repeated bug in the repo:
+five separate defects, found one at a time over months, all of this shape. A
+focus move deferred past the end of the task that asked for it lands in the
+middle of whatever the user did next and takes focus off whatever they had just
+put it on. Nothing throws, and there is no error for a keystroke that lands
+nowhere — so it always presents as something else:
+
+- the command palette opening already missing the first letters of the word,
+  because `K` is followed immediately by what the user came to type;
+- `Enter` into the inspector landing on **Close the inspector**, so the next
+  Space shuts the panel;
+- a three-node chain built entirely from the keyboard coming out wired
+  backwards, because a late frame moved focus to the node the palette had just
+  added and the arrow key acted on that one instead.
+
+`useLayoutEffect` runs synchronously after the commit, in the same task as the
+keystroke, so there is no window to lose. Where the move has to happen more
+than once, make the request a **counter or a sequence number** rather than a
+boolean — two Enters in a row are two requests, and a boolean is one.
 
 ### Types
 

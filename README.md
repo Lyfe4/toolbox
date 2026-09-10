@@ -319,10 +319,10 @@ do — in `pnpm check:browsers`. All four themes are held to WCAG AA by a test
 that resolves the real CSS and measures each pair.
 
 A theme somebody builds themselves cannot be held to that by a test, because it
-does not exist when the test runs — so the theme editor measures the same 38
+does not exist when the test runs — so the theme editor measures the same 39
 pairs live, with the same code the test uses, and says which pair is failing
 against which. Saving a failing theme is allowed; it is the user's choice. The
-state is carried by a signal colour, a rule and the words "5 of 38 pairs fail
+state is carried by a signal colour, a rule and the words "5 of 39 pairs fail
 WCAG AA", so it does not depend on being able to see the colour it is warning
 about.
 
@@ -885,6 +885,31 @@ scrolled but nothing could focus it, so a keyboard user could not read past the
 fold — was found by axe in a real browser and is structurally invisible to
 jsdom, because whether a box scrolls is a question about layout.
 
+### The third tier, and the trap in it
+
+A few things are reachable by neither, and they are listed in
+[docs/manual-checks.md](docs/manual-checks.md) with a checklist each rather than
+a suggestion to try it on a phone: Safari itself, a real on-screen keyboard, a
+genuinely backgrounded tab, and pasting into Word.
+
+The trap is that "the harness cannot do this" is easy to say and expensive to
+be wrong about. The soft-keyboard check is the cautionary example. It was
+described as running the same arithmetic on a different event, by shrinking the
+window — and a window resize moves the layout viewport and the visual one
+together, so the inset it computed was **zero every time**. It would have passed
+against a build with no keyboard handling at all. The fix was not more effort in
+the same direction but a different one: `visualViewport.height` is a prototype
+accessor, an own property shadows it, and dispatching the real `resize` event on
+the real object produces the one condition a keyboard produces and a window
+resize cannot. Two tabs racing over one `localStorage` key went the same way —
+two pages in one browser context _is_ a second tab, and it had gone unreproduced
+because it was filed under "decided" rather than "untested".
+
+So the rule is: before writing something down as unreachable, say precisely what
+the mechanism is, and check whether the mechanism can be produced separately
+from the thing that usually causes it. A hidden tab cannot be produced; late
+timers, which is all a hidden tab does to this app, can be.
+
 ## Performance
 
 All figures from the production build, measured in Firefox on a desktop
@@ -895,7 +920,7 @@ in this file have numbers behind them.
 
 |                                          | Raw      | Gzipped  |
 | ---------------------------------------- | -------- | -------- |
-| Initial JavaScript                       | 328.5 kB | 106.3 kB |
+| Initial JavaScript                       | 329.3 kB | 106.6 kB |
 | Budget (enforced by `pnpm bundle:check`) | 380.0 kB | —        |
 
 Every tool, the canvas, the styleguide and the tool pages are lazy chunks and
@@ -1082,8 +1107,16 @@ media stack, and some of its platform integration. Two consequences are
 already documented in the harness — `upgrade-insecure-requests` is applied to
 loopback in WebKit where Chromium and Gecko exempt it, and Playwright's WebKit
 build cannot navigate at all while offline, so the offline reload check is
-explicitly skipped there rather than silently dropped. **Patchbay has not been
-tested on Safari itself.**
+explicitly skipped there rather than silently dropped.
+
+There is a third, and it is the one worth knowing: **Playwright's WebKit has no
+`OffscreenCanvas` at all, and real Safari has had it since 16.4.** So the image
+tool's _worker_ path has never run in any WebKit this repository can drive — it
+is exercised only in Firefox, and WebKit only ever proves the main-thread
+fallback. That is the first item on
+[docs/manual-checks.md](docs/manual-checks.md#1-safari-itself), which is six
+minutes on a Mac or an iPhone and is what "tested on Safari" would actually
+mean. **Patchbay has not been tested on Safari itself.**
 
 ## Deployment
 

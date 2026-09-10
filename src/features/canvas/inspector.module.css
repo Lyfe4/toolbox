@@ -566,7 +566,31 @@
      */
     inset-block-end: var(--keyboard-inset, 0px);
     z-index: var(--pb-z-sticky);
-    max-block-size: 65%;
+
+    /*
+     * AND NO TALLER THAN THE ROOM IT HAS ONCE THE KEYBOARD IS OPEN.
+     *
+     * `65%` alone was measured against the LAYOUT viewport, which a keyboard
+     * does not shrink - so the inset above lifted the sheet without resizing
+     * it, and a sheet taller than the space left ran off the TOP of the
+     * screen. Measured at 390x780 with a 336px keyboard: a 474px sheet lifted
+     * to sit on the keyboard has its top at -30, which takes the header with
+     * the node's name and the Close button off-screen. The panel scrolls
+     * internally, so nothing in the body was lost - the one part that cannot
+     * be scrolled back to is the part that went.
+     *
+     * `100% - inset` IS the visible band, so the second term caps the sheet at
+     * exactly the space above the keyboard; the first keeps it to two thirds of
+     * the screen when there is no keyboard and the canvas behind it still
+     * matters. With one open the canvas is not what anybody is looking at, so
+     * taking the whole band is right rather than merely safe.
+     *
+     * This is the same defect the inset itself was written to fix, one step
+     * further on, and it was invisible for as long as the check drove this by
+     * shrinking the window - which moves both viewports together and produces
+     * a zero inset, so the sheet was never lifted at all.
+     */
+    max-block-size: min(65%, calc(100% - var(--keyboard-inset, 0px)));
     border-inline: none;
     border-block-end: none;
   }

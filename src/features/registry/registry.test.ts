@@ -6,6 +6,8 @@ import { canToolsConnect, findConnections } from './connections';
 import { loadableToolIds, loadTool } from './loader';
 import { getManifestEntry, isToolId, searchTools, TOOL_MANIFEST } from './manifest';
 
+import type { ToolManifestEntry } from './manifest';
+
 const ids = TOOL_MANIFEST.map((entry) => entry.id);
 
 describe('manifest integrity', () => {
@@ -19,6 +21,42 @@ describe('manifest integrity', () => {
 
   it.each(ids)('%s has a kebab-case id', (id) => {
     expect(id).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+  });
+
+  /*
+   * A LIMITATION THAT ENFORCES ITSELF.
+   *
+   * `runPipeline` passes no `onProgress`, so a tool that reports progress
+   * shows none on the canvas. That is written down as a known limitation on
+   * the grounds that nothing is currently lost - no shipped tool declares
+   * `reportsProgress: true`, so there is no progress to drop.
+   *
+   * "Nothing is currently lost" is a statement about the manifest, and the
+   * manifest changes. Left as prose, the day somebody adds a tool that reports
+   * progress is the day the paragraph silently becomes wrong and the canvas
+   * silently starts throwing progress away - with nothing failing, because a
+   * progress callback nobody passes raises no error.
+   *
+   * So it is asserted. This test failing is not a defect in the new tool; it
+   * is the wiring falling due.
+   */
+  it('has no tool that reports progress, which is what makes the pipeline gap harmless', () => {
+    /*
+     * Read through the DECLARED type rather than off the const literal. The
+     * literal's inferred type already says every flag is `false`, so the
+     * filter would be statically dead - which lint rejects, and which would
+     * make this test compile-time noise rather than a guard that survives the
+     * manifest changing.
+     */
+    const entries: readonly ToolManifestEntry[] = TOOL_MANIFEST;
+    const reporting = entries
+      .filter((entry) => entry.execution.reportsProgress)
+      .map((entry) => entry.id);
+
+    expect(
+      reporting,
+      'runPipeline passes no onProgress, so progress from these tools would be dropped on the canvas. Wire it through before shipping them.',
+    ).toEqual([]);
   });
 
   it('has a loader for every manifest entry and nothing more', () => {

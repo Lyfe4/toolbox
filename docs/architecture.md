@@ -1137,9 +1137,24 @@ a component NAMES is declared. It now also asks whether every class a
 stylesheet DECLARES is named, which is the question that found this. Adding it
 turned up four dead blocks in the canvas alone and dead rules in four more
 stylesheets, including a `.placeholder` meant to hold an image panel open while
-its object URL is created — so `ImageView` really does jump by 420px on the
-frame after a run finishes, which is now a known defect rather than a comment
-describing behaviour that does not exist.
+its object URL is created — so `ImageView` really did jump by 420px on the frame
+after a run finishes, which was a known defect rather than a comment describing
+behaviour that does not exist.
+
+**It is fixed now, and not by reviving the placeholder.** A reserved box of a
+fixed height only moves the jump: a favicon would open a 420px hole and then
+collapse it. The box has to be the right size on the first frame, which means
+knowing the aspect ratio before the decode — and every format this view will
+preview states its own dimensions in its header, in the first few dozen bytes.
+`inspectImage` already reads exactly those four formats for the image tool's own
+size guard, so `previewAspectRatio` reuses it and the element carries an
+`aspect-ratio` from the moment it is rendered. A header it cannot read returns
+null and the element is left exactly as it was, because a wrong ratio is worse
+than none: none is the old jump, and a wrong one is a box that resizes to
+something else once the picture arrives. The comparison image is measured in
+`comparisonFor`, where the bytes still exist — the preview is handed the `File`
+itself rather than a copy of its bytes, so it has nothing of its own to
+measure.
 
 The reverse check cannot be asked of a stylesheet whose importers use a
 computed key (`styles[variant]`, deliberate in four components), so those are
@@ -2421,13 +2436,25 @@ canvas had the same shape of bug via a stored counter that had fallen behind.
 ### Known limitations
 
 **Two tabs, one canvas.** The saved graph is a single `localStorage` key with
-no cross-tab coordination, and nothing listens for `storage`. To reproduce:
-open the canvas in two tabs, add a node in each, and reload the first — the
-second tab's save has replaced the first's, including its ids. Last write wins,
-silently. This is not fixed here because the fix is a product decision (which
-tab wins, and what the other is told) rather than a defect to repair, and a
-half-measure — a toast saying the canvas changed elsewhere — is more confusing
-than the current behaviour rather than less.
+no cross-tab coordination, and nothing listens for `storage`. Open the canvas in
+two tabs, add a node in each, and reload the first: the second tab's save has
+replaced the first's, including its ids. Last write wins, silently. This is not
+fixed here because the fix is a product decision (which tab wins, and what the
+other is told) rather than a defect to repair, and a half-measure — a toast
+saying the canvas changed elsewhere — is more confusing than the current
+behaviour rather than less.
+
+What has changed is that it is now **reproduced rather than described**.
+`checkTwoTabs` in `check:browsers` opens two pages in one browser context —
+which is exactly the scope `localStorage` has, so it is a second tab in every
+sense — adds a different tool in each, and asserts the behaviour in three
+parts: both tabs stay right about themselves while they are open, the saved key
+holds only the last writer, and reloading the first silently gives it the second
+one's canvas with no message at all. It was reachable all along, and appears to
+have gone unreached because it was filed under _decided_ rather than under
+_untested_. Asserting the current behaviour is what stops the paragraph above
+drifting away from the app: if somebody adds a `storage` listener, that check
+goes red and the change is deliberate.
 
 **Image conversion blocks its own deadline where `OffscreenCanvas` is absent.**
 The engine downgrades `image-convert` to the main thread there (Safari before
@@ -2443,22 +2470,61 @@ the engine. `scripts/cross-browser-check.mjs` asserts which branch each engine
 takes, so the fallback cannot rot unnoticed.
 
 **No harness here has seen a real on-screen keyboard.** Playwright cannot open
-one in either engine, and cannot shrink the _visual_ viewport independently of
-the layout viewport — which is exactly what a keyboard does on iOS. So the one
-claim everybody wants, "the keyboard does not cover the field you are typing
-into", is not proved anywhere in this repo.
+one in either engine. What it _can_ now be made to produce is the geometry, and
+that turned out to matter more than it looked.
 
-What is established instead, and stated as such in `check:browsers`: every field
-in the app now lives in an ordinary scrolling box — the routes are documents,
+The check used to drive this by shrinking the window with `setViewportSize`,
+described as "the same arithmetic on a different event". It was not the same
+arithmetic. A window resize moves the layout viewport **and** the visual one
+together, so `innerHeight - visualViewport.bottom` is zero and
+[`keyboardInset`](../src/features/canvas/keyboardInset.ts) computed **0 px**
+however small the window got. The sheet stayed on screen because the bottom of
+the layout viewport had moved up with it — which is equally true of a sheet with
+no keyboard handling at all. The check was passing on an app that had never had
+the feature.
+
+`visualViewport.height` is an accessor on the prototype, so an own property
+defined on the instance shadows it, and the app reads the instance. Defining one
+and dispatching the real `resize` event on the real `visualViewport` object puts
+the page into the state a keyboard puts it in: a visual viewport genuinely
+shorter than a layout viewport that has not moved. `checkSoftKeyboard` does that
+now, and asserts four things it could not before — that a window resize yields a
+zero inset (logged as a number, so the paragraph above is a measurement rather
+than a claim), that a visual-viewport shrink lifts the sheet by exactly the
+covered height, that the sheet and its focused field both end up above the
+keyboard line, and that the inset returns to zero when the keyboard closes. The
+dialog check and the fine-pointer check are driven the same way, so the chain
+from `visualViewport` through `useKeyboardInset` to the custom property to the
+geometry is exercised as one thing rather than in halves.
+
+**It found a defect on its first run**, which is the strongest argument that the
+window resize had been proving nothing. The inset MOVED the sheet and never
+RESIZED it. Its height cap was `max-block-size: 65%`, measured against the
+layout viewport that a keyboard does not shrink — so at 390×780 with a 336 px
+keyboard, a 474 px sheet lifted to sit on top of the keyboard had its top at
+**−30 px**. The body scrolls, so nothing in it was lost; the head does not, so
+what went off the top was the node's name and the only control that closes the
+panel. The cap is `min(65%, calc(100% - var(--keyboard-inset, 0px)))` now: the
+second term is exactly the visible band, and with a keyboard open the canvas
+behind the sheet is not what anybody is looking at, so filling that band is
+right rather than merely safe. This is the same defect the inset itself was
+written to fix, one step further along.
+
+This is a simulation and is labelled as one in the run. The geometry is real,
+the event is real and the code path is real; the keyboard is not. What it proves
+that nothing here could before is that the sheet moves for the **visual**
+viewport specifically — an implementation reading `window.innerHeight`, which is
+the obvious wrong answer, passes a window resize and fails this. Whether iOS
+fires that event when the keyboard opens, and whether what you end up looking at
+is usable, still needs a phone: see
+[manual-checks.md](manual-checks.md#2-a-real-on-screen-keyboard).
+
+The rest is unchanged, and is why there is only one number to compute: every
+field in the app lives in an ordinary scrolling box — the routes are documents,
 and the canvas's fields are in the inspector, which is a scroll container — so
 the engine's own scroll-into-view has somewhere to put a focused field. The one
-thing left to application code is the inspector SHEET's position: it is anchored
-to the bottom of the layout viewport, and a keyboard shrinks the visual one, so
-the whole panel would sit behind it.
-[`keyboardInset.ts`](../src/features/canvas/keyboardInset.ts) measures the
-covered height from `visualViewport` and the sheet sits that far up, on a coarse
-pointer only. The arithmetic is unit-tested, the wiring is driven in both engines
-by shrinking the window, and the keyboard itself is not tested.
+thing left to application code is the inspector SHEET's position, anchored to
+the bottom of the layout viewport that a keyboard does not shrink.
 
 (This replaced a viewport pan. Node fields sat on the 0×0 transformed plane
 inside an `overflow: hidden` root, so `scrollHeight` equalled `clientHeight`
@@ -2480,16 +2546,45 @@ every one, and a deleted node's bytes are retained until then.
 shipped tool declares `reportsProgress: true`, so nothing is currently lost;
 adding one would need this wiring first.
 
-**Nothing here has seen a backgrounded tab.** Every deadline in the engine is a
-`window.setTimeout`, and browsers clamp those in a hidden tab — so leaving a
-run and switching away is a timing case the app has, and no test does.
-Playwright cannot produce one: bringing another page in the same context to the
-front leaves `document.visibilityState` at `visible` in both headless engines,
-with 300 ms timers still arriving at ~310 ms intervals (measured, both
-engines). So this is stated as uncovered rather than as either safe or broken.
-The reasoning, which is reasoning and not a measurement, is that clamping can
-only make a deadline **late**: a run cannot be cut short by it, and a wedged
-worker survives longer than it should in a tab nobody is looking at.
+"Nothing is currently lost" is a statement about the manifest, and the manifest
+changes — so it is asserted rather than written down. `registry.test.ts` fails
+if any entry declares `reportsProgress: true`, with a message saying what has to
+be wired. Left as prose, the day somebody adds such a tool is the day this
+paragraph quietly becomes wrong and the canvas quietly starts discarding
+progress, with nothing failing, because a callback nobody passes raises no
+error.
+
+**Nothing here has seen a backgrounded tab, but the thing a backgrounded tab
+does is now measured.** Playwright cannot produce one: bringing another page in
+the same context to the front leaves `document.visibilityState` at `visible` in
+both headless engines, with 300 ms timers still arriving at ~310 ms intervals
+(measured, both engines).
+
+What the app is exposed to, though, is not hiddenness. It is **late timers** —
+every deadline in the engine is a `window.setTimeout`, and a hidden tab clamps
+those to a 1 s floor and later to something far coarser. A late timer can be
+produced exactly, in a real engine, against the real worker: replace
+`setTimeout` with one that will not fire before a floor, which is what the
+browser does and all that it does. `checkBackgroundedTab` installs a 3 s floor
+and a shadowed `visibilityState` before the bundle loads, then runs a wedging
+regex node beside a healthy base64 node.
+
+The reasoning used to be that clamping can only make a deadline **late**, and
+that a late deadline is a no-op because a settled request has already been
+removed from `pending` with its timer cleared. That is reasoning about code, and
+it is now three assertions: the wedged node still fails rather than hanging, the
+healthy node beside it keeps its own result rather than being blamed by a
+deadline that arrived after the answer, and nothing throws while the clock is
+stretched. The base64 node is the one that matters — it finishes in single-digit
+milliseconds and its own 15 s deadline is never reached, so a late deadline able
+to settle an already-answered request would show up there as an `error` on a
+node that plainly succeeded.
+
+Timers under 100 ms are left alone so Playwright's own injected polling keeps
+working; every deadline this is about is far above that — 2 s for regex, 15 s
+for base64, 500 ms for the re-run debounce. A genuinely hidden tab is two
+minutes of manual work: see
+[manual-checks.md](manual-checks.md#3-a-backgrounded-tab).
 
 **The two engines disagree about catastrophic backtracking**, which matters for
 any test that wants to wedge a worker on purpose. SpiderMonkey runs until it
