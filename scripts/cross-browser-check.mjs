@@ -4560,6 +4560,7 @@ const MOBILE_ROUTES = [
   ['/tools/color-convert', 'colour convert'],
   ['/tools/image-convert', 'image convert'],
   ['/tools/text-convert', 'text convert'],
+  ['/tools/video-remux', 'video remux'],
   ['/nothing-here', 'the 404'],
 ];
 
@@ -7499,6 +7500,7 @@ async function runChecks(engine, label) {
     await checkCanvasFileInput(browser, label);
     await checkFileInputTouch(engine, label);
     await checkImageConvert(browser, label);
+    await checkVideoRemux(browser, label);
     await checkThemeEditor(browser, label);
   } finally {
     await browser.close();
@@ -8849,6 +8851,315 @@ async function checkImageConvert(browser, label) {
       pngLow.report.to.bytes === pngHigh.report.to.bytes &&
         (pngLow.report.notes ?? []).some((note) => note.title.includes('Quality does not apply')),
       `${String(pngLow.report.to.bytes)} B at both`,
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/* ========================================================================== */
+
+/**
+ * A TINY MP4, BUILT HERE, CONVERTED IN A REAL WORKER.
+ *
+ * The feasibility investigation's own rule for testing this feature: a
+ * conversion's correctness does not need a long conversion. Every seam in the
+ * tool - the file input, the size guard, the worker protocol, the port, the
+ * bytes view, the download - is exercised by a file of a few hundred bytes,
+ * and every seam bug this repository has ever found has been in the plumbing
+ * rather than in the format code.
+ *
+ * The fixture is built by hand HERE rather than imported from the tool's own
+ * fixtures, and deliberately in the layout the tool's writer never emits:
+ * `mdat` before `moov`, and a 32-bit `stco`. A file produced by the code under
+ * test proves the code agrees with itself and nothing more.
+ *
+ * WHAT THIS CANNOT SAY is whether the result plays. That needs a person and a
+ * player, and it is in docs/manual-checks.md. What it can say - and does - is
+ * that the compressed frames come out byte for byte, which is the property a
+ * player would be checking on our behalf.
+ */
+function makeTinyMp4() {
+  const b = (value, width) => {
+    const out = [];
+    let rest = value;
+    for (let index = 0; index < width; index += 1) {
+      out.unshift(rest % 256);
+      rest = Math.floor(rest / 256);
+    }
+    return out;
+  };
+  const tag = (text) => [...text].map((character) => character.charCodeAt(0));
+  const box = (type, ...parts) => {
+    const body = parts.flat();
+    return [...b(8 + body.length, 4), ...tag(type), ...body];
+  };
+  const full = (type, version, flags, ...parts) => box(type, [version], b(flags, 3), ...parts);
+  const matrix = [
+    ...b(0x00010000, 4),
+    ...b(0, 4),
+    ...b(0, 4),
+    ...b(0, 4),
+    ...b(0x00010000, 4),
+    ...b(0, 4),
+    ...b(0, 4),
+    ...b(0, 4),
+    ...b(0x40000000, 4),
+  ];
+
+  // Three samples with a signature run in each, so a frame that moved or was
+  // zeroed can be told apart from one that survived.
+  const samples = [0, 1, 2].map((index) =>
+    Array.from({ length: 24 }, (_, at) => (index * 31 + at * 7 + 11) & 0xff),
+  );
+
+  const ftyp = box('ftyp', tag('isom'), b(0x200, 4), tag('mp41'));
+  const media = samples.flat();
+  const mdat = box('mdat', media);
+  const firstSample = ftyp.length + 8;
+
+  const stbl = box(
+    'stbl',
+    full(
+      'stsd',
+      0,
+      0,
+      b(1, 4),
+      box(
+        'avc1',
+        new Array(6).fill(0),
+        b(1, 2),
+        new Array(16).fill(0),
+        b(64, 2),
+        b(48, 2),
+        b(0x00480000, 4),
+        b(0x00480000, 4),
+        b(0, 4),
+        b(1, 2),
+        new Array(32).fill(0),
+        b(0x0018, 2),
+        b(0xffff, 2),
+        box('avcC', [0x01, 0x64, 0x00, 0x1f, 0xff, 0xe1, 0x00, 0x02, 0x67, 0x64, 0x01, 0x00, 0x00]),
+      ),
+    ),
+    full('stts', 0, 0, b(1, 4), b(3, 4), b(40, 4)),
+    full('stsc', 0, 0, b(1, 4), b(1, 4), b(3, 4), b(1, 4)),
+    full('stsz', 0, 0, b(0, 4), b(3, 4), b(24, 4), b(24, 4), b(24, 4)),
+    // The 32-bit table, one chunk holding all three samples.
+    full('stco', 0, 0, b(1, 4), b(firstSample, 4)),
+  );
+
+  const trak = box(
+    'trak',
+    full(
+      'tkhd',
+      0,
+      7,
+      b(0, 4),
+      b(0, 4),
+      b(1, 4),
+      b(0, 4),
+      b(120, 4),
+      new Array(8).fill(0),
+      b(0, 2),
+      b(0, 2),
+      b(0, 2),
+      b(0, 2),
+      matrix,
+      b(64 * 0x10000, 4),
+      b(48 * 0x10000, 4),
+    ),
+    box(
+      'mdia',
+      full('mdhd', 0, 0, b(0, 4), b(0, 4), b(1000, 4), b(120, 4), b(0x55c4, 2), b(0, 2)),
+      full('hdlr', 0, 0, b(0, 4), tag('vide'), new Array(12).fill(0), tag('Harness'), [0]),
+      box(
+        'minf',
+        full('vmhd', 0, 1, b(0, 2), b(0, 2), b(0, 2), b(0, 2)),
+        box('dinf', full('dref', 0, 0, b(1, 4), full('url ', 0, 1))),
+        stbl,
+      ),
+    ),
+  );
+
+  const moov = box(
+    'moov',
+    full(
+      'mvhd',
+      0,
+      0,
+      // A non-zero creation time: a real record of when the camera was
+      // running, which the repackage is expected to report as removed.
+      b(3_800_000_000, 4),
+      b(0, 4),
+      b(1000, 4),
+      b(120, 4),
+      b(0x00010000, 4),
+      b(0x0100, 2),
+      b(0, 2),
+      new Array(8).fill(0),
+      matrix,
+      new Array(24).fill(0),
+      b(2, 4),
+    ),
+    trak,
+  );
+
+  return { bytes: Buffer.from([...ftyp, ...mdat, ...moov]), media: Buffer.from(media) };
+}
+
+async function checkVideoRemux(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+
+  // The output port hands its bytes to `URL.createObjectURL` on Download, and
+  // that is the only place the finished file is reachable from outside the
+  // app. The same wrapper the image check uses.
+  await context.addInitScript(() => {
+    const original = URL.createObjectURL.bind(URL);
+    window.__lastBlob = null;
+    URL.createObjectURL = (blob) => {
+      window.__lastBlob = blob;
+      return original(blob);
+    };
+  });
+
+  const page = await context.newPage();
+  const fixture = makeTinyMp4();
+
+  try {
+    const run = async (file, operation, outcome = 'ok') => {
+      await page.goto(`${ORIGIN}/tools/video-remux`, { waitUntil: 'networkidle' });
+      await page.getByRole('heading', { level: 1, name: 'Video' }).waitFor({ timeout: 15_000 });
+      await page.evaluate(() => {
+        window.__lastBlob = null;
+      });
+      await page.locator('input[type="file"]').setInputFiles(file);
+      await page.getByLabel('Operation').click();
+      await page.getByRole('option', { name: operation, exact: true }).click();
+
+      const started = Date.now();
+      await page.getByRole('button', { name: 'Run' }).click();
+
+      if (outcome === 'error') {
+        const code = page.locator('p', { hasText: 'Code:' }).first();
+        await code.waitFor({ timeout: 30_000 });
+        return { elapsed: Date.now() - started, code: (await code.textContent()) ?? '' };
+      }
+
+      await page.getByRole('button', { name: 'Raw' }).click({ timeout: 30_000 });
+      await page.waitForFunction(
+        () =>
+          [...document.querySelectorAll('textarea[readonly]')].some((field) =>
+            field.value.includes('"summary"'),
+          ),
+        undefined,
+        { timeout: 30_000 },
+      );
+
+      const report = await page.evaluate(() => {
+        const field = [...document.querySelectorAll('textarea[readonly]')].find((candidate) =>
+          candidate.value.includes('"summary"'),
+        );
+        return field ? JSON.parse(field.value) : null;
+      });
+
+      await page.getByRole('button', { name: 'Download' }).first().click();
+      const encoded = await page.evaluate(async () => {
+        const blob = window.__lastBlob;
+        if (!blob) return null;
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        let binary = '';
+        for (const byte of bytes) binary += String.fromCharCode(byte);
+        return btoa(binary);
+      });
+
+      return { elapsed: Date.now() - started, report, encoded };
+    };
+
+    /* -- 1. A repackage, in a real worker --------------------------------- */
+
+    const file = { name: 'clip.mp4', mimeType: 'video/mp4', buffer: fixture.bytes };
+    const done = await run(file, 'Repackage as MP4');
+    const out = Buffer.from(done.encoded ?? '', 'base64');
+
+    check(
+      label,
+      'a video is repackaged through the worker and comes back',
+      out.length > 0 && done.report?.to?.format === 'MP4 · H.264',
+      `${String(out.length)} bytes, ${String(done.report?.to?.format)}`,
+    );
+
+    /*
+     * THE ASSERTION THE WHOLE TOOL RESTS ON. Not "the file is well formed" - a
+     * file whose index is immaculate and whose offsets are four bytes out is
+     * well formed and is noise - but that the compressed frames in it are the
+     * ones that went in.
+     */
+    check(
+      label,
+      'and every compressed frame in it is the one that went in',
+      out.includes(fixture.media),
+      out.includes(fixture.media) ? 'all three frames byte-identical' : 'the media did not survive',
+    );
+
+    check(
+      label,
+      'the index is written in front of the media, which the source was not',
+      out.indexOf('moov') > 0 && out.indexOf('moov') < out.indexOf('mdat'),
+      `moov at ${String(out.indexOf('moov'))}, mdat at ${String(out.indexOf('mdat'))}`,
+    );
+
+    /*
+     * The privacy claim, asserted on the bytes. The source carries a real
+     * recording timestamp in `mvhd`; the output must say it removed it and
+     * must not have carried it.
+     */
+    check(
+      label,
+      'the recording date is reported as removed, and is not in the output',
+      (done.report?.from?.metadata ?? []).includes('Recording date') &&
+        (done.report?.to?.metadata ?? []).length === 0,
+      JSON.stringify(done.report?.from?.metadata ?? null),
+    );
+
+    /*
+     * Time is the reason this feature was cut down to a remuxer at all. The
+     * investigation measured 284 seconds for a one-minute 1080p transcode and
+     * 0.2 seconds for the same clip remuxed. This fixture is a few hundred
+     * bytes, so the number below is worker boot and a round trip rather than
+     * the work - and it is asserted because a regression that reintroduced a
+     * decode would show up here and nowhere else.
+     */
+    check(
+      label,
+      'a repackage costs a round trip rather than a conversion',
+      done.elapsed < 5000,
+      `${String(done.elapsed)} ms end to end, including worker boot`,
+    );
+
+    /* -- 2. The refusal, where a person will actually meet one ------------ */
+
+    const notVideo = {
+      name: 'notes.mp4',
+      mimeType: 'video/mp4',
+      buffer: Buffer.from('this is not a video, whatever it has been called', 'utf8'),
+    };
+    const refused = await run(notVideo, 'Repackage as MP4', 'error');
+    check(
+      label,
+      'a file that is not a video is refused whatever its name says',
+      refused.code.includes('unsupported-type'),
+      refused.code.trim(),
+    );
+
+    /* -- 3. Audio, on a file that has none -------------------------------- */
+
+    const noAudio = await run(file, 'Extract the audio track', 'error');
+    check(
+      label,
+      'extracting audio from a file with none says so rather than producing nothing',
+      noAudio.code.includes('invalid-input'),
+      noAudio.code.trim(),
     );
   } finally {
     await context.close().catch(() => {});

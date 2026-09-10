@@ -7,6 +7,33 @@ Nothing here is built. This document exists so the decision can be made from
 numbers. The spike that produced them is described at the end and has been
 deleted; every figure below can be reproduced from the method given.
 
+> **What happened next.** The remuxing half was built and shipped — see
+> [the tool's README](../src/tools/video-remux/README.md). This document is
+> left as the snapshot it was, because its numbers are what the decision was
+> made from and rewriting them afterwards would destroy the record. Three
+> things in it were **not** followed, each for a reason the building turned up:
+>
+> - **`@ffmpeg/core` is not shipped at all.** The recommendation was for a
+>   remuxer that could also transcode, and taking only the first half removes
+>   the argument for the payload: 30.7 MiB of encoders for an operation that
+>   runs none. Both containers are parsed and the MP4 written in TypeScript, in
+>   35.6 kB. The Cache Storage result stands and was not needed.
+> - **`requiresWasm` and `wasmModules` were deleted rather than given a job**,
+>   on the reasoning this document offered for exactly that case. So was
+>   `'wasm-unsafe-eval'`, which is the same defect one layer down and was in
+>   the security policy.
+> - **Cross-origin isolation was kept**, and the header comment now says why:
+>   not for threads, which this document measured as unusable, but because COOP
+>   and COEP each earn their place without them — and because isolation gates
+>   `performance.measureUserAgentSpecificMemory()`, which is the measurement
+>   this document most wanted and could not get.
+>
+> And one thing it did not find, which the building did: **the files people
+> most want to remux do not fit in a browser's memory at all.** The 92.6 MiB
+> one-minute clip measured here generalises badly — the archetypal "won't play"
+> file is a two-gigabyte film, and holding one is beyond this tool's 256 MB
+> limit and beyond a WASM ffmpeg's 2 GiB heap ceiling alike.
+
 - [The verdict](#the-verdict)
 - [How this was measured](#how-this-was-measured)
 - [The payload](#the-payload)

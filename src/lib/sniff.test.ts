@@ -22,6 +22,44 @@ describe('sniffBytes', () => {
     expect(sniffBytes(webp).mediaType).toBe('image/webp');
   });
 
+  /*
+   * THE ISO BASE MEDIA FAMILY, WHICH IS FOUR FORMATS BEHIND ONE SIGNATURE.
+   *
+   * `ftyp` at byte 4 is an MP4, a MOV, an M4A and a 3GP alike, and the brand
+   * that follows it is the only thing separating them. The order of the
+   * signatures is therefore load-bearing: the two specific brands have to be
+   * tried before the general one, or every song is reported as a film.
+   */
+  const ftyp = (brand: string): Uint8Array =>
+    new Uint8Array([
+      0,
+      0,
+      0,
+      0x18,
+      0x66,
+      0x74,
+      0x79,
+      0x70,
+      ...brand.split('').map((c) => c.charCodeAt(0)),
+    ]);
+
+  it('tells the ISO base media brands apart', () => {
+    expect(sniffBytes(ftyp('isom')).mediaType).toBe('video/mp4');
+    expect(sniffBytes(ftyp('mp42')).label).toBe('MP4 video');
+    expect(sniffBytes(ftyp('qt  ')).mediaType).toBe('video/quicktime');
+    expect(sniffBytes(ftyp('M4A ')).mediaType).toBe('audio/mp4');
+  });
+
+  it('recognises EBML without claiming to know which flavour it is', () => {
+    // Matroska and WebM share the signature, and the DocType that separates
+    // them is at a position this cannot depend on. The tool that opens the
+    // file reads it properly; a sniff that guessed would be wrong half the
+    // time about which one it was looking at.
+    const ebml = bytesOf(0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x00, 0x00, 0x00);
+    expect(sniffBytes(ebml).mediaType).toBe('video/x-matroska');
+    expect(sniffBytes(ebml).isProbablyText).toBe(false);
+  });
+
   it('marks recognised binary formats as not text', () => {
     expect(sniffBytes(bytesOf(0x89, 0x50, 0x4e, 0x47)).isProbablyText).toBe(false);
   });

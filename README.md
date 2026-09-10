@@ -1,7 +1,7 @@
 # Patchbay
 
 A developer toolbox — encoders, hashes, formatters, diff, regex, colour, image
-conversion — that runs entirely in your browser. Wire the tools together on a
+and video conversion — that runs entirely in your browser. Wire the tools together on a
 node canvas and a throwaway one-liner becomes a pipeline you can see, share and
 re-run, without anything you paste ever leaving the page.
 
@@ -28,6 +28,7 @@ re-run, without anything you paste ever leaving the page.
 | **Colour**          | Convert hex, `rgb()`, `hsl()` and `oklch()`, with contrast checks.          |
 | **Image**           | Convert and resize between PNG, JPEG and WebP, with a before-and-after.     |
 | **Text convert**    | Markdown, HTML and plain text, with a sandboxed preview and rich-text copy. |
+| **Video**           | Repackage a video into an MP4 without re-encoding, or extract its audio.    |
 
 Each has its own README next to the code, which is where the interesting parts
 are written down: why [JWT](src/tools/jwt-decode/README.md) refuses
@@ -36,7 +37,9 @@ absence, how [Regex](src/tools/regex-tester/README.md) survives a
 catastrophically backtracking pattern and what it tells you when a pattern
 finds nothing, why
 [Image](src/tools/image-convert/README.md) strips every scrap of metadata from
-a photograph and says so, why [Text convert](src/tools/text-convert/README.md) round-trips are
+a photograph and says so, why [Video](src/tools/video-remux/README.md) refuses
+to put a WebM's codecs in an MP4 and ships no ffmpeg at all, why
+[Text convert](src/tools/text-convert/README.md) round-trips are
 checked for _meaning_ rather than byte equality, and why
 [Structured data](src/tools/structured-data/README.md) refuses to guess that a
 CSV cell holding `01234` is a number.
@@ -328,7 +331,7 @@ about.
 
 ## Testing
 
-2,563 tests across 99 files. The count is not the interesting part; what the
+2,761 tests across 104 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Conformance, measured against the specifications
@@ -416,6 +419,73 @@ failing on:
 Each is now a named regression test, and the tool's README carries the coercion
 policy, the detection rules and what it does with data that cannot survive the
 conversion — including the one silent loss that is not fixable here.
+
+### What a video tool cost, and what it did not
+
+[Video](src/tools/video-remux/README.md) changes a container without
+re-encoding: an `.mkv` or a `.mov` becomes an `.mp4`, or its audio track comes
+out on its own. The frames are copied across byte for byte, so nothing here
+decodes a pixel and nothing here can be lossy.
+
+**It was measured before it was built.**
+[docs/video-convert-feasibility.md](docs/video-convert-feasibility.md) is an
+investigation that built nothing and produced numbers: a 1080p one-minute clip
+transcodes in **4 minutes 44 seconds** at ffmpeg's own default preset and
+**remuxes in 0.2 seconds**. Transcoding also needs three changes to the
+execution engine's central guarantees, paid for by every other tool.
+So this is the remuxing half, shipped on its own.
+
+**And it ships no ffmpeg**, which is where the build departed from the
+investigation. That recommendation was for a remuxer that could _also_
+transcode, and removing the transcoding removes the argument for the payload:
+ffmpeg's 30.7 MiB is libx264, libx265, libvpx, LAME and the rest — **encoders**,
+all of them — and a remuxer runs none. Both containers are parsed and the MP4 is
+written in TypeScript, in **35.6 kB raw / 12.8 kB gzipped**, about one
+five-hundredth of the 6.9 MiB brotli payload. It needs no service worker, no
+Cache Storage, and no CSP exception — `'wasm-unsafe-eval'`, which had been
+carried since the project began for "the WASM-backed tools to come", is gone
+from the policy with it.
+
+The trade is coverage, and it is stated rather than discovered: two container
+families rather than every one ever written, and H.264, H.265, AAC and MP3
+rather than every codec. A WebM is **refused**, because VP9 and Opus inside an
+MP4 make a file that fewer players accept than the one it came from.
+
+Three things came out of building it that the investigation had not found:
+
+- **The files people most want to remux do not fit in memory.** The 92.6 MiB
+  clip it measured generalises badly: the archetypal "won't play" file is a
+  two-gigabyte film, and no browser tool can hold one — not this one at its
+  256 MB limit, and not a WASM ffmpeg either, whose heap ceiling is 2 GiB
+  before the file itself is counted. The fix is streaming the input and the
+  output, which is a change to `ToolValue` rather than to a tool.
+- **A repackage silently discards the recording location and date**, which a
+  phone writes into every file it produces. That is the image tool's GPS
+  finding in a second place, and it is now a warning on the result and an
+  assertion on the output bytes.
+- **A rotation is one line away from being lost.** A phone held upright
+  records landscape pixels and writes a 90-degree transform into the track
+  header; everything else in the file describes a landscape video. A rebuilt
+  header without it produces a repackage that is correct in every measurable
+  respect and plays on its side.
+
+**Malformed input was part of the first version rather than a follow-up**,
+because the investigation named it as its own largest gap: every file its spike
+saw was one ffmpeg had just written. With no library in the way, the whole
+attack surface is ours — so `entriesThatFit` is the single function that turns a
+declared 32-bit count into a real one by measuring the box that declared it, and
+no array anywhere is sized from a number a file chose. An `stsz` claiming four
+billion samples out of twelve bytes yields zero. The properties are asserted
+over arbitrary bytes, over real headers followed by noise, and — the one that
+reaches the interesting code — over a valid file with one byte changed, four
+hundred times, in bounded time.
+
+The guard worth naming on its own is the one that has no analogue in the image
+tool. Nothing in either container forbids two frames from pointing at the same
+bytes, so a small file can describe an enormous one: twenty-five kilobytes
+declaring two thousand samples of four kilobytes each asks for eight megabytes,
+and every individual range in it is inside the file and passes every other
+check. The bound is the input's own size, because a repackage **copies**.
 
 ### The guard that was in the wrong place
 

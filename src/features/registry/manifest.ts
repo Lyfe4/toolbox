@@ -339,6 +339,65 @@ export const TOOL_MANIFEST = [
     },
   },
   {
+    id: 'video-remux',
+    name: 'Video',
+    summary: 'Repackage a video into an MP4 without re-encoding it, or extract its audio.',
+    category: 'encoding',
+    keywords: [
+      'mp4',
+      'mkv',
+      'mov',
+      'webm',
+      'matroska',
+      'remux',
+      'container',
+      'm4a',
+      'mp3',
+      'extract audio',
+      'h264',
+      'h265',
+      'hevc',
+      'aac',
+      'quicktime',
+      'rotate',
+    ],
+    inputs: [
+      {
+        id: 'input',
+        label: 'Video',
+        types: ['bytes'],
+        required: true,
+        description:
+          'An MP4, MOV, M4V, 3GP or Matroska file. The container is read from the bytes.',
+      },
+    ],
+    outputs: [
+      {
+        id: 'output',
+        label: 'Repackaged',
+        types: ['bytes'],
+        description: 'The same compressed frames in a new container, byte for byte.',
+      },
+      {
+        id: 'report',
+        label: 'Report',
+        types: ['json'],
+        description: 'What travelled, what did not, and the streams before and after.',
+        presentation: 'report',
+      },
+    ],
+    execution: {
+      strategy: 'worker',
+      requiresOffscreenCanvas: false,
+      reportsProgress: false,
+      timeoutMs: 30_000,
+      // Four times the largest limit in the set, and a memory decision rather
+      // than a video one - a run holds the input about three times over. The
+      // arithmetic, and what it means for a feature film, is in the tool.
+      maxInputBytes: 256 * 1024 * 1024,
+    },
+  },
+  {
     id: 'text-convert',
     name: 'Text convert',
     summary: 'Convert between Markdown, HTML and plain text, with GitHub Flavoured syntax.',

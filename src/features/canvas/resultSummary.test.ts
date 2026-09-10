@@ -185,7 +185,7 @@ describe('the remaining data types', () => {
 
 describe('which output a node summarises', () => {
   /*
-   * THE FIRST DECLARED OUTPUT, and only that one. Six of the nine tools have
+   * THE FIRST DECLARED OUTPUT, and only that one. Seven of the ten tools have
    * more than one, and the manifest's order is not arbitrary: the first port
    * is the tool's answer and the rest are its working. This asserts the
    * property the summary relies on rather than the summary itself, so a tool

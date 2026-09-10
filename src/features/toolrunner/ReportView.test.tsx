@@ -123,6 +123,46 @@ describe('ReportView', () => {
     expect(screen.getByText('JPEG')).toBeInTheDocument();
   });
 
+  /*
+   * The same view, over a payload from a completely different tool.
+   *
+   * A row is dropped when neither side has anything to say, which is what lets
+   * one view serve two tools that measure different things: the video tool has
+   * a duration and no transparency, the image tool the other way round. Both
+   * get a table with only their own rows in it, from one implementation.
+   */
+  it('serves a second tool without carrying the first tool’s empty rows', () => {
+    renderReport({
+      from: {
+        format: 'Matroska · H.264 + AAC',
+        width: 1920,
+        height: 1080,
+        duration: '1:02',
+        frames: 1860,
+        size: '92.6 MB',
+        metadata: ['Recording date'],
+      },
+      to: {
+        format: 'MP4 · H.264 + AAC',
+        width: 1920,
+        height: 1080,
+        duration: '1:02',
+        frames: 1860,
+        size: '92.6 MB',
+        metadata: [],
+      },
+      summary: 'Matroska · H.264 + AAC → MP4 · H.264 + AAC · 92.6 MB',
+      notes: [],
+    });
+
+    const headers = screen.getAllByRole('rowheader').map((cell) => cell.textContent);
+    expect(headers).toEqual(['Format', 'Dimensions', 'Duration', 'Size', 'Frames', 'Metadata']);
+    // Transparency is an image question, and this report never asked it.
+    expect(headers).not.toContain('Transparency');
+    // Once on each side: a repackage does not change how long the film is.
+    expect(screen.getAllByText('1:02', { selector: 'td' })).toHaveLength(2);
+  });
+
   it('drops a row neither side can fill rather than showing an empty one', () => {
     renderReport({ summary: 'done', notes: [], from: { size: '1 kB' }, to: { size: '2 kB' } });
 

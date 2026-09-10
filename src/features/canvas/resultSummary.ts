@@ -209,7 +209,7 @@ export function summariseValue(
 /**
  * The one line a node prints once it has run.
  *
- * THE FIRST DECLARED OUTPUT, and only that one. Six of the nine tools have
+ * THE FIRST DECLARED OUTPUT, and only that one. Seven of the ten tools have
  * more than one output port, and a node that tried to summarise all of them
  * would be summarising none of them at 224px. The manifest's order is not
  * arbitrary - the first port is the tool's answer and the rest are its working

@@ -45,6 +45,45 @@ const SIGNATURES: readonly Signature[] = [
     mediaType: 'image/webp',
     label: 'WebP image',
   },
+  /*
+   * The ISO base media family, matched on the `ftyp` box that opens the file
+   * rather than on any one brand. Three entries, in this order, because the
+   * brand is the only thing that separates a film from a song from a
+   * QuickTime recording - and every one of them is `ftyp` at offset 4.
+   *
+   * Nothing here tries to distinguish HEIC, which is also `ftyp`: it would be
+   * labelled as an MP4, and the tool that opens it says what it really found.
+   * A sniff is a coarse "what is this", and the readers do not trust it.
+   */
+  {
+    bytes: [0x66, 0x74, 0x79, 0x70, 0x71, 0x74, 0x20, 0x20],
+    offset: 4,
+    mediaType: 'video/quicktime',
+    label: 'QuickTime video',
+  },
+  {
+    bytes: [0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x41, 0x20],
+    offset: 4,
+    mediaType: 'audio/mp4',
+    label: 'MPEG-4 audio',
+  },
+  {
+    bytes: [0x66, 0x74, 0x79, 0x70],
+    offset: 4,
+    mediaType: 'video/mp4',
+    label: 'MP4 video',
+  },
+  /*
+   * EBML, which is Matroska and WebM alike. Which one it is lives in a DocType
+   * element at a position that varies, so this signature cannot say - and the
+   * label does not pretend to. `readMatroska` reads the DocType properly.
+   */
+  {
+    bytes: [0x1a, 0x45, 0xdf, 0xa3],
+    offset: 0,
+    mediaType: 'video/x-matroska',
+    label: 'Matroska or WebM video',
+  },
   {
     bytes: [0x25, 0x50, 0x44, 0x46],
     offset: 0,

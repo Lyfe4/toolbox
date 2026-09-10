@@ -343,6 +343,23 @@ describe('pipelines a person would actually build', () => {
       'diff',
       'changed',
     ],
+    /*
+     * The video tool's output really is `bytes`, and the feasibility
+     * investigation was ambivalent about whether it should be - a whole film
+     * on a wire is three copies of a film in a cache that never looks at what
+     * it holds. It declares the port anyway, on that document's own reasoning:
+     * "if the port exists it will be wired", so the version that pretends
+     * otherwise is the dishonest one. These are the two wires that are
+     * actually worth having.
+     */
+    ['fingerprint a repackaged video', 'video-remux', 'output', 'hash', 'input'],
+    [
+      'export what a repackage carried and dropped as YAML',
+      'video-remux',
+      'report',
+      'structured-data',
+      'input',
+    ],
   ])('can build: %s', (_name, fromTool, fromPort, toTool, toPort) => {
     expect(wireIsLegal(fromTool, fromPort, toTool, toPort)).toBe(true);
   });

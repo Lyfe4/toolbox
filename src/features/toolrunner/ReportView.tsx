@@ -48,6 +48,14 @@ interface Facts {
   readonly format: string | null;
   readonly width: number | null;
   readonly height: number | null;
+  /**
+   * Already written the way a person reads a clock - `2:07`, `1:02:03`.
+   *
+   * A string rather than a number of seconds, because the tool that measured
+   * it knows how precise the answer is and this view does not. It is the only
+   * row here whose value is not derived from something countable.
+   */
+  readonly duration: string | null;
   readonly size: string | null;
   readonly hasAlpha: boolean | null;
   readonly frames: number | null;
@@ -76,6 +84,7 @@ function parseFacts(value: JsonValue | undefined): Facts | null {
     format: typeof value.format === 'string' ? value.format : null,
     width: typeof value.width === 'number' ? value.width : null,
     height: typeof value.height === 'number' ? value.height : null,
+    duration: typeof value.duration === 'string' ? value.duration : null,
     size: typeof value.size === 'string' ? value.size : null,
     hasAlpha: typeof value.hasAlpha === 'boolean' ? value.hasAlpha : null,
     frames: typeof value.frames === 'number' ? value.frames : null,
@@ -162,6 +171,10 @@ function factRows(
       to: to?.format === null || to === null ? '' : formatName(to.format),
     },
     { label: 'Dimensions', from: dimensions(from), to: dimensions(to) },
+    // Video only, and free for everything else: a row is dropped when neither
+    // side has anything to say, which is what lets this view serve two tools
+    // that measure completely different things.
+    { label: 'Duration', from: from?.duration ?? '', to: to?.duration ?? '' },
     { label: 'Size', from: from?.size ?? '', to: to?.size ?? '' },
     { label: 'Transparency', from: alpha(from), to: alpha(to) },
     { label: 'Frames', from: frames(from), to: frames(to) },

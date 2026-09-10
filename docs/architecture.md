@@ -122,6 +122,7 @@ tool.
 | `color-convert`   | `input` Colour · text, color                               | `output` Converted · text — `swatch` Swatch · color — `all` Notations · json             |
 | `image-convert`   | `input` Image · bytes                                      | `output` Converted · bytes — `report` Report · json                                      |
 | `text-convert`    | `input` Document · text, bytes                             | `output` Converted · text — `rendered` Rendered HTML · text — `detected` Detected · text |
+| `video-remux`     | `input` Video · bytes                                      | `output` Repackaged · bytes — `report` Report · json                                     |
 
 ### The conventions, and what each one is worth
 
@@ -1967,8 +1968,8 @@ would sail past a "both ran" assertion.
 ## The tool runner page
 
 `/tools/:id` is the plain view of one tool. It is generated entirely from the
-manifest entry plus the tool's own `optionFields`, so nine tools share one
-component and adding a tenth adds no UI.
+manifest entry plus the tool's own `optionFields`, so ten tools share one
+component and adding an eleventh adds no UI.
 
 ### Four regions, in reading order
 
@@ -2540,6 +2541,27 @@ canvas you can close and come back to without re-choosing them, and a graph you
 share is not one the recipient can run without supplying their own. A node
 deleted and undone keeps its file; a graph replaced by a load or a link loses
 every one, and a deleted node's bytes are retained until then.
+
+**A video larger than 256 MB cannot be repackaged here, and the files people
+most want to repackage are larger than that.** `video-remux` copies rather than
+converts, so its cost is memory rather than time — and a run holds the input
+about three times over: the page keeps the chosen file's bytes for the session,
+the worker gets a structured clone because
+[inputs are borrowed rather than transferred](#the-worker-boundary), and the
+output is built beside that clone. 256 MB is where three times that stops being
+something a laptop shrugs at.
+
+The consequence is worth stating as a limitation rather than as a setting: about
+four minutes of 1080p phone video fits, and a two-gigabyte film does not — which
+is exactly the file somebody means when they say a video will not play. No
+browser tool can hold one; a WASM ffmpeg's own heap ceiling is 2 GiB before the
+file is counted. The fix is not a larger number but reading the input from disk
+in pieces and writing the output in pieces, which is a change to `ToolValue` —
+every value in this engine is a whole `Uint8Array` — rather than to the tool.
+That is a redesign of the value model, in the same class as the liveness
+deadline and the second worker the
+[feasibility investigation](video-convert-feasibility.md) costed for
+transcoding, and it is not paid for by anything this version does.
 
 **Progress is not reported through a pipeline.** `runPipeline` passes no
 `onProgress`, so a tool that reports progress shows none on the canvas. No

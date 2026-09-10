@@ -60,13 +60,15 @@ worker or anything visual.** jsdom has no layout engine, no Worker, no
 `OffscreenCanvas` and no pointer events, so the unit suite is structurally
 unable to see most of what that script checks.
 
-### And four that need a person
+### And five that need a person
 
 [`docs/manual-checks.md`](docs/manual-checks.md) — Safari itself, a real
-on-screen keyboard, a genuinely backgrounded tab, and pasting into Word. Each
-is a checklist with a pass and a fail per step, not a suggestion to try it on a
-phone. Run the relevant one before a release, and the keyboard one before any
-change to the inspector sheet.
+on-screen keyboard, a genuinely backgrounded tab, pasting into Word, and
+playing a video the remuxer produced. Each is a checklist with a pass and a
+fail per step, not a suggestion to try it on a phone. Run the relevant one
+before a release, the keyboard one before any change to the inspector sheet,
+and the video one before any change to the container readers or the MP4 writer
+— nothing here has ever played a file that tool made.
 
 **Before adding to that file, try harder.** Two of its entries used to be three.
 The soft-keyboard check was driven by shrinking the window, described as the

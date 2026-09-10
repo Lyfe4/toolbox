@@ -1,6 +1,6 @@
 # Manual checks
 
-Four things this repository cannot assert about itself. Everything else that
+Five things this repository cannot assert about itself. Everything else that
 could be automated has been — see [the known
 limitations](architecture.md#known-limitations) for what was reached and how,
 including the two that turned out to be reachable after all (a shrunken visual
@@ -17,6 +17,7 @@ rather than skipped.
 | [A real on-screen keyboard](#2-a-real-on-screen-keyboard) | A phone                     | 4 min  |
 | [A backgrounded tab](#3-a-backgrounded-tab)               | Any browser                 | 2 min  |
 | [Rich text in Word](#4-rich-text-in-word)                 | Word, Google Docs, Outlook  | 10 min |
+| [A repackaged video plays](#5-a-repackaged-video-plays)   | QuickTime, VLC, a phone     | 8 min  |
 
 ---
 
@@ -175,3 +176,68 @@ applications honour it is the part only you can answer.
 
 The document to convert and the seven things to look at are in
 [`src/tools/text-convert/clipboard-check.md`](../src/tools/text-convert/clipboard-check.md).
+
+---
+
+## 5. A repackaged video plays
+
+**Why a human.** `check:browsers` asserts that the compressed frames come out
+of the video tool byte for byte and that the index round-trips through the
+tool's own reader. That is a real assertion about a real answer, and it is not
+the question a person has. **Nobody has ever played a file this tool produced.**
+
+There is a second reason, and it is the one worth being uncomfortable about:
+every fixture in the suite is hand-built, so **no file written by a real
+encoder has ever been read by it**. The MP4 builder in `fixtures.ts` goes out
+of its way to do what our writer does not — `mdat` first, a 32-bit `stco`,
+several samples per chunk, a QuickTime version-1 audio entry — because a
+fixture produced by the code under test proves only that the code agrees with
+itself. It is still not a camera.
+
+**Do these six in order.** You need one file off a phone and one `.mkv` from
+anywhere. Under 256 MB, or the tool refuses it at the moment you choose it —
+which is itself step 6.
+
+1. **A phone video, repackaged.** Record ten seconds on a phone **holding it
+   upright**, get the `.mov` onto the machine, open `/tools/video-remux`,
+   choose it, and press Run. Download the result and open it in QuickTime or
+   VLC.
+   - _Pass:_ it plays, the picture is **the right way up**, and the sound is in
+     step with it.
+   - _Fail (the one this step exists for):_ it plays **on its side**. That is
+     the display matrix not surviving the repackage, and it is the exact shape
+     of failure this repository keeps writing down — correct in every
+     measurable respect and obviously wrong to a person.
+   - _Fail:_ the sound drifts out of step as it goes.
+
+2. **The same file in Safari.** Drag the result into a Safari window.
+   - _Pass:_ it plays. Safari is the strictest reader of an MP4 in common use,
+     and it is also the one WebKit-via-Playwright is least like.
+   - _Fail:_ a black frame, or a download prompt instead of a player.
+
+3. **Scrubbing.** Drag the playhead to the middle and let go, three times.
+   - _Pass:_ it lands and resumes within a moment each time.
+   - _Fail:_ it jumps to the start, or stalls. That is the sync-sample table:
+     an absent `stss` means "every frame is seekable", which is a plausible
+     wrong answer that plays perfectly from the beginning.
+
+4. **An `.mkv`, repackaged.** One with H.264 and AAC in it — a WebM will be
+   refused, correctly, and tells you why. Play the result.
+   - _Pass:_ it plays, in step, with the same running time as the original.
+   - _Fail:_ the picture stutters or the frames are subtly out of order. That
+     is the decode-time reconstruction, which is the one thing in this tool
+     that is inference rather than transcription.
+
+5. **The audio out of it.** Set the operation to **Extract the audio track**
+   and run it on the same file. Play the `.m4a` in a music player.
+   - _Pass:_ it plays end to end, at the right pitch and the right length.
+   - _Fail:_ it is the right length and the wrong speed, or a fraction of the
+     length it should be. Both are lacing: several audio frames share one
+     Matroska block, and a reader that mishandles that produces audio that is
+     all there and wrong.
+
+6. **Something too big.** Choose a file over 256 MB.
+   - _Pass:_ it is refused **at the moment you choose it**, naming the file,
+     its size and the limit, before anything is read.
+   - _Fail:_ the app thinks about it, then refuses. That means the limit is
+     being applied after the read rather than before it.
