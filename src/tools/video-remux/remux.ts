@@ -333,6 +333,13 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
   /* -- Everything else is an MP4 ------------------------------------------ */
 
   const tracks: OutputTrack[] = [];
+  // Paired with `tracks`, because a track can be dropped HERE - after the
+  // selection - for want of a decoder configuration, and the report has to
+  // describe the streams that actually travelled rather than the ones that
+  // were chosen. Taking the first N of `kept` instead would name the video
+  // track on a file whose video was the one dropped.
+  const carried: SourceTrack[] = [];
+
   for (const track of kept) {
     const built = toOutputTrack(track);
     if (built === null) {
@@ -344,6 +351,7 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
       continue;
     }
     tracks.push(built);
+    carried.push(track);
   }
 
   if (tracks.length === 0) {
@@ -389,7 +397,7 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
   return ok(
     outcome({
       file,
-      kept: kept.slice(0, tracks.length),
+      kept: carried,
       bytes: out,
       mediaType: audioOnly ? 'audio/mp4' : 'video/mp4',
       extension: audioOnly ? 'm4a' : 'mp4',

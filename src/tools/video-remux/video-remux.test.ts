@@ -304,6 +304,41 @@ describe('repackaging a Matroska file', () => {
     expect(samplesOf(done.value.bytes).file.tracks[0]?.samples.sync).toEqual([1, 0, 0]);
   });
 
+  it('describes the streams that travelled, not the ones that were chosen', () => {
+    // The video track is dropped here for want of a configuration record, so
+    // the audio is the only thing that goes. Reporting "the first one kept"
+    // would name H.264 on a file whose H.264 was the part that did not make it.
+    const halfBroken = makeMatroska({
+      tracks: [
+        { number: 1, kind: 'video', codecId: 'V_MPEG4/ISO/AVC', width: 640, height: 480 },
+        {
+          number: 2,
+          kind: 'audio',
+          codecId: 'A_AAC',
+          codecPrivate: aacConfig(),
+          channels: 2,
+          sampleRate: 44_100,
+        },
+      ],
+      blocks: [
+        { track: 1, time: 0, frames: [sampleBytes(61, 120)] },
+        { track: 2, time: 0, frames: [sampleBytes(62, 90)] },
+      ],
+    });
+
+    const done = remux(halfBroken, 'container');
+    if (!done.ok) throw new Error(done.error.message);
+    // And what is left is audio, so it is written and named as audio - asking
+    // to repackage as MP4 and getting a `.mp4` with no picture in it would be
+    // the more surprising of the two answers.
+    expect(done.value.to.format).toBe('M4A · AAC');
+    expect(done.value.extension).toBe('m4a');
+    expect(done.value.to.width).toBeNull();
+    expect(done.value.notes.some((note) => note.title.includes('no decoder configuration'))).toBe(
+      true,
+    );
+  });
+
   it('reports the recording date and the tags it left behind', () => {
     const done = remux(source, 'container');
     if (!done.ok) throw new Error(done.error.message);
