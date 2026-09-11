@@ -1,0 +1,264 @@
+/*
+ * THE COLD OPEN.
+ *
+ * The first screen at `/`, for a visitor with no saved graph and no share
+ * link. Its markup is in index.html rather than in a component - the reasoning
+ * is written there - so this is the one stylesheet in the project that styles
+ * elements it does not own, and the one that may use id and class selectors
+ * written by hand instead of a CSS module.
+ *
+ * It is still held to the token rule: only `--pb-*`, checked by
+ * `token-layering.test.ts`, which reaches out to this file by name for exactly
+ * that reason. A cold open that looked right in graphite and wrong in vellum
+ * would be wrong on the one screen where being wrong costs the most.
+ *
+ * WHY IT COVERS THE WHOLE VIEWPORT rather than floating over the canvas the
+ * way the empty state does. Two reasons, and the second is the real one:
+ *
+ *   1. it is not an annotation on a canvas, it is the page - somebody who has
+ *      never seen this site does not yet know there is a canvas to annotate;
+ *   2. the app behind it is `inert` while it is up, so nothing behind it is
+ *      focusable or reachable by a screen reader. Covering half the screen
+ *      while disabling all of it would be a lie about what is operable.
+ *
+ * The grid is drawn here rather than borrowed from the canvas, because the
+ * canvas's grid is a transformed, zoom-aware surface and this one is a flat
+ * backdrop. Same two tokens, one line each.
+ */
+
+#cold-open {
+  position: fixed;
+  inset: 0;
+  z-index: var(--pb-z-overlay);
+
+  /*
+   * CENTRED WHEN IT FITS, TOP-ALIGNED WHEN IT DOES NOT, and the second half is
+   * why this is three rows rather than `place-content: center`.
+   *
+   * Centred content that outgrows a scrolling box overflows in BOTH
+   * directions, and the half above the top edge cannot be scrolled back to -
+   * at 320px that silently ate the eyebrow and the headline, which is to say
+   * the entire first impression. Two flexible rows with a real minimum
+   * collapse to that minimum instead, so the panel's top edge is always
+   * reachable and the gutter never disappears.
+   */
+  display: grid;
+  grid-template-rows:
+    minmax(var(--pb-space-xl), 1fr)
+    auto
+    minmax(var(--pb-space-xl), 1fr);
+  justify-items: center;
+
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-inline: var(--pb-space-lg);
+
+  background-color: var(--pb-surface-base);
+  background-image:
+    linear-gradient(to right, var(--pb-border-subtle) 0 1px, transparent 1px 100%),
+    linear-gradient(to bottom, var(--pb-border-subtle) 0 1px, transparent 1px 100%);
+  background-size: 64px 64px;
+
+  color: var(--pb-ink-primary);
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+}
+
+.cold-open-panel {
+  grid-row: 2;
+  inline-size: min(100%, 680px);
+  display: grid;
+  background-color: var(--pb-surface-raised);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-panel);
+}
+
+/* -----------------------------------------------------------------------
+ * Sections
+ *
+ * One rule draws every divider, so a section added or removed later cannot
+ * leave a hairline hanging at the top or bottom of the panel.
+ * -------------------------------------------------------------------- */
+.cold-open-head,
+.cold-open-section {
+  display: grid;
+  gap: var(--pb-space-sm);
+  padding: var(--pb-space-lg);
+}
+
+.cold-open-section {
+  border-block-start: var(--pb-border-width) solid var(--pb-border-hairline);
+}
+
+.cold-open-eyebrow {
+  margin: 0;
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-heading-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-accent);
+}
+
+.cold-open-title {
+  margin: 0;
+
+  /*
+   * The one place a display size is allowed to shrink. At 320px this line is
+   * five words of 24px uppercase mono, which overflows a 288px panel - and a
+   * headline that clips is worse than a headline one size down.
+   */
+  font-size: clamp(var(--pb-heading-size), 5vw, var(--pb-display-size));
+  font-weight: var(--pb-heading-weight);
+  letter-spacing: var(--pb-heading-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-primary);
+}
+
+.cold-open-lede {
+  margin: 0;
+  font-family: var(--pb-font-prose);
+  font-size: var(--pb-body-size);
+  line-height: var(--pb-body-leading);
+  color: var(--pb-ink-secondary);
+}
+
+.cold-open-label {
+  margin: 0;
+  font-size: var(--pb-label-size);
+  font-weight: var(--pb-label-weight);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+}
+
+/* The directive is a directive, not a heading, so it keeps its own case. */
+.cold-open-label code {
+  font-family: var(--pb-font-ui);
+  text-transform: none;
+  color: var(--pb-ink-accent);
+}
+
+/* -----------------------------------------------------------------------
+ * The ways in
+ * -------------------------------------------------------------------- */
+.cold-open-ways {
+  display: grid;
+  gap: var(--pb-space-hairline);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/*
+ * A row is a whole control - link or button - so it is one tab stop and one
+ * hit target rather than a label with a link somewhere inside it.
+ *
+ * `text-align: start` and the font declarations are not decoration: a <button>
+ * inherits neither from the document, so without them the last row would be
+ * centred in a system font beside four rows that are not.
+ */
+.cold-open-way {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--pb-space-2xs);
+  inline-size: 100%;
+  padding: var(--pb-space-md);
+
+  background-color: var(--pb-control-surface);
+  border: var(--pb-border-width) solid var(--pb-control-border);
+  border-radius: var(--pb-radius-control);
+
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  text-align: start;
+  text-decoration: none;
+  cursor: pointer;
+
+  transition:
+    border-color var(--pb-motion-fast) var(--pb-ease),
+    background-color var(--pb-motion-fast) var(--pb-ease);
+}
+
+@media (min-width: 480px) {
+  .cold-open-way {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: var(--pb-space-md);
+  }
+}
+
+.cold-open-way:hover {
+  background-color: var(--pb-control-surface-hover);
+  border-color: var(--pb-control-border-hover);
+}
+
+.cold-open-way-name {
+  color: var(--pb-ink-primary);
+  font-weight: var(--pb-value-weight);
+  letter-spacing: var(--pb-value-tracking);
+}
+
+.cold-open-way-path {
+  color: var(--pb-ink-muted);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+}
+
+.cold-open-aside,
+.cold-open-body {
+  /*
+   * No measure of its own. The panel is 680px at its widest and the section
+   * padding already holds prose to about 60 characters, so a `max-inline-size`
+   * here only ever produced a second, narrower column inside a box that was
+   * already the right width - a ragged right edge with 170px of panel beside
+   * it.
+   */
+  margin: 0;
+  font-family: var(--pb-font-prose);
+  font-size: var(--pb-body-size);
+  line-height: var(--pb-body-leading);
+  color: var(--pb-ink-muted);
+}
+
+.cold-open-body code {
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-value-size);
+  color: var(--pb-ink-secondary);
+}
+
+/* -----------------------------------------------------------------------
+ * The readout along the bottom
+ *
+ * Three short statements, wrapped rather than truncated: at 320px they stack,
+ * and stacking three facts is better than hiding two of them.
+ * -------------------------------------------------------------------- */
+.cold-open-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pb-space-xs);
+  margin: 0;
+  padding: var(--pb-space-md) var(--pb-space-lg);
+  border-block-start: var(--pb-border-width) solid var(--pb-border-hairline);
+  background-color: var(--pb-surface-sunken);
+  border-end-start-radius: var(--pb-radius-panel);
+  border-end-end-radius: var(--pb-radius-panel);
+  list-style: none;
+}
+
+/*
+ * Each fact is a boxed cell rather than three phrases separated by space.
+ *
+ * They wrap - three short statements do not fit on one line at 680px, let
+ * alone at 320px - and a separator character between them lands at the start
+ * of a line as often as between two items. A border is a separator that is
+ * still correct after a wrap.
+ */
+.cold-open-facts li {
+  padding: var(--pb-space-2xs) var(--pb-space-sm);
+  border: var(--pb-border-width) solid var(--pb-border-hairline);
+  border-radius: var(--pb-radius-control);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-muted);
+}

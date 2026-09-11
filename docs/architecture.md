@@ -11,6 +11,7 @@ way they are.
 - [The worker boundary](#the-worker-boundary)
 - [Incremental caching](#incremental-caching)
 - [The canvas](#the-canvas)
+- [The first screen](#the-first-screen)
 - [The node inspector](#the-node-inspector)
 - [A file as an input](#a-file-as-an-input)
 - [The tool runner page](#the-tool-runner-page)
@@ -1357,6 +1358,106 @@ Only real failures are counted. A node that never ran because something
 upstream broke did not fail, and counting it would turn one broken node into
 "5 failed" and send someone looking for five bugs. The run summary reports the
 two separately (`failed` and `skipped`) for the same reason.
+
+## The first screen
+
+The canvas is the homepage, and for a long time the homepage was an empty grid
+and a line about pressing `K`. The fix is not a route, and the reason it is not
+is worth writing down, because a landing page at `/` is the obvious shape and
+it is wrong.
+
+**`/?p=...` is a share link.** It is the one URL in this application that other
+people paste into chat and issue trackers, and the whole point of it is that it
+opens the pipeline it describes. Moving the canvas to `/canvas` to make room
+for an introduction means either breaking every link already in the world, or
+answering one with a redirect through a page about the product. Both are worse
+than the problem.
+
+So the state that was actually missing content is narrower than a route:
+
+| `/` with…     | Shows                       |
+| ------------- | --------------------------- |
+| `?p=...`      | the pipeline in the link    |
+| a saved graph | your canvas, as you left it |
+| neither       | **the cold open**           |
+
+That third row is the only one that was ever empty, and it is by definition a
+visitor who has never been here.
+
+### Why it is in index.html
+
+The panel is hand-written markup in `index.html`, styled by
+`src/styles/cold-open.css`, and the app does not render it. Three things follow
+from that, and none of them is available to a component:
+
+1. **It exists without JavaScript.** Everything else on this site is behind a
+   dynamic import, so a crawler or a link-preview bot that does not execute the
+   router sees an empty `<div id="root">`. This is the one page where that
+   matters, and it is the one page that no longer has the problem.
+2. **It paints early.** The document's stylesheet is a render-blocking `<link>`
+   in the built output, so the panel is on screen with its real type and
+   colours before the canvas chunk has been requested.
+3. **It costs nothing in JavaScript.** The initial payload is byte-for-byte
+   what it was. The price is 2.3 kB gzipped of markup and CSS, in a document
+   served `no-cache`.
+
+The price of that is that nothing in the type system holds the two halves
+together — so `coldOpen.test.ts` reads `index.html` with Vite's `?raw` and
+asserts the joins: that each example link decodes against the live registry,
+that the `localStorage` keys the inline script names as literals are the ones
+the app writes, and that the element ids `coldOpen.ts` looks up are the ones
+the markup carries.
+
+### The decision is made in the parse, not in React
+
+An inline script sits immediately after the markup it governs and before the
+module script. It either removes the panel outright or marks `#root` inert, and
+it does so in the same parse that produced the element.
+
+That placement is the whole mechanism. A CSS rule could not promise it: in dev
+the stylesheet arrives with the module rather than before it, so `/tools` would
+flash an introduction for as long as the first chunk took. A React effect could
+not promise it either, because by the time an effect runs a frame has already
+been painted — and the failure being avoided is precisely a **flash of the
+wrong first screen**, not a leftover element.
+
+Removing rather than hiding is the same argument one level on: a hidden panel is
+state the app would have to know about and eventually get wrong.
+
+### Inert, and where focus goes
+
+While the panel is up, `#root` is `inert`. The canvas mounts behind it a moment
+later with a full toolbar, and an invisible-but-tabbable toolbar is the oldest
+overlay bug there is. Nothing in `#root` is focusable before the app boots, so
+setting the flag in the inline script has no ordering hazard.
+
+`dismissColdOpen` clears it, and does three things rather than one — remove the
+element, clear the flag, record that it happened — because a caller that did
+two of the three would break in a way that only shows up for the next visit.
+The focus move is the fourth, and it lives at the call site rather than in the
+helper: focus was on the panel's own button, which has just left the document,
+and focus on a removed element falls to `<body>` where the canvas's keyboard
+model is unreachable and the next `Tab` restarts from the top of the page. A
+panel that came down because a share link brought a graph with it never had
+focus, so that path does not take it.
+
+### Two empty states, deliberately
+
+The canvas keeps its own `Empty canvas — choose Add tool, or press K`, and does
+not draw it while the panel is up. They are not duplicates: one is an
+introduction for somebody who does not yet know there is a canvas, and the other
+is operational, for somebody who has one and has just cleared it.
+
+**The element is the state.** The canvas reads it through
+`useSyncExternalStore` rather than copying it into a `useState` on mount, and
+the difference is not stylistic. A copy has to be maintained, and what
+maintains it is `nodeOrder.length === 0` — which is true again the moment
+somebody selects everything and presses Delete. That flips a copied boolean
+back to "the introduction is up" on a canvas whose panel went in the bin ten
+minutes ago: nothing renders, because the element was removed, and the canvas's
+own empty state is suppressed on the one screen that needed a message. Asking
+the document cannot get that wrong. There is one panel, it is removed exactly
+once, and removal is the only event there is to publish.
 
 ## The node inspector
 

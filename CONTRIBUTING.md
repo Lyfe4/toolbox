@@ -207,6 +207,14 @@ enforced by `src/styles/token-layering.test.ts` rather than by convention.
 **A component stylesheet may only name `--pb-*` tokens, and only ones that
 exist.** The test fails the build otherwise.
 
+The rule is about who may name a raw shade, not about file naming, so the test
+reaches past the `*.module.css` glob for one file: `src/styles/cold-open.css`.
+The first screen's markup lives in `index.html` rather than in a component — see
+[The first screen](README.md#the-first-screen) — so it has no module to be
+scoped by, and it is otherwise exactly the kind of stylesheet the rule exists
+for. A cold open that looked right in graphite and wrong in vellum would be
+wrong on the one screen where being wrong costs the most.
+
 ### Why
 
 Layer 1 is the raw scale — `--raw-amber-500`, `--raw-space-16`. Layer 2 names

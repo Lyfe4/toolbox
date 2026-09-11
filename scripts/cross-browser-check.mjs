@@ -354,6 +354,33 @@ function shareParam(payload) {
     .replaceAll('=', '');
 }
 
+/**
+ * Takes the cold open down, if this page is showing one.
+ *
+ * EVERY CONTEXT HERE IS FRESH, which makes every context a first-time visitor,
+ * which makes `/` answer with the introduction panel and hold the app inert
+ * behind it. That is the product's behaviour rather than a test artefact - so
+ * the harness walks through it the way a person does instead of seeding
+ * storage to skip it, and `checkColdOpen` below is where the panel itself is
+ * the subject rather than the obstacle.
+ *
+ * Silent when there is nothing to dismiss: a share link, a deep link and a
+ * reload after the flag has been written all arrive with no panel at all, and
+ * a helper that threw on those would have to be guarded at every call site.
+ */
+async function dismissColdOpen(page) {
+  const start = page.locator('#cold-open-start');
+  if ((await start.count()) === 0) return;
+  await start.click();
+  await page.locator('#cold-open').waitFor({ state: 'detached', timeout: 15_000 });
+}
+
+/** Opens a canvas URL and leaves the introduction behind. */
+async function gotoCanvas(page, path = '/') {
+  await page.goto(`${ORIGIN}${path}`, { waitUntil: 'networkidle' });
+  await dismissColdOpen(page);
+}
+
 function check(browser, name, passed, detail = '') {
   const mark = passed ? 'ok  ' : 'FAIL';
   console.log(`  ${mark} ${name}${detail ? ` - ${detail}` : ''}`);
@@ -374,7 +401,7 @@ async function checkChromeWidths(browser, label) {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+      await gotoCanvas(page);
       await page.locator('[class*="toolbar"]').waitFor({ timeout: 15_000 });
 
       const chrome = await page.evaluate(() => {
@@ -628,7 +655,7 @@ async function checkInspector(browser, label) {
     });
 
   try {
-    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(page);
     await page.getByRole('button', { name: 'Add tool' }).click();
     await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
     await page.getByTestId('dialog-option-regex-tester').click();
@@ -885,7 +912,7 @@ async function checkInspector(browser, label) {
   const narrowPage = await narrow.newPage();
 
   try {
-    await narrowPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(narrowPage);
     await narrowPage.getByRole('button', { name: 'Add tool' }).click();
     await narrowPage.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
     await narrowPage.getByTestId('dialog-option-base64').click();
@@ -2106,7 +2133,7 @@ async function checkInspectorTouch(engine, label) {
   const page = await context.newPage();
 
   try {
-    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(page);
     await page.getByRole('button', { name: 'Add tool' }).click();
     await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
     await page.getByTestId('dialog-option-hash').click();
@@ -2177,7 +2204,7 @@ async function checkInspectorTouch(engine, label) {
     });
     const forcedPage = await forced.newPage();
     try {
-      await forcedPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+      await gotoCanvas(forcedPage);
       await forcedPage.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
       await setInspector(forcedPage, true);
       await forcedPage.getByTestId('inspector-handle').waitFor({ timeout: 10_000 });
@@ -2232,7 +2259,7 @@ async function checkInspectorMotion(browser, label) {
   const page = await context.newPage();
 
   try {
-    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(page);
     await page.getByRole('button', { name: 'Add tool' }).click();
     await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
     await page.getByTestId('dialog-option-hash').click();
@@ -2369,7 +2396,7 @@ async function checkInspectorMotion(browser, label) {
     });
     const reducedPage = await reduced.newPage();
     try {
-      await reducedPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+      await gotoCanvas(reducedPage);
       await reducedPage.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
       await setInspector(reducedPage, false);
 
@@ -2415,7 +2442,7 @@ async function checkDialogScroll(browser, label) {
   const page = await context.newPage();
 
   try {
-    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(page);
     await page.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
 
     const planeTransform = () =>
@@ -2661,7 +2688,7 @@ async function checkRouteFeedback(browser, label) {
       }
       await route.continue();
     });
-    await slowPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(slowPage);
     await slowPage.evaluate(() => {
       document.querySelector('a[href="/styleguide"]')?.click();
     });
@@ -2692,7 +2719,7 @@ async function checkRouteFeedback(browser, label) {
 
   try {
     await fastPage.addInitScript(blockServiceWorker);
-    await fastPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(fastPage);
     // Prime the chunk, so the navigation under test is a warm one.
     await fastPage.evaluate(() => {
       document.querySelector('a[href="/tools"]')?.click();
@@ -2738,7 +2765,7 @@ async function checkRouteFeedback(browser, label) {
 
     try {
       await page.addInitScript(blockServiceWorker);
-      await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+      await gotoCanvas(page);
       asked.length = 0;
 
       if (intent === 'hover') await page.hover('a[href="/styleguide"]');
@@ -2925,7 +2952,7 @@ async function checkOffline(browser, label) {
   });
 
   try {
-    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(page);
 
     const installed = await page.evaluate(async () => {
       if (!('serviceWorker' in navigator)) return { supported: false };
@@ -3083,7 +3110,7 @@ async function checkAxe(browser, label) {
   try {
     for (const theme of ['graphite', 'vellum']) {
       for (const [path, name] of [
-        ['/', 'the canvas'],
+        ['/', 'the cold open'],
         ['/tools', 'the tool index'],
         ['/tools/base64', 'a tool page'],
         ['/tools/text-convert', 'the text conversion tool'],
@@ -3115,6 +3142,31 @@ async function checkAxe(browser, label) {
 
         const violations = await scan();
         check(label, `${name} is clean in ${theme}`, violations.length === 0, describe(violations));
+
+        /*
+         * `/` ANSWERS TWICE, because a first-time visitor and a returning one
+         * are not looking at the same document. The scan above covered the
+         * introduction panel - a landmark, a heading, five controls and a
+         * background this loop has just re-themed - and the empty canvas is
+         * underneath it, reachable only by taking it down.
+         *
+         * The flag is then cleared, so the second pass round this loop sees
+         * the panel again rather than silently scanning the canvas twice in
+         * vellum and the panel never.
+         */
+        if (path === '/') {
+          await dismissColdOpen(page);
+          const behind = await scan();
+          check(
+            label,
+            `the empty canvas is clean in ${theme}`,
+            behind.length === 0,
+            describe(behind),
+          );
+          await page.evaluate(() => {
+            window.localStorage.removeItem('patchbay:cold-open:v1');
+          });
+        }
       }
     }
 
@@ -3123,7 +3175,7 @@ async function checkAxe(browser, label) {
      * node groups, port glyphs, wires and the toolbar readout all only exist
      * once something has been added.
      */
-    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(page);
     for (const tool of ['Base64', 'Hash']) {
       await page.getByRole('button', { name: 'Add tool' }).click();
       await page.locator('[role="option"]').first().waitFor({ timeout: 10_000 });
@@ -3233,7 +3285,7 @@ async function checkConsoleSilence(browser, label) {
 
     // And while actually doing something, not merely sitting there.
     heard.length = 0;
-    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(page);
     await page.getByRole('button', { name: 'Add tool' }).click();
     await page.locator('[role="option"]').first().waitFor({ timeout: 10_000 });
     await page.getByTestId('dialog-option-base64').click();
@@ -3696,7 +3748,7 @@ async function checkTouch(engine, label) {
     );
 
   try {
-    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(page);
     await page.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
 
     check(
@@ -4823,7 +4875,7 @@ async function checkMobileLayout(engine, label) {
       const page = await context.newPage();
 
       try {
-        await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+        await gotoCanvas(page);
         await page.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
 
         /*
@@ -4855,7 +4907,7 @@ async function checkMobileLayout(engine, label) {
         }
 
         /* -- Every overlay ------------------------------------------------- */
-        await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+        await gotoCanvas(page);
         await page.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
 
         await page.getByRole('button', { name: 'Add tool' }).click();
@@ -5190,7 +5242,7 @@ async function checkSoftKeyboard(engine, label) {
 
   try {
     /* -- The canvas has nothing for the browser to scroll ---------------- */
-    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(page);
     await page.getByRole('button', { name: 'Add tool' }).click();
     await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
     await page.getByTestId('dialog-option-base64').click();
@@ -5381,7 +5433,7 @@ async function checkSoftKeyboard(engine, label) {
      * geometry as one thing, which is how it has to work on a phone.
      */
     await page.setViewportSize({ width: 390, height: 780 });
-    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(page);
     await page.getByRole('button', { name: 'Add tool' }).click();
     await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
 
@@ -5442,7 +5494,7 @@ async function checkSoftKeyboard(engine, label) {
   const finePage = await fineContext.newPage();
 
   try {
-    await finePage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(finePage);
     await finePage.getByRole('button', { name: 'Add tool' }).click();
     await finePage.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
     await finePage.getByTestId('dialog-option-base64').click();
@@ -5779,8 +5831,8 @@ async function checkTwoTabs(browser, label) {
           .join(',');
       });
 
-    await first.goto(ORIGIN + '/', { waitUntil: 'networkidle' });
-    await second.goto(ORIGIN + '/', { waitUntil: 'networkidle' });
+    await gotoCanvas(first);
+    await gotoCanvas(second);
 
     await addTool(first, 'dialog-option-base64');
     await addTool(second, 'dialog-option-hash');
@@ -6062,7 +6114,7 @@ async function checkTruncation(browser, label) {
   const page = await context.newPage();
 
   try {
-    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(page);
 
     /*
      * Text convert has both kinds: 'Document', 'Converted' and 'Detected' fit,
@@ -6179,7 +6231,7 @@ async function checkTruncation(browser, label) {
     const touchPage = await touchContext.newPage();
 
     try {
-      await touchPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+      await gotoCanvas(touchPage);
       await touchPage.getByRole('button', { name: 'Add tool' }).click();
       await touchPage.locator('[role="option"]').first().waitFor({ timeout: 10_000 });
       await touchPage
@@ -6990,6 +7042,246 @@ async function checkPreviewSandbox(browser, label) {
   }
 }
 
+/**
+ * THE COLD OPEN.
+ *
+ * The first screen at `/` is hand-written markup in index.html rather than
+ * anything the app renders, which buys three things nothing in a component
+ * could - it exists for a crawler, it paints before the canvas chunk has been
+ * asked for, and it costs the JavaScript payload nothing - at the price of
+ * being invisible to the type system. `coldOpen.test.ts` ties the markup to
+ * the code it names; this is the half that needs a real browser.
+ *
+ * Four things only an engine can answer:
+ *
+ *   1. IT IS THERE WITH SCRIPTING OFF. That is the whole claim about crawlers
+ *      and link previews, and a jsdom render of a React tree cannot make it -
+ *      the assertion has to be made against the served bytes in a browser that
+ *      will not run a line of our code;
+ *   2. THE APP BEHIND IT IS NOT REACHABLE. `inert` is a browser behaviour;
+ *      jsdom exposes the property and enforces nothing;
+ *   3. AN EXAMPLE LINK IS A WORKING PIPELINE. The links are encoded by hand
+ *      and decoded by CompressionStream, so this is the only place the whole
+ *      chain runs end to end;
+ *   4. NOBODY WHO HAS ALREADY ARRIVED SEES IT. A reload, a share link and a
+ *      saved graph each have to answer with the canvas - and "the panel is
+ *      gone by the time the load finished" is not the assertion, because the
+ *      failure being ruled out is a FLASH. The removal happens in a
+ *      parser-blocking script, so `domcontentloaded` is the earliest moment at
+ *      which a paint could have happened, and that is where it is checked.
+ */
+async function checkColdOpen(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+
+  try {
+    /* -- With JavaScript switched off entirely -------------------------- */
+    const noScript = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      javaScriptEnabled: false,
+    });
+    const staticPage = await noScript.newPage();
+    try {
+      await staticPage.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded' });
+
+      const headline = staticPage.locator('#cold-open-title');
+      const visible = await headline.isVisible();
+      const text = ((await headline.textContent()) ?? '').trim();
+      check(
+        label,
+        'the first screen renders with no JavaScript at all',
+        visible && text.length > 0,
+        text,
+      );
+
+      /*
+       * Styled, not merely present. The stylesheet is a render-blocking <link>
+       * in the built document, so a panel that arrived as unstyled markup
+       * would mean the CSS had moved into the module graph - which is exactly
+       * what happens in dev, and would be a real regression in production.
+       */
+      const painted = await staticPage.evaluate(() => {
+        const panel = document.querySelector('.cold-open-panel');
+        if (!panel) return null;
+        const styles = getComputedStyle(panel);
+        return { border: styles.borderTopWidth, background: styles.backgroundColor };
+      });
+      check(
+        label,
+        'and it is painted by the stylesheet rather than left as bare markup',
+        painted !== null && painted.border !== '0px' && painted.background !== 'rgba(0, 0, 0, 0)',
+        painted === null ? 'no panel' : `${painted.border} border on ${painted.background}`,
+      );
+
+      const links = await staticPage.locator('#cold-open a[href^="/?p="]').count();
+      check(
+        label,
+        'and its example pipelines are real links, not scripted buttons',
+        links === 3,
+        `${String(links)} share link(s)`,
+      );
+    } finally {
+      await noScript.close().catch(() => {});
+    }
+
+    /* -- A first-time visitor ------------------------------------------- */
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    check(
+      label,
+      'a first-time visitor to / gets the introduction',
+      await page.locator('#cold-open').isVisible(),
+    );
+
+    const held = await page.evaluate(() => {
+      const root = document.getElementById('root');
+      const toolbar = document.querySelector('[data-canvas-chrome="toolbar"] button');
+      return {
+        inert: root?.inert ?? null,
+        // The real question: can anything behind the panel take focus?
+        focusable: (() => {
+          toolbar?.focus();
+          return document.activeElement === toolbar;
+        })(),
+      };
+    });
+    check(
+      label,
+      'and the canvas behind it cannot be focused or tabbed into',
+      held.inert === true && held.focusable === false,
+      `inert=${String(held.inert)}, toolbar took focus=${String(held.focusable)}`,
+    );
+
+    /* -- An example pipeline -------------------------------------------- */
+    await page.locator('#cold-open a[href^="/?p="]').first().click();
+    await page.locator('[data-node-id]').first().waitFor({ timeout: 15_000 });
+    const wired = await page.evaluate(() => ({
+      panel: document.getElementById('cold-open') !== null,
+      nodes: document.querySelectorAll('[data-node-id]').length,
+      inert: document.getElementById('root')?.inert ?? null,
+    }));
+    check(
+      label,
+      'an example link opens the pipeline it names, with no panel in the way',
+      wired.panel === false && wired.nodes === 2 && wired.inert === false,
+      `${String(wired.nodes)} node(s)`,
+    );
+
+    /* -- Dismissing it by hand ------------------------------------------ */
+    const fresh = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const freshPage = await fresh.newPage();
+    try {
+      await freshPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+      await freshPage.locator('#cold-open-start').click();
+      await freshPage.locator('#cold-open').waitFor({ state: 'detached', timeout: 15_000 });
+
+      const released = await freshPage.evaluate(() => ({
+        inert: document.getElementById('root')?.inert ?? null,
+        focused: document.activeElement?.getAttribute('data-testid') ?? null,
+      }));
+      check(
+        label,
+        'dismissing it releases the app and hands focus to the canvas',
+        released.inert === false && released.focused === 'canvas-root',
+        `focus on ${released.focused ?? 'nothing'}`,
+      );
+
+      /*
+       * Reloaded, and checked at `domcontentloaded` rather than after the app
+       * has booted. A panel that were merely REMOVED BY REACT would still have
+       * been painted first, and "you saw the introduction again for 200ms" is
+       * the failure this is here to rule out.
+       */
+      await freshPage.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded' });
+      check(
+        label,
+        'and a reload never paints it again',
+        (await freshPage.locator('#cold-open').count()) === 0,
+      );
+
+      /* -- Somebody with work saved ------------------------------------- */
+      await freshPage.waitForLoadState('networkidle');
+      await freshPage.getByRole('button', { name: 'Add tool' }).click();
+      await freshPage.locator('[role="option"]').first().waitFor({ timeout: 10_000 });
+      await freshPage.locator('[role="option"]').first().click();
+      await freshPage.locator('[data-node-id]').first().waitFor({ timeout: 10_000 });
+
+      // The flag is what suppressed the last reload; clear it, so what is
+      // being tested now is the SAVED GRAPH and nothing else.
+      await freshPage.evaluate(() => {
+        window.localStorage.removeItem('patchbay:cold-open:v1');
+      });
+      /*
+       * WAIT FOR THE SAVE, do not time it.
+       *
+       * `createDebouncedSaver` is subscribed to the whole canvas store, not to
+       * the graph, and the store also carries the announcement log - so every
+       * line the pipeline announces while the new nodes settle pushes the
+       * 500ms window out again. A fixed wait passed locally and lost the race
+       * in both engines here, which left the next assertion claiming that a
+       * saved graph does not suppress the panel when what had actually
+       * happened was that nothing had been saved yet.
+       */
+      await freshPage.waitForFunction(
+        () => (window.localStorage.getItem('patchbay:graph:v3') ?? '').includes('"nodes"'),
+        undefined,
+        { timeout: 20_000 },
+      );
+
+      await freshPage.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded' });
+
+      /*
+       * Read at `domcontentloaded`, before the module script has run, which is
+       * the earliest moment a paint could have happened. Anything later would
+       * pass just as happily on a panel that was shown and then withdrawn.
+       */
+      check(
+        label,
+        'a saved graph is enough on its own to suppress it',
+        (await freshPage.locator('#cold-open').count()) === 0,
+      );
+
+      /*
+       * And the other half of the same statement: the reason it is suppressed
+       * is that there is something better to show, so that thing has to
+       * actually arrive. WAITED FOR rather than counted - restoring a graph is
+       * a chunk fetch and then an effect, and `networkidle` is neither.
+       */
+      await freshPage
+        .locator('[data-node-id]')
+        .first()
+        .waitFor({ timeout: 15_000 })
+        .catch(() => {});
+      const restored = await freshPage.locator('[data-node-id]').count();
+      check(
+        label,
+        'and the work it was suppressed in favour of is on the canvas',
+        restored > 0,
+        `${String(restored)} node(s) restored`,
+      );
+    } finally {
+      await fresh.close().catch(() => {});
+    }
+
+    /* -- Every other URL ------------------------------------------------ */
+    const other = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const otherPage = await other.newPage();
+    try {
+      for (const path of ['/tools', '/tools/base64', '/styleguide', '/nothing-here']) {
+        await otherPage.goto(`${ORIGIN}${path}`, { waitUntil: 'domcontentloaded' });
+        check(
+          label,
+          `${path} is served the same document and still never shows it`,
+          (await otherPage.locator('#cold-open').count()) === 0,
+        );
+      }
+    } finally {
+      await other.close().catch(() => {});
+    }
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 async function runChecks(engine, label) {
   console.log(`\n${label}`);
   const browser = await engine.launch();
@@ -7004,7 +7296,7 @@ async function runChecks(engine, label) {
 
   try {
     /* -- The canvas route loads at all ---------------------------------- */
-    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(page);
     // A CSS locator rather than getByRole: WebKit's accessibility tree names
     // `role="application"` differently from Gecko and Blink, and the point of
     // this check is that the canvas rendered, not how the name is computed.
@@ -7486,6 +7778,7 @@ async function runChecks(engine, label) {
   }
 
   try {
+    await checkColdOpen(browser, label);
     await checkChromeWidths(browser, label);
     await checkRunnerLayout(browser, label);
     await checkInspector(browser, label);
@@ -8018,7 +8311,7 @@ async function checkCanvasFileInput(browser, label) {
       savedGraph === null ? 'nothing saved' : `${String(savedGraph.length)} bytes saved`,
     );
 
-    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await gotoCanvas(page);
     await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
     const afterReload = await untilStatus(page, 'n1', 'blocked', 20_000);
     const reloadSummary = await page.evaluate(

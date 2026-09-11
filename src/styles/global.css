@@ -6,15 +6,22 @@
  *   semantic   -> layer 2, meanings + graphite defaults
  *   themes     -> layer 2 overrides per [data-theme]
  *   reset      -> element normalisation, needs the tokens above
+ *   cold-open  -> the one screen whose markup is in index.html
  *
  * themes.css MUST come after semantic.css: the two selectors have equal
  * specificity, so the later one wins.
+ *
+ * cold-open.css is last because it is the only stylesheet here that styles
+ * markup the app did not render - the first screen lives in index.html, so
+ * that it exists before a line of this has been fetched. It needs everything
+ * above it and nothing needs it.
  */
 @import './fonts.css';
 @import './primitives.css';
 @import './semantic.css';
 @import './themes.css';
 @import './reset.css';
+@import './cold-open.css';
 
 /* -----------------------------------------------------------------------
  * Colour scheme - makes native scrollbars and form controls match the theme.

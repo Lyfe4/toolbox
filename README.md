@@ -5,6 +5,7 @@ and video conversion — that runs entirely in your browser. Wire the tools toge
 node canvas and a throwaway one-liner becomes a pipeline you can see, share and
 re-run, without anything you paste ever leaving the page.
 
+- [The first screen](#the-first-screen)
 - [The tools](#the-tools)
 - [The zero-network guarantee](#the-zero-network-guarantee)
 - [Architecture](#architecture)
@@ -14,6 +15,75 @@ re-run, without anything you paste ever leaving the page.
 - [Adding a tool](#adding-a-tool)
 - [Setup](#setup)
 - [Browser support](#browser-support)
+
+## The first screen
+
+`/` is the canvas, and it stays there. A share link is `/?p=...`, and a link
+that opened onto an introduction instead of the pipeline it describes would be
+a worse product than one with no introduction at all.
+
+So the thing that was missing was never a route. It was the **first-run state**
+of this one — `/`, with no share parameter and no saved graph — which used to
+be an empty grid and a line about pressing `K`. Somebody arriving for the first
+time was told which key to press before being told what the site was.
+
+That state is now a **cold open**: what this is, five ways in, and the one claim
+that makes it different from every hosted equivalent. Three of the five ways in
+are ordinary share links — the same encoding the canvas's Share button
+produces — so the first thing on the page is a working two-node pipeline rather
+than a description of one.
+
+**It is markup in [`index.html`](index.html), not a component**, and that is the
+whole design rather than a shortcut:
+
+| Because                                          | Which a component could not do                                                      |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| It is what a crawler and a link-preview bot read | Every other word on this site is behind a dynamic import                            |
+| It paints with the stylesheet                    | Before the canvas chunk has been requested, let alone parsed                        |
+| It costs the initial JavaScript payload nothing  | `bundle:check` reports the same 330.0 kB it did before — the delta is 0 bytes of JS |
+
+The cost is **2.3 kB gzipped**, all of it markup and CSS: the document goes from
+1232 to 3022 bytes gzipped and the entry stylesheet from 5554 to 6063. The
+document is served `no-cache`, so a returning visitor pays it only when a deploy
+has actually changed it.
+
+**Nobody who has already arrived sees it.** An inline script decides, in the
+same parse that produced the element, and _removes_ it rather than hiding it —
+so there is no frame in which the wrong person is looking at an introduction,
+in any engine, in dev or in production. Four ways to not be a first-time
+visitor:
+
+- a path other than `/` — the document is the SPA fallback for every URL, so
+  `/tools/base64` is served these bytes too;
+- a `?p=` share link, which is a pipeline somebody sent you;
+- a saved graph with at least one node in it, which is your own work;
+- having dismissed it before, so choosing "empty canvas" and then reloading
+  does not hand it back.
+
+While it is up, `#root` is **`inert`**. The canvas mounts behind it a moment
+later, and a toolbar that is invisible but tabbable is the oldest overlay bug
+there is; the app clears the flag when it takes the panel down. Dismissing it by
+hand also moves focus to the canvas, because focus on a removed element falls to
+`<body>` and the next `Tab` restarts from the top of the page — a panel that
+came down because a share link brought a graph with it never had focus, so that
+path leaves it alone.
+
+**What ties it to the code.** Nothing in the type system connects hand-written
+HTML to the app, so the joins are asserted instead — see
+[`coldOpen.test.ts`](src/features/canvas/coldOpen.test.ts) and
+[`coldOpen.canvas.test.tsx`](src/features/canvas/coldOpen.canvas.test.tsx):
+
+- each example link is **decoded against the live registry**, so a change to
+  the share format, a tool's id or a port's name fails a test rather than
+  leaving a visitor clicking the first thing on the page into an empty canvas;
+- the `localStorage` keys the inline script reads by literal are checked
+  against the constants the app writes them with;
+- `pnpm check:browsers` loads `/` **with JavaScript disabled** and asserts the
+  panel is there, styled by the stylesheet, with three real `href`s — which is
+  the claim about crawlers, made in a browser that will not run a line of our
+  code. It also asserts the reverse: that a reload, a share link and a saved
+  graph each reach `domcontentloaded` with the panel already absent, because
+  the failure worth ruling out is a flash rather than a leftover.
 
 ## The tools
 
@@ -60,7 +130,9 @@ the markup. `Plain text (strip formatting)` is the opposite: it removes the
 formatting rather than carrying it.
 
 `/` is the node canvas; `/tools` is the same set as a plain list. Neither is a
-fallback for the other.
+fallback for the other, and the canvas stays at `/` so that a share link opens
+the pipeline it describes — see [The first screen](#the-first-screen) for what a
+visitor with neither a link nor a saved graph gets instead.
 
 **On the canvas, a node's input, options and output are one panel.** Select a
 node and the inspector shows all three, using the same options panel and the
@@ -1039,7 +1111,14 @@ in this file have numbers behind them.
 | Budget (enforced by `pnpm bundle:check`) | 380.0 kB | —        |
 
 Every tool, the canvas, the styleguide and the tool pages are lazy chunks and
-none of them are in that figure. **Three more budgets are, though**, and two of
+none of them are in that figure.
+
+**Neither is the first screen, because it is not JavaScript.** The cold open is
+markup and CSS, so the figure above is unchanged by it to the byte; what it does
+cost is 1232 → 3022 bytes gzipped on the document and 5554 → 6063 on the entry
+stylesheet. The document is `no-cache`, so a returning visitor re-fetches those
+1.8 kB only when a deploy has changed them, and the stylesheet is content-hashed
+and `immutable`. **Three more budgets are, though**, and two of
 them were added because the first two could not see what they measure:
 
 | Measured                                    | Now       | Budget |
@@ -1133,6 +1212,12 @@ Production build, served with the real headers, gzipped as the CDN serves it.
 | `/tools`        | 91 / 100                       | 100           | 100            | 91  |
 | `/tools/base64` | 93 / 99                        | 100           | 100            | 91  |
 | `/styleguide`   | 90 / 100                       | 100           | 100            | 91  |
+
+**The `/` row predates the cold open** and has not been re-measured since. What
+it measured is still what a returning visitor gets — the canvas — and the first
+screen adds no JavaScript, one render-blocking stylesheet it was already
+fetching, and no images or fonts beyond the ones on that row. Treat it as
+untested rather than as a claim about the new first screen.
 
 SEO is 91 everywhere because of a single audit — Lighthouse's fetch of
 `/robots.txt` fails with a Chrome DevTools protocol error in this environment.

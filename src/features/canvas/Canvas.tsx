@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 
 import { Button } from '@/components/Button';
 import { CopyIcon, PlusIcon, SearchIcon, SignalIcon, SlidersIcon } from '@/components/Icon';
@@ -23,6 +32,7 @@ import { useMediaQuery } from '@/lib/useMediaQuery';
 import { useAttachmentStore } from './attachmentStore';
 import styles from './canvas.module.css';
 import { CanvasNodeView, NODE_ACTION_ATTRIBUTE, portKey } from './CanvasNodeView';
+import { dismissColdOpen, isColdOpenShowing, onColdOpenStart, subscribeColdOpen } from './coldOpen';
 import { CommandDialog, type DialogGroup, type DialogOption } from './CommandDialog';
 import {
   checkConnection,
@@ -430,6 +440,63 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     }
     return undefined;
   }, [store, notify, shareParam]);
+
+  /*
+   * THE COLD OPEN, AND WHO TAKES IT DOWN.
+   *
+   * The first screen at `/` is static markup in index.html - the reasoning for
+   * that is written there - and by the time this component exists the inline
+   * script has already decided whether it is up. So the canvas does not RENDER
+   * it, it INHERITS it, and its only job is to know when it has stopped being
+   * the right thing to be looking at.
+   *
+   * Subscribed to rather than copied into state. The element is the fact; a
+   * boolean beside it would be a second copy of that fact, and `coldOpen.ts`
+   * records the specific way that copy goes wrong.
+   */
+  const panelIsUp = useSyncExternalStore(subscribeColdOpen, isColdOpenShowing);
+
+  /*
+   * A NODE ARRIVING IS THE OTHER WAY OUT, and it is the one that happens most:
+   * a share link's graph lands here, and so does a preset, and so does
+   * anything a returning visitor had saved. None of those should be read
+   * through an introduction to a product the user is evidently already using.
+   *
+   * Derived rather than set from an effect, so there is no render in which the
+   * panel is still nominally up after the graph says otherwise. The effect
+   * below only has to make the DOM agree with what has already been decided
+   * here, which is the one thing an effect is actually for - and once it has,
+   * `panelIsUp` is false for good, whatever the node count does next.
+   */
+  const nodeCount = graph.nodeOrder.length;
+  const coldOpen = panelIsUp && nodeCount === 0;
+
+  useEffect(() => {
+    if (!coldOpen) dismissColdOpen();
+  }, [coldOpen]);
+
+  const leaveColdOpen = useCallback(() => {
+    dismissColdOpen();
+
+    /*
+     * Focus has to be MOVED, not merely released. It was on the panel's own
+     * button, which has just left the document - and focus on a removed
+     * element falls to <body>, where the canvas's keyboard model is
+     * unreachable and the next Tab restarts from the top of the page. The
+     * canvas surface is the thing that was just opened, so that is where it
+     * goes.
+     *
+     * Only on this path. A panel that came down because a share link brought a
+     * graph with it did not have focus in the first place, and taking it would
+     * be a second surprise on top of the first.
+     */
+    rootRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!coldOpen) return undefined;
+    return onColdOpenStart(leaveColdOpen);
+  }, [coldOpen, leaveColdOpen]);
 
   useEffect(() => {
     const saver = createDebouncedSaver();
@@ -2622,7 +2689,15 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
           })}
         </div>
 
-        {graph.nodeOrder.length === 0 ? (
+        {/*
+          NOT WHILE THE COLD OPEN IS UP. Both of these speak to somebody
+          looking at an empty grid, and they are not the same somebody: this
+          one is operational - here are the two controls - and assumes the
+          reader knows what a node is for. The panel is the introduction, and
+          it covers the whole viewport, so drawing this underneath it would put
+          two answers to one question on the screen at once and show neither.
+        */}
+        {graph.nodeOrder.length === 0 && !coldOpen ? (
           <div className={styles.empty}>
             <p className={styles.emptyTitle}>Empty canvas</p>
             {/*

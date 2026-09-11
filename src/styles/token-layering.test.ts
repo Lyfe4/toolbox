@@ -32,7 +32,28 @@ const routeStyles = import.meta.glob<string>('../routes/**/*.module.css', {
   eager: true,
 });
 
-const styleEntries = Object.entries({ ...componentStyles, ...featureStyles, ...routeStyles });
+/*
+ * The one global stylesheet that is subject to the rule.
+ *
+ * The globs above look for `*.module.css`, which is the right shape for the
+ * rule and the wrong shape for the cold open: its markup lives in index.html,
+ * so it has no module to be scoped by. Naming it here rather than widening the
+ * glob to `../styles/**` is deliberate - primitives.css, semantic.css and
+ * themes.css are where `--raw-*` is SUPPOSED to appear, and a glob that swept
+ * them up would have to carve them back out by name anyway.
+ */
+const coldOpen = import.meta.glob<string>('../styles/cold-open.css', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+});
+
+const styleEntries = Object.entries({
+  ...componentStyles,
+  ...featureStyles,
+  ...routeStyles,
+  ...coldOpen,
+});
 
 /** Pulls every `var(--name)` reference out of a stylesheet. */
 function usedTokens(css: string): string[] {

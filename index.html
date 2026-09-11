@@ -87,6 +87,184 @@
   </head>
   <body>
     <div id="root"></div>
+
+    <!--
+      THE COLD OPEN - the first screen, and the only content in this document.
+
+      WHY IT IS HERE AND NOT IN A COMPONENT. The canvas is the product and it
+      stays at `/`, because `/?p=...` is a share link and a link that opened
+      onto an introduction instead of the pipeline it describes would be a
+      regression. So the thing that was actually missing is not a route: it is
+      the FIRST-RUN STATE of this one - `/`, no share parameter, no saved
+      graph - which until now was an empty grid and a line about pressing K.
+
+      Being markup rather than a component is what makes it work at all:
+
+        - it is what a crawler or a link-preview bot reads, and none of them
+          run the router. Every other word on this site is behind a dynamic
+          import;
+        - it paints with the stylesheet, before the canvas chunk has been
+          asked for, so the pitch is on screen sooner than the app could
+          render it; and
+        - it costs the initial JavaScript payload nothing at all. Two inline
+          elements and no module.
+
+      The three pipeline links are ORDINARY SHARE LINKS - the same encoding the
+      canvas's Share button produces - which is why they can be markup at all:
+      a link is a real URL naming a real pipeline whether or not anything has
+      run yet. They carry structure and never data, exactly like every other
+      share link, and coldOpen.test.ts decodes each one against the live
+      registry so a change to the share format cannot quietly rot them.
+
+      The script below decides whether any of this is shown, and does it by
+      REMOVING the element rather than hiding it - so there is no state for the
+      app to inherit, and no frame in which a returning visitor sees a pitch.
+      See src/features/canvas/coldOpen.ts for the other half.
+    -->
+    <div id="cold-open">
+      <section class="cold-open-panel" aria-labelledby="cold-open-title">
+        <header class="cold-open-head">
+          <p class="cold-open-eyebrow">Patchbay</p>
+          <h1 class="cold-open-title" id="cold-open-title">
+            Developer tools that cannot phone home
+          </h1>
+          <p class="cold-open-lede">
+            Encode, hash, diff, format, decode, convert &mdash; ten tools that run in this tab and
+            nowhere else. Wire them together on the canvas and a throwaway one-liner becomes a
+            pipeline you can see, share and re-run.
+          </p>
+        </header>
+
+        <nav class="cold-open-section" aria-labelledby="cold-open-start-label">
+          <p class="cold-open-label" id="cold-open-start-label">Start</p>
+          <ul class="cold-open-ways">
+            <li>
+              <a
+                class="cold-open-way"
+                href="/?p=RY0xCsMwEAT_svUFHDmk0FeECkU6giE-BekuEIz-HoSLdLPF7Bz4wK8EgQ8BcgXhkTrfb6CFFjqw18LwKJwnjEgB4kDo2iyrNS6XkjSBVncKvVrLU0mmFQRN7ckKj2_aXyBsUlgU3o0YCfzvVtO3Kej832SOGMcP"
+              >
+                <span class="cold-open-way-name">Decode, then convert</span>
+                <span class="cold-open-way-path">Base64 &rarr; JSON to YAML</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="cold-open-way"
+                href="/?p=Rc4xisMwEEDRu_x6Ao5DttAVcgSjQtiD5ZCMgjQKCcF3X5YUW_7m8T88CSfBCNOEHRGa1z57r7ocluQJGWSQD630OiuBuT0RPNVVncC1FUPYbFFzwiC0Uv2i70bw2nWPMmEjQk4tI6fx66XbWurm-U6g5XQYzz8IanNZNlsJZH2xxyjo_1vp_uiOfMHN_iLG_Rc"
+              >
+                <span class="cold-open-way-name">Fingerprint a CSV</span>
+                <span class="cold-open-way-path">CSV to JSON &rarr; SHA-256</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="cold-open-way"
+                href="/?p=bc5NCoMwFATgu8x6hPxUF7lKyCKtwQg1KY0WQbx7sRZE2t17DN8wC14wmkgw1iJJEFdfQnMBBQUXDLkNMAjpth2ro0VSIKIvEdRKsJKy4QJ_7_KzH-MAgxJ9peoG3F2fOhjEMH-9PvlfPrT1P-qIcMzM0_iYRnCf06ft-bSfQ32Ebn0D"
+              >
+                <span class="cold-open-way-name">Encode, then compare digests</span>
+                <span class="cold-open-way-path">Base64 &rarr; SHA-256 and MD5</span>
+              </a>
+            </li>
+            <li>
+              <a class="cold-open-way" href="/tools">
+                <span class="cold-open-way-name">Every tool, one at a time</span>
+                <span class="cold-open-way-path">A plain list at /tools</span>
+              </a>
+            </li>
+            <li>
+              <button class="cold-open-way" type="button" id="cold-open-start">
+                <span class="cold-open-way-name">Start with an empty canvas</span>
+                <span class="cold-open-way-path">Place the first node with K</span>
+              </button>
+            </li>
+          </ul>
+          <p class="cold-open-aside">
+            The first three are ordinary share links &mdash; the same kind the canvas&rsquo;s Share
+            button makes. A link carries the shape of a pipeline and never anything you typed into
+            it.
+          </p>
+        </nav>
+
+        <div class="cold-open-section">
+          <p class="cold-open-label"><code>connect-src 'none'</code></p>
+          <p class="cold-open-body">
+            Every document here is served with a Content-Security-Policy that removes the
+            browser&rsquo;s ability to make a network request at all. <code>fetch</code>,
+            <code>XMLHttpRequest</code>, <code>WebSocket</code> and <code>sendBeacon</code> are
+            refused in the network stack, below the JavaScript &mdash; so nothing on this page can
+            send what you paste anywhere, including code we did not write. Checked in Firefox and
+            WebKit against the built app on every change, rather than asserted.
+          </p>
+        </div>
+
+        <ul class="cold-open-facts">
+          <li>Works offline after the first load</li>
+          <li>A complete keyboard path, not a fallback</li>
+          <li>No account, no upload, no telemetry</li>
+        </ul>
+      </section>
+    </div>
+
+    <!--
+      WHO SEES IT: a first-time visitor on `/`, and nobody else.
+
+      This runs where it sits, immediately after the markup it governs and
+      before the module below, so the decision lands in the same parse that
+      produced the element - there is no frame in which the wrong person sees
+      it, in any engine, in dev or in production. A CSS rule could not promise
+      that: in dev the stylesheet arrives with the module, not before it.
+
+      Three ways to not be a first-time visitor, and all three are the same
+      statement - THERE IS SOMETHING BETTER TO SHOW YOU THAN AN INTRODUCTION:
+
+        - a path other than `/`. This document is the SPA fallback for every
+          URL, so /tools/base64 is served these bytes too;
+        - a `?p=` share link, which is a pipeline somebody sent you;
+        - a saved graph with at least one node in it, which is your own work.
+
+      Plus the flag written when the panel is dismissed by hand, so choosing
+      "empty canvas" and then reloading does not hand you the introduction
+      again.
+
+      `#root` is made inert rather than left alone. The canvas mounts behind
+      this panel a moment later, and a toolbar that is invisible but tabbable
+      is the oldest overlay bug there is. Nothing in `#root` is focusable until
+      the app boots, so there is no ordering hazard in setting it here; the app
+      clears it when it takes the panel down.
+
+      A parse failure or a storage exception falls through to SHOWING the
+      panel. That is the deliberate direction: the cost of an unnecessary
+      introduction is one click, and the cost of the opposite is a blank grid.
+    -->
+    <script>
+      (function () {
+        var panel = document.getElementById('cold-open');
+        if (!panel) return;
+
+        var first = window.location.pathname === '/' && !/[?&]p=/.test(window.location.search);
+
+        if (first) {
+          try {
+            if (window.localStorage.getItem('patchbay:cold-open:v1')) first = false;
+            var saved = window.localStorage.getItem('patchbay:graph:v3');
+            if (saved) {
+              var nodes = JSON.parse(saved).nodes;
+              if (nodes && nodes.length > 0) first = false;
+            }
+          } catch (error) {
+            /* Unreadable storage is not a reason to hide the only content. */
+          }
+        }
+
+        if (first) {
+          var root = document.getElementById('root');
+          if (root) root.inert = true;
+        } else {
+          panel.remove();
+        }
+      })();
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
