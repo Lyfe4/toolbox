@@ -3830,7 +3830,19 @@ async function checkTouch(engine, label) {
        * check failing on a scrim intercepting its clicks.
        */
       await locator.scrollIntoViewIfNeeded().catch(() => {});
-      const box = await locator.boundingBox();
+      /*
+       * A SHORT TIMEOUT, AND A CATCH, because the default is thirty seconds
+       * and a throw - and a throw here is not a failing check, it is the
+       * script dying and taking every check after it with it.
+       *
+       * The case that does it is a toast: the Undo offered after a wire is
+       * deleted lives six seconds, `count()` and `boundingBox()` are two round
+       * trips, and a slow run puts the dismissal between them. Observed once
+       * in WebKit, where it aborted the run two hundred checks early and
+       * reported a Playwright timeout rather than anything about the app.
+       * Returning false instead makes it the named failure it always was.
+       */
+      const box = await locator.boundingBox({ timeout: 2000 }).catch(() => null);
       if (!box) return false;
       await page.touchscreen.tap(
         Math.round(box.x + box.width / 2),
