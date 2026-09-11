@@ -187,9 +187,28 @@
   }
 }
 
-.cold-open-way:hover {
+.cold-open-way:hover:enabled,
+a.cold-open-way:hover {
   background-color: var(--pb-control-surface-hover);
   border-color: var(--pb-control-border-hover);
+}
+
+/*
+ * The start button before the app has arrived to honour it.
+ *
+ * Visible rather than hidden: a row that appears and pushes the others down
+ * is a worse first second than a row that is plainly not ready yet. On a warm
+ * load this state lasts about 30ms and nobody sees it; on a cold one it is the
+ * honest answer for as long as it is true.
+ */
+.cold-open-way:disabled {
+  background-color: var(--pb-control-surface-disabled);
+  cursor: default;
+}
+
+.cold-open-way:disabled .cold-open-way-name,
+.cold-open-way:disabled .cold-open-way-path {
+  color: var(--pb-ink-disabled);
 }
 
 .cold-open-way-name {

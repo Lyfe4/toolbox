@@ -38,6 +38,9 @@ function mountColdOpen(): void {
   const start = document.createElement('button');
   start.id = COLD_OPEN_START_ID;
   start.type = 'button';
+  // Shipped disabled - the canvas is what makes it mean anything, and it is a
+  // lazy chunk away. See onColdOpenStart.
+  start.disabled = true;
   start.textContent = 'Start with an empty canvas';
 
   panel.append(start);
@@ -103,6 +106,12 @@ describe('while the cold open is up', () => {
 
     expect(screen.queryByText('Empty canvas')).not.toBeInTheDocument();
     expect(document.getElementById(COLD_OPEN_ID)).not.toBeNull();
+  });
+
+  it('makes the start button live, because now it can honour it', () => {
+    renderCanvas();
+
+    expect(screen.getByRole('button', { name: 'Start with an empty canvas' })).toBeEnabled();
   });
 
   it('the toolbar is still rendered, and still behind an inert root', () => {

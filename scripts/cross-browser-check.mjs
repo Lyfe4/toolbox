@@ -7124,6 +7124,69 @@ async function checkColdOpen(browser, label) {
       await noScript.close().catch(() => {});
     }
 
+    /* -- With the module graph blocked ---------------------------------- */
+    /*
+     * STRONGER THAN THE NO-JAVASCRIPT CONTEXT ABOVE, and it is here because
+     * of a bug that one could not see.
+     *
+     * The style layer used to be imported by `main.tsx`, which put it in the
+     * module graph. A production build extracts that into a render-blocking
+     * <link>, so the check above passed and everything looked right - while
+     * `pnpm dev`, which does no extraction, served the panel as raw unstyled
+     * markup until the first chunk arrived. Scripting being OFF hid the
+     * difference: with no modules to run there is no module-injected
+     * stylesheet to be late.
+     *
+     * So: scripting on, inline bootstrap running, and every chunk refused.
+     * That is the app failing to arrive rather than being switched off, and
+     * the panel has to be fully painted anyway - which is the whole claim the
+     * first screen makes about itself.
+     */
+    const blocked = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const blockedPage = await blocked.newPage();
+    try {
+      await blockedPage.route('**/assets/*.js', (route) => route.abort());
+      await blockedPage.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded' });
+
+      const painted = await blockedPage.evaluate(() => {
+        const box = document.querySelector('.cold-open-panel');
+        const title = document.getElementById('cold-open-title');
+        if (!box || !title) return null;
+        return {
+          border: getComputedStyle(box).borderTopWidth,
+          background: getComputedStyle(box).backgroundColor,
+          // The cold open's OWN rule, not an inherited default: nothing else
+          // would uppercase this heading.
+          transform: getComputedStyle(title).textTransform,
+        };
+      });
+      /*
+       * And the one control that needs the app says so, rather than looking
+       * live and swallowing the press. This is the state a cold connection
+       * shows for real, for as long as the entry bundle and the canvas chunk
+       * take; here it is permanent, which is what makes it checkable.
+       */
+      check(
+        label,
+        'and its one scripted control is visibly not ready, rather than dead',
+        await blockedPage.locator('#cold-open-start').isDisabled(),
+      );
+
+      check(
+        label,
+        'the first screen is painted with every module refused',
+        painted !== null &&
+          painted.border !== '0px' &&
+          painted.background !== 'rgba(0, 0, 0, 0)' &&
+          painted.transform === 'uppercase',
+        painted === null
+          ? 'no panel'
+          : `${painted.border} border on ${painted.background}, title ${painted.transform}`,
+      );
+    } finally {
+      await blocked.close().catch(() => {});
+    }
+
     /* -- A first-time visitor ------------------------------------------- */
     await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
     check(
@@ -7164,6 +7227,46 @@ async function checkColdOpen(browser, label) {
       'an example link opens the pipeline it names, with no panel in the way',
       wired.panel === false && wired.nodes === 2 && wired.inert === false,
       `${String(wired.nodes)} node(s)`,
+    );
+
+    /*
+     * AND FRAMES IT. The first version of these links encoded the graph at the
+     * world origin, so both nodes landed in the top-left corner with half the
+     * first one under the toolbar and the rest of the canvas empty - a
+     * pipeline that decoded perfectly and read as a broken page. Two things
+     * fixed it and this asserts the pair: the links now carry the coordinates
+     * the app itself would produce, and any share link is fitted on arrival.
+     */
+    const framing = await page.evaluate(() => {
+      const surface = document.querySelector('[role="application"]');
+      if (!surface) return null;
+      const canvas = surface.getBoundingClientRect();
+      const bar = document.querySelector('[data-canvas-chrome="toolbar"]')?.getBoundingClientRect();
+      const nodes = [...document.querySelectorAll('[data-node-id]')].map((node) =>
+        node.getBoundingClientRect(),
+      );
+      if (nodes.length === 0) return null;
+
+      return {
+        inView: nodes.every(
+          (box) =>
+            box.left >= canvas.left &&
+            box.right <= canvas.right &&
+            box.top >= canvas.top &&
+            box.bottom <= canvas.bottom,
+        ),
+        clearOfToolbar:
+          bar === undefined || nodes.every((box) => box.top >= bar.bottom || box.left >= bar.right),
+        first: nodes[0],
+      };
+    });
+    check(
+      label,
+      'and frames it on the canvas rather than in the corner under the toolbar',
+      framing !== null && framing.inView && framing.clearOfToolbar,
+      framing === null
+        ? 'no nodes'
+        : `first node at ${String(Math.round(framing.first.left))},${String(Math.round(framing.first.top))}`,
     );
 
     /* -- Dismissing it by hand ------------------------------------------ */
@@ -7257,6 +7360,33 @@ async function checkColdOpen(browser, label) {
         'and the work it was suppressed in favour of is on the canvas',
         restored > 0,
         `${String(restored)} node(s) restored`,
+      );
+
+      /*
+       * AND IS NOT REFRAMED, which is the other half of the share-link
+       * decision rather than an absence of one. A link's coordinates belong to
+       * whoever sent it; a save's belong to the person reading it, who chose
+       * them against this viewport - so a restore that fitted would overrule
+       * its own user's layout on every reload. The plane is left exactly where
+       * the default viewport puts it.
+       */
+      const planeTransform = await freshPage.evaluate(
+        () =>
+          document.querySelector('[data-testid="canvas-plane"]')?.style.transform ?? '(no plane)',
+      );
+      /*
+       * Matched rather than compared. The canvas writes
+       * `translate(${x}px, ${y}px) scale(${zoom})`, and reading it back off
+       * `style.transform` returns the CSS serialisation - which drops a
+       * second argument of zero, so an untouched plane comes back as
+       * `translate(0px) scale(1)` in both engines. Both spellings mean the
+       * same thing and both mean "nobody moved this".
+       */
+      check(
+        label,
+        'and a restored save is left where its author put it, not fitted',
+        /^translate\(0px(?:, 0px)?\) scale\(1\)$/.test(planeTransform),
+        planeTransform,
       );
     } finally {
       await fresh.close().catch(() => {});

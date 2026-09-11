@@ -1414,15 +1414,39 @@ An inline script sits immediately after the markup it governs and before the
 module script. It either removes the panel outright or marks `#root` inert, and
 it does so in the same parse that produced the element.
 
-That placement is the whole mechanism. A CSS rule could not promise it: in dev
-the stylesheet arrives with the module rather than before it, so `/tools` would
-flash an introduction for as long as the first chunk took. A React effect could
-not promise it either, because by the time an effect runs a frame has already
-been painted — and the failure being avoided is precisely a **flash of the
-wrong first screen**, not a leftover element.
+That placement is the whole mechanism. A React effect could not promise it,
+because by the time an effect runs a frame has already been painted — and the
+failure being avoided is precisely a **flash of the wrong first screen**, not a
+leftover element.
 
-Removing rather than hiding is the same argument one level on: a hidden panel is
-state the app would have to know about and eventually get wrong.
+Removing rather than hiding is a different argument: a hidden panel is state,
+and the app would have to know about it, agree with it, and keep agreeing. A
+removed one cannot come back on a later render.
+
+### The document owns its stylesheet
+
+The style layer is a `<link>` in `index.html`, not an `import` in `main.tsx`,
+and the difference is invisible in production and load-bearing in dev.
+
+Vite extracts CSS out of the module graph at build time and writes exactly that
+`<link>` into the head itself, so a production build looked identical either
+way — which is why every gate passed. `pnpm dev` does no extraction: an
+imported stylesheet arrives as a JavaScript module that injects a `<style>`
+when it runs. So the one screen whose entire claim is that it exists before any
+module has been fetched was served, in dev, as raw unstyled markup on a white
+page for as long as the first chunk took.
+
+The rule the fix generalises to is the same one the theme bootstrap already
+followed: **whatever has to be true before the module runs is the document's to
+declare.** The markup, the theme attribute, the decision about who sees the
+panel, and now the stylesheet.
+
+Both halves are asserted in `src/app/index.head.test.ts` — that the tag is
+there, and that no module imports the stylesheet as well, because a second
+owner is a silent route back to the dev behaviour rather than a duplicate in
+the build. `check:browsers` adds the other end: it loads `/` with every
+`assets/*.js` request aborted — scripting on, inline bootstrap running, the app
+simply never arriving — and asserts the panel is still fully painted.
 
 ### Inert, and where focus goes
 
@@ -1440,6 +1464,43 @@ and focus on a removed element falls to `<body>` where the canvas's keyboard
 model is unreachable and the next `Tab` restarts from the top of the page. A
 panel that came down because a share link brought a graph with it never had
 focus, so that path does not take it.
+
+### A share link is fitted; a saved graph is not
+
+The three example links are the first pipelines most people will ever open, and
+the first version of them put every graph at the world origin. They decoded
+perfectly, and both nodes landed in the top-left corner with half the first one
+under the toolbar and the whole rest of the canvas empty. It read as a broken
+page.
+
+There were two causes and they needed two fixes, because either alone would
+have hidden the other.
+
+**The coordinates were wrong.** Nothing this application creates has ever put a
+node at `(0, 0)` — `addPreset` drops a preset at `centre − (NODE_WIDTH, 80)` in
+world space, which on any real canvas is a comfortable positive coordinate.
+`(0, 0)` was a hand-encoded number and nothing else. The links now carry what
+the app itself would have produced, and `coldOpen.test.ts` checks both the
+place and the shape: every node at a positive coordinate, and the layout equal
+to the `PIPELINE_PRESETS` entry of the same name, snapped the way the decoder
+snaps.
+
+**And nothing framed an arriving link.** This is the general case and it is not
+about these three at all: a share link's coordinates belong to whoever sent it,
+chosen against their viewport on their screen, and the person opening it has no
+relationship with them. Dropped into the default viewport they land wherever
+they land. So the canvas now fits on arrival — the same argument `addPreset`
+already makes, that the point of loading a several-node graph is to see the
+shape, and the case where it is most true, because the reader has never seen
+the thing before.
+
+**A restored save is deliberately left alone.** Those coordinates are the
+reader's own, chosen against this viewport, and nodes are created in view — so
+a save comes back where it was built. Fitting it would be the app overruling a
+layout its own user made, on every reload, to solve a problem that case does
+not have. `F` is one key away. The harness asserts both directions: an example
+link lands with every node inside the canvas and clear of the toolbar, and a
+restored save leaves the plane on the identity transform.
 
 ### Two empty states, deliberately
 

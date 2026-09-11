@@ -103,17 +103,25 @@ export function dismissColdOpen(): void {
 }
 
 /**
- * Wires the panel's one button to `onStart` and hands back the unsubscribe.
+ * Wires the panel's one button to `handler`, and makes it live.
  *
  * The listener is attached rather than the markup carrying an `onclick`,
  * because an inline handler is exactly what `script-src` without
  * `'unsafe-inline'` refuses - the button would be dead in production and fine
  * in every test that never served the real headers.
+ *
+ * IT SHIPS DISABLED, and this is where that ends. The panel's four other rows
+ * are anchors and work as soon as the markup is parsed; this one needs the
+ * canvas behind it to exist, which is the entry bundle plus a lazy chunk away.
+ * Enabling it here means the control is inert for exactly as long as pressing
+ * it would have done nothing, and says so while it is - rather than looking
+ * live and swallowing the press.
  */
 export function onColdOpenStart(handler: () => void): () => void {
   const button = document.getElementById(COLD_OPEN_START_ID);
-  if (!button) return () => undefined;
+  if (!(button instanceof HTMLButtonElement)) return () => undefined;
 
+  button.disabled = false;
   button.addEventListener('click', handler);
   return () => {
     button.removeEventListener('click', handler);

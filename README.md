@@ -47,6 +47,20 @@ The cost is **2.3 kB gzipped**, all of it markup and CSS: the document goes from
 document is served `no-cache`, so a returning visitor pays it only when a deploy
 has actually changed it.
 
+**The stylesheet is the document's too**, and that took a bug to notice. It was
+`import '@/styles/global.css'` in `main.tsx`, which put the whole style layer in
+the module graph. A production build extracts that into exactly the
+render-blocking `<link>` Vite now writes itself, so nothing downstream could
+tell the difference — but `pnpm dev` does no extraction, and an imported
+stylesheet arrives as a JavaScript module that injects a `<style>` when it runs.
+The one screen whose whole claim is that it exists before any module has been
+fetched was, in dev, raw unstyled markup on a white page until the first chunk
+landed. The rule it generalises to is the one the theme bootstrap already
+followed: **whatever has to be true before the module runs is the document's to
+declare.** It costs the payload nothing — Vite emits the identical single hashed
+stylesheet — and `check:browsers` now loads `/` with every `assets/*.js` request
+aborted and asserts the panel is painted anyway.
+
 **Nobody who has already arrived sees it.** An inline script decides, in the
 same parse that produced the element, and _removes_ it rather than hiding it —
 so there is no frame in which the wrong person is looking at an introduction,
@@ -67,6 +81,22 @@ hand also moves focus to the canvas, because focus on a removed element falls to
 `<body>` and the next `Tab` restarts from the top of the page — a panel that
 came down because a share link brought a graph with it never had focus, so that
 path leaves it alone.
+
+**A share link is fitted on arrival; a saved graph is not.** A link's
+coordinates belong to whoever sent it — chosen against their viewport, on their
+screen — and the person opening it has no relationship with them, so the canvas
+frames the graph when one arrives. That is the same argument the palette already
+makes for a preset: the point of loading a several-node graph is to see the
+shape. A restored save is left exactly where it was: those coordinates are the
+reader's own, made against this viewport, and reframing them every reload would
+be the app overruling a layout its own user built. `F` is one key away.
+
+The three example links had a second, separate problem — they were hand-encoded
+at the world origin, which is a coordinate nothing this app has ever produced,
+and both nodes landed under the toolbar. They now carry what `addPreset` itself
+would produce, and a test checks the place and the shape: every node at a
+positive coordinate, and the layout equal to the preset of the same name.
+Fitting alone would have hidden that rather than fixed it.
 
 **What ties it to the code.** Nothing in the type system connects hand-written
 HTML to the app, so the joins are asserted instead — see

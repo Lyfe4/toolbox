@@ -26,6 +26,13 @@ import indexHtml from '../../index.html?raw';
 
 const SITE = '%VITE_SITE_URL%';
 
+/** Every TypeScript source in the app, as text. See `the stylesheet` below. */
+const sources = import.meta.glob<string>('../**/*.{ts,tsx}', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+});
+
 /** The `content` of a `<meta>` matched by some other attribute pair. */
 function metaContent(attribute: string, value: string): string | undefined {
   const pattern = new RegExp(
@@ -52,6 +59,51 @@ describe('theme-color', () => {
     const declared = pattern.exec(indexHtml)?.[1];
 
     expect(declared).toBe(resolveTheme(theme)['pb-surface-raised']);
+  });
+});
+
+/**
+ * THE DOCUMENT OWNS ITS STYLESHEET.
+ *
+ * It did not, and the bug that produced was invisible to every gate.
+ * `main.tsx` imported `@/styles/global.css`, which made the whole style layer
+ * part of the MODULE GRAPH. In a production build that is harmless - Vite
+ * extracts it and writes a render-blocking <link> into the head, which is why
+ * the cross-browser harness, which only ever tests the build, said the first
+ * screen was painted. In dev there is no extraction: the CSS arrives as a
+ * JavaScript module that injects a <style> tag when it runs.
+ *
+ * So `pnpm dev` served the cold open - hand-written markup whose entire
+ * purpose is to be on screen before any module has been fetched - as raw
+ * unstyled HTML on a white page, for as long as the first chunk took. The one
+ * screen that was supposed to prove the document could stand on its own was
+ * the screen that could not.
+ *
+ * A <link> in index.html is the same trade the inline theme script already
+ * makes, one layer along: whatever has to be true before the module runs is
+ * declared by the document, not by the module. Vite resolves the href at
+ * build time and emits the identical single hashed stylesheet, so this costs
+ * the payload nothing and makes dev and production agree.
+ *
+ * Both halves are asserted, because either one alone can be reverted without
+ * breaking anything a browser would notice in production.
+ */
+describe('the stylesheet', () => {
+  it('is linked by the document rather than imported by a module', () => {
+    expect(indexHtml).toMatch(/<link[^>]+rel="stylesheet"[^>]+href="\/src\/styles\/global\.css"/);
+  });
+
+  /*
+   * And is not ALSO in the module graph. A second owner is not a duplicate
+   * stylesheet in the build - Vite dedupes - it is a silent route back to the
+   * dev behaviour above, because the module copy is the one dev serves.
+   */
+  it('is imported by no module', () => {
+    const offenders = Object.entries(sources)
+      .filter(([, source]) => /import\s+['"][^'"]*styles\/global\.css['"]/.test(source))
+      .map(([path]) => path);
+
+    expect(offenders).toEqual([]);
   });
 });
 

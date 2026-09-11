@@ -415,10 +415,40 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
           // finishes, which is a wrong answer rather than a missing one.
           usePipelineStore.getState().reset();
           store.getState().replaceGraph(result.graph);
+
+          /*
+           * FITTED, BECAUSE THE COORDINATES IN A LINK ARE THE AUTHOR'S.
+           *
+           * A share link carries world positions, and the person opening it
+           * has no relationship with them at all - they were chosen against
+           * somebody else's viewport, on somebody else's screen. Dropped into
+           * the default viewport they land wherever they happen to land, which
+           * for a graph built near the origin is jammed into the top-left
+           * corner under the toolbar with the rest of the canvas empty. It
+           * reads as a broken page rather than as a pipeline.
+           *
+           * This is the same argument `addPreset` already makes one screen
+           * down - the point of loading a several-node graph is to see the
+           * SHAPE, which is no use if part of it is off-screen - and a link is
+           * the case where it is most true, because the reader has never seen
+           * the thing before.
+           *
+           * A RESTORED SAVE IS DELIBERATELY NOT FITTED. Those coordinates are
+           * the reader's own, chosen against their own viewport, and nodes are
+           * created in view - so a save comes back where it was built.
+           * Reframing it would be the app overruling a layout its user made,
+           * every reload, and `F` is one key away if they want it.
+           */
+          const rect = rootRef.current?.getBoundingClientRect();
+          useViewportStore.getState().fitToContent(result.graph, {
+            width: rect?.width ?? 800,
+            height: rect?.height ?? 600,
+          });
+
           store
             .getState()
             .announce(
-              `Loaded a shared pipeline: ${result.graph.nodeOrder.length.toString()} nodes. Inputs are empty - shared links never carry data.`,
+              `Loaded a shared pipeline: ${result.graph.nodeOrder.length.toString()} nodes, fitted in view. Inputs are empty - shared links never carry data.`,
             );
         } else {
           notify({ title: 'Shared link rejected', description: result.message, tone: 'error' });

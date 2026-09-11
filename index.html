@@ -56,6 +56,27 @@
       crossorigin
     />
 
+    <!--
+      THE DOCUMENT'S OWN STYLESHEET, and it has to be the document's.
+
+      This used to be `import '@/styles/global.css'` in main.tsx, which put the
+      whole style layer in the MODULE GRAPH. A production build extracts that
+      into exactly the render-blocking <link> Vite writes here instead, so
+      nothing downstream could tell the difference - but `pnpm dev` does no
+      extraction: the CSS arrived as a JavaScript module that injected a
+      <style> when it ran. The cold open below, whose entire purpose is to be
+      on screen before any module has been fetched, was therefore served as raw
+      unstyled markup on a white page for as long as the first chunk took.
+
+      Declared here, both agree, and the rule generalises past this one bug:
+      whatever has to be true before the module runs is the document's to say.
+      That is the same trade the theme bootstrap makes below. Vite resolves the
+      href at build and emits the identical single hashed stylesheet, so it
+      costs the payload nothing. src/app/index.head.test.ts asserts both halves
+      - that the tag is here, and that no module imports it as well.
+    -->
+    <link rel="stylesheet" href="/src/styles/global.css" />
+
     <script>
       (function () {
         var root = document.documentElement;
@@ -141,7 +162,7 @@
             <li>
               <a
                 class="cold-open-way"
-                href="/?p=RY0xCsMwEAT_svUFHDmk0FeECkU6giE-BekuEIz-HoSLdLPF7Bz4wK8EgQ8BcgXhkTrfb6CFFjqw18LwKJwnjEgB4kDo2iyrNS6XkjSBVncKvVrLU0mmFQRN7ckKj2_aXyBsUlgU3o0YCfzvVtO3Kej832SOGMcP"
+                href="/?p=RY3BCsMgEAX_5Z230GhIwV8RDzYuJdCsRddCCf57kFJ6mzkMc-ANZwkC5z1kAuEeKy8zaJ4WsuZKB_acGA6J1wE9kIcYEKqWtmornC4pagTd7C-puZV1RLFpBkFjebDC4RP3JwibJBaFMz0EAv_vuemrKeh72GRICP0E"
               >
                 <span class="cold-open-way-name">Decode, then convert</span>
                 <span class="cold-open-way-path">Base64 &rarr; JSON to YAML</span>
@@ -150,7 +171,7 @@
             <li>
               <a
                 class="cold-open-way"
-                href="/?p=Rc4xisMwEEDRu_x6Ao5DttAVcgSjQtiD5ZCMgjQKCcF3X5YUW_7m8T88CSfBCNOEHRGa1z57r7ocluQJGWSQD630OiuBuT0RPNVVncC1FUPYbFFzwiC0Uv2i70bw2nWPMmEjQk4tI6fx66XbWurm-U6g5XQYzz8IanNZNlsJZH2xxyjo_1vp_uiOfMHN_iLG_Rc"
+                href="/?p=Rc5BasMwEEDRu_z1BBI7TUBX6BGMFsIeLId2VKRRSAi-eymldPk3j__iThgFI0wTdkJoXvvsvepyWJIn5Hy6yDgc5UUrvc5KYG53BE91VSdwa8UQNlvUnHAUWqn-rs9G8Np1jzJhA0JOLSPX8U9MH2upm-dPAi2nw_B2QVCby7LZSiDrgz1GQf8PS_ev7sgvudlPxLh_Aw"
               >
                 <span class="cold-open-way-name">Fingerprint a CSV</span>
                 <span class="cold-open-way-path">CSV to JSON &rarr; SHA-256</span>
@@ -159,7 +180,7 @@
             <li>
               <a
                 class="cold-open-way"
-                href="/?p=bc5NCoMwFATgu8x6hPxUF7lKyCKtwQg1KY0WQbx7sRZE2t17DN8wC14wmkgw1iJJEFdfQnMBBQUXDLkNMAjpth2ro0VSIKIvEdRKsJKy4QJ_7_KzH-MAgxJ9peoG3F2fOhjEMH-9PvlfPrT1P-qIcMzM0_iYRnCf06ft-bSfQ32Ebn0D"
+                href="/?p=bc5BCoMwFATQu8x6CprEFHKVkEVagxFqLE0sBfHuxVoQS3f_M7xhZjxhJJFgrEWqQVx8DlqBqtaUouKMYWwDDEK6rsfiaJEEiOhzBM9SU1SKM_ytGx99iQMMcvQn0WhwY33qYBDD68vlgSupf_jQNv-oI8K-dJzKfSrgtqZP6_NpP4ZyD93yBg"
               >
                 <span class="cold-open-way-name">Encode, then compare digests</span>
                 <span class="cold-open-way-path">Base64 &rarr; SHA-256 and MD5</span>
@@ -172,7 +193,23 @@
               </a>
             </li>
             <li>
-              <button class="cold-open-way" type="button" id="cold-open-start">
+              <!--
+                DISABLED UNTIL THE APP CAN HONOUR IT.
+
+                The four rows above are anchors and work from the moment this
+                markup is parsed. This one cannot: taking the panel down means
+                releasing the canvas behind it, and the canvas is a lazy chunk
+                behind the entry bundle. Measured on localhost the gap is about
+                30ms and nobody could find it; on a cold connection it is the
+                entry plus the canvas chunk, which is seconds of a control that
+                looks live, does nothing when pressed, and gives no reason.
+
+                So it says so. `onColdOpenStart` in coldOpen.ts enables it at
+                the moment it attaches the handler, which is the first moment
+                pressing it would do anything - and with scripting off it stays
+                disabled, which is the truth rather than a trap.
+              -->
+              <button class="cold-open-way" type="button" id="cold-open-start" disabled>
                 <span class="cold-open-way-name">Start with an empty canvas</span>
                 <span class="cold-open-way-path">Place the first node with K</span>
               </button>
@@ -211,8 +248,10 @@
       This runs where it sits, immediately after the markup it governs and
       before the module below, so the decision lands in the same parse that
       produced the element - there is no frame in which the wrong person sees
-      it, in any engine, in dev or in production. A CSS rule could not promise
-      that: in dev the stylesheet arrives with the module, not before it.
+      it, in any engine, in dev or in production. A CSS rule could hide it just
+      as early, now that the stylesheet is the document's; what it could not do
+      is leave nothing behind. A hidden panel is state, and the app would have
+      to know about it, agree with it, and keep agreeing.
 
       Three ways to not be a first-time visitor, and all three are the same
       statement - THERE IS SOMETHING BETTER TO SHOW YOU THAN AN INTRODUCTION:
