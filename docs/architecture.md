@@ -2714,9 +2714,12 @@ engine — and a repackage that would exceed it is refused **before anything is
 copied**, naming the size and pointing at the audio operation, which produces a
 few tens of megabytes out of the same file and is unaffected.
 
-What that means in practice: a DivX film, an AVCHD clip and a two-gigabyte MKV
-now go through; a four-gigabyte tuner recording can have its audio extracted
-but not its container changed. The remaining fix is not a larger number either
+What that means in practice: a DivX film and a feature-length MKV now go
+through, an AVCHD clip split at 2 GB is at the line, and a four-gigabyte tuner
+recording can have its audio extracted but not its container changed. The
+output is usually a little smaller than the input - the extra audio dubs are
+left behind and nothing but `moov` and `mdat` is written - so a file a shade
+over the ceiling often produces an answer a shade under it. The remaining fix is not a larger number either
 — it is writing the output somewhere other than a blob, which means the File
 System Access API in Chromium or OPFS in all three, and both are a save flow
 rather than a value. Neither is paid for by anything this version does.

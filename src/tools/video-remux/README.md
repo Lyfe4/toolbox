@@ -416,9 +416,16 @@ What that means for the four archetypal files:
 | File                               | Repackage                                        | Extract the audio |
 | ---------------------------------- | ------------------------------------------------ | ----------------- |
 | A DivX film, 700 MB – 1.4 GB       | reads it, then refuses the **codec** — see above | yes               |
-| A 2 GB MKV of a feature            | yes                                              | yes               |
-| An AVCHD clip, split at 2 GB       | yes                                              | yes               |
+| A 1.5 GB MKV of a feature          | yes                                              | yes               |
+| An AVCHD clip, split at 2 GB       | at the line — see below                          | yes               |
 | An hour of DVB recording, 2 – 4 GB | refused: the answer would not fit                | yes               |
+
+**At the line** means what it says. The output is usually a little smaller than
+the input — the extra audio dubs are left behind, a transport stream's packet
+headers are 2% of it, and nothing but `moov` and `mdat` is written — so a file
+a shade over the ceiling often produces an answer a shade under it. A file well
+over it does not, and the refusal names the figure rather than leaving anybody
+to work it out.
 
 The remaining fix is not a bigger number either. It is writing the output
 somewhere that is not a blob — the File System Access API, which is Chromium
