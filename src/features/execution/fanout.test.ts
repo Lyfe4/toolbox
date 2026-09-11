@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { getManifestEntry, loadTool, type ToolId } from '@/features/registry';
 import type { Bytes, ToolOutputs, ToolResult } from '@/features/registry/types';
+import { bytesValue } from '@/features/registry/types';
 
 import { createExecutionEngine, type ExecutionEngine } from './engine';
 
@@ -46,7 +47,7 @@ describe('binary fan-out', () => {
 
     const first = await engine.execute({
       toolId: BASE64,
-      inputs: { input: { type: 'bytes', bytes, mediaType: null, filename: null } },
+      inputs: { input: bytesValue(bytes) },
       options: { mode: 'encode' },
     });
 
@@ -56,7 +57,7 @@ describe('binary fan-out', () => {
 
     const second = await engine.execute({
       toolId: BASE64,
-      inputs: { input: { type: 'bytes', bytes, mediaType: null, filename: null } },
+      inputs: { input: bytesValue(bytes) },
       options: { mode: 'encode', urlSafe: true },
     });
 
@@ -73,7 +74,7 @@ describe('binary fan-out', () => {
       [0, 1, 2].map(() =>
         engine.execute({
           toolId: BASE64,
-          inputs: { input: { type: 'bytes', bytes, mediaType: null, filename: null } },
+          inputs: { input: bytesValue(bytes) },
           options: { mode: 'encode' },
         }),
       ),
@@ -90,7 +91,7 @@ describe('binary fan-out', () => {
     await engine.execute({
       toolId: BASE64,
       // No `ownership` given at all.
-      inputs: { input: { type: 'bytes', bytes, mediaType: null, filename: null } },
+      inputs: { input: bytesValue(bytes) },
       options: { mode: 'encode' },
     });
 

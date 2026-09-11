@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { checkConnection, firstRefusedEdge } from '@/features/canvas/connections';
 import { instantiatePreset, PIPELINE_PRESETS } from '@/features/canvas/presets';
 import type { GraphData } from '@/features/canvas/types';
+import { bytesValue } from '@/features/registry/types';
 import { textToBytes } from '@/lib/base64';
 
 import { loadTool } from './loader';
@@ -425,25 +426,15 @@ describe('the renamed output ports', () => {
 });
 
 describe('the widened document ports', () => {
-  const bytesValue = (text: string): ToolValue => ({
-    type: 'bytes',
-    bytes: textToBytes(text),
-    mediaType: null,
-    filename: null,
-  });
+  const bytesOf = (text: string): ToolValue => bytesValue(textToBytes(text));
 
   /** Bytes that are not valid UTF-8: a lone continuation byte. */
-  const notText = (): ToolValue => ({
-    type: 'bytes',
-    bytes: new Uint8Array([0x48, 0x69, 0xff, 0xfe, 0x00, 0x80]),
-    mediaType: null,
-    filename: null,
-  });
+  const notText = (): ToolValue => bytesValue(new Uint8Array([0x48, 0x69, 0xff, 0xfe, 0x00, 0x80]));
 
   it('searches bytes wired into the regex subject', async () => {
     const tool = await loadTool('regex-tester');
     const result = await tool.run({
-      inputs: { input: bytesValue('alpha beta alpha') },
+      inputs: { input: bytesOf('alpha beta alpha') },
       options: { pattern: 'alpha', mode: 'match', global: true },
       context,
     });
@@ -459,7 +450,7 @@ describe('the widened document ports', () => {
   it('converts bytes wired into the text converter', async () => {
     const tool = await loadTool('text-convert');
     const result = await tool.run({
-      inputs: { input: bytesValue('# Heading\n') },
+      inputs: { input: bytesOf('# Heading\n') },
       options: { source: 'markdown', target: 'html', headingIds: false, linkify: true },
       context,
     });

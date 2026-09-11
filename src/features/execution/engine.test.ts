@@ -8,6 +8,7 @@ import {
   type ToolOutputs,
   type ToolResult,
 } from '@/features/registry/types';
+import { bytesValue } from '@/features/registry/types';
 
 import { createExecutionEngine, resolveExecutionMeta, type WorkerHandle } from './engine';
 import {
@@ -217,7 +218,7 @@ describe('execution engine, worker path', () => {
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const promise = engine.execute({
       toolId: TOOL_ID,
-      inputs: { input: { type: 'bytes', bytes, mediaType: null, filename: null } },
+      inputs: { input: bytesValue(bytes) },
       options: {},
     });
 
@@ -238,7 +239,7 @@ describe('execution engine, worker path', () => {
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const promise = engine.execute({
       toolId: TOOL_ID,
-      inputs: { input: { type: 'bytes', bytes, mediaType: null, filename: null } },
+      inputs: { input: bytesValue(bytes) },
       options: {},
       ownership: 'transfer',
     });
@@ -390,7 +391,7 @@ describe('guards', () => {
     const result = await engine.execute({
       toolId: TOOL_ID,
       inputs: {
-        input: { type: 'bytes', bytes: new Uint8Array(2048), mediaType: null, filename: null },
+        input: bytesValue(new Uint8Array(2048)),
       },
       options: {},
     });
@@ -468,7 +469,7 @@ describe('protocol helpers', () => {
     expect(measureInputs({ a: { type: 'text', text: 'abcd' } })).toBe(8);
     expect(
       measureInputs({
-        a: { type: 'bytes', bytes: new Uint8Array(10), mediaType: null, filename: null },
+        a: bytesValue(new Uint8Array(10)),
       }),
     ).toBe(10);
     expect(measureInputs({ a: { type: 'json', data: { x: 1 } } })).toBeGreaterThan(0);
@@ -477,8 +478,8 @@ describe('protocol helpers', () => {
   it('collects each buffer once, and skips non-binary values', () => {
     const bytes = new Uint8Array([1, 2, 3]);
     const transferables = collectTransferables([
-      { type: 'bytes', bytes, mediaType: null, filename: null },
-      { type: 'bytes', bytes, mediaType: null, filename: null },
+      bytesValue(bytes),
+      bytesValue(bytes),
       { type: 'text', text: 'not binary' },
       undefined,
     ]);
@@ -781,7 +782,7 @@ describe('a timeout with other requests in flight', () => {
     const transferred = engine.execute({
       toolId: TOOL_ID,
       inputs: {
-        input: { type: 'bytes', bytes: new Uint8Array([1, 2, 3]), mediaType: null, filename: null },
+        input: bytesValue(new Uint8Array([1, 2, 3])),
       },
       options: {},
       ownership: 'transfer',

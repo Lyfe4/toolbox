@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CanvasNode, GraphData } from '@/features/canvas/types';
 import { getManifestEntry, loadTool } from '@/features/registry';
 import type { ToolOutputs, ToolResult, ToolValue } from '@/features/registry/types';
+import { residentBytes } from '@/lib/binary';
 
 import { createExecutionEngine, type ExecuteOptions } from './engine';
 import { runPipeline, type PipelineCache, type PipelineState } from './graph';
@@ -80,7 +81,7 @@ function textAt(states: PipelineState, id: string, port: string): string {
 function bytesAt(states: PipelineState, id: string, port: string): Uint8Array {
   const value = states[id]?.outputs?.[port];
   if (value?.type !== 'bytes') throw new Error(`no bytes on ${id}.${port}`);
-  return value.bytes;
+  return residentBytes(value.data) ?? new Uint8Array();
 }
 
 const SHA256 = { algorithm: 'sha-256', encoding: 'hex' } as const;

@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { CanvasNode, GraphData, NodeId } from '@/features/canvas/types';
-import { ok, fail, type ToolOutputs, type ToolResult } from '@/features/registry/types';
+import {
+  bytesValue,
+  ok,
+  fail,
+  type ToolOutputs,
+  type ToolResult,
+  type ToolValue,
+} from '@/features/registry/types';
+import { residentBytes } from '@/lib/binary';
 
 import {
   CycleError,
@@ -276,9 +284,9 @@ describe('data flow', () => {
     const execute = vi.fn(async (options: ExecuteOptions): Promise<ToolResult<ToolOutputs>> => {
       await Promise.resolve();
       const value = options.inputs.input;
-      if (value?.type === 'bytes') seen.push(Array.from(value.bytes));
+      if (value?.type === 'bytes') seen.push(Array.from(residentBytes(value.data) ?? []));
       if (options.toolId === 'base64') {
-        return ok({ output: { type: 'bytes', bytes, mediaType: null, filename: null } });
+        return ok({ output: bytesValue(bytes) });
       }
       return ok({ digest: { type: 'text', text: 'digest' } });
     });
@@ -648,8 +656,8 @@ function fileNode(id: string, toolId: ToolName, portId = 'input', name = 'notes.
 
 const FILE_BYTES = Uint8Array.from([1, 2, 3, 4]);
 
-function fileValue(filename = 'notes.txt') {
-  return { type: 'bytes', bytes: FILE_BYTES, mediaType: null, filename } as const;
+function fileValue(filename = 'notes.txt'): ToolValue {
+  return bytesValue(FILE_BYTES, { filename });
 }
 
 describe('a file as a node input', () => {
@@ -756,7 +764,7 @@ describe('a file as a node input', () => {
     const seen: number[][] = [];
     const { execute } = recordingExecutor((options) => {
       const value = options.inputs.input;
-      if (value?.type === 'bytes') seen.push(Array.from(value.bytes));
+      if (value?.type === 'bytes') seen.push(Array.from(residentBytes(value.data) ?? []));
       return ok({ output: { type: 'text', text: 'out' } });
     });
 

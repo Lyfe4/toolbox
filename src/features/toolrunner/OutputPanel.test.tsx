@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import type { ToolValue } from '@/features/registry/types';
+import { bytesValue } from '@/features/registry/types';
 import { png as pngFixture } from '@/tools/image-convert/fixtures';
 
 import { OutputView } from './OutputPanel';
@@ -71,12 +72,12 @@ describe('OutputView: choosing a view', () => {
    * makes. You converted a picture and never saw it.
    */
   it('shows an image rather than telling you to download it', () => {
-    renderValue({
-      type: 'bytes',
-      bytes: pngFixture({ width: 8, height: 8 }),
-      mediaType: 'image/png',
-      filename: 'photo.png',
-    });
+    renderValue(
+      bytesValue(pngFixture({ width: 8, height: 8 }), {
+        mediaType: 'image/png',
+        filename: 'photo.png',
+      }),
+    );
 
     expect(screen.getByRole('img', { name: 'Tool Output' })).toBeInTheDocument();
     expect(screen.queryByText(/Binary output/)).not.toBeInTheDocument();
@@ -87,24 +88,19 @@ describe('OutputView: choosing a view', () => {
    * is really a ZIP must not be handed to an `<img>` to fail silently.
    */
   it('believes the bytes rather than the declared media type', () => {
-    renderValue({
-      type: 'bytes',
-      bytes: new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0]),
-      mediaType: 'image/png',
-      filename: 'not-really.png',
-    });
+    renderValue(
+      bytesValue(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0]), {
+        mediaType: 'image/png',
+        filename: 'not-really.png',
+      }),
+    );
 
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
     expect(screen.getByText(/Binary output/)).toBeInTheDocument();
   });
 
   it('leaves text-shaped bytes with their text preview', () => {
-    renderValue({
-      type: 'bytes',
-      bytes: new TextEncoder().encode('hello, world'),
-      mediaType: null,
-      filename: null,
-    });
+    renderValue(bytesValue(new TextEncoder().encode('hello, world')));
 
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
     expect(screen.getByText('hello, world')).toBeInTheDocument();
@@ -131,7 +127,7 @@ describe('comparisonFor', () => {
   const loaded = (name: string, mediaType: string | null, label: string): LoadedFile => ({
     file: new File([new Uint8Array(4)], name),
     sniff: { mediaType, label, isProbablyText: mediaType === 'text/plain' },
-    value: { type: 'bytes', bytes: Uint8Array.from([1, 2, 3, 4]), mediaType, filename: name },
+    value: bytesValue(Uint8Array.from([1, 2, 3, 4]), { mediaType, filename: name }),
   });
 
   it('offers the source when the run was given an image', () => {
@@ -161,12 +157,7 @@ describe('comparisonFor', () => {
     const comparison = comparisonFor({
       file: new File([wide], 'wide.png'),
       sniff: { mediaType: 'image/png', label: 'PNG image', isProbablyText: false },
-      value: {
-        type: 'bytes',
-        bytes: wide,
-        mediaType: 'image/png',
-        filename: 'wide.png',
-      },
+      value: bytesValue(wide, { mediaType: 'image/png', filename: 'wide.png' }),
     });
 
     expect(comparison?.ratio).toBeCloseTo(4, 10);

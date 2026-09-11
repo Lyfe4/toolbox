@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { getManifestEntry, TOOL_MANIFEST } from '@/features/registry';
 import type { ToolValue } from '@/features/registry/types';
+import { bytesValue } from '@/features/registry/types';
 
 import { summariseOutputs, summariseValue, SUMMARY_LIMIT } from './resultSummary';
 
@@ -24,12 +25,7 @@ function json(data: unknown): ToolValue {
 }
 
 function bytes(source: readonly number[]): ToolValue {
-  return {
-    type: 'bytes',
-    bytes: new Uint8Array(source),
-    mediaType: null,
-    filename: null,
-  };
+  return bytesValue(new Uint8Array(source));
 }
 
 const PNG_HEADER = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];

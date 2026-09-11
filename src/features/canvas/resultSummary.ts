@@ -7,6 +7,7 @@ import {
   type ToolOutputs,
   type ToolValue,
 } from '@/features/registry/types';
+import { binaryHead, binarySize } from '@/lib/binary';
 import { counted } from '@/lib/plural';
 import { formatBytes, sniffBytes } from '@/lib/sniff';
 
@@ -193,9 +194,14 @@ export function summariseValue(
        * The SNIFFED label, never the declared one - the same rule the rest of
        * the app follows, and the reason `payload.zip` renamed to `photo.png`
        * cannot describe itself as an image here either.
+       *
+       * From the value's HEAD rather than from the whole thing, which is what
+       * keeps this synchronous now that a value's bytes may be on disk: the
+       * sniff never looks past 4 kB, so the head gives the verdict the file
+       * would have given.
        */
-      const sniff = sniffBytes(value.bytes);
-      return `${formatBytes(value.bytes.byteLength)} ${sniff.label}`;
+      const sniff = sniffBytes(binaryHead(value.data));
+      return `${formatBytes(binarySize(value.data))} ${sniff.label}`;
     }
 
     case 'color': {

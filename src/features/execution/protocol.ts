@@ -1,5 +1,6 @@
 import type { ToolId } from '@/features/registry/manifest';
 import type { ToolInputs, ToolOutputs, ToolResult, ToolValue } from '@/features/registry/types';
+import { binarySize, residentBytes } from '@/lib/binary';
 
 /**
  * The worker message protocol.
@@ -119,7 +120,16 @@ export function collectTransferables(values: Iterable<ToolValue | undefined>): T
     if (value === undefined) continue;
     if (value.type !== 'bytes') continue;
 
-    const buffer = value.bytes.buffer;
+    /*
+     * A DEFERRED VALUE CONTRIBUTES NOTHING HERE, and needs to contribute
+     * nothing: a Blob crosses `postMessage` by reference already, so there is
+     * no copy for a transfer to save and no buffer for it to detach. The
+     * values this list exists for are the resident ones.
+     */
+    const bytes = residentBytes(value.data);
+    if (bytes === null) continue;
+
+    const buffer = bytes.buffer;
     if (buffer instanceof ArrayBuffer && !transferables.includes(buffer)) {
       transferables.push(buffer);
     }
@@ -141,7 +151,10 @@ export function measureInputs(inputs: ToolInputs): number {
         total += value.text.length * 2;
         break;
       case 'bytes':
-        total += value.bytes.byteLength;
+        // Read off the value rather than out of it. A deferred value knows its
+        // own size without anything having to touch the bytes, which is what
+        // makes the engine's size guard free for a four-gigabyte input.
+        total += binarySize(value.data);
         break;
       case 'json':
         total += JSON.stringify(value.data).length * 2;

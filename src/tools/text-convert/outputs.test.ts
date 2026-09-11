@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ToolRunContext, ToolValue } from '@/features/registry/types';
+import type { Bytes, ResidentValue, ToolRunContext } from '@/features/registry/types';
 import { textToBytes } from '@/lib/base64';
 
 import { textConvertTool } from './index';
@@ -32,7 +32,7 @@ const context: ToolRunContext = {
 };
 
 async function run(
-  input: ToolValue,
+  input: ResidentValue,
   overrides: Partial<TextConvertOptions> = {},
 ): Promise<Record<'output' | 'rendered' | 'detected', string>> {
   const result = await textConvertTool.run({
@@ -49,14 +49,22 @@ async function run(
   };
 }
 
-const text = (value: string): ToolValue => ({ type: 'text', text: value });
+const text = (value: string) => ({ type: 'text' as const, text: value });
 
-const bytes = (value: string): ToolValue => ({
-  type: 'bytes',
-  bytes: textToBytes(value),
+/**
+ * The RESIDENT shape, because these tests call the typed tool rather than the
+ * erased one - and the typed tool is what a resident tool's `run` signature is
+ * derived from. Going through the erased tool would test the conversion as
+ * well as the tool, which `ports.test.ts` already does.
+ */
+const residentBytes = (value: Bytes) => ({
+  type: 'bytes' as const,
+  bytes: value,
   mediaType: null,
   filename: null,
 });
+
+const bytes = (value: string) => residentBytes(textToBytes(value));
 
 /* ========================================================================== *
  * The rendered port is sanitised, always
@@ -238,10 +246,11 @@ describe('the Document input port', () => {
       utf16[3 + index * 2] = source.charCodeAt(index) >> 8;
     }
 
-    const { output } = await run(
-      { type: 'bytes', bytes: utf16, mediaType: null, filename: null },
-      { source: 'markdown', target: 'html', headingIds: false },
-    );
+    const { output } = await run(residentBytes(utf16), {
+      source: 'markdown',
+      target: 'html',
+      headingIds: false,
+    });
     expect(output).toContain('<h1>Heading</h1>');
   });
 
@@ -254,12 +263,7 @@ describe('the Document input port', () => {
   it('refuses bytes that are not text, rather than converting mojibake', async () => {
     const result = await textConvertTool.run({
       inputs: {
-        input: {
-          type: 'bytes',
-          bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe, 0x80]),
-          mediaType: null,
-          filename: null,
-        },
+        input: residentBytes(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe, 0x80])),
       },
       options: textConvertDefaultOptions,
       context,

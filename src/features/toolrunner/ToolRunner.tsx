@@ -7,6 +7,7 @@ import { useToast } from '@/components/Toast';
 import { useToolExecution, type ExecutionState } from '@/features/execution';
 import { loadTool, type ToolId, type ToolManifestEntry } from '@/features/registry';
 import type { ErasedTool, InputPort, ToolInputs, ToolValue } from '@/features/registry/types';
+import { binaryHead } from '@/lib/binary';
 import type { LoadedFile } from '@/lib/fileInput';
 import { formatBytes } from '@/lib/sniff';
 
@@ -84,8 +85,12 @@ export function comparisonFor(file: LoadedFile | null): ImageComparison | null {
    * image can only have been accepted by a port that takes bytes - but that is
    * an inference about the registry rather than something this function knows,
    * so it is checked instead of assumed.
+   *
+   * The HEAD is enough: every dimension this needs sits within the first few
+   * dozen bytes of an image, and the value's bytes may be a file nobody has
+   * read.
    */
-  const bytes = file.value.type === 'bytes' ? file.value.bytes : null;
+  const bytes = file.value.type === 'bytes' ? binaryHead(file.value.data) : null;
 
   return {
     blob: file.file,

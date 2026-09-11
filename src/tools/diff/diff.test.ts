@@ -3,6 +3,7 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import type { ToolRunContext } from '@/features/registry/types';
+import { bytesValue } from '@/features/registry/types';
 
 import {
   computeDiff,
@@ -916,12 +917,8 @@ describe('the tool', () => {
      * comparing a Windows checkout against a Unix one happens.
      */
     const encoder = new TextEncoder();
-    const bytes = (value: string) => ({
-      type: 'bytes' as const,
-      bytes: encoder.encode(value),
-      mediaType: 'text/plain',
-      filename: 'file.txt',
-    });
+    const bytes = (value: string) =>
+      bytesValue(encoder.encode(value), { mediaType: 'text/plain', filename: 'file.txt' });
 
     const result = await diffTool.run({
       inputs: { original: bytes('a\r\nb\r\n'), changed: bytes('a\nb\n') },

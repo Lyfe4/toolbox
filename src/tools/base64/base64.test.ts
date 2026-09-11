@@ -2,6 +2,8 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import type { ToolRunContext } from '@/features/registry/types';
+import { bytesValue } from '@/features/registry/types';
+import { residentBytes } from '@/lib/binary';
 
 import { bytesToText, decodeBase64, encodeBase64, textToBytes, type EncodeOptions } from './codec';
 import base64Tool from './index';
@@ -221,12 +223,7 @@ describe('tool definition', () => {
   it('encodes dropped bytes without treating them as text', async () => {
     const result = await base64Tool.run({
       inputs: {
-        input: {
-          type: 'bytes',
-          bytes: new Uint8Array([0xff, 0x00, 0x10]),
-          mediaType: null,
-          filename: 'x.bin',
-        },
+        input: bytesValue(new Uint8Array([0xff, 0x00, 0x10]), { filename: 'x.bin' }),
       },
       options: { mode: 'encode' },
       context,
@@ -247,7 +244,8 @@ describe('tool definition', () => {
     if (result.ok) {
       const output = result.value.output;
       expect(output?.type).toBe('bytes');
-      if (output?.type === 'bytes') expect(bytesToText(output.bytes)).toBe('foobar');
+      if (output?.type === 'bytes')
+        expect(bytesToText(residentBytes(output.data) ?? new Uint8Array())).toBe('foobar');
     }
   });
 

@@ -2,6 +2,7 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import type { JsonValue, ToolRunContext } from '@/features/registry/types';
+import { bytesValue } from '@/features/registry/types';
 
 import {
   DELIMITERS,
@@ -1151,7 +1152,7 @@ describe('tool definition', () => {
     }
 
     const result = await structuredDataTool.run({
-      inputs: { input: { type: 'bytes', bytes, mediaType: null, filename: null } },
+      inputs: { input: bytesValue(bytes) },
       options: { target: 'json', indent: 0 },
       context,
     });
@@ -1168,12 +1169,7 @@ describe('tool definition', () => {
     // error about a character nobody typed.
     const result = await structuredDataTool.run({
       inputs: {
-        input: {
-          type: 'bytes',
-          bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe]),
-          mediaType: null,
-          filename: null,
-        },
+        input: bytesValue(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe])),
       },
       options: { target: 'json' },
       context,

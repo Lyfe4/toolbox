@@ -1,5 +1,6 @@
-import type { Bytes, InputPort, ToolValue } from '@/features/registry/types';
+import type { InputPort, ToolValue } from '@/features/registry/types';
 
+import { deferredBinary, HEAD_BYTES, type Bytes } from './binary';
 import { formatBytes, sniffBytes, type SniffResult } from './sniff';
 import { decodeDocument } from './text';
 
@@ -27,7 +28,7 @@ import { decodeDocument } from './text';
  * what lets a 64 MB binary be refused by a text-only port without having been
  * read into memory first - asserted by `fileInput.test.ts`.
  */
-export const SNIFF_WINDOW_BYTES = 4096;
+export const SNIFF_WINDOW_BYTES = HEAD_BYTES;
 
 /**
  * A file that has been read, sniffed and accepted for a specific port.
@@ -97,7 +98,18 @@ export function fileValueFor(
     return {
       value: {
         type: 'bytes',
-        bytes,
+        /*
+         * THE FILE, NOT ITS CONTENTS.
+         *
+         * A `File` is a reference to something the operating system is already
+         * holding, and this used to read all of it - so choosing a 200 MB
+         * video put 200 MB in the tab before anything had decided to do
+         * anything with it, and that copy then lived for the whole session in
+         * the attachment store. Handing over the reference instead costs the
+         * 4 kB head that was read to sniff it and nothing else, which is why a
+         * four-gigabyte recording can now be chosen at all.
+         */
+        data: deferredBinary(file, bytes.subarray(0, HEAD_BYTES)),
         // The sniffed type, never the one the file declared.
         mediaType: sniff.mediaType,
         filename: file.name,
@@ -170,10 +182,18 @@ export async function loadFileForPort(
   const early = sniffRejection(port, sniff);
   if (early !== null) return { error: early };
 
-  // Split across two statements so the buffer is inferred as a plain
-  // ArrayBuffer rather than ArrayBufferLike - see the note on `Bytes`.
-  const buffer = await file.arrayBuffer();
-  const bytes: Bytes = new Uint8Array(buffer);
+  /*
+   * A BYTES PORT NEVER READS THE FILE, and a text port always does.
+   *
+   * The split is not an optimisation, it is the honest shape of the two cases.
+   * A `bytes` port hands the reference on and whoever runs decides how to read
+   * it; a text port has to decode, decoding is a pass over the whole thing,
+   * and the tools with a text-only document port declare limits in the
+   * kilobytes and megabytes rather than the gigabytes. Nothing gets to read a
+   * file it has not already agreed to hold.
+   */
+  const whole = port.types.includes('bytes') ? head : new Uint8Array(await file.arrayBuffer());
+  const bytes: Bytes = whole;
 
   const built = fileValueFor(port, file, bytes, sniff);
   if ('error' in built) return { error: built.error };

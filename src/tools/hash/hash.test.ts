@@ -2,6 +2,7 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import type { ToolRunContext } from '@/features/registry/types';
+import { bytesValue } from '@/features/registry/types';
 import { textToBytes } from '@/lib/base64';
 
 import { BROKEN_ALGORITHMS, digestBytes, formatDigest, isBroken, toHex } from './digest';
@@ -163,7 +164,7 @@ describe('tool surface', () => {
     });
     const asBytes = await hashTool.run({
       inputs: {
-        input: { type: 'bytes', bytes: textToBytes('abc'), mediaType: null, filename: null },
+        input: bytesValue(textToBytes('abc')),
       },
       options: {},
       context,
@@ -178,7 +179,7 @@ describe('tool surface', () => {
   it('hashes a multi-megabyte input in slices', async () => {
     const big = new Uint8Array(3 * 1024 * 1024).fill(0x41);
     const result = await hashTool.run({
-      inputs: { input: { type: 'bytes', bytes: big, mediaType: null, filename: null } },
+      inputs: { input: bytesValue(big) },
       options: { algorithm: 'md5' },
       context,
     });

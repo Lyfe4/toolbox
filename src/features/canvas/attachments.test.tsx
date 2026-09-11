@@ -8,6 +8,7 @@ import { usePipelineStore } from '@/features/execution/pipelineStore';
 import { getManifestEntry } from '@/features/registry';
 import type { InputPort, ToolOutputs, ToolResult } from '@/features/registry/types';
 import { EMPTY_ANNOUNCEMENTS } from '@/lib/announce';
+import { materialiseBinary, type BinaryData } from '@/lib/binary';
 import { loadFileForPort, type LoadedFile } from '@/lib/fileInput';
 import { expectNoAxeViolations } from '@/lib/testing/axe';
 
@@ -371,8 +372,17 @@ describe('choosing a file', () => {
     });
     const call = calls.find((entry) => entry.inputs.input?.type === 'bytes');
     const value = call?.inputs.input;
-    expect(value?.type === 'bytes' && Array.from(value.bytes)).toEqual([104, 101, 108, 108, 111]);
-    expect(value?.type === 'bytes' && value.filename).toBe('notes.txt');
+    if (value?.type !== 'bytes') throw new Error('the tool was handed no bytes');
+
+    /*
+     * READ THROUGH THE VALUE, because the value no longer holds the bytes: a
+     * file chosen for a `bytes` port is now a reference to the file on disk,
+     * and what this test has always been about is that the TOOL gets the
+     * content. Materialising here is what the harness does for a resident
+     * tool, so this asserts the same thing one step earlier.
+     */
+    expect(Array.from(await materialiseBinary(value.data))).toEqual([104, 101, 108, 108, 111]);
+    expect(value.filename).toBe('notes.txt');
   });
 
   /*
@@ -732,11 +742,11 @@ describe('one file feeding more than one node', () => {
    * one buffer reaching several tools.
    */
   it('gives both nodes intact bytes rather than detaching the second', async () => {
-    const seen: number[][] = [];
+    const seen: BinaryData[] = [];
     usePipelineStore.setState({
       execute: (options) => {
         const value = options.inputs.input;
-        if (value?.type === 'bytes') seen.push(Array.from(value.bytes));
+        if (value?.type === 'bytes') seen.push(value.data);
         return Promise.resolve<ToolResult<ToolOutputs>>({
           ok: true,
           value: { output: { type: 'text', text: 'digest' } },
@@ -759,7 +769,16 @@ describe('one file feeding more than one node', () => {
     await waitFor(() => {
       expect(seen.length).toBeGreaterThanOrEqual(2);
     });
-    for (const bytes of seen) expect(bytes).toEqual([104, 105]);
+
+    /*
+     * READ EVERY ONE OF THEM, one after another, which is the assertion that
+     * matters now. Detaching was the old hazard and a blob cannot be detached;
+     * the new one would be a value that reads back correctly ONCE - and
+     * reading all of them is how that would show.
+     */
+    for (const data of seen) {
+      expect(Array.from(await materialiseBinary(data))).toEqual([104, 105]);
+    }
   });
 
   it('copies the file onto a duplicated node rather than leaving it claiming one', async () => {
@@ -791,11 +810,11 @@ describe('the cache and a replaced file', () => {
    * because nothing looks wrong.
    */
   it('re-runs when a file is swapped for a different one of the same name and size', async () => {
-    const digests: number[][] = [];
+    const digests: BinaryData[] = [];
     usePipelineStore.setState({
       execute: (options) => {
         const value = options.inputs.input;
-        if (value?.type === 'bytes') digests.push(Array.from(value.bytes));
+        if (value?.type === 'bytes') digests.push(value.data);
         return Promise.resolve<ToolResult<ToolOutputs>>({
           ok: true,
           value: { output: { type: 'text', text: 'digest' } },
@@ -806,14 +825,17 @@ describe('the cache and a replaced file', () => {
     seed([node('a', 'hash')]);
     renderCanvas();
 
+    const read = async (): Promise<number[][]> =>
+      Promise.all(digests.map(async (data) => Array.from(await materialiseBinary(data))));
+
     await attach('a', 'hash', 'input', new File(['aa'], 'same.txt'));
-    await waitFor(() => {
-      expect(digests).toContainEqual([97, 97]);
+    await waitFor(async () => {
+      expect(await read()).toContainEqual([97, 97]);
     });
 
     await attach('a', 'hash', 'input', new File(['bb'], 'same.txt'));
-    await waitFor(() => {
-      expect(digests).toContainEqual([98, 98]);
+    await waitFor(async () => {
+      expect(await read()).toContainEqual([98, 98]);
     });
   });
 });

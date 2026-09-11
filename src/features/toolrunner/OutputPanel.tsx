@@ -2,6 +2,7 @@ import { Button } from '@/components/Button';
 import { ErrorIcon } from '@/components/Icon';
 import { TextArea } from '@/components/TextArea';
 import type { OutputPort, ToolError, ToolValue } from '@/features/registry/types';
+import { binaryBlob, binaryHead, binarySize, residentBytes } from '@/lib/binary';
 import { formatBytes, sniffBytes } from '@/lib/sniff';
 
 import { ColorView } from './ColorView';
@@ -45,12 +46,12 @@ export function ErrorReport({ error }: { readonly error: ToolError }) {
  * -------------------------------------------------------------------------- */
 
 /** A short, safe preview of decoded bytes. Never rendered as markup. */
-function previewOf(bytes: Uint8Array): string {
-  const slice = bytes.subarray(0, 2048);
+function previewOf(head: Uint8Array, size: number): string {
+  const slice = head.subarray(0, 2048);
   // Non-fatal decode: binary output should still show something rather than
   // refusing, and replacement characters are honest about what it is.
   const text = new TextDecoder('utf-8').decode(slice);
-  return bytes.length > slice.length ? `${text}…` : text;
+  return size > slice.length ? `${text}…` : text;
 }
 
 export interface OutputViewProps {
@@ -239,10 +240,19 @@ export function OutputView({
        * output gets it too - decoding a `data:` URI and seeing the image is a
        * real thing people do with that tool.
        */
-      if (isPreviewableImage(value.bytes)) {
+      /*
+       * A DEFERRED VALUE IS NOT PREVIEWED AS A PICTURE, and cannot be: the
+       * view builds an object URL from bytes it holds, and a value whose bytes
+       * are on disk has none. Nothing is lost in practice - the one tool that
+       * produces a picture is resident, and the one that produces something
+       * too big to hold produces a film - and the summary below is right for
+       * both, because it reads the head and the size rather than the value.
+       */
+      const resident = residentBytes(value.data);
+      if (resident !== null && isPreviewableImage(resident)) {
         return (
           <ImageView
-            bytes={value.bytes}
+            bytes={resident}
             label={label}
             filename={value.filename ?? `${baseFilename}.bin`}
             comparison={comparison}
@@ -251,16 +261,18 @@ export function OutputView({
         );
       }
 
-      const sniff = sniffBytes(value.bytes);
+      const head = binaryHead(value.data);
+      const size = binarySize(value.data);
+      const sniff = sniffBytes(head);
       return (
         <div className={styles.stack}>
           <div className={styles.binarySummary}>
             <p className={styles.spread}>
               <span className={styles.mono}>{sniff.label}</span>
-              <span className={styles.hint}>{formatBytes(value.bytes.byteLength)}</span>
+              <span className={styles.hint}>{formatBytes(size)}</span>
             </p>
             {sniff.isProbablyText ? (
-              <pre className={styles.preview}>{previewOf(value.bytes)}</pre>
+              <pre className={styles.preview}>{previewOf(head, size)}</pre>
             ) : (
               <p className={styles.hint}>
                 Binary output. Download it rather than trying to read it here.
@@ -268,12 +280,12 @@ export function OutputView({
             )}
           </div>
           <div className={styles.row}>
-            {sniff.isProbablyText ? (
+            {sniff.isProbablyText && resident !== null ? (
               <Button
                 size="sm"
                 variant="ghost"
                 onClick={() => {
-                  onCopy(new TextDecoder('utf-8').decode(value.bytes));
+                  onCopy(new TextDecoder('utf-8').decode(resident));
                 }}
               >
                 Copy as text
@@ -282,8 +294,14 @@ export function OutputView({
             <Button
               size="sm"
               onClick={() => {
+                /*
+                 * THE ONE PLACE A TWO-GIGABYTE ANSWER LEAVES THIS APP, and it
+                 * costs nothing: a deferred value is already a blob, so this
+                 * hands the browser a reference rather than assembling a copy
+                 * of the file in the tab that just avoided holding one.
+                 */
                 onDownload(
-                  new Blob([value.bytes], { type: sniff.mediaType ?? 'application/octet-stream' }),
+                  binaryBlob(value.data, sniff.mediaType),
                   value.filename ?? `${baseFilename}.bin`,
                 );
               }}

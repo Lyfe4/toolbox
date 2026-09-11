@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { measureInputs } from '@/features/execution/protocol';
 import { getManifestEntry } from '@/features/registry';
 import type { Bytes, InputPort, ToolInputs } from '@/features/registry/types';
+import { bytesValue } from '@/features/registry/types';
 
 import { fileValueFor, loadFileForPort, SNIFF_WINDOW_BYTES, sniffRejection } from './fileInput';
 import { sniffBytes } from './sniff';
@@ -64,21 +65,27 @@ describe('the declared media type is never read', () => {
   });
 
   it('carries the sniffed type onto the value, not the declared one', () => {
-    const built = fileValueFor(
-      bytesPort,
-      fileOf('notes.json', PNG_HEADER, 'application/json'),
-      PNG_HEADER,
-      sniffBytes(PNG_HEADER),
-    );
+    const file = fileOf('notes.json', PNG_HEADER, 'application/json');
+    const built = fileValueFor(bytesPort, file, PNG_HEADER, sniffBytes(PNG_HEADER));
 
-    expect(built).toEqual({
-      value: {
-        type: 'bytes',
-        bytes: PNG_HEADER,
-        mediaType: 'image/png',
-        filename: 'notes.json',
-      },
+    expect(built).toMatchObject({
+      value: { type: 'bytes', mediaType: 'image/png', filename: 'notes.json' },
     });
+
+    /*
+     * AND THE VALUE POINTS AT THE FILE RATHER THAN HOLDING IT. This is the
+     * whole of what a `bytes` port costs now: a reference, a size and a head.
+     * Asserting the blob is the very `File` object is the only way to say
+     * "nothing was read" in a test, since a copy would be indistinguishable
+     * from it by content.
+     */
+    if (!('value' in built) || built.value.type !== 'bytes') throw new Error('no value');
+    const { data } = built.value;
+    expect(data.kind).toBe('deferred');
+    if (data.kind !== 'deferred') return;
+    expect(data.blob).toBe(file);
+    expect(data.size).toBe(PNG_HEADER.byteLength);
+    expect(Array.from(data.head)).toEqual(Array.from(PNG_HEADER));
   });
 });
 
@@ -221,7 +228,7 @@ describe('a size limit is enforced at the point of selection', () => {
   it('measures a budget the way the engine measures a run', async () => {
     const first = Uint8Array.from([1, 2, 3, 4]);
     const committed: ToolInputs = {
-      original: { type: 'bytes', bytes: first, mediaType: null, filename: 'a.bin' },
+      original: bytesValue(first, { filename: 'a.bin' }),
     };
     const otherBytes = measureInputs(committed);
     expect(otherBytes).toBe(4);

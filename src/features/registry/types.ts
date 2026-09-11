@@ -12,7 +12,23 @@
  *
  * The mechanism for (1) and (2) is explained at `defineTool` at the bottom.
  */
+import {
+  materialiseBinary,
+  residentBinary,
+  sourceFor,
+  type BinaryData,
+  type ByteSource,
+  type Bytes,
+} from '@/lib/binary';
+
 import type { ZodType, output as ZodOutput } from 'zod';
+
+/**
+ * Re-exported rather than moved, because `Bytes` is the name every tool
+ * imports and the module it now lives in is about where bytes ARE rather than
+ * about the tool contract.
+ */
+export type { BinaryData, ByteSource, Bytes };
 
 /* ========================================================================== *
  * Data types
@@ -60,16 +76,6 @@ export type JsonValue =
   string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
 /**
- * Bytes we own.
- *
- * Explicitly `Uint8Array<ArrayBuffer>` rather than the default
- * `Uint8Array<ArrayBufferLike>`: the loose form also permits a
- * SharedArrayBuffer, which can be neither transferred to a worker nor used to
- * build a Blob. Pinning it here means those guarantees hold everywhere.
- */
-export type Bytes = Uint8Array<ArrayBuffer>;
-
-/**
  * True when a JsonValue is an array.
  *
  * `value is readonly JsonValue[]` is a TYPE PREDICATE. It matters because the
@@ -100,46 +106,129 @@ export interface ColorPayload {
   readonly a: number;
 }
 
+interface TextValue {
+  readonly type: 'text';
+  readonly text: string;
+}
+
+interface JsonBox {
+  readonly type: 'json';
+  readonly data: JsonValue;
+}
+
+interface ColorValue {
+  readonly type: 'color';
+  readonly color: ColorPayload;
+}
+
+interface BytesFacts {
+  readonly type: 'bytes';
+  /** Declared media type, if the source claimed one. Never trusted. */
+  readonly mediaType: string | null;
+  readonly filename: string | null;
+}
+
 /**
+ * THE THREE SHAPES A BINARY VALUE HAS, AND WHY THERE ARE THREE.
+ *
+ * Everywhere outside a tool - on a wire, in the result cache, across the
+ * worker boundary - a `bytes` value carries a `BinaryData`, which says whether
+ * its bytes are in memory or in a blob that nobody has read. That is the
+ * TRANSPORT shape, and it is the only one anything stores.
+ *
+ * A tool never sees it. What a tool sees is derived from what the tool said
+ * about itself, in exactly the way its `run` signature is already derived from
+ * its ports:
+ *
+ *   - A tool that reads binary input RESIDENTLY is handed `bytes`, a
+ *     `Uint8Array`, which is byte for byte the shape every tool has always
+ *     been handed. Nine of the ten tools are in this class and not one line of
+ *     any of them changed.
+ *   - A tool that reads binary input in WINDOWS is handed `source`, and there
+ *     IS NO `bytes` MEMBER on it. That absence is the whole mechanism: the
+ *     failure this was not built to avoid for a long time is a streaming value
+ *     that some tools handle and others quietly buffer, and a tool cannot
+ *     quietly buffer a value it has no way to ask for whole.
+ */
+interface ResidentBytes extends BytesFacts {
+  readonly bytes: Bytes;
+}
+
+interface WindowedBytes extends BytesFacts {
+  readonly source: ByteSource;
+}
+
+interface TransportBytes extends BytesFacts {
+  readonly data: BinaryData;
+}
+
+/**
+ * A value as it travels: between nodes, into the cache, across `postMessage`.
+ *
  * A DISCRIMINATED UNION: every member has a `type` field holding a different
  * string literal, so checking `value.type === 'bytes'` tells TypeScript which
- * member it has and therefore that `value.data` is a Uint8Array.
+ * member it has and therefore that `value.data` is a `BinaryData`.
  *
  * Because the tag travels with the payload, a value is always self-describing.
  * A port can hand one to another tool and the receiver can narrow it safely
  * without a cast and without a separate "what is this" argument.
  *
- * Binary is Uint8Array or Blob and NEVER a base64 string. Base64 is an
+ * Binary is a `Uint8Array` or a `Blob` and NEVER a base64 string. Base64 is an
  * encoding for transport; using it internally would mean paying a 33% size
  * penalty plus an encode/decode on every hop between tools.
  */
-export type ToolValue =
-  | { readonly type: 'text'; readonly text: string }
-  | { readonly type: 'json'; readonly data: JsonValue }
-  | {
-      readonly type: 'bytes';
-      readonly bytes: Bytes;
-      /** Declared media type, if the source claimed one. Never trusted. */
-      readonly mediaType: string | null;
-      readonly filename: string | null;
-    }
-  | { readonly type: 'color'; readonly color: ColorPayload };
+export type ToolValue = TextValue | JsonBox | TransportBytes | ColorValue;
+
+/** A value as a tool that reads binary input residently sees it. */
+export type ResidentValue = TextValue | JsonBox | ResidentBytes | ColorValue;
+
+/** A value as a tool that reads binary input in windows sees it. */
+export type WindowedValue = TextValue | JsonBox | WindowedBytes | ColorValue;
+
+/** Every family, for the few helpers that are honestly generic over them. */
+export type AnyValue = ToolValue | ResidentValue | WindowedValue;
 
 /**
- * The payload shape for one or more data types.
+ * The payload shape for one or more data types, within one family.
  *
  * `Extract<Union, Shape>` keeps only the union members assignable to `Shape`.
  * So `ValueOfType<'bytes'>` is just the bytes member, and
  * `ValueOfType<'text' | 'bytes'>` is those two members - which is exactly what
  * a port accepting either type should hand its tool.
+ *
+ * It defaults to the RESIDENT family because tools are what read it, and the
+ * resident family is what nine of the ten are handed.
  */
-export type ValueOfType<T extends DataType> = Extract<ToolValue, { type: T }>;
+export type ValueOfType<T extends DataType, F extends AnyValue = ResidentValue> = Extract<
+  F,
+  { type: T }
+>;
+
+/**
+ * A transport value over bytes that are already in memory.
+ *
+ * Worth a helper rather than an object literal because the literal is now four
+ * fields deep, and because every call site that writes one is asserting the
+ * bytes ARE resident - which is a claim, and is easier to see when it has a
+ * name.
+ */
+export function bytesValue(
+  bytes: Bytes,
+  facts: { readonly mediaType?: string | null; readonly filename?: string | null } = {},
+): ToolValue {
+  return {
+    type: 'bytes',
+    data: residentBinary(bytes),
+    mediaType: facts.mediaType ?? null,
+    filename: facts.filename ?? null,
+  };
+}
 
 /** Runtime tag check. Mirrors what `ValueOfType` does at compile time. */
-export function isValueOfType<T extends DataType>(
-  value: ToolValue,
+export function isValueOfType<T extends DataType, F extends AnyValue = ToolValue>(
+  value: F,
   types: readonly T[],
-): value is ValueOfType<T> {
+): value is ValueOfType<T, F> {
   return (types as readonly DataType[]).includes(value.type);
 }
 
@@ -208,7 +297,7 @@ export function canConnect(from: OutputPort, to: InputPort): boolean {
 }
 
 /** True when a concrete value may be delivered to a port. */
-export function canAcceptValue(port: PortBase, value: ToolValue): boolean {
+export function canAcceptValue(port: PortBase, value: AnyValue): boolean {
   return (port.types as readonly DataType[]).includes(value.type);
 }
 
@@ -437,19 +526,26 @@ export type MaybePromise<T> = T | Promise<T>;
  * `{ data: { type: 'bytes'; bytes: Uint8Array; ... } }` and a run function
  * that tried to read `inputs.data.text` would not compile.
  */
-export type InputsOf<TInputs extends readonly InputPort[]> = {
+export type InputsOf<TInputs extends readonly InputPort[], F extends AnyValue = ResidentValue> = {
   readonly [P in TInputs[number] as P['id']]: P['required'] extends true
-    ? ValueOfType<P['types'][number]>
-    : ValueOfType<P['types'][number]> | undefined;
+    ? ValueOfType<P['types'][number], F>
+    : ValueOfType<P['types'][number], F> | undefined;
 };
 
 /** The same idea for outputs; every declared output must be produced. */
-export type OutputsOf<TOutputs extends readonly OutputPort[]> = {
-  readonly [P in TOutputs[number] as P['id']]: ValueOfType<P['types'][number]>;
+export type OutputsOf<
+  TOutputs extends readonly OutputPort[],
+  F extends AnyValue = ResidentValue,
+> = {
+  readonly [P in TOutputs[number] as P['id']]: ValueOfType<P['types'][number], F>;
 };
 
-export interface ToolRunArgs<TInputs extends readonly InputPort[], TOptions> {
-  readonly inputs: InputsOf<TInputs>;
+export interface ToolRunArgs<
+  TInputs extends readonly InputPort[],
+  TOptions,
+  F extends AnyValue = ResidentValue,
+> {
+  readonly inputs: InputsOf<TInputs, F>;
   readonly options: TOptions;
   readonly context: ToolRunContext;
 }
@@ -457,6 +553,27 @@ export interface ToolRunArgs<TInputs extends readonly InputPort[], TOptions> {
 /* ========================================================================== *
  * Tool definition
  * ========================================================================== */
+
+/**
+ * How a tool reads binary input, and therefore what it is handed.
+ *
+ * Two classes, and the app now genuinely has two - which is a change to how
+ * anybody reasons about it, not an implementation detail:
+ *
+ *   - `resident` is every tool that existed before the video tool grew past
+ *     the size of memory. Its binary inputs arrive whole, bounded by its own
+ *     `maxInputBytes`, exactly as they always did.
+ *   - `windowed` is a tool that reads its input through a `ByteSource` and
+ *     never holds it. It is the only class that can be given a file larger
+ *     than the tab, and the price is that it has to be written as a walk over
+ *     offsets rather than over an array.
+ *
+ * The class is a property of the IMPLEMENTATION, not of the manifest, and that
+ * is deliberate: nothing outside `eraseTool` acts on it. The engine's job is
+ * unchanged either way - it refuses an input over the tool's limit and posts
+ * the value - so there is no third place for the two descriptions to disagree.
+ */
+export type BinaryHandling = 'resident' | 'windowed';
 
 export interface ToolDefinition<
   TInputs extends readonly InputPort[] = readonly InputPort[],
@@ -509,10 +626,57 @@ export function defineTool<
   const TInputs extends readonly InputPort[],
   const TOutputs extends readonly OutputPort[],
   TSchema extends ZodType,
+>(definition: ToolDefinition<TInputs, TOutputs, TSchema>): DefinedTool<TInputs, TOutputs, TSchema> {
+  return { ...definition, binary: 'resident' };
+}
+
+/**
+ * A tool that reads its binary input through a window onto it.
+ *
+ * Everything above is the same except the two halves that have to be: its
+ * `run` is handed a `ByteSource` where a resident tool is handed a
+ * `Uint8Array`, and it returns a `BinaryData` where a resident tool returns
+ * one. Both are the transport shape, so a streaming tool is the one kind of
+ * tool that decides for itself whether its answer is in memory.
+ */
+export interface StreamingToolDefinition<
+  TInputs extends readonly InputPort[] = readonly InputPort[],
+  TOutputs extends readonly OutputPort[] = readonly OutputPort[],
+  TSchema extends ZodType = ZodType,
+> extends Omit<ToolDefinition<TInputs, TOutputs, TSchema>, 'run'> {
+  readonly run: (
+    args: ToolRunArgs<TInputs, ZodOutput<TSchema>, WindowedValue>,
+  ) => MaybePromise<ToolResult<OutputsOf<TOutputs, ToolValue>>>;
+}
+
+/**
+ * The two things `defineTool` and `defineStreamingTool` return.
+ *
+ * The `binary` tag is added by the factory rather than written by the author,
+ * so it cannot disagree with the shape of the `run` the compiler just checked.
+ * A tool declaring `windowed` and reading `input.bytes` is not a mismatch that
+ * has to be tested for; it is a definition that does not compile.
+ */
+export type DefinedTool<
+  TInputs extends readonly InputPort[] = readonly InputPort[],
+  TOutputs extends readonly OutputPort[] = readonly OutputPort[],
+  TSchema extends ZodType = ZodType,
+> = ToolDefinition<TInputs, TOutputs, TSchema> & { readonly binary: 'resident' };
+
+export type DefinedStreamingTool<
+  TInputs extends readonly InputPort[] = readonly InputPort[],
+  TOutputs extends readonly OutputPort[] = readonly OutputPort[],
+  TSchema extends ZodType = ZodType,
+> = StreamingToolDefinition<TInputs, TOutputs, TSchema> & { readonly binary: 'windowed' };
+
+export function defineStreamingTool<
+  const TInputs extends readonly InputPort[],
+  const TOutputs extends readonly OutputPort[],
+  TSchema extends ZodType,
 >(
-  definition: ToolDefinition<TInputs, TOutputs, TSchema>,
-): ToolDefinition<TInputs, TOutputs, TSchema> {
-  return definition;
+  definition: StreamingToolDefinition<TInputs, TOutputs, TSchema>,
+): DefinedStreamingTool<TInputs, TOutputs, TSchema> {
+  return { ...definition, binary: 'windowed' };
 }
 
 /* ========================================================================== *
@@ -584,7 +748,9 @@ export function eraseTool<
   TInputs extends readonly InputPort[],
   TOutputs extends readonly OutputPort[],
   TSchema extends ZodType,
->(tool: ToolDefinition<TInputs, TOutputs, TSchema>): ErasedTool {
+>(
+  tool: DefinedTool<TInputs, TOutputs, TSchema> | DefinedStreamingTool<TInputs, TOutputs, TSchema>,
+): ErasedTool {
   return {
     id: tool.id,
     name: tool.name,
@@ -612,7 +778,7 @@ export function eraseTool<
     optionFields: tool.optionFields as unknown as readonly OptionField<Record<string, unknown>>[],
     execution: tool.execution,
     secretOptionKeys: tool.secretOptionKeys ?? [],
-    run: ({ inputs, options, context }) => {
+    run: async ({ inputs, options, context }) => {
       const checked = validateInputs(tool.inputs, inputs);
       if (!checked.ok) return checked;
 
@@ -623,11 +789,75 @@ export function eraseTool<
         });
       }
 
-      return tool.run({
-        inputs: checked.value as InputsOf<TInputs>,
+      /*
+       * THE BOUNDARY BETWEEN THE TWO CLASSES OF TOOL, AND THE ONLY ONE.
+       *
+       * A streaming tool is handed a source per binary input and its answer
+       * needs no conversion, because it already speaks the transport shape. A
+       * resident tool is handed whole bytes - which is where a deferred value
+       * is materialised, and the ONLY place in the app where that happens on
+       * behalf of a tool.
+       *
+       * That it is safe rests entirely on the engine having already refused an
+       * input over this tool's `maxInputBytes`. A resident tool therefore
+       * cannot be handed more than the number it wrote down about itself,
+       * however large the value that arrived on the wire was, and a video
+       * output too big for `hash` fails as a size refusal naming both rather
+       * than as an allocation nobody predicted.
+       */
+      if (tool.binary === 'windowed') {
+        return await tool.run({
+          inputs: (await mapValues(checked.value, windowValue)) as InputsOf<TInputs, WindowedValue>,
+          options: parsed.data,
+          context,
+        });
+      }
+
+      const result = await tool.run({
+        inputs: (await mapValues(checked.value, residentValue)) as InputsOf<TInputs>,
         options: parsed.data,
         context,
       });
+      if (!result.ok) return result;
+      return ok(await mapValues(result.value, transportValue));
     },
   };
+}
+
+/**
+ * Rebuilds a record of values through one conversion, leaving gaps as gaps.
+ *
+ * Sequential rather than `Promise.all`, and deliberately: the conversions that
+ * are not free are materialisations, and two of those running together is two
+ * whole files in memory at the same moment for no gain in wall clock, since
+ * both are waiting on the same disk.
+ */
+async function mapValues<In, Out>(
+  values: Readonly<Record<string, In | undefined>>,
+  convert: (value: In) => MaybePromise<Out>,
+): Promise<Readonly<Record<string, Out>>> {
+  const out: Record<string, Out> = {};
+  for (const [id, value] of Object.entries(values)) {
+    if (value === undefined) continue;
+    out[id] = await convert(value);
+  }
+  return out;
+}
+
+async function residentValue(value: ToolValue): Promise<ResidentValue> {
+  if (value.type !== 'bytes') return value;
+  const { mediaType, filename } = value;
+  return { type: 'bytes', bytes: await materialiseBinary(value.data), mediaType, filename };
+}
+
+async function windowValue(value: ToolValue): Promise<WindowedValue> {
+  if (value.type !== 'bytes') return value;
+  const { mediaType, filename } = value;
+  return { type: 'bytes', source: await sourceFor(value.data), mediaType, filename };
+}
+
+function transportValue(value: ResidentValue): ToolValue {
+  if (value.type !== 'bytes') return value;
+  const { mediaType, filename } = value;
+  return { type: 'bytes', data: residentBinary(value.bytes), mediaType, filename };
 }
