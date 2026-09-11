@@ -24,6 +24,8 @@
  * nobody mistakes for success.
  */
 
+import type { ByteSource } from '@/features/registry/types';
+
 /* ========================================================================== *
  * MPEG-1 and MPEG-2 audio: Layer I, II and III
  * ========================================================================== */
@@ -70,12 +72,12 @@ export interface MpegAudioFrame {
  * Eleven bits of sync are only eleven bits, so the check has to be everything
  * else in the header as well.
  */
-export function mpegAudioFrame(bytes: Uint8Array, at: number): MpegAudioFrame | null {
-  if (at + 4 > bytes.length) return null;
-  const b0 = bytes[at] ?? 0;
-  const b1 = bytes[at + 1] ?? 0;
-  const b2 = bytes[at + 2] ?? 0;
-  const b3 = bytes[at + 3] ?? 0;
+export function mpegAudioFrame(bytes: ByteSource, at: number): MpegAudioFrame | null {
+  if (at + 4 > bytes.size) return null;
+  const b0 = bytes.u8(at);
+  const b1 = bytes.u8(at + 1);
+  const b2 = bytes.u8(at + 2);
+  const b3 = bytes.u8(at + 3);
 
   if (b0 !== 0xff || (b1 & 0xe0) !== 0xe0) return null;
 
@@ -142,7 +144,7 @@ export interface AudioSplit {
  * `resynced` so the caller can say the file was damaged rather than quietly
  * producing a shorter track than the file holds.
  */
-export function splitMpegAudio(bytes: Uint8Array, limit: number): AudioSplit | null {
+export function splitMpegAudio(bytes: ByteSource, limit: number): AudioSplit | null {
   const frames: AudioFrame[] = [];
   let sampleRate = 0;
   let channels = 2;
@@ -151,7 +153,7 @@ export function splitMpegAudio(bytes: Uint8Array, limit: number): AudioSplit | n
   let resynced = false;
   let at = 0;
 
-  while (at + 4 <= bytes.length && frames.length < limit) {
+  while (at + 4 <= bytes.size && frames.length < limit) {
     const frame = mpegAudioFrame(bytes, at);
     if (frame === null) {
       resynced = true;
@@ -160,7 +162,7 @@ export function splitMpegAudio(bytes: Uint8Array, limit: number): AudioSplit | n
     }
     // A frame that runs past the buffer is a truncated last frame. Writing it
     // would index bytes that are not there; the caller learns from `resynced`.
-    if (at + frame.length > bytes.length) {
+    if (at + frame.length > bytes.size) {
       resynced = true;
       break;
     }
@@ -199,24 +201,22 @@ interface AdtsFrame {
   readonly samplesPerFrame: number;
 }
 
-function adtsFrame(bytes: Uint8Array, at: number): AdtsFrame | null {
-  if (at + 7 > bytes.length) return null;
-  const b0 = bytes[at] ?? 0;
-  const b1 = bytes[at + 1] ?? 0;
+function adtsFrame(bytes: ByteSource, at: number): AdtsFrame | null {
+  if (at + 7 > bytes.size) return null;
+  const b0 = bytes.u8(at);
+  const b1 = bytes.u8(at + 1);
   if (b0 !== 0xff || (b1 & 0xf6) !== 0xf0) return null; // sync, and layer must be 0
 
   const protectionAbsent = b1 & 0x01;
-  const b2 = bytes[at + 2] ?? 0;
+  const b2 = bytes.u8(at + 2);
   const objectType = ((b2 >> 6) & 0x03) + 1;
   const rateIndex = (b2 >> 2) & 0x0f;
   if (rateIndex >= AAC_SAMPLE_RATES.length) return null;
-  const channelConfig = (((b2 & 0x01) << 2) | (((bytes[at + 3] ?? 0) >> 6) & 0x03)) & 0x07;
+  const channelConfig = (((b2 & 0x01) << 2) | ((bytes.u8(at + 3) >> 6) & 0x03)) & 0x07;
   if (channelConfig === 0) return null; // the config is in the stream, not here
 
   const length =
-    (((bytes[at + 3] ?? 0) & 0x03) << 11) |
-    ((bytes[at + 4] ?? 0) << 3) |
-    (((bytes[at + 5] ?? 0) >> 5) & 0x07);
+    ((bytes.u8(at + 3) & 0x03) << 11) | (bytes.u8(at + 4) << 3) | ((bytes.u8(at + 5) >> 5) & 0x07);
   const headerLength = protectionAbsent === 1 ? 7 : 9;
   if (length <= headerLength) return null;
 
@@ -226,7 +226,7 @@ function adtsFrame(bytes: Uint8Array, at: number): AdtsFrame | null {
     objectType,
     rateIndex,
     channelConfig,
-    samplesPerFrame: 1024 * (((bytes[at + 6] ?? 0) & 0x03) + 1),
+    samplesPerFrame: 1024 * ((bytes.u8(at + 6) & 0x03) + 1),
   };
 }
 
@@ -269,20 +269,20 @@ export interface AdtsSplit {
  * remuxer can do with it - and it is why the audio pitch is on the device
  * checklist.
  */
-export function splitAdts(bytes: Uint8Array, limit: number): AdtsSplit | null {
+export function splitAdts(bytes: ByteSource, limit: number): AdtsSplit | null {
   const frames: AudioFrame[] = [];
   let first: AdtsFrame | null = null;
   let resynced = false;
   let at = 0;
 
-  while (at + 7 <= bytes.length && frames.length < limit) {
+  while (at + 7 <= bytes.size && frames.length < limit) {
     const frame = adtsFrame(bytes, at);
     if (frame === null) {
       resynced = true;
       at += 1;
       continue;
     }
-    if (at + frame.length > bytes.length) {
+    if (at + frame.length > bytes.size) {
       resynced = true;
       break;
     }

@@ -1,4 +1,4 @@
-import { fail, ok, type ToolResult } from '@/features/registry/types';
+import { fail, ok, type ByteSource, type ToolResult } from '@/features/registry/types';
 
 import {
   LIMITS,
@@ -38,21 +38,21 @@ import {
  * Bounded reading
  * ========================================================================== */
 
-function u8(bytes: Uint8Array, at: number): number {
-  return bytes[at] ?? 0;
+function u8(bytes: ByteSource, at: number): number {
+  return bytes.u8(at);
 }
 
-function u16(bytes: Uint8Array, at: number): number {
+function u16(bytes: ByteSource, at: number): number {
   return (u8(bytes, at) << 8) | u8(bytes, at + 1);
 }
 
-function i16(bytes: Uint8Array, at: number): number {
+function i16(bytes: ByteSource, at: number): number {
   const value = u16(bytes, at);
   return value >= 0x8000 ? value - 0x10000 : value;
 }
 
 /** `* 0x1000000` rather than `<< 24`, because the shift operator is signed. */
-function u32(bytes: Uint8Array, at: number): number {
+function u32(bytes: ByteSource, at: number): number {
   return (
     u8(bytes, at) * 0x1000000 +
     (u8(bytes, at + 1) << 16) +
@@ -61,7 +61,7 @@ function u32(bytes: Uint8Array, at: number): number {
   );
 }
 
-function i32(bytes: Uint8Array, at: number): number {
+function i32(bytes: ByteSource, at: number): number {
   const value = u32(bytes, at);
   return value >= 0x80000000 ? value - 0x100000000 : value;
 }
@@ -74,11 +74,11 @@ function i32(bytes: Uint8Array, at: number): number {
  * number this tool could act on anyway, and every caller range-checks what it
  * gets rather than assuming it is sane.
  */
-function u64(bytes: Uint8Array, at: number): number {
+function u64(bytes: ByteSource, at: number): number {
   return u32(bytes, at) * 0x100000000 + u32(bytes, at + 4);
 }
 
-function tag(bytes: Uint8Array, at: number): string {
+function tag(bytes: ByteSource, at: number): string {
   let out = '';
   for (let index = 0; index < 4; index += 1) out += String.fromCharCode(u8(bytes, at + index));
   return out;
@@ -129,7 +129,7 @@ interface Walk {
  * A box that does not advance the cursor ends the walk in every case, which is
  * the property that makes this loop terminate whatever the file says.
  */
-function childBoxes(bytes: Uint8Array, from: number, to: number, walk: Walk, depth: number): Box[] {
+function childBoxes(bytes: ByteSource, from: number, to: number, walk: Walk, depth: number): Box[] {
   const found: Box[] = [];
   if (depth > LIMITS.maxDepth) {
     walk.problem = 'the boxes are nested deeper than any real file nests them';
@@ -227,7 +227,7 @@ const AUDIO_CHANNELS = 16;
  * `esds` sixteen bytes early - where it finds nothing, and the track silently
  * loses the configuration a decoder needs to play it.
  */
-function audioSubBoxes(bytes: Uint8Array, entryBody: number): number {
+function audioSubBoxes(bytes: ByteSource, entryBody: number): number {
   const version = u16(bytes, entryBody + 8);
   if (version === 1) return 44;
   if (version === 2) return 64;
@@ -242,7 +242,7 @@ function audioSubBoxes(bytes: Uint8Array, entryBody: number): number {
  * step. The descriptor length is a base-128 varint whose continuation bit is
  * in the top of each byte, which is its own small opportunity to run away.
  */
-function esdsObjectType(bytes: Uint8Array, from: number, to: number): number | null {
+function esdsObjectType(bytes: ByteSource, from: number, to: number): number | null {
   let cursor = from + 4; // version and flags
   let guard = 0;
 
@@ -289,7 +289,7 @@ function esdsObjectType(bytes: Uint8Array, from: number, to: number): number | n
  * an `mp4a` with no readable `esds` is treated as AAC because that is what it
  * is in every file anybody has.
  */
-function codecOfEntry(bytes: Uint8Array, entry: Box, kind: TrackKind): CodecId {
+function codecOfEntry(bytes: ByteSource, entry: Box, kind: TrackKind): CodecId {
   switch (entry.type) {
     case 'avc1':
     case 'avc3':
@@ -351,7 +351,7 @@ interface TableParts {
 }
 
 /** `stsz`, or `stz2` where the sizes are packed into 4, 8 or 16 bits. */
-function readSizes(bytes: Uint8Array, stbl: readonly Box[]): number[] | null {
+function readSizes(bytes: ByteSource, stbl: readonly Box[]): number[] | null {
   const stsz = findBox(stbl, 'stsz');
   if (stsz !== null) {
     const uniform = u32(bytes, stsz.body + 4);
@@ -363,7 +363,7 @@ function readSizes(bytes: Uint8Array, stbl: readonly Box[]): number[] | null {
       const count = Math.min(
         declared,
         LIMITS.maxSamplesPerTrack,
-        Math.ceil(bytes.length / uniform) + 1,
+        Math.ceil(bytes.size / uniform) + 1,
       );
       return new Array<number>(count).fill(uniform);
     }
@@ -411,7 +411,7 @@ function readSizes(bytes: Uint8Array, stbl: readonly Box[]): number[] | null {
  * for a one-frame file is the whole file.
  */
 function readDecodeTimes(
-  bytes: Uint8Array,
+  bytes: ByteSource,
   stbl: readonly Box[],
   sampleCount: number,
 ): { readonly dts: number[]; readonly lastDuration: number } | null {
@@ -447,7 +447,7 @@ function readDecodeTimes(
 
 /** `ctts`: how far each sample's presentation time is from its decode time. */
 function readCompositionOffsets(
-  bytes: Uint8Array,
+  bytes: ByteSource,
   stbl: readonly Box[],
   sampleCount: number,
 ): number[] {
@@ -488,7 +488,7 @@ function readCompositionOffsets(
  * every one of them against the length of the file afterwards.
  */
 function readOffsets(
-  bytes: Uint8Array,
+  bytes: ByteSource,
   stbl: readonly Box[],
   sizes: readonly number[],
 ): number[] | null {
@@ -538,7 +538,7 @@ function readOffsets(
 }
 
 /** `stss`: the samples a player may seek to. Absent means every one of them. */
-function readSyncFlags(bytes: Uint8Array, stbl: readonly Box[], sampleCount: number): number[] {
+function readSyncFlags(bytes: ByteSource, stbl: readonly Box[], sampleCount: number): number[] {
   const stss = findBox(stbl, 'stss');
   if (stss === null) return new Array<number>(sampleCount).fill(1);
 
@@ -551,7 +551,7 @@ function readSyncFlags(bytes: Uint8Array, stbl: readonly Box[], sampleCount: num
   return flags;
 }
 
-function readTable(bytes: Uint8Array, stbl: readonly Box[]): TableParts | null {
+function readTable(bytes: ByteSource, stbl: readonly Box[]): TableParts | null {
   const sizes = readSizes(bytes, stbl);
   if (sizes === null || sizes.length === 0) return null;
 
@@ -589,7 +589,7 @@ function readLanguage(packed: number): string | null {
   return language === 'und' ? null : language;
 }
 
-function readEdits(bytes: Uint8Array, trak: readonly Box[], walk: Walk): readonly Edit[] {
+function readEdits(bytes: ByteSource, trak: readonly Box[], walk: Walk): readonly Edit[] {
   const edts = findBox(trak, 'edts');
   if (edts === null) return [];
   const elst = findBox(childBoxes(bytes, edts.body, edts.end, walk, 3), 'elst');
@@ -627,7 +627,7 @@ function readEdits(bytes: Uint8Array, trak: readonly Box[], walk: Walk): readonl
 }
 
 function readTrack(
-  bytes: Uint8Array,
+  bytes: ByteSource,
   trakBox: Box,
   number: number,
   walk: Walk,
@@ -676,8 +676,7 @@ function readTrack(
   const tkhd = findBox(trak, 'tkhd');
   const matrixAt = tkhd !== null && u8(bytes, tkhd.body) === 1 ? 52 : 40;
   const header = tkhd !== null && tkhd.body + matrixAt + 44 <= tkhd.end ? tkhd : null;
-  const matrix =
-    header === null ? null : bytes.subarray(header.body + matrixAt, header.body + matrixAt + 36);
+  const matrix = header === null ? null : bytes.slice(header.body + matrixAt, 36);
 
   const displayWidth =
     header === null ? 0 : Math.round(u32(bytes, header.body + matrixAt + 36) / 65536);
@@ -716,7 +715,7 @@ function readTrack(
      */
     sampleRate: kind === 'audio' ? timescale : null,
     language,
-    sampleEntry: bytes.subarray(entry.start, entry.end),
+    sampleEntry: bytes.slice(entry.start, entry.end - entry.start),
     codecPrivate: null,
     matrix,
     edits: readEdits(bytes, trak, walk),
@@ -734,7 +733,7 @@ function readTrack(
 /** Cap on how much of a metadata box is searched. Real ones are kilobytes. */
 const METADATA_SCAN_LIMIT = 1024 * 1024;
 
-function containsTag(bytes: Uint8Array, from: number, to: number, wanted: string): boolean {
+function containsTag(bytes: ByteSource, from: number, to: number, wanted: string): boolean {
   const limit = Math.min(to, from + METADATA_SCAN_LIMIT);
   const first = wanted.charCodeAt(0);
   for (let at = from; at + wanted.length <= limit; at += 1) {
@@ -763,7 +762,7 @@ function containsTag(bytes: Uint8Array, from: number, to: number, wanted: string
  * when the tool is about to discard it.
  */
 function readMetadata(
-  bytes: Uint8Array,
+  bytes: ByteSource,
   moovChildren: readonly Box[],
   trakBoxes: readonly Box[],
   walk: Walk,
@@ -803,9 +802,9 @@ function readMetadata(
  * Entry point
  * ========================================================================== */
 
-export function readIsoBmff(bytes: Uint8Array): ToolResult<SourceFile> {
+export function readIsoBmff(bytes: ByteSource): ToolResult<SourceFile> {
   const walk: Walk = { nodes: 0, problem: null };
-  const top = childBoxes(bytes, 0, bytes.length, walk, 0);
+  const top = childBoxes(bytes, 0, bytes.size, walk, 0);
 
   const ftyp = findBox(top, 'ftyp');
   const moov = findBox(top, 'moov');
@@ -879,9 +878,9 @@ export function readIsoBmff(bytes: Uint8Array): ToolResult<SourceFile> {
     for (let index = 0; index < track.samples.count; index += 1) {
       const at = track.samples.offset[index] ?? 0;
       const size = track.samples.size[index] ?? 0;
-      if (at < 0 || size < 0 || at + size > bytes.length) {
+      if (at < 0 || size < 0 || at + size > bytes.size) {
         return fail('parse-error', 'That file is truncated: some of its frames are not in it.', {
-          detail: `Track ${String(track.number)} says frame ${String(index + 1)} is ${String(size)} bytes at offset ${String(at)}, and the file is ${String(bytes.length)} bytes long. This is what an interrupted download looks like.`,
+          detail: `Track ${String(track.number)} says frame ${String(index + 1)} is ${String(size)} bytes at offset ${String(at)}, and the file is ${String(bytes.size)} bytes long. This is what an interrupted download looks like.`,
         });
       }
     }

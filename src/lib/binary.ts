@@ -218,8 +218,14 @@ export interface ByteSource {
   /**
    * A view of `[at, at + length)`, clamped to the end of the source.
    *
-   * INVALIDATED BY THE NEXT CALL on this source. Copy anything you keep - or
-   * ask for it with `slice`, which is the same thing said in the type.
+   * READ-ONLY, AND IT MAY ALIAS AN INTERNAL WINDOW - so never write through
+   * one. It stays READABLE for as long as it is held, which is a promise this
+   * interface makes deliberately rather than by accident: a window that is
+   * evicted is REPLACED with a fresh array rather than overwritten in place,
+   * and the transport-stream walk relies on that - it pulls a block of packets
+   * and iterates inside it while the visitor reads elsewhere in the file.
+   *
+   * Use `slice` when the bytes have to be owned rather than merely read.
    */
   readonly view: (at: number, length: number) => Uint8Array;
   /** A copy of `[at, at + length)` that outlives the next read. */
@@ -271,7 +277,14 @@ interface Window {
  * a decision somewhere a person can read it.
  */
 export function blobSource(blob: Blob): ByteSource {
-  const reader = new FileReaderSync();
+  const Reader = syncReaderConstructor();
+  if (Reader === null) {
+    // Unreachable through `sourceFor` and through every sink built with
+    // `spill: canWindowBlobs()`. Stated rather than assumed, because the
+    // alternative to a message is a `TypeError` about an undefined global.
+    throw new Error('Blobs cannot be read synchronously outside a worker.');
+  }
+  const reader = new Reader();
   const size = blob.size;
   const windows: Window[] = [];
   let clock = 0;
@@ -362,9 +375,35 @@ export function blobSource(blob: Blob): ByteSource {
   };
 }
 
+/**
+ * `FileReaderSync`, declared here rather than imported from a lib.
+ *
+ * It is a WORKER-ONLY API - the only synchronous way to get bytes out of a
+ * blob, and the whole reason the container readers did not have to be rewritten
+ * as asynchronous state machines - and this project's TypeScript `lib` is DOM,
+ * because the application is a page. Pulling in `lib.webworker` for one
+ * constructor would bring a second, conflicting declaration of most of the
+ * platform with it.
+ *
+ * So the two members actually used are declared, and reached through
+ * `globalThis` rather than as a bare name: a bare name is a `ReferenceError` in
+ * a realm that does not have it, and every caller here has to be able to ASK
+ * whether it is there.
+ */
+interface SyncFileReader {
+  readAsArrayBuffer: (blob: Blob) => ArrayBuffer;
+}
+
+type SyncFileReaderConstructor = new () => SyncFileReader;
+
+function syncReaderConstructor(): SyncFileReaderConstructor | null {
+  const realm = globalThis as { FileReaderSync?: SyncFileReaderConstructor };
+  return realm.FileReaderSync ?? null;
+}
+
 /** Whether this realm can read a blob synchronously. True in a worker. */
 export function canWindowBlobs(): boolean {
-  return typeof FileReaderSync !== 'undefined';
+  return syncReaderConstructor() !== null;
 }
 
 /**
@@ -419,11 +458,38 @@ export interface ByteSink {
   readonly copyFrom: (source: ByteSource, at: number, length: number) => void;
   /** Everything written, as a value. Callable once. */
   readonly finish: () => BinaryData;
+  /**
+   * Everything written, as something to read back. Callable once, instead of
+   * `finish`.
+   *
+   * For the case where the thing being assembled is not the answer but an
+   * intermediate that this same run has to index - a transport stream's frames
+   * gathered out of its packets, which are then copied into the output in a
+   * different order. Build such a sink with `spill: canWindowBlobs()`, since a
+   * realm that cannot read a blob synchronously cannot read one back here
+   * either.
+   */
+  readonly source: () => ByteSource;
 }
 
-export function createByteSink(): ByteSink {
+export interface SinkOptions {
+  /**
+   * Whether to hand full buffers to blob storage as they fill.
+   *
+   * True by default and false only where the sink's own output has to be read
+   * back synchronously in a realm with no `FileReaderSync` - which is the unit
+   * suite, where the data is small by construction. It is a fallback that
+   * costs memory rather than correctness, and having it is what keeps the two
+   * paths honest: the same code assembles a transport stream in a test and in
+   * a worker.
+   */
+  readonly spill?: boolean;
+}
+
+export function createByteSink(options: SinkOptions = {}): ByteSink {
+  const spilling = options.spill ?? true;
   const parts: Blob[] = [];
-  let buffer = new Uint8Array(SPILL_BYTES);
+  let buffer = new Uint8Array(spilling ? SPILL_BYTES : 64 * 1024);
   let used = 0;
   let written = 0;
   /*
@@ -436,8 +502,16 @@ export function createByteSink(): ByteSink {
 
   function spill(): void {
     if (used === 0) return;
-    parts.push(new Blob([buffer.slice(0, used)]));
-    used = 0;
+    if (spilling) {
+      parts.push(new Blob([buffer.slice(0, used)]));
+      used = 0;
+      return;
+    }
+    // Not spilling: grow instead, which is the old behaviour and the only
+    // thing a realm without synchronous blob reads can do.
+    const grown = new Uint8Array(buffer.byteLength * 2);
+    grown.set(buffer);
+    buffer = grown;
   }
 
   function append(chunk: Uint8Array): void {
@@ -483,6 +557,12 @@ export function createByteSink(): ByteSink {
       spill();
       buffer = new Uint8Array(0);
       return deferredBinary(new Blob(parts), head.subarray(0, Math.min(written, HEAD_BYTES)));
+    },
+    source: () => {
+      if (parts.length === 0) return residentSource(buffer.slice(0, used));
+      spill();
+      buffer = new Uint8Array(0);
+      return blobSource(new Blob(parts));
     },
   };
 }

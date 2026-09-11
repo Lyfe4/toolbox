@@ -2,14 +2,16 @@ import { describe, expect, it } from 'vitest';
 
 import { readAvi } from './avi';
 import {
+  MP3_FRAME_BYTES,
   annexB,
   avcPps,
   avcSlice,
   avcSps,
+  bytesOf,
   makeAvi,
-  MP3_FRAME_BYTES,
   mpegAudioFrameBytes,
   sampleBytes,
+  sourceOf,
 } from './fixtures';
 import { readIsoBmff } from './isobmff';
 import { remux } from './remux';
@@ -40,7 +42,7 @@ function samplesOf(bytes: Uint8Array): {
   readonly sizes: readonly (readonly [number | null, number | null])[];
   readonly dts: readonly (readonly number[])[];
 } {
-  const read = readIsoBmff(bytes);
+  const read = readIsoBmff(sourceOf(bytes));
   if (!read.ok) throw new Error(`the output could not be read back: ${read.error.message}`);
 
   return {
@@ -130,7 +132,7 @@ describe('an old AVI film: Xvid video with MP3 sound', () => {
      * soundtrack coming out under the label "Repackaged", which is the
      * plausible-wrong-answer shape applied to a whole feature.
      */
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     expect(done.ok).toBe(false);
     if (done.ok) return;
     // Named the way somebody holding the file names it, which is the point of
@@ -141,17 +143,17 @@ describe('an old AVI film: Xvid video with MP3 sound', () => {
   });
 
   it('lifts the soundtrack out frame for frame, across the chunk boundaries', () => {
-    const done = remux(source, 'audio');
+    const done = remux(sourceOf(source), 'audio');
     if (!done.ok) throw new Error(done.error.message);
     expect(done.value.extension).toBe('mp3');
     // Every byte of every frame, in order, including the two that were split
     // between chunks. A reader that took a chunk as a frame would produce
     // three samples of the wrong lengths and audio that clicks.
-    expect([...done.value.bytes]).toEqual([...stream]);
+    expect([...bytesOf(done.value.bytes)]).toEqual([...stream]);
   });
 
   it('finds the frames rather than the chunks, and times them by the codec', () => {
-    const read = readAvi(source);
+    const read = readAvi(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     const audio = read.value.tracks.find((track) => track.kind === 'audio');
 
@@ -169,7 +171,7 @@ describe('an old AVI film: Xvid video with MP3 sound', () => {
   });
 
   it('still names the video, so the refusal can say what the file holds', () => {
-    const read = readAvi(source);
+    const read = readAvi(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     const video = read.value.tracks.find((track) => track.kind === 'video');
     expect(video?.codec).toBe('mpeg4part2');
@@ -180,7 +182,7 @@ describe('an old AVI film: Xvid video with MP3 sound', () => {
   });
 
   it('says the titles and tags were left behind', () => {
-    const done = remux(source, 'audio');
+    const done = remux(sourceOf(source), 'audio');
     if (!done.ok) throw new Error(done.error.message);
     expect(done.value.from.metadata).toEqual(['Titles and tags']);
   });
@@ -220,9 +222,9 @@ describe('an AVI carrying H.264, which some capture hardware writes', () => {
   });
 
   it('carries every coded picture across, unit for unit', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    const read = samplesOf(done.value.bytes);
+    const read = samplesOf(bytesOf(done.value.bytes));
     expect((read.tracks[0] ?? []).flatMap(nalsIn).map((nal) => [...nal])).toEqual(
       [idr, later[0] ?? idr, later[1] ?? idr].map((nal) => [...nal]),
     );
@@ -237,9 +239,9 @@ describe('an AVI carrying H.264, which some capture hardware writes', () => {
      * old capture is hundreds, and which presents as sound drifting steadily
      * ahead of picture rather than as anything being missing.
      */
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    expect(samplesOf(done.value.bytes).dts[0]).toEqual([0, 1, 3]);
+    expect(samplesOf(bytesOf(done.value.bytes)).dts[0]).toEqual([0, 1, 3]);
   });
 
   it('takes the keyframe flags from the index and the offsets from the movie list', () => {
@@ -255,21 +257,21 @@ describe('an AVI carrying H.264, which some capture hardware writes', () => {
      * That the samples above came out right IS this assertion; the flag below
      * is the other half.
      */
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    expect(samplesOf(done.value.bytes).sync[0]).toEqual([1, 0, 0]);
+    expect(samplesOf(bytesOf(done.value.bytes)).sync[0]).toEqual([1, 0, 0]);
   });
 
   it('descends into a `rec ` group, which changes nothing about the data', () => {
     // The fixture above is grouped. A reader that does not descend finds no
     // chunks belonging to any stream and reports an empty movie list.
-    const read = readAvi(source);
+    const read = readAvi(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     expect(read.value.tracks[0]?.samples.count).toBe(3);
   });
 
   it('says the framing was rebuilt, because these frames were Annex B', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
     expect(done.value.notes.some((note) => note.title.includes('framing was rebuilt'))).toBe(true);
   });
@@ -297,9 +299,9 @@ describe('an AVI carrying H.264, which some capture hardware writes', () => {
       ],
     });
 
-    const done = remux(lying, 'container');
+    const done = remux(sourceOf(lying), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    expect(samplesOf(done.value.bytes).sizes[0]).toEqual([640, 480]);
+    expect(samplesOf(bytesOf(done.value.bytes)).sizes[0]).toEqual([640, 480]);
   });
 
   it('works with no index at all, which is what a cut-short file has', () => {
@@ -316,9 +318,9 @@ describe('an AVI carrying H.264, which some capture hardware writes', () => {
       index: false,
     });
 
-    const done = remux(unindexed, 'container');
+    const done = remux(sourceOf(unindexed), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    const read = samplesOf(done.value.bytes);
+    const read = samplesOf(bytesOf(done.value.bytes));
     // And the keyframe is still found, because it comes out of the bitstream:
     // an IDR is written by the encoder and a flag is written by the muxer, and
     // where there is no muxer left to ask, the encoder still knows.
@@ -354,9 +356,9 @@ describe('the other things an AVI holds', () => {
       ],
     });
 
-    const done = remux(source, 'audio');
+    const done = remux(sourceOf(source), 'audio');
     if (!done.ok) throw new Error(done.error.message);
-    expect([...done.value.bytes]).toEqual([...stream]);
+    expect([...bytesOf(done.value.bytes)]).toEqual([...stream]);
   });
 
   it('tells Layer II from Layer III whatever the format tag says', () => {
@@ -375,11 +377,11 @@ describe('the other things an AVI holds', () => {
       ],
     });
 
-    const read = readAvi(source);
+    const read = readAvi(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     expect(read.value.tracks[0]?.codec).toBe('mp2');
 
-    const done = remux(source, 'audio');
+    const done = remux(sourceOf(source), 'audio');
     expect(done.ok).toBe(false);
     if (done.ok) return;
     expect(done.error.detail).toContain('Layer II');
@@ -405,7 +407,7 @@ describe('the other things an AVI holds', () => {
       ],
     });
 
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     expect(done.ok).toBe(false);
     if (done.ok) return;
     expect(done.error.detail).toContain('Motion JPEG');
@@ -427,10 +429,10 @@ describe('the other things an AVI holds', () => {
       ],
     });
 
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
     expect(done.value.notes.some((note) => note.title.includes('Subtitles'))).toBe(true);
-    expect(samplesOf(done.value.bytes).kinds).toEqual(['video']);
+    expect(samplesOf(bytesOf(done.value.bytes)).kinds).toEqual(['video']);
   });
 
   it('refuses something that is RIFF and is not an AVI', () => {
@@ -441,7 +443,7 @@ describe('the other things an AVI holds', () => {
       0x52, 0x49, 0x46, 0x46, 0x20, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74,
       0x20, 0x10, 0x00, 0x00, 0x00,
     ]);
-    const done = remux(wav, 'container');
+    const done = remux(sourceOf(wav), 'container');
     expect(done.ok).toBe(false);
     if (done.ok) return;
     expect(done.error.code).toBe('unsupported-type');

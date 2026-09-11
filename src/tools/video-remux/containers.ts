@@ -1,4 +1,4 @@
-import { fail, type ToolResult } from '@/features/registry/types';
+import { fail, type ByteSource, type ToolResult } from '@/features/registry/types';
 
 /**
  * WHAT BOTH READERS PRODUCE, AND THE CEILINGS THEY READ UNDER.
@@ -405,8 +405,15 @@ export interface SourceTrack {
    * stream it is about to refuse. An AVI holding Xvid video and MP3 sound
    * assembles the MP3 - whose frames straddle chunk boundaries - and leaves
    * the Xvid pointing at the original file, where it costs nothing.
+   *
+   * A SOURCE RATHER THAN A BUFFER, because an hour of broadcast video gathered
+   * out of its packets is two to four gigabytes and there is nowhere in a tab
+   * to put that. What the reader assembles now goes into a `ByteSink`, which
+   * keeps a small stream in memory exactly as before and hands a large one to
+   * blob storage - and what comes back out is something the writer indexes the
+   * same way it indexes the input file.
    */
-  readonly media: Uint8Array | null;
+  readonly media: ByteSource | null;
 }
 
 export type ContainerId = 'mp4' | 'matroska' | 'mpegts' | 'avi';

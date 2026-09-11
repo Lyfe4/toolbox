@@ -391,10 +391,15 @@ export const TOOL_MANIFEST = [
       requiresOffscreenCanvas: false,
       reportsProgress: false,
       timeoutMs: 30_000,
-      // Four times the largest limit in the set, and a memory decision rather
-      // than a video one - a run holds the input about three times over. The
-      // arithmetic, and what it means for a feature film, is in the tool.
-      maxInputBytes: 256 * 1024 * 1024,
+      // The one tool whose deadline scales with its input, because the one
+      // tool that reads its input through a window is the only one whose input
+      // can be four gigabytes. See the tool.
+      timeoutMsPerMiB: 20,
+      // Sixteen times the next largest limit in the set, and no longer a memory
+      // decision: the input is a file this tool walks in windows rather than
+      // holds. What still has a ceiling is the ANSWER. The arithmetic is in the
+      // tool, and the sizes are the ones the formats themselves reach.
+      maxInputBytes: 4 * 1024 * 1024 * 1024,
     },
   },
   {

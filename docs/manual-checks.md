@@ -214,9 +214,10 @@ plays. Each names the failure it exists to catch, because that is what made
 the rotation case worth having.
 
 You need: a `.ts` or `.m2ts`/`.mts` from a real device (OBS, a camcorder, a
-tuner), an old `.avi` film, and QuickTime or VLC, plus Safari and a phone.
-Under 256 MB, or the tool refuses it at the moment you choose it — which is
-step 11.
+tuner), an old `.avi` film, and QuickTime or VLC, plus Safari and a phone. Size
+is no longer a reason to pick a small one — **pick a large one on purpose**,
+because the largest files are the ones nothing here has ever run on. See steps
+11 and 12.
 
 1. **A transport stream, in Safari.** Repackage a `.ts` or `.mts` holding
    H.264, download the result, and drag it into a Safari window. Do this
@@ -330,18 +331,29 @@ step 11.
       than transcription — and note that a transport stream needs none of it,
       so a fault here is Matroska-only.
 
-11. **Something too big.** Choose a file over 256 MB — which any real DivX film
-    or hour of tuner recording will be.
-    - _Pass:_ it is refused **at the moment you choose it**, naming the file,
-      its size and the limit, before anything is read.
-    - _Fail:_ the app thinks about it, then refuses. That means the limit is
-      being applied after the read rather than before it.
+11. **Something genuinely large.** A real DivX film, an hour of tuner
+    recording, or an AVCHD clip — 1 GB or more, on a desktop.
+    - _Pass:_ choosing it is **instant**, because the page reads 4 kB of it and
+      nothing else, and the size beside the chooser is right. Then the
+      repackage either completes, or is refused **naming the size of the answer
+      and pointing at the audio operation** — which is what happens past about
+      1.9 GB of output, and is a browser's blob limit rather than a choice
+      here.
+    - _Fail:_ choosing it takes seconds and the tab's memory jumps. That is the
+      file being read on the main thread, which is the whole thing the value
+      model changed.
+    - _Fail:_ the run dies, or the Download button produces nothing. That is
+      blob storage refusing, and it is the number this repository has measured
+      on a desktop and nowhere else — Chromium at 1.88 GiB, Gecko and
+      JavaScriptCore past 4. Write down what the device did.
 
-12. **On a phone, and watch the memory.** Repackage a transport stream of
-    100 MB or more on a phone.
-    - _Pass:_ it completes.
-    - _Fail:_ the tab reloads or the run dies. A transport stream is held
-      **four** times over rather than three — page, worker clone, assembly
-      buffer, output — because its frames are not contiguous in the file and
-      have to be gathered before they can be indexed. That arithmetic is read
-      off the engine and has never been measured on a device.
+12. **On a phone, and watch the memory. THE FIRST THING TO CHECK.** Repackage a
+    transport stream of 500 MB or more on a phone, and then something larger.
+    - _Pass:_ it completes, and the tab survives.
+    - _Fail:_ the tab reloads or the run dies. Nothing here has ever run on a
+      device, and a phone is where the one remaining unmeasured number lives:
+      **how much blob storage a mobile browser will give a page before
+      `FileReaderSync` starts refusing.** The desktop numbers in the tool's
+      README are a desktop's. The input is no longer the risk — it stays on
+      disk and is read in 1 MB windows — so a failure here is about the OUTPUT
+      and about what the gathered frames of a transport stream cost.

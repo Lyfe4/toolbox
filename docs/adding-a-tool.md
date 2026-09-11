@@ -148,6 +148,25 @@ each is in
   `DATA_TYPES` for a tool you are about to write is fine; leaving one there for
   a tool nobody wrote is a permanent tax on every switch over `ToolValue`.
 
+### `defineTool`, or `defineStreamingTool`
+
+Almost certainly the first. `defineTool` gives a `bytes` input to your `run` as
+a `Uint8Array`, bounded by the `maxInputBytes` you declare, exactly as every
+tool in this repository except one works.
+
+`defineStreamingTool` is for a tool whose input can be larger than the tab —
+today that means `video-remux` and nothing else. Its `run` is handed a
+`ByteSource` instead: `u8`, `view` and `slice` over bytes that may still be on
+disk, and **no `bytes` member to reach for**. That absence is deliberate; see
+[where a value's bytes are](architecture.md#where-a-values-bytes-are). Its
+outputs are `BinaryData` rather than arrays, which is what lets it write a
+result larger than memory through a `ByteSink`.
+
+The cost is that every reader you write has to be a walk over offsets rather
+than over an array, and that is a real constraint rather than a style: it is
+why the video tool's four container readers look the way they do. Reach for it
+when the file genuinely does not fit, and not before.
+
 A port id is a persisted identifier — it is two of the four fields of every
 edge, a key of `CanvasNode.inputs`, and it travels in share links — so renaming
 one later means a migration in

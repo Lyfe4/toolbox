@@ -1,5 +1,5 @@
 import {
-  defineTool,
+  defineStreamingTool,
   eraseTool,
   ok,
   type ErasedTool,
@@ -47,7 +47,7 @@ function facts(side: StreamFacts): JsonValue {
  * second's work rather than the four and three quarter minutes the feasibility
  * investigation measured for the same clip re-encoded.
  */
-export const videoRemuxTool = defineTool({
+export const videoRemuxTool = defineStreamingTool({
   id: 'video-remux',
   name: 'Video',
   summary: 'Repackage a video into an MP4 without re-encoding it, or extract its audio.',
@@ -99,40 +99,59 @@ export const videoRemuxTool = defineTool({
     requiresOffscreenCanvas: false,
     reportsProgress: false,
     /*
-     * Thirty seconds, against a measured fraction of one.
+     * Thirty seconds of fixed budget, plus time per megabyte of input.
      *
-     * The work is parsing an index and copying bytes, both linear in the size
-     * of the file, so the honest budget is "enough for the largest input this
-     * tool accepts, several times over". The engine's guarantee is at most
-     * this long waiting and then this long running, so the real worst case a
-     * user can see is a minute.
+     * A DEADLINE HAS TO SCALE WITH THE FILE NOW, and that is new. While the
+     * ceiling was 256 MB a constant was honest: the work is parsing an index
+     * and copying bytes, both linear in the size of the file, and a fraction
+     * of a second was the measurement. A four-gigabyte tuner recording is
+     * sixteen times that file and is walked several times over - once for the
+     * tables, once to measure each stream, once to read each - so a constant
+     * that fits a phone clip either strangles a film or is meaningless for the
+     * clip.
+     *
+     * Twenty milliseconds per MiB is 50 MB/s, which is an order of magnitude
+     * under the 868-4163 MB/s a windowed read of a blob was measured at, and
+     * therefore has room for the parsing between the reads. It gives a phone
+     * clip about a minute and a four-gigabyte recording about twenty-three.
      */
     timeoutMs: 30_000,
+    timeoutMsPerMiB: 20,
     /*
-     * 256 MB, which is four times the largest limit in the set, and the number
-     * is a memory decision rather than a video one.
+     * 4 GiB, against 256 MB before this tool read its input through a window.
      *
-     * A run holds the input three times over: the page keeps the chosen file's
-     * bytes for the session, the worker gets a structured clone of them
-     * because inputs are borrowed rather than transferred, and the output is
-     * built beside that clone. So the peak is about three times the input, and
-     * 256 MB is where that stops being something a laptop shrugs at.
+     * THE OLD NUMBER WAS ABOUT MEMORY AND THIS ONE IS NOT. A run used to hold
+     * the input three times over - the page kept the chosen file's bytes for
+     * the session, the worker got a structured clone because inputs are
+     * borrowed rather than transferred, and the output was built beside that
+     * clone - and a transport stream cost a fourth copy, because its frames
+     * are not contiguous and had to be gathered before they could be indexed.
+     * 256 MB was where three times that stopped being something a laptop
+     * shrugs at.
      *
-     * WHAT THAT MEANS IN PRACTICE, said here because it is the tool's most
-     * important limitation: about four minutes of 1080p phone video fits, and
-     * a feature-length film does not. The files people most want to repackage
-     * are two-gigabyte films, and no browser tool can hold one of those in
-     * memory - not this one, and not a WASM ffmpeg either, whose own heap
-     * ceiling is 2 GiB before the file is counted. Doing those needs the input
-     * streamed from disk in pieces and the output written out in pieces, which
-     * is a change to the execution engine's value model rather than to this
-     * tool. See the README.
+     * None of those copies exists now. The page holds the `File` and not its
+     * contents; the worker is handed a blob by reference; the readers walk it
+     * in windows; what a transport stream gathers goes to blob storage as it
+     * fills; and the output is written the same way. So the limit stopped
+     * being a statement about memory and became a statement about what this
+     * tool will agree to walk.
+     *
+     * 4 GiB is chosen from the formats rather than from the machine: AVCHD
+     * splits its clips at 2 GB, an OpenDML AVI exists because the format
+     * cannot address past 2 GB, and an hour of tuner recording is 2 to 4 GB.
+     * That is the size the files this tool exists for actually reach.
+     *
+     * WHAT STILL HAS A CEILING IS THE ANSWER, not the input - see
+     * `MAX_BLOB_BYTES` and `refuseOversizedOutput`. A four-gigabyte recording
+     * can have its audio extracted here and cannot be repackaged whole,
+     * because a browser will not hand back a two-gigabyte blob; the refusal
+     * says so in those terms, before any of it is copied.
      */
-    maxInputBytes: 256 * 1024 * 1024,
+    maxInputBytes: 4 * 1024 * 1024 * 1024,
   },
 
   run: ({ inputs, options }) => {
-    const converted = remux(inputs.input.bytes, options.operation);
+    const converted = remux(inputs.input.source, options.operation);
     if (!converted.ok) return converted;
 
     const result = converted.value;
@@ -142,7 +161,7 @@ export const videoRemuxTool = defineTool({
     return ok({
       output: {
         type: 'bytes',
-        bytes: result.bytes,
+        data: result.bytes,
         mediaType: result.mediaType,
         filename: `${outputBase(inputs.input.filename)}.${result.extension}`,
       } as const,

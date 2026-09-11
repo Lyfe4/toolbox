@@ -21,15 +21,27 @@ import type { FileInputRef, NodeId } from './types';
  * link at any size. So a file is session state, deliberately, and the reload
  * path says so out loud instead of failing quietly.
  *
- * WHAT IS HELD IS THE BUILT VALUE, not the `File`. It was validated against its
+ * WHAT IS HELD IS THE BUILT VALUE, and for a `bytes` port that value is a
+ * REFERENCE TO THE FILE rather than its contents. It was validated against its
  * port at selection - see `loadFileForPort` - so nothing downstream can be
- * handed a file its port cannot use, and no run has to read or decode anything.
+ * handed a file its port cannot use, and no run has to decode anything.
+ *
+ * That reference is the difference between this store costing a session's
+ * worth of chosen files and costing a session's worth of pointers. Choosing a
+ * 320 MB video used to put 320 MB here until the tab closed; it now costs the
+ * 4 kB head the sniff already read. A port that needs TEXT still holds the
+ * decoded string, which is the honest shape of that case - decoding is a pass
+ * over the whole file, and the tools with a text-only document port declare
+ * limits in the kilobytes.
  *
  * ONE FILE CAN FEED SEVERAL NODES. The value is handed out by reference and the
  * pipeline executes with `ownership: 'borrow'`, so each consumer gets a
- * structured clone and the second one is not looking at a detached buffer.
- * `fanout.test.ts` holds that line for wired outputs; `attachments.test.ts`
- * holds it for a file.
+ * structured clone - and where the value is a blob, the clone is a second
+ * reference to the same immutable bytes rather than a copy of them. A blob
+ * cannot be detached, so the failure this rule was written to prevent is not
+ * available to it. `fanout.test.ts` holds the line for wired outputs;
+ * `attachments.test.ts` holds it for a file, and reads every consumer's value
+ * rather than the first.
  */
 
 /** Node id -> port id -> the file on that port. */

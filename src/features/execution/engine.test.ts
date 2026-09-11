@@ -404,6 +404,113 @@ describe('guards', () => {
     expect(workers).toHaveLength(0);
   });
 
+  /*
+   * A DEADLINE MEASURES A TOOL'S OWN WORK, AND ITS WORK GREW BY A FACTOR OF
+   * SIXTEEN.
+   *
+   * A constant was honest while every tool's accepted input was bounded in the
+   * megabytes. One tool now reads a file it never holds, accepts 4 GiB of it,
+   * and its cost is linear in the size - so a number that fits a four-minute
+   * phone clip strangles an hour of broadcast, and a number that fits the
+   * broadcast lets the clip sit at "Running" for twenty minutes before anybody
+   * is told anything.
+   *
+   * Asserted on the deadline actually armed, because nothing else in the
+   * system can see it: a tool that runs over gets an error either way, and the
+   * only difference between the right number and the wrong one is how long the
+   * user waited for it.
+   */
+  it('scales a deadline with the input where the tool declared a rate', async () => {
+    const armed: number[] = [];
+    const engine = createExecutionEngine({
+      createWorker: () => createFakeWorker().handle,
+      loadTool: () => Promise.resolve(stubTool()),
+      getExecutionMeta: () => ({
+        ...WORKER_META,
+        maxInputBytes: 64 * 1024 * 1024,
+        timeoutMs: 30_000,
+        timeoutMsPerMiB: 20,
+      }),
+      setTimer: (_callback, ms) => {
+        armed.push(ms);
+        return armed.length;
+      },
+      clearTimer: () => undefined,
+    });
+
+    void engine.execute({
+      toolId: TOOL_ID,
+      inputs: { input: bytesValue(new Uint8Array(8 * 1024 * 1024)) },
+      options: {},
+    });
+    await Promise.resolve();
+
+    // 30 s of budget plus 20 ms for each of eight megabytes.
+    expect(armed).toEqual([30_160]);
+  });
+
+  it('leaves a tool that declared no rate on its constant', async () => {
+    const armed: number[] = [];
+    const engine = createExecutionEngine({
+      createWorker: () => createFakeWorker().handle,
+      loadTool: () => Promise.resolve(stubTool()),
+      getExecutionMeta: () => ({ ...WORKER_META, maxInputBytes: 64 * 1024 * 1024 }),
+      setTimer: (_callback, ms) => {
+        armed.push(ms);
+        return armed.length;
+      },
+      clearTimer: () => undefined,
+    });
+
+    void engine.execute({
+      toolId: TOOL_ID,
+      inputs: { input: bytesValue(new Uint8Array(8 * 1024 * 1024)) },
+      options: {},
+    });
+    await Promise.resolve();
+
+    expect(armed).toEqual([5000]);
+  });
+
+  /*
+   * THE SIZE GUARD IS WHAT PROTECTS EVERY RESIDENT TOOL FROM EVERY WINDOWED
+   * ONE, so it has to weigh a deferred value without touching it. A blob knows
+   * its own size; nothing here reads a byte to find it out, which is what
+   * makes the guard free for a four-gigabyte input and is why a video output
+   * wired into a tool with a 1 kB limit is a refusal rather than an
+   * allocation.
+   */
+  it('refuses an oversized deferred input by its size, without reading it', async () => {
+    const { engine, workers } = setup();
+    const big = new Uint8Array(2048);
+    let reads = 0;
+    const blob = new Blob([big]);
+    const watched = new Proxy(blob, {
+      get: (target, key, receiver) => {
+        if (key === 'arrayBuffer' || key === 'slice') reads += 1;
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+
+    const result = await engine.execute({
+      toolId: TOOL_ID,
+      inputs: {
+        input: {
+          type: 'bytes',
+          data: { kind: 'deferred', blob: watched, size: big.byteLength, head: big.slice(0, 16) },
+          mediaType: null,
+          filename: null,
+        },
+      },
+      options: {},
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('limit-exceeded');
+    expect(reads).toBe(0);
+    expect(workers).toHaveLength(0);
+  });
+
   it('fails everything in flight when the worker itself dies', async () => {
     const { engine, workers } = setup();
     const promise = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });

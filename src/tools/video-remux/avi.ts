@@ -1,4 +1,5 @@
-import { fail, ok, type ToolResult } from '@/features/registry/types';
+import { fail, ok, type ByteSource, type ToolResult } from '@/features/registry/types';
+import { canWindowBlobs, createByteSink } from '@/lib/binary';
 
 import {
   ParameterSets,
@@ -69,26 +70,26 @@ import { splitMpegAudio } from './elementary';
  * RIFF
  * ========================================================================== */
 
-function fourcc(bytes: Uint8Array, at: number): string {
-  if (at + 4 > bytes.length) return '';
+function fourcc(bytes: ByteSource, at: number): string {
+  if (at + 4 > bytes.size) return '';
   let out = '';
-  for (let index = 0; index < 4; index += 1) out += String.fromCharCode(bytes[at + index] ?? 0);
+  for (let index = 0; index < 4; index += 1) out += String.fromCharCode(bytes.u8(at + index));
   return out;
 }
 
 /** Little-endian, which is the whole of what makes RIFF not ISO-BMFF. */
-function u32le(bytes: Uint8Array, at: number): number {
-  if (at + 4 > bytes.length) return 0;
+function u32le(bytes: ByteSource, at: number): number {
+  if (at + 4 > bytes.size) return 0;
   return (
-    (bytes[at] ?? 0) +
-    (bytes[at + 1] ?? 0) * 0x100 +
-    (bytes[at + 2] ?? 0) * 0x10000 +
-    (bytes[at + 3] ?? 0) * 0x1000000
+    bytes.u8(at) +
+    bytes.u8(at + 1) * 0x100 +
+    bytes.u8(at + 2) * 0x10000 +
+    bytes.u8(at + 3) * 0x1000000
   );
 }
 
-function u16le(bytes: Uint8Array, at: number): number {
-  return (bytes[at] ?? 0) + (bytes[at + 1] ?? 0) * 0x100;
+function u16le(bytes: ByteSource, at: number): number {
+  return bytes.u8(at) + bytes.u8(at + 1) * 0x100;
 }
 
 interface Chunk {
@@ -113,7 +114,7 @@ interface Walk {
  * early, reads a four-character code straddling two chunks, and finds garbage
  * for the rest of the file.
  */
-function children(bytes: Uint8Array, from: number, to: number, walk: Walk, depth: number): Chunk[] {
+function children(bytes: ByteSource, from: number, to: number, walk: Walk, depth: number): Chunk[] {
   const found: Chunk[] = [];
   if (depth > LIMITS.maxDepth) {
     walk.problem = 'the chunks are nested deeper than any real file nests them';
@@ -233,7 +234,7 @@ interface StreamDraft {
 }
 
 function readStreamHeader(
-  bytes: Uint8Array,
+  bytes: ByteSource,
   list: Chunk,
   index: number,
   walk: Walk,
@@ -267,7 +268,7 @@ function readStreamHeader(
     codec = videoCodecFor(fourcc(bytes, strf.body + 16));
     const headerSize = Math.max(40, u32le(bytes, strf.body));
     if (strf.body + headerSize < strf.end) {
-      extra = bytes.subarray(strf.body + headerSize, strf.end);
+      extra = bytes.slice(strf.body + headerSize, strf.end - strf.body - headerSize);
     }
   } else if (type === 'auds') {
     if (strf === undefined || strf.end - strf.body < 16) return null;
@@ -276,7 +277,7 @@ function readStreamHeader(
     sampleRate = u32le(bytes, strf.body + 4);
     const cbSize = strf.end - strf.body >= 18 ? u16le(bytes, strf.body + 16) : 0;
     if (cbSize > 0 && strf.body + 18 + cbSize <= strf.end) {
-      extra = bytes.subarray(strf.body + 18, strf.body + 18 + cbSize);
+      extra = bytes.slice(strf.body + 18, cbSize);
     }
   } else {
     // `txts` for subtitles, `mids` for MIDI, and anything else a writer
@@ -325,7 +326,7 @@ function chunkBelongsTo(id: string, prefix: string): boolean {
 }
 
 function gatherMovi(
-  bytes: Uint8Array,
+  bytes: ByteSource,
   list: Chunk,
   drafts: readonly StreamDraft[],
   walk: Walk,
@@ -356,7 +357,7 @@ function gatherMovi(
  * place in an AVI that says which frames a player may seek to, and getting it
  * from the one field in the table that cannot be ambiguous is worth the walk.
  */
-function readIndexFlags(bytes: Uint8Array, index: Chunk, drafts: readonly StreamDraft[]): void {
+function readIndexFlags(bytes: ByteSource, index: Chunk, drafts: readonly StreamDraft[]): void {
   const flags = new Map<string, number[]>();
   for (const draft of drafts) flags.set(draft.prefix, []);
 
@@ -451,10 +452,15 @@ interface Built {
  * advances the frame counter, so the sample after it lands at the right
  * instant instead of one frame early.
  */
-function buildAnnexBVideo(bytes: Uint8Array, draft: StreamDraft): Built | null {
+function buildAnnexBVideo(bytes: ByteSource, draft: StreamDraft): Built | null {
   const codec = draft.codec === 'avc' ? 'avc' : 'hevc';
   const total = draft.chunks.reduce((sum, chunk) => sum + chunk.size, 0);
-  const media = new Uint8Array(reframedCeiling(total));
+  // Assembled rather than pointed at, because Annex B has to be re-framed on
+  // the way into an MP4 - so the bytes written are not the bytes read. Through
+  // a sink for the same reason the transport-stream reader uses one: an AVI
+  // that carries H.264 is a capture file, and capture files are large.
+  const media = createByteSink({ spill: canWindowBlobs() });
+  let scratch = new Uint8Array(0);
   const parameterSets = new ParameterSets(codec);
 
   const offset: number[] = [];
@@ -465,12 +471,16 @@ function buildAnnexBVideo(bytes: Uint8Array, draft: StreamDraft): Built | null {
 
   for (const [index, chunk] of draft.chunks.entries()) {
     if (chunk.size === 0) continue; // a dropped frame: time passes, nothing is stored
-    const view = bytes.subarray(chunk.offset, chunk.offset + chunk.size);
+    const view = bytes.slice(chunk.offset, chunk.size);
     const nals = splitAnnexB(view, 0, view.length);
     parameterSets.observe(view, nals);
 
-    const framed = reframeInto(media, written, view, nals, codec);
+    const room = reframedCeiling(view.length);
+    if (scratch.byteLength < room) scratch = new Uint8Array(room);
+    const framed = reframeInto(scratch, 0, view, nals, codec);
     if (framed.empty) continue;
+    if (written + framed.written > reframedCeiling(total)) continue;
+    media.write(scratch.subarray(0, framed.written));
 
     offset.push(written);
     size.push(framed.written);
@@ -514,7 +524,7 @@ function buildAnnexBVideo(bytes: Uint8Array, draft: StreamDraft): Built | null {
       codecPrivate: config.config,
       matrix: null,
       edits: [],
-      media: media.subarray(0, written),
+      media: media.source(),
       samples: {
         count: offset.length,
         offset,
@@ -590,15 +600,12 @@ function buildCopiedVideo(draft: StreamDraft): Built | null {
  * the duration exactly. The AVI header's own idea of the rate is a nominal
  * figure a muxer wrote and is not consulted.
  */
-function buildMpegAudio(bytes: Uint8Array, draft: StreamDraft): Built | null {
+function buildMpegAudio(bytes: ByteSource, draft: StreamDraft): Built | null {
   const total = draft.chunks.reduce((sum, chunk) => sum + chunk.size, 0);
   if (total === 0) return null;
-  const media = new Uint8Array(total);
-  let written = 0;
-  for (const chunk of draft.chunks) {
-    media.set(bytes.subarray(chunk.offset, chunk.offset + chunk.size), written);
-    written += chunk.size;
-  }
+  const sink = createByteSink({ spill: canWindowBlobs() });
+  for (const chunk of draft.chunks) sink.copyFrom(bytes, chunk.offset, chunk.size);
+  const media = sink.source();
 
   const split = splitMpegAudio(media, LIMITS.maxSamplesPerTrack);
   if (split === null) return null;
@@ -705,9 +712,9 @@ function buildAacAudio(draft: StreamDraft): Built | null {
  * Entry point
  * ========================================================================== */
 
-export function readAvi(bytes: Uint8Array): ToolResult<SourceFile> {
+export function readAvi(bytes: ByteSource): ToolResult<SourceFile> {
   const walk: Walk = { chunks: 0, problem: null };
-  const top = children(bytes, 0, bytes.length, walk, 0);
+  const top = children(bytes, 0, bytes.size, walk, 0);
 
   const riff = top.find((chunk) => chunk.id === 'RIFF' && chunk.listType === 'AVI ');
   if (riff === undefined) {
@@ -848,9 +855,9 @@ export function readAvi(bytes: Uint8Array): ToolResult<SourceFile> {
     for (let index = 0; index < track.samples.count; index += 1) {
       const at = track.samples.offset[index] ?? 0;
       const size = track.samples.size[index] ?? 0;
-      if (at < 0 || size < 0 || at + size > bytes.length) {
+      if (at < 0 || size < 0 || at + size > bytes.size) {
         return fail('parse-error', 'That file is truncated: some of its frames are not in it.', {
-          detail: `Stream ${String(track.number)} says frame ${String(index + 1)} is ${String(size)} bytes at offset ${String(at)}, and the file is ${String(bytes.length)} bytes long.`,
+          detail: `Stream ${String(track.number)} says frame ${String(index + 1)} is ${String(size)} bytes at offset ${String(at)}, and the file is ${String(bytes.size)} bytes long.`,
         });
       }
     }
@@ -879,7 +886,7 @@ export function readAvi(bytes: Uint8Array): ToolResult<SourceFile> {
   });
 }
 
-function hasInfo(bytes: Uint8Array, inside: readonly Chunk[], walk: Walk): boolean {
+function hasInfo(bytes: ByteSource, inside: readonly Chunk[], walk: Walk): boolean {
   if (inside.some((chunk) => chunk.id === 'LIST' && chunk.listType === 'INFO')) return true;
   const odml = inside.find((chunk) => chunk.id === 'LIST' && chunk.listType === 'odml');
   if (odml === undefined) return false;

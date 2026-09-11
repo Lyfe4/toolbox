@@ -484,6 +484,21 @@ export interface ExecutionMeta {
   readonly reportsProgress: boolean;
   /** Worker is terminated and replaced if a run exceeds this. */
   readonly timeoutMs: number;
+  /**
+   * Extra deadline granted per MiB of input, for a tool whose work is linear
+   * in the size of the file.
+   *
+   * A DEADLINE MEASURES A TOOL'S OWN WORK, and a constant stopped being able
+   * to when one tool's accepted input went from 256 MB to 4 GiB. A number that
+   * fits a four-minute phone clip strangles an hour of broadcast; a number
+   * that fits the broadcast lets the clip hang for twenty minutes before
+   * anybody is told anything. Nothing else changes - the engine still restarts
+   * the clock when the tool actually begins, so this is still a budget for the
+   * work rather than for the queue.
+   *
+   * Omitted by every tool whose cost is bounded by its own small limit.
+   */
+  readonly timeoutMsPerMiB?: number;
   /** Inputs larger than this are rejected before the tool is even loaded. */
   readonly maxInputBytes: number;
   /**

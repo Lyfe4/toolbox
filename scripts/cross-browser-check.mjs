@@ -20,7 +20,9 @@
  * Run it with `pnpm check:browsers` after `pnpm build`.
  */
 import { deflateRawSync, deflateSync } from 'node:zlib';
-import { readFile } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { firefox, webkit } from 'playwright';
@@ -7501,6 +7503,7 @@ async function runChecks(engine, label) {
     await checkFileInputTouch(engine, label);
     await checkImageConvert(browser, label);
     await checkVideoRemux(browser, label);
+    await checkLargeVideo(browser, label);
     await checkThemeEditor(browser, label);
   } finally {
     await browser.close();
@@ -9358,6 +9361,301 @@ async function checkVideoRemux(browser, label) {
     );
   } finally {
     await context.close().catch(() => {});
+  }
+}
+
+/* ========================================================================== *
+ * A file larger than the tool used to accept
+ * ========================================================================== */
+
+/**
+ * A transport stream of roughly `targetBytes`, written to disk.
+ *
+ * WRITTEN RATHER THAN PASSED, and that matters: `setInputFiles` with a buffer
+ * sends the whole thing over the DevTools protocol, and the point of this
+ * check is a file the browser opens from disk and never receives. A path is
+ * what a real file chooser produces.
+ *
+ * Its shape is `makeTinyTs`'s, with a larger coded picture and the frame
+ * repeated - so the tables are read once, the frames are gathered, and the
+ * walk has to cross hundreds of megabytes to find them all.
+ */
+async function writeBigTransportStream(targetBytes) {
+  const SPS = [0x67, 0x42, 0x00, 0x1e, 0xda, 0x02, 0x80, 0xf6, 0x40];
+  const PPS = [0x68, 0xce, 0x3c, 0x80];
+
+  const section = (tableId, body) => {
+    const length = body.length + 4;
+    return [tableId, 0xb0 | ((length >> 8) & 0x0f), length & 0xff, ...body, 0, 0, 0, 0];
+  };
+  const PMT_PID = 0x1000;
+  const VIDEO_PID = 0x0100;
+  const pat = section(0x00, [
+    0x00,
+    0x01,
+    0xc1,
+    0x00,
+    0x00,
+    0x00,
+    0x01,
+    0xe0 | ((PMT_PID >> 8) & 0x1f),
+    PMT_PID & 0xff,
+  ]);
+  const pmt = section(0x02, [
+    0x00,
+    0x01,
+    0xc1,
+    0x00,
+    0x00,
+    0xe0 | 0x10,
+    0x00,
+    0xf0,
+    0x00,
+    0x1b,
+    0xe0 | ((VIDEO_PID >> 8) & 0x1f),
+    VIDEO_PID & 0xff,
+    0xf0,
+    0x00,
+  ]);
+  const stamp = (prefix, value) => [
+    (prefix << 4) | ((Math.floor(value / 2 ** 30) & 0x07) << 1) | 1,
+    Math.floor(value / 2 ** 22) & 0xff,
+    ((Math.floor(value / 2 ** 15) & 0x7f) << 1) | 1,
+    Math.floor(value / 2 ** 7) & 0xff,
+    ((value & 0x7f) << 1) | 1,
+  ];
+
+  // A quarter of a megabyte per picture, which keeps the sample table beside
+  // the point and the file itself the point.
+  const idr = [0x65];
+  for (let index = 0; index < 256 * 1024; index += 1) idr.push((index * 7 + 11) & 0xff);
+  const startCode = [0, 0, 0, 1];
+
+  let counter = 0;
+  const packetsFor = (pid, payload, chunks) => {
+    let at = 0;
+    let first = true;
+    while (at < payload.length) {
+      const take = Math.min(184, payload.length - at);
+      const stuffing = 184 - take;
+      const packet = [
+        0x47,
+        (first ? 0x40 : 0) | ((pid >> 8) & 0x1f),
+        pid & 0xff,
+        (stuffing > 0 ? 0x30 : 0x10) | (counter & 0x0f),
+      ];
+      counter += 1;
+      if (stuffing === 1) packet.push(0);
+      else if (stuffing > 1) {
+        packet.push(stuffing - 1, 0x00);
+        for (let index = 0; index < stuffing - 2; index += 1) packet.push(0xff);
+      }
+      packet.push(...payload.slice(at, at + take));
+      chunks.push(Buffer.from(packet));
+      at += take;
+      first = false;
+    }
+  };
+
+  const path = join(tmpdir(), `patchbay-big-${String(process.pid)}.ts`);
+  const out = createWriteStream(path);
+  const write = (buffer) =>
+    new Promise((resolve, reject) => {
+      out.write(buffer, (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+
+  const header = [];
+  packetsFor(0, [0x00, ...pat], header);
+  packetsFor(PMT_PID, [0x00, ...pmt], header);
+  await write(Buffer.concat(header));
+
+  let written = header.reduce((total, chunk) => total + chunk.length, 0);
+  let frames = 0;
+  while (written < targetBytes) {
+    const time = frames * 3000;
+    const pes = [
+      0,
+      0,
+      1,
+      0xe0,
+      0,
+      0,
+      0x80,
+      0xc0,
+      10,
+      ...stamp(3, time),
+      ...stamp(1, time),
+      ...startCode,
+      ...SPS,
+      ...startCode,
+      ...PPS,
+      ...startCode,
+      ...idr,
+    ];
+    const chunks = [];
+    packetsFor(VIDEO_PID, pes, chunks);
+    const block = Buffer.concat(chunks);
+    await write(block);
+    written += block.length;
+    frames += 1;
+  }
+
+  await new Promise((resolve) => {
+    out.end(resolve);
+  });
+  return { path, bytes: written, frames };
+}
+
+/**
+ * THE CHANGE THIS RELEASE IS ABOUT, ASSERTED ON A FILE THAT PROVES IT.
+ *
+ * The video tool refused anything over 256 MB, and nearly every file it exists
+ * for is larger than that. What made 256 MB the number was not video, it was
+ * memory: a run held the input three times over - the page kept the chosen
+ * file's bytes for the session, the worker got a structured clone, and the
+ * output was built beside it - and a transport stream cost a fourth copy,
+ * because its frames are not contiguous and had to be gathered first.
+ *
+ * None of those copies exists now, and this is the check that says so rather
+ * than the commit message. Four things are measured, and three of them would
+ * have been false before:
+ *
+ *   1. A file larger than the old limit is repackaged at all.
+ *   2. THE PAGE NEVER READS IT. `Blob.prototype.slice` and `.arrayBuffer` are
+ *      counted on the main thread, for `File` receivers only, so what is
+ *      measured is the bytes the TAB pulled out of the chosen file. It used to
+ *      be all of them, at the moment the file was chosen. It should now be the
+ *      4 kB the sniff looks at and nothing else - the worker reads the rest in
+ *      its own realm through its own window, and none of that is visible here,
+ *      which is the point.
+ *   3. The answer comes back as a blob of the right size, which is what a
+ *      download is handed.
+ *
+ * Only a real engine can be asked any of this. jsdom has no Worker, so nothing
+ * in the unit suite has ever executed `FileReaderSync` - the whole mechanism
+ * this rests on - even once.
+ */
+async function checkLargeVideo(browser, label) {
+  // Comfortably past the old 256 MB ceiling and still quick to write.
+  const TARGET = 320 * 1024 * 1024;
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+
+  await context.addInitScript(() => {
+    window.__fileBytesRead = 0;
+    const slice = Blob.prototype.slice;
+    const arrayBuffer = Blob.prototype.arrayBuffer;
+    Blob.prototype.slice = function patchedSlice(start, end, type) {
+      if (this instanceof File) {
+        const from = start ?? 0;
+        const to = end ?? this.size;
+        window.__fileBytesRead += Math.max(0, to - from);
+      }
+      return slice.call(this, start, end, type);
+    };
+    Blob.prototype.arrayBuffer = function patchedArrayBuffer() {
+      if (this instanceof File) window.__fileBytesRead += this.size;
+      return arrayBuffer.call(this);
+    };
+
+    const original = URL.createObjectURL.bind(URL);
+    window.__lastBlob = null;
+    URL.createObjectURL = (blob) => {
+      window.__lastBlob = blob;
+      return original(blob);
+    };
+  });
+
+  const page = await context.newPage();
+  let made = null;
+
+  try {
+    made = await writeBigTransportStream(TARGET);
+
+    await page.goto(`${ORIGIN}/tools/video-remux`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Video' }).waitFor({ timeout: 15_000 });
+
+    const chosenAt = Date.now();
+    await page.locator('input[type="file"]').setInputFiles(made.path);
+    await page.getByText('MB', { exact: false }).first().waitFor({ timeout: 60_000 });
+    const chooseMs = Date.now() - chosenAt;
+
+    const afterChoosing = await page.evaluate(() => window.__fileBytesRead);
+    check(
+      label,
+      'choosing a 320 MB video reads 4 kB of it and no more',
+      afterChoosing <= 8192,
+      `${String(afterChoosing)} bytes read on the main thread, in ${String(chooseMs)} ms`,
+    );
+
+    const started = Date.now();
+    await page.getByRole('button', { name: 'Run' }).click();
+    await page.getByRole('button', { name: 'Download' }).first().waitFor({ timeout: 300_000 });
+    const elapsed = Date.now() - started;
+
+    // The report is drawn as a report; `Raw` is where its JSON is legible to a
+    // harness, the same way `checkVideoRemux` reads it.
+    await page.getByRole('button', { name: 'Raw' }).click({ timeout: 30_000 });
+    await page.waitForFunction(
+      () =>
+        [...document.querySelectorAll('textarea[readonly]')].some((field) =>
+          field.value.includes('"summary"'),
+        ),
+      undefined,
+      { timeout: 30_000 },
+    );
+    const report = await page.evaluate(() => {
+      const field = [...document.querySelectorAll('textarea[readonly]')].find((candidate) =>
+        candidate.value.includes('"summary"'),
+      );
+      return field ? JSON.parse(field.value) : null;
+    });
+
+    check(
+      label,
+      'a video larger than the old 256 MB ceiling is repackaged',
+      report?.to?.format === 'MP4 · H.264' && (report?.to?.bytes ?? 0) > 256 * 1024 * 1024,
+      `${String(made.bytes)} bytes in, ${String(report?.to?.bytes)} out, ${String(report?.to?.frames)} frames, ${String(elapsed)} ms`,
+    );
+
+    check(
+      label,
+      'and its picture size still comes out of the parameter set',
+      report?.to?.width === 640 && report?.to?.height === 480,
+      `${String(report?.to?.width)} x ${String(report?.to?.height)}`,
+    );
+
+    const duringRun = await page.evaluate(() => window.__fileBytesRead);
+    check(
+      label,
+      'and the page never reads the file, whatever the worker does with it',
+      duringRun <= 8192,
+      `${String(duringRun)} bytes read on the main thread across the whole run`,
+    );
+
+    await page.getByRole('button', { name: 'Download' }).first().click();
+    const handed = await page.evaluate(() => {
+      const blob = window.__lastBlob;
+      return blob ? { size: blob.size, type: blob.type } : null;
+    });
+
+    /*
+     * The download is where a value leaves, and a deferred one leaves as the
+     * blob it already was. Asserting the SIZE rather than the bytes is
+     * deliberate: reading 320 MB back into the page to compare them would be
+     * the very thing this whole change exists to stop doing.
+     */
+    check(
+      label,
+      'the finished file is handed over as a blob rather than assembled in the tab',
+      handed !== null && handed.size === report?.to?.bytes && handed.type === 'video/mp4',
+      handed === null ? 'no blob' : `${String(handed.size)} bytes of ${handed.type}`,
+    );
+  } finally {
+    await context.close().catch(() => {});
+    if (made !== null) await rm(made.path, { force: true }).catch(() => {});
   }
 }
 

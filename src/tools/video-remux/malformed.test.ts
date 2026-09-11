@@ -2,6 +2,7 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import type { ToolResult } from '@/features/registry/types';
+import { binarySize } from '@/lib/binary';
 
 import { describeAvc, describeHevc, splitAnnexB } from './annexb';
 import { readAvi } from './avi';
@@ -20,10 +21,11 @@ import {
   makeAvi,
   makeMatroska,
   makeMp4,
-  mp4Box,
   makeTransportStream,
+  mp4Box,
   mpegAudioFrameBytes,
   sampleBytes,
+  sourceOf,
 } from './fixtures';
 import { readIsoBmff } from './isobmff';
 import { readMatroska } from './matroska';
@@ -114,14 +116,16 @@ describe('a box header that cannot be true', () => {
     // Three bytes for something that needs eight. Believed, this rewinds the
     // cursor and the walk never ends.
     const at = indexOfTag(validMp4, 'moov') - 4;
-    const said = expectRefused(remux(withBytesAt(validMp4, at, [0, 0, 0, 3]), 'container'));
+    const said = expectRefused(
+      remux(sourceOf(withBytesAt(validMp4, at, [0, 0, 0, 3])), 'container'),
+    );
     expect(said).toContain('less than a header');
   });
 
   it('refuses a box that runs past the file that contains it', () => {
     const at = indexOfTag(validMp4, 'moov') - 4;
     const said = expectRefused(
-      remux(withBytesAt(validMp4, at, [0x7f, 0xff, 0xff, 0xff]), 'container'),
+      remux(sourceOf(withBytesAt(validMp4, at, [0x7f, 0xff, 0xff, 0xff])), 'container'),
     );
     expect(said).toContain('past the end');
   });
@@ -132,7 +136,7 @@ describe('a box header that cannot be true', () => {
     const truncated = new Uint8Array(validMp4.byteLength + 8);
     truncated.set(validMp4);
     truncated.set([0, 0, 0, 1, 0x66, 0x72, 0x65, 0x65], validMp4.byteLength);
-    const said = expectRefused(remux(truncated, 'container'));
+    const said = expectRefused(remux(sourceOf(truncated), 'container'));
     expect(said).toContain('64-bit size');
   });
 
@@ -141,7 +145,9 @@ describe('a box header that cannot be true', () => {
     const broken = withBytesAt(validMp4, at, [0, 0, 0, 1]);
     // The largesize field lands where `moov`'s first child used to start.
     broken.set([0, 0, 0, 0, 0, 0, 0, 4], at + 8);
-    expect(expectRefused(remux(broken, 'container'))).toContain('smaller than its own header');
+    expect(expectRefused(remux(sourceOf(broken), 'container'))).toContain(
+      'smaller than its own header',
+    );
   });
 
   it('accepts a size of zero, which legitimately means "to the end"', () => {
@@ -151,14 +157,14 @@ describe('a box header that cannot be true', () => {
     const streamed = withBytesAt(validMp4, at, [0, 0, 0, 0]);
     // `moov` now sits inside `mdat`, so there is no index and the file is
     // refused - but for the right reason, and without hanging.
-    expect(expectRefused(remux(streamed, 'container'))).toContain('no movie header');
+    expect(expectRefused(remux(sourceOf(streamed), 'container'))).toContain('no movie header');
   });
 
   it('refuses boxes nested deeper than any real file nests them', () => {
     let nested = mp4Box('moov', mp4Box('free'));
     for (let depth = 0; depth < 20; depth += 1) nested = mp4Box('free', nested);
     const bomb = new Uint8Array([...mp4Box('ftyp', [0x69, 0x73, 0x6f, 0x6d]), ...nested]);
-    expect(remux(bomb, 'container').ok).toBe(false);
+    expect(remux(sourceOf(bomb), 'container').ok).toBe(false);
   });
 });
 
@@ -184,12 +190,15 @@ describe('a declared count that the file has no room for', () => {
       // eight for `stsz`, whose first field is the uniform size.
       const countAt = at + 4 + 4 + (table === 'stsz' ? 4 : 0);
       const started = Date.now();
-      const result = remux(withBytesAt(validMp4, countAt, [0xff, 0xff, 0xff, 0xff]), 'container');
+      const result = remux(
+        sourceOf(withBytesAt(validMp4, countAt, [0xff, 0xff, 0xff, 0xff])),
+        'container',
+      );
       // Refused or repackaged, but bounded either way, and the elapsed time is
       // the only observable proof: a reader that believed the count would
       // still be allocating.
       expect(Date.now() - started).toBeLessThan(1000);
-      if (result.ok) expect(result.value.bytes.byteLength).toBeLessThan(validMp4.byteLength * 4);
+      if (result.ok) expect(binarySize(result.value.bytes)).toBeLessThan(validMp4.byteLength * 4);
     },
   );
 
@@ -197,7 +206,9 @@ describe('a declared count that the file has no room for', () => {
     // `samples_per_chunk` of zero: every chunk consumes nothing, so a walk
     // that trusts it makes no progress through the sample list.
     const at = indexOfTag(validMp4, 'stsc');
-    const said = expectRefused(remux(withBytesAt(validMp4, at + 16, [0, 0, 0, 0]), 'container'));
+    const said = expectRefused(
+      remux(sourceOf(withBytesAt(validMp4, at + 16, [0, 0, 0, 0])), 'container'),
+    );
     expect(said).toContain('no readable tracks');
   });
 
@@ -210,7 +221,7 @@ describe('a declared count that the file has no room for', () => {
     const bomb = withBytesAt(validMp4, at + 8, [0, 0, 0, 1]);
     bomb.set([0xff, 0xff, 0xff, 0xff], at + 12);
     const started = Date.now();
-    expectRefused(remux(bomb, 'container'));
+    expectRefused(remux(sourceOf(bomb), 'container'));
     expect(Date.now() - started).toBeLessThan(1000);
   });
 });
@@ -225,7 +236,7 @@ describe('an index describing bytes that are not there', () => {
     // data that stops early. Reading past the end of a Uint8Array is not a
     // crash in JavaScript - it is `undefined` per byte - so without this check
     // the output is a perfectly well-formed MP4 full of silence and black.
-    const done = remux(validMp4.subarray(0, validMp4.byteLength - 40), 'container');
+    const done = remux(sourceOf(validMp4.subarray(0, validMp4.byteLength - 40)), 'container');
     // The tail holds the index, so this one is refused for want of a `moov`.
     expect(done.ok).toBe(false);
   });
@@ -233,7 +244,7 @@ describe('an index describing bytes that are not there', () => {
   it('refuses an offset that points outside the file', () => {
     const at = indexOfTag(validMp4, 'stco');
     const said = expectRefused(
-      remux(withBytesAt(validMp4, at + 12, [0x00, 0xff, 0xff, 0xff]), 'container'),
+      remux(sourceOf(withBytesAt(validMp4, at + 12, [0x00, 0xff, 0xff, 0xff])), 'container'),
     );
     expect(said).toContain('truncated');
   });
@@ -262,7 +273,7 @@ describe('an index describing bytes that are not there', () => {
       inflated.set([0, 0, 0x10, 0x00], at + 16 + index * 4);
     }
 
-    const said = expectRefused(remux(inflated, 'container'));
+    const said = expectRefused(remux(sourceOf(inflated), 'container'));
     expect(said).toContain('more media than it contains');
   });
 });
@@ -277,7 +288,9 @@ describe('a Matroska file that lies about its own shape', () => {
     // which EBML does not define. Read carelessly it consumes no bytes, and a
     // walk that consumes no bytes does not end.
     const at = indexOfTag(validMkv, 'matroska') + 20;
-    expect(remux(withBytesAt(validMkv, at, [0x00, 0x00, 0x00, 0x00]), 'container').ok).toBe(false);
+    expect(
+      remux(sourceOf(withBytesAt(validMkv, at, [0x00, 0x00, 0x00, 0x00])), 'container').ok,
+    ).toBe(false);
   });
 
   it('refuses an unsized element that is not the segment', () => {
@@ -296,7 +309,9 @@ describe('a Matroska file that lies about its own shape', () => {
       ...ebml(0x18538067, unsizedTracks),
     ]);
 
-    expect(expectRefused(remux(broken, 'container'))).toContain('does not say how long it is');
+    expect(expectRefused(remux(sourceOf(broken), 'container'))).toContain(
+      'does not say how long it is',
+    );
   });
 
   it('refuses a timestamp scale of zero rather than dividing by it', () => {
@@ -305,7 +320,7 @@ describe('a Matroska file that lies about its own shape', () => {
       tracks: [{ number: 1, kind: 'video', codecId: 'V_MPEG4/ISO/AVC', codecPrivate: avcConfig() }],
       blocks: [{ track: 1, time: 0, frames: [sampleBytes(1, 100)] }],
     });
-    expect(expectRefused(remux(source, 'container'))).toContain('zero seconds long');
+    expect(expectRefused(remux(sourceOf(source), 'container'))).toContain('zero seconds long');
   });
 
   it('refuses a document type that is not a video', () => {
@@ -314,7 +329,7 @@ describe('a Matroska file that lies about its own shape', () => {
       tracks: [{ number: 1, kind: 'video', codecId: 'V_MPEG4/ISO/AVC', codecPrivate: avcConfig() }],
       blocks: [{ track: 1, time: 0, frames: [sampleBytes(1, 100)] }],
     });
-    expect(expectRefused(remux(source, 'container'))).toContain('seomthing-else');
+    expect(expectRefused(remux(sourceOf(source), 'container'))).toContain('seomthing-else');
   });
 
   it('drops a lace whose frame sizes overrun the block that holds them', () => {
@@ -354,7 +369,7 @@ describe('a Matroska file that lies about its own shape', () => {
       ],
     });
 
-    expect(expectRefused(remux(source, 'container'))).toContain('no frames');
+    expect(expectRefused(remux(sourceOf(source), 'container'))).toContain('no frames');
   });
 
   it('ignores a track numbered zero, which no block can ever address', () => {
@@ -372,7 +387,7 @@ describe('a Matroska file that lies about its own shape', () => {
       ],
       blocks: [{ track: 1, time: 0, frames: [sampleBytes(1, 100)] }],
     });
-    const read = readMatroska(source);
+    const read = readMatroska(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     expect(read.value.tracks).toHaveLength(1);
     expect(read.value.tracks[0]?.width).toBe(320);
@@ -393,8 +408,10 @@ describe('a Matroska file that lies about its own shape', () => {
         blocks: [{ track: 1, time: 0, frames: [sampleBytes(7, 96)] }],
       });
 
-    expect(expectRefused(remux(withoutConfig('A_AAC'), 'container'))).toContain('how to decode');
-    expect(remux(withoutConfig('A_MPEG/L3'), 'container').ok).toBe(true);
+    expect(expectRefused(remux(sourceOf(withoutConfig('A_AAC')), 'container'))).toContain(
+      'how to decode',
+    );
+    expect(remux(sourceOf(withoutConfig('A_MPEG/L3')), 'container').ok).toBe(true);
   });
 
   it('drops a stream that never says how to decode it', () => {
@@ -404,7 +421,7 @@ describe('a Matroska file that lies about its own shape', () => {
       tracks: [{ number: 1, kind: 'video', codecId: 'V_MPEG4/ISO/AVC', width: 320, height: 240 }],
       blocks: [{ track: 1, time: 0, frames: [sampleBytes(1, 100)] }],
     });
-    const said = expectRefused(remux(source, 'container'));
+    const said = expectRefused(remux(sourceOf(source), 'container'));
     expect(said).toContain('how to decode');
   });
 });
@@ -453,7 +470,7 @@ describe('a transport stream that lies about its own shape', () => {
       if (((damaged[at + 3] ?? 0) >> 4) % 4 !== 3) continue;
       damaged[at + 4] = 0xff;
     }
-    expect(() => remux(damaged, 'container')).not.toThrow();
+    expect(() => remux(sourceOf(damaged), 'container')).not.toThrow();
   });
 
   it('does not resynchronise onto a sync byte inside the video', () => {
@@ -468,7 +485,7 @@ describe('a transport stream that lies about its own shape', () => {
     const lastPacket = Math.floor((damaged.length - 188) / 188) * 188;
     damaged[lastPacket] = 0x00;
 
-    const done = remux(damaged, 'container');
+    const done = remux(sourceOf(damaged), 'container');
     if (done.ok) {
       expect(done.value.notes.some((note) => note.title.includes('damaged'))).toBe(true);
     }
@@ -482,7 +499,7 @@ describe('a transport stream that lies about its own shape', () => {
     const at = 188 + 4 + 1; // the second packet's pointer field, then table_id
     damaged[at + 1] = 0xbf;
     damaged[at + 2] = 0xff;
-    expect(() => remux(damaged, 'container')).not.toThrow();
+    expect(() => remux(sourceOf(damaged), 'container')).not.toThrow();
   });
 
   it('answers for a corrupted transport stream, whatever the damage', () => {
@@ -493,13 +510,13 @@ describe('a transport stream that lies about its own shape', () => {
         (at, value) => {
           const damaged = withBytesAt(validTs, at, [value]);
           const started = Date.now();
-          const done = remux(damaged, 'container');
+          const done = remux(sourceOf(damaged), 'container');
           expect(Date.now() - started).toBeLessThan(500);
           // A repackage copies, so it can never honestly produce meaningfully
           // more media than it was given - and for this container that bound
           // covers the assembly buffer as well as the output.
           if (done.ok) {
-            expect(done.value.bytes.byteLength).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
+            expect(binarySize(done.value.bytes)).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
           }
         },
       ),
@@ -518,7 +535,7 @@ describe('a transport stream that lies about its own shape', () => {
       fc.property(fc.uint8Array({ minLength: 188 * 6, maxLength: 188 * 8 }), (noise) => {
         const grid = new Uint8Array(noise);
         for (let at = 0; at + 188 <= grid.length; at += 188) grid[at] = 0x47;
-        expect(() => readMpegTs(grid)).not.toThrow();
+        expect(() => readMpegTs(sourceOf(grid))).not.toThrow();
       }),
       { numRuns: 200 },
     );
@@ -556,7 +573,7 @@ describe('a parameter set that cannot be parsed', () => {
     });
 
     const started = Date.now();
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     expect(Date.now() - started).toBeLessThan(500);
 
     /*
@@ -637,7 +654,7 @@ describe('a parameter set that cannot be parsed', () => {
             },
           ],
         });
-        expect(() => remux(source, 'container')).not.toThrow();
+        expect(() => remux(sourceOf(source), 'container')).not.toThrow();
       }),
       { numRuns: 200 },
     );
@@ -659,7 +676,7 @@ describe('a parameter set that cannot be parsed', () => {
     });
 
     const started = Date.now();
-    expect(() => remux(source, 'container')).not.toThrow();
+    expect(() => remux(sourceOf(source), 'container')).not.toThrow();
     expect(Date.now() - started).toBeLessThan(500);
   });
 
@@ -679,7 +696,7 @@ describe('a parameter set that cannot be parsed', () => {
     });
 
     const started = Date.now();
-    expect(() => remux(source, 'container')).not.toThrow();
+    expect(() => remux(sourceOf(source), 'container')).not.toThrow();
     expect(Date.now() - started).toBeLessThan(1000);
     // Every unit is zero bytes long, so none of them survives the trim - and
     // a NAL unit of no length is a sample of no length, which an MP4 writes
@@ -708,7 +725,7 @@ describe('an AVI that lies about its own shape', () => {
   it('refuses a chunk that runs past the list containing it', () => {
     const at = indexOfTag(validAvi, 'movi');
     const damaged = withBytesAt(validAvi, at + 4, [0xff, 0xff, 0xff, 0x7f]);
-    expect(() => remux(damaged, 'container')).not.toThrow();
+    expect(() => remux(sourceOf(damaged), 'container')).not.toThrow();
   });
 
   it('does not size the audio buffer from a length the file made up', () => {
@@ -722,16 +739,16 @@ describe('an AVI that lies about its own shape', () => {
      */
     const at = indexOfTag(validAvi, '00wb');
     const damaged = withBytesAt(validAvi, at + 4, [0x00, 0x00, 0x00, 0x40]);
-    const done = remux(damaged, 'audio');
+    const done = remux(sourceOf(damaged), 'audio');
     if (done.ok) {
-      expect(done.value.bytes.byteLength).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
+      expect(binarySize(done.value.bytes)).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
     }
   });
 
   it('refuses an index entry count the file has no room for', () => {
     const at = indexOfTag(validAvi, 'idx1');
     const damaged = withBytesAt(validAvi, at + 4, [0xff, 0xff, 0xff, 0x0f]);
-    expect(() => remux(damaged, 'container')).not.toThrow();
+    expect(() => remux(sourceOf(damaged), 'container')).not.toThrow();
   });
 
   it('answers for a corrupted AVI, whatever the damage', () => {
@@ -742,10 +759,10 @@ describe('an AVI that lies about its own shape', () => {
         (at, value) => {
           const damaged = withBytesAt(validAvi, at, [value]);
           const started = Date.now();
-          const done = remux(damaged, 'audio');
+          const done = remux(sourceOf(damaged), 'audio');
           expect(Date.now() - started).toBeLessThan(500);
           if (done.ok) {
-            expect(done.value.bytes.byteLength).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
+            expect(binarySize(done.value.bytes)).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
           }
         },
       ),
@@ -771,7 +788,7 @@ describe('an AVI that lies about its own shape', () => {
           0x20,
           ...tail,
         ]);
-        expect(() => readAvi(avi)).not.toThrow();
+        expect(() => readAvi(sourceOf(avi))).not.toThrow();
       }),
       { numRuns: 300 },
     );
@@ -780,7 +797,7 @@ describe('an AVI that lies about its own shape', () => {
   it('answers for an AVI cut short at any point', () => {
     fc.assert(
       fc.property(fc.integer({ min: 0, max: validAvi.byteLength }), (length) => {
-        expect(() => remux(validAvi.subarray(0, length), 'audio')).not.toThrow();
+        expect(() => remux(sourceOf(validAvi.subarray(0, length)), 'audio')).not.toThrow();
       }),
       { numRuns: 200 },
     );
@@ -804,8 +821,8 @@ describe('the properties that must hold for any bytes at all', () => {
   it('returns a result for arbitrary bytes, and never throws', () => {
     fc.assert(
       fc.property(fc.uint8Array({ minLength: 0, maxLength: 400 }), (bytes) => {
-        expect(() => remux(bytes, 'container')).not.toThrow();
-        expect(() => remux(bytes, 'audio')).not.toThrow();
+        expect(() => remux(sourceOf(bytes), 'container')).not.toThrow();
+        expect(() => remux(sourceOf(bytes), 'audio')).not.toThrow();
       }),
       { numRuns: 300 },
     );
@@ -823,7 +840,7 @@ describe('the properties that must hold for any bytes at all', () => {
     fc.assert(
       fc.property(fc.uint8Array({ minLength: 8, maxLength: 400 }), (tail) => {
         const bytes = new Uint8Array([...prefix, ...tail]);
-        expect(() => remux(bytes, 'container')).not.toThrow();
+        expect(() => remux(sourceOf(bytes), 'container')).not.toThrow();
       }),
       { numRuns: 300 },
     );
@@ -853,10 +870,10 @@ describe('the properties that must hold for any bytes at all', () => {
         (at, value) => {
           const damaged = withBytesAt(valid, at, [value]);
           const started = Date.now();
-          const done = remux(damaged, 'container');
+          const done = remux(sourceOf(damaged), 'container');
           expect(Date.now() - started).toBeLessThan(500);
           if (done.ok) {
-            expect(done.value.bytes.byteLength).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
+            expect(binarySize(done.value.bytes)).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
           }
         },
       ),
@@ -867,7 +884,7 @@ describe('the properties that must hold for any bytes at all', () => {
   it('answers for a file cut short at any point', () => {
     fc.assert(
       fc.property(fc.integer({ min: 0, max: validMp4.byteLength }), (length) => {
-        expect(() => remux(validMp4.subarray(0, length), 'container')).not.toThrow();
+        expect(() => remux(sourceOf(validMp4.subarray(0, length)), 'container')).not.toThrow();
       }),
       { numRuns: 200 },
     );
@@ -886,8 +903,8 @@ describe('the properties that must hold for any bytes at all', () => {
       fc.property(fc.uint8Array({ minLength: 16, maxLength: 300 }), (tail) => {
         const iso = new Uint8Array([0, 0, 0, 0x10, 0x66, 0x74, 0x79, 0x70, ...tail]);
         const mkv = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, ...tail]);
-        expect(() => readIsoBmff(iso)).not.toThrow();
-        expect(() => readMatroska(mkv)).not.toThrow();
+        expect(() => readIsoBmff(sourceOf(iso))).not.toThrow();
+        expect(() => readMatroska(sourceOf(mkv))).not.toThrow();
       }),
       { numRuns: 300 },
     );

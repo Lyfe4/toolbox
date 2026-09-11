@@ -7,6 +7,7 @@ import {
   avcSlice,
   avcSps,
   avcSpsHigh,
+  bytesOf as outputBytes,
   hevcPps,
   hevcSlice,
   hevcSps,
@@ -14,6 +15,7 @@ import {
   makeTransportStream,
   mpegAudioFrameBytes,
   sampleBytes,
+  sourceOf,
   type TsAccessUnit,
 } from './fixtures';
 import { readIsoBmff } from './isobmff';
@@ -80,7 +82,7 @@ interface ReadBack {
 
 /** Reads a finished MP4 back through this tool's own ISO-BMFF reader. */
 function readBack(bytes: Uint8Array): ReadBack {
-  const read = readIsoBmff(bytes);
+  const read = readIsoBmff(sourceOf(bytes));
   if (!read.ok) throw new Error(`the output could not be read back: ${read.error.message}`);
 
   return {
@@ -179,9 +181,11 @@ describe('repackaging a transport stream', () => {
   });
 
   it('carries every coded picture across, unit for unit', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    const video = readBack(done.value.bytes).tracks.find((track) => track.kind === 'video');
+    const video = readBack(outputBytes(done.value.bytes)).tracks.find(
+      (track) => track.kind === 'video',
+    );
 
     // The parameter sets and the delimiters are gone, the SEI stayed, and
     // every slice is the encoder's own bytes with a length in front of it.
@@ -203,7 +207,7 @@ describe('repackaging a transport stream', () => {
      * subtly out of order. Here both numbers are stated and both are read, so
      * the offsets below are the encoder's own arithmetic and not ours.
      */
-    const read = readMpegTs(source);
+    const read = readMpegTs(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     const video = read.value.tracks.find((track) => track.kind === 'video');
     expect(video?.samples.dts).toEqual([0, 3000, 6000, 9000]);
@@ -227,7 +231,7 @@ describe('repackaging a transport stream', () => {
       ],
     });
 
-    const read = readMpegTs(spliced);
+    const read = readMpegTs(sourceOf(spliced));
     if (!read.ok) throw new Error(read.error.message);
     const video = read.value.tracks[0];
     expect(video?.samples.dts).toEqual([0, 1]);
@@ -251,7 +255,7 @@ describe('repackaging a transport stream', () => {
       ],
     });
 
-    const read = readMpegTs(skewed);
+    const read = readMpegTs(sourceOf(skewed));
     if (!read.ok) throw new Error(read.error.message);
     const video = read.value.tracks[0];
     const offsets = video?.samples.dts.map((at, index) => (video.samples.cts[index] ?? 0) - at);
@@ -259,9 +263,11 @@ describe('repackaging a transport stream', () => {
   });
 
   it('marks only the frames a player may actually seek to', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    const video = readBack(done.value.bytes).tracks.find((track) => track.kind === 'video');
+    const video = readBack(outputBytes(done.value.bytes)).tracks.find(
+      (track) => track.kind === 'video',
+    );
     // The first frame holds an IDR and the rest do not. Marking them all is
     // the plausible wrong answer: it plays from the start and cannot be
     // scrubbed, which is the failure `manual-checks.md` step 3 exists for.
@@ -269,9 +275,11 @@ describe('repackaging a transport stream', () => {
   });
 
   it('builds a configuration record whose profile is the stream’s own', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    const video = readBack(done.value.bytes).tracks.find((track) => track.kind === 'video');
+    const video = readBack(outputBytes(done.value.bytes)).tracks.find(
+      (track) => track.kind === 'video',
+    );
     const config = video?.config;
 
     expect(config?.[0]).toBe(1); // configurationVersion
@@ -282,9 +290,11 @@ describe('repackaging a transport stream', () => {
   });
 
   it('reads the picture size out of the parameter set, since nothing else states it', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    const video = readBack(done.value.bytes).tracks.find((track) => track.kind === 'video');
+    const video = readBack(outputBytes(done.value.bytes)).tracks.find(
+      (track) => track.kind === 'video',
+    );
     /*
      * THE FAILURE THIS EXISTS FOR. A transport stream states no picture size
      * anywhere, so an `mp4` written without parsing the SPS gets a track
@@ -296,9 +306,11 @@ describe('repackaging a transport stream', () => {
   });
 
   it('strips the ADTS header and states the configuration once instead', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    const audio = readBack(done.value.bytes).tracks.find((track) => track.kind === 'audio');
+    const audio = readBack(outputBytes(done.value.bytes)).tracks.find(
+      (track) => track.kind === 'audio',
+    );
 
     // Every sample is the raw AAC frame, seven header bytes shorter than the
     // frame that arrived. Leaving them in produces a track whose every sample
@@ -310,7 +322,7 @@ describe('repackaging a transport stream', () => {
   });
 
   it('builds the AudioSpecificConfig from the fields the ADTS header states', () => {
-    const read = readMpegTs(source);
+    const read = readMpegTs(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     const audio = read.value.tracks.find((track) => track.kind === 'audio');
     // AAC-LC, sampling frequency index 4 (44.1 kHz), two channels - the same
@@ -324,7 +336,7 @@ describe('repackaging a transport stream', () => {
     // The second PES packet holds two AAC frames. A reader that indexed the
     // packet would produce two samples instead of three, all the audio would
     // be present, and the track would be a third too short.
-    const read = readMpegTs(source);
+    const read = readMpegTs(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     const audio = read.value.tracks.find((track) => track.kind === 'audio');
     expect(audio?.samples.count).toBe(3);
@@ -334,13 +346,13 @@ describe('repackaging a transport stream', () => {
   });
 
   it('names the language a broadcaster put on the track', () => {
-    const read = readMpegTs(source);
+    const read = readMpegTs(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     expect(read.value.tracks.find((track) => track.kind === 'audio')?.language).toBe('fra');
   });
 
   it('says that the framing was rebuilt, because "byte for byte" stops being true', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
     expect(done.value.notes.some((note) => note.title.includes('framing was rebuilt'))).toBe(true);
   });
@@ -363,7 +375,7 @@ describe('finding the packet grid', () => {
     // Every AVCHD camcorder writes this. Refusing it while accepting `.ts`
     // would turn away the largest single group of files this reader is for.
     const source = makeTransportStream({ streams, units: [unit], packetSize: 192 });
-    const read = readMpegTs(source);
+    const read = readMpegTs(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     expect(read.value.flavour).toBe('MPEG-TS (AVCHD)');
     expect(read.value.tracks[0]?.samples.count).toBe(1);
@@ -373,7 +385,7 @@ describe('finding the packet grid', () => {
     // A transport stream has no beginning: a recorder writes whatever it had
     // buffered, so the first byte is 0x47 only by luck.
     const source = makeTransportStream({ streams, units: [unit], leading: 91 });
-    const read = readMpegTs(source);
+    const read = readMpegTs(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     expect(read.value.tracks[0]?.samples.count).toBe(1);
   });
@@ -424,9 +436,9 @@ describe('two streams that do not start together', () => {
   });
 
   it('holds the offset between them in an edit list rather than losing it', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    const tracks = readBack(done.value.bytes).tracks;
+    const tracks = readBack(outputBytes(done.value.bytes)).tracks;
 
     const picture = tracks.find((track) => track.kind === 'video');
     const sound = tracks.find((track) => track.kind === 'audio');
@@ -445,7 +457,7 @@ describe('two streams that do not start together', () => {
     // Which is the other half of the same decision: the timestamps in a
     // transport stream start wherever the transmitter's clock was, and 90,000
     // ticks of leading offset inside `stts` is a second of nothing.
-    const read = readMpegTs(source);
+    const read = readMpegTs(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     for (const track of read.value.tracks) {
       expect(track.samples.dts[0]).toBe(0);
@@ -465,7 +477,7 @@ describe('what a transport stream can hold that will not travel', () => {
       scrambled: true,
     });
 
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     expect(done.ok).toBe(false);
     if (done.ok) return;
     expect(done.error.message).toContain('encrypted');
@@ -488,7 +500,7 @@ describe('what a transport stream can hold that will not travel', () => {
       ],
     });
 
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     expect(done.ok).toBe(false);
     if (done.ok) return;
     expect(done.error.detail).toContain('MPEG-2 video');
@@ -514,11 +526,11 @@ describe('what a transport stream can hold that will not travel', () => {
       ],
     });
 
-    const read = readMpegTs(source);
+    const read = readMpegTs(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     expect(read.value.tracks[0]?.codec).toBe('mp2');
 
-    const done = remux(source, 'audio');
+    const done = remux(sourceOf(source), 'audio');
     expect(done.ok).toBe(false);
     if (done.ok) return;
     expect(done.error.detail).toContain('Layer II');
@@ -549,10 +561,10 @@ describe('what a transport stream can hold that will not travel', () => {
       ],
     });
 
-    const done = remux(source, 'audio');
+    const done = remux(sourceOf(source), 'audio');
     if (!done.ok) throw new Error(done.error.message);
     expect(done.value.extension).toBe('mp3');
-    expect([...done.value.bytes]).toEqual([
+    expect([...outputBytes(done.value.bytes)]).toEqual([
       ...(frames[0] ?? []),
       ...(frames[1] ?? []),
       ...(frames[2] ?? []),
@@ -573,7 +585,7 @@ describe('what a transport stream can hold that will not travel', () => {
       extraPrograms: 4,
     });
 
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
     expect(done.value.from.metadata).toEqual(['4 other programmes in the multiplex']);
   });
@@ -583,7 +595,7 @@ describe('what a transport stream can hold that will not travel', () => {
       streams: [{ pid: PID_VIDEO, streamType: 0x1b }],
       units: [],
     });
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     expect(done.ok).toBe(false);
     if (done.ok) return;
     expect(done.error.message).toContain('no frames');
@@ -604,7 +616,7 @@ describe('what a transport stream can hold that will not travel', () => {
       ],
     });
 
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
     // Audio survives, and the result is named as audio rather than pretending
     // to be a video - the same salvage the Matroska reader's missing
@@ -636,9 +648,9 @@ describe('H.265 out of a transport stream', () => {
   });
 
   it('builds an hvcC whose profile, tier and level are the stream’s own', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    const config = readBack(done.value.bytes).tracks[0]?.config;
+    const config = readBack(outputBytes(done.value.bytes)).tracks[0]?.config;
 
     /*
      * The twelve bytes this asserts are the reason `readHevcSps` exists. Every
@@ -661,22 +673,22 @@ describe('H.265 out of a transport stream', () => {
   });
 
   it('reads the picture size, which H.265 states in luma samples', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    const track = readBack(done.value.bytes).tracks[0];
+    const track = readBack(outputBytes(done.value.bytes)).tracks[0];
     expect([track?.width, track?.height]).toEqual([1280, 720]);
   });
 
   it('treats a random-access picture as a seek point and a trailing one as not', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    expect(readBack(done.value.bytes).tracks[0]?.sync).toEqual([1, 0]);
+    expect(readBack(outputBytes(done.value.bytes)).tracks[0]?.sync).toEqual([1, 0]);
   });
 
   it('carries the video parameter set, which H.264 has no equivalent of', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    const config = readBack(done.value.bytes).tracks[0]?.config ?? new Uint8Array(0);
+    const config = readBack(outputBytes(done.value.bytes)).tracks[0]?.config ?? new Uint8Array(0);
     const text = [...config].join(',');
     expect(text).toContain([...vps].join(','));
     expect(text).toContain([...sps].join(','));
@@ -711,9 +723,9 @@ describe('a 1080p stream, which is coded 1088 lines tall', () => {
       ],
     });
 
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    const track = readBack(done.value.bytes).tracks[0];
+    const track = readBack(outputBytes(done.value.bytes)).tracks[0];
     expect([track?.width, track?.height]).toEqual([1920, 1080]);
   });
 
@@ -730,9 +742,10 @@ describe('a 1080p stream, which is coded 1088 lines tall', () => {
       ],
     });
 
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
-    const config: Uint8Array = readBack(done.value.bytes).tracks[0]?.config ?? new Uint8Array(0);
+    const config: Uint8Array =
+      readBack(outputBytes(done.value.bytes)).tracks[0]?.config ?? new Uint8Array(0);
     // The last four bytes: chroma format 1, both bit depths 8, no extensions.
     expect([...config.subarray(-4)]).toEqual([0xfd, 0xf8, 0xf8, 0x00]);
   });

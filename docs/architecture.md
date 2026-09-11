@@ -6,6 +6,7 @@ way they are.
 - [The shape of it](#the-shape-of-it)
 - [The registry](#the-registry)
 - [The port set](#the-port-set)
+- [Where a value's bytes are](#where-a-values-bytes-are)
 - [The execution engine](#the-execution-engine)
 - [The worker boundary](#the-worker-boundary)
 - [Incremental caching](#incremental-caching)
@@ -344,6 +345,114 @@ makes it the one place in the app that can reference a port that does not
 exist — and it failed exactly as quietly as the stale share link did. Every
 preset wire goes through `firstRefusedEdge` in `ports.test.ts`.
 
+## Where a value's bytes are
+
+A `bytes` value used to be a whole `Uint8Array`, and for eight of the ten tools
+it still is. It carries a **`BinaryData`** now, which says where the bytes are
+rather than holding them:
+
+| Kind       | Holds                                  | Where it comes from                     |
+| ---------- | -------------------------------------- | --------------------------------------- |
+| `resident` | a `Uint8Array`                         | every tool's output that fits in memory |
+| `deferred` | a `Blob`, its size, and its first 4 kB | a chosen `File`, or a large tool output |
+
+This exists for one tool and one problem. `video-remux` refused anything over
+256 MB, and nearly every file it exists for is larger: a DivX film is 700 MB to
+1.4 GB, an hour of tuner recording is 2 to 4 GB, AVCHD clips are split at 2 GB
+by the format, and an OpenDML AVI exists _because_ the format cannot address
+past 2 GB. What made 256 MB the number was not video. It was that a run held
+the input three or four times over.
+
+### Why a blob, and not a stream
+
+The obvious shape for this is a stream, and a stream is the wrong shape, for
+two reasons that had both been written down as objections before any of it was
+built.
+
+**Inputs are borrowed rather than transferred, deliberately, so one output can
+feed several inputs.** A stream that can be consumed once is in direct tension
+with that guarantee: the second consumer gets nothing, and on this canvas
+twelve consumers on one binary output is a case that is asserted rather than
+assumed. A blob is in no tension with it at all — it is immutable and
+re-readable, so reading it does not spend it, and a fan-out costs twelve
+pointers.
+
+**The result cache holds whole outputs for the life of the tab, and its whole
+design is that it never has to look at a value.** A deferred value is a
+reference, so that stays exactly as true of a two-gigabyte output as it was of
+a two-kilobyte one. Nothing in the cache changed.
+
+And the third property is the one that made it worth doing at all: **a blob
+crosses `postMessage` by reference.** Measured in all three engines, handing a
+512 MB blob to a worker takes 0.0–6.0 ms, against 294 ms merely to allocate and
+fill 64 MB of ordinary memory. The structured clone that used to be the second
+copy of the input is not a copy.
+
+### Two classes of tool, and what the other class has to know
+
+The reason this was declined once before is worth keeping: **a streaming value
+that some tools handle and others quietly buffer would be worse than an honest
+ceiling.** So a tool declares how it reads binary input, and what it is handed
+is derived from that — the same mechanism that already derives its `run`
+signature from its ports.
+
+| Class      | `run` receives | Tools                      |
+| ---------- | -------------- | -------------------------- |
+| `resident` | `bytes`        | the other nine             |
+| `windowed` | `source`       | `video-remux`, and only it |
+
+A windowed tool's input **has no `bytes` member at all.** That absence is the
+whole mechanism: a tool cannot quietly buffer a value it has no way to ask for
+whole, and one that declared `windowed` and reached for `input.bytes` would not
+compile. The class is a property of the implementation rather than of the
+manifest, set by which factory built it — `defineTool` or `defineStreamingTool`
+— so the two descriptions cannot drift apart.
+
+**What the resident tools have to know about the windowed one is: nothing.**
+That is the design goal rather than a happy accident. A deferred value arriving
+at a resident tool is materialised in `eraseTool`, which is the one place in the
+app that buffers a whole value on a tool's behalf — and by the time it does, the
+engine has already refused anything over that tool's own `maxInputBytes`. So a
+resident tool cannot be handed more than the number it wrote down about itself,
+however large the value on the wire was. A two-gigabyte video output wired into
+`hash` fails as a size refusal naming both numbers, before anything is read.
+
+The places that _describe_ a binary value rather than process it — the sniff,
+the node summary, the output panel's preview and its Download button — work on
+either kind without knowing which they have. That is what the **head** is for:
+the first 4 kB travels beside the reference, which is already this app's idea of
+enough to know what something is, since `sniffBytes` never looks further. So
+`resultSummary` still runs synchronously during a render against a value whose
+bytes are on disk.
+
+### What has a ceiling now, and what does not
+
+Reading no longer has one worth stating. An input arrives as a `File` the
+operating system is holding; the tool walks it through a window; nothing
+assembles. A 320 MB transport stream is repackaged in 2.4 s in Gecko and 3.4 s
+in JavaScriptCore, and **the page reads 4096 bytes of it** — measured in
+`checkLargeVideo`, by counting `Blob.prototype.slice` and `.arrayBuffer` on the
+main thread for `File` receivers.
+
+The **answer** has one, and it is a browser's rather than a choice here. A
+download is one blob, and blob storage is not unbounded: assembling 8 MB parts
+in a worker and reading the result back after each, Chromium stops at 1.88 GiB
+with a `NotReadableError`, while Gecko and JavaScriptCore both went past 4 GiB
+without complaint. `MAX_BLOB_BYTES` is Chromium's number because Chromium's is
+the one that binds, and the video tool refuses an output over it **before
+copying anything**, naming the size and pointing at the audio operation, which
+is not affected. A failure at the moment somebody presses Download, after
+several minutes of work, is the worst possible place to discover a limit.
+
+Two smaller things follow from the same measurements. A windowed read runs at
+868 MB/s in JavaScriptCore, 1149 in Chromium and 4163 in Gecko, through
+`FileReaderSync` — the only synchronous way to get bytes out of a blob, and the
+reason four container readers did not have to be rewritten as asynchronous
+state machines. And it exists **only in a worker**, which is why `ByteSource`
+has two implementations and why the unit suite always takes the materialising
+one: jsdom has no worker, so nothing in `pnpm test` has ever executed
+`FileReaderSync` even once. That is what `checkLargeVideo` is for.
+
 ## The execution engine
 
 Given a graph, the engine:
@@ -397,6 +506,18 @@ The timer armed at post time is not simply cancelled, because a request the
 worker never acknowledges at all — the worker wedged before reaching it — still
 has to fail rather than hang. The practical guarantee is therefore: **at most
 `timeoutMs` waiting, then `timeoutMs` running.**
+
+**And `timeoutMs` is now a budget plus a rate**, for the one tool that needed
+it to be. A constant was honest while every tool's accepted input was bounded
+in the megabytes; `video-remux` now accepts 4 GiB, and a number that fits a
+four-minute phone clip strangles an hour of broadcast while a number that fits
+the broadcast lets the clip hang for twenty minutes before anybody is told
+anything. `timeoutMsPerMiB` is added to the constant from the measured size of
+the request's inputs, and the video tool declares 20 — 50 MB/s, an order of
+magnitude under the 868–4163 MB/s a windowed blob read was measured at, so the
+budget has room for the parsing between the reads. Nothing else changes: the
+clock is still restarted when the tool actually begins, so this is still a
+budget for the tool's own work rather than for the queue.
 
 ### One node's timeout, and everything else in flight
 
@@ -581,6 +702,13 @@ miserable thing to debug, so the fan-out case is asserted on the actual bytes
 rather than on the shape of the result — twelve consumers, past the concurrency
 bound, each checked against a known digest.
 
+**None of that applies to a deferred value, and it needed no exception to be
+carved for it.** A blob crosses `postMessage` by reference, so there is no copy
+for a transfer to save and no buffer for one to detach; `collectTransferables`
+simply finds nothing to collect. The list of transferables is about the
+resident values, which are the small ones. See [where a value's bytes
+are](#where-a-values-bytes-are).
+
 Where `OffscreenCanvas` is unavailable, image work falls back to the main
 thread and produces an identical result. `scripts/cross-browser-check.mjs`
 asserts which branch was actually taken, so the fallback cannot rot unnoticed.
@@ -667,6 +795,14 @@ Two things are **not** cached, and both are deliberate:
   outputs, so an entry for a deleted node would hold that node's decoded file
   for the life of the tab. Entries are pruned at the start of each run, which is
   the one place that sees both the cache and the graph it belongs to.
+
+**A deferred value in the cache is a reference and not a file.** The cache's
+design rationale — that it never has to look at a value — is what made this
+survive the change to the value model untouched: an entry holding a
+two-gigabyte repackage holds a blob handle, and the bytes behind it are the
+browser's problem rather than the tab's. The pruning above still matters for
+exactly the same reason it did, because a handle nobody drops is a file nobody
+frees.
 
 Editing one node re-runs that node and its descendants, and nothing else.
 Typing is debounced, so a pipeline re-runs once you pause rather than once per
@@ -1762,11 +1898,25 @@ inspector explains that a file is never saved with a canvas. Without the stub
 the node would be indistinguishable from one nobody had ever fed, which is a
 silently empty node rather than an answer.
 
-**What is stored is the built value, not the `File`.** It was validated against
-its port at the moment it was chosen — see below — so nothing downstream can be
-handed a file its port cannot use, and no run has to read or decode anything.
-The alternative, holding the `File` and reading it per run, would mean reading a
-64 MB image on every 300ms debounced re-run of an unrelated node.
+**What is stored is the built value, not the `File`** — and for a `bytes` port
+that value now _is_ a reference to the `File`, which is the one thing in this
+section the streaming change moved. It is still validated against its port at
+the moment it is chosen, so nothing downstream can be handed a file its port
+cannot use; what no longer happens is the read. Choosing a 320 MB video used to
+put 320 MB in the tab before anything had decided to do anything with it, and
+that copy then lived for the whole session. It now costs the 4 kB the sniff
+already looked at — measured, in both engines, in `checkLargeVideo`.
+
+A port that needs **text** still reads the whole file, and that asymmetry is
+the honest shape of the two cases rather than an optimisation: a text port has
+to decode, decoding is a pass over the whole thing, and every tool with a
+text-only document port declares a limit in the kilobytes or low megabytes.
+Nothing reads a file it has not already agreed to hold.
+
+The cost of the change, stated plainly: a resident tool fed a 64 MB file reads
+it from disk on each run rather than from memory. That only happens on a cache
+miss — which means the node's own work is about to be redone anyway — and a
+disk read is a fraction of the work that follows it.
 
 `token` distinguishes two files with the same name and the same size, which name
 and size alone cannot. It is part of the node's cache key, so replacing a file
@@ -2542,49 +2692,44 @@ share is not one the recipient can run without supplying their own. A node
 deleted and undone keeps its file; a graph replaced by a load or a link loses
 every one, and a deleted node's bytes are retained until then.
 
-**A video larger than 256 MB cannot be repackaged here, and the files people
-most want to repackage are larger than that.** `video-remux` copies rather than
-converts, so its cost is memory rather than time — and a run holds the input
-about three times over: the page keeps the chosen file's bytes for the session,
-the worker gets a structured clone because
-[inputs are borrowed rather than transferred](#the-worker-boundary), and the
-output is built beside that clone. 256 MB is where three times that stops being
-something a laptop shrugs at.
+**A repackaged video cannot be larger than about 1.9 GB, and that is a
+browser's limit rather than this app's.** This paragraph used to say something
+much worse — that nothing over 256 MB could be repackaged at all, and that
+almost every file the tool exists for is larger than that. What changed is
+[the value model](#where-a-values-bytes-are), and what is left is the half of
+the problem a tab genuinely cannot solve.
 
-**A transport stream costs a fourth copy**, which is the one number in this
-paragraph that changed after it was written. Its frames are not contiguous in
-the file — one picture is spread across dozens of 188-byte packets, each with a
-header in the middle of it — so the samples that get written have to be
-gathered into a buffer of their own before they can be indexed at all. That
-buffer is sized from a measuring pass over the packets rather than grown, so
-the peak is knowable rather than whatever the allocator arrived at, but it is
-still a fourth copy of the input.
+The input side has no limit worth stating any more. A chosen file stays on
+disk, crosses into the worker as a reference, and is read through a window;
+`maxInputBytes` is 4 GiB and is a statement about what the tool will agree to
+walk rather than about what fits in memory. The old number was three or four
+copies of the input, and none of those copies exists.
 
-The consequence is worth stating as a limitation rather than as a setting: about
-four minutes of 1080p phone video fits, and a two-gigabyte film does not — which
-is exactly the file somebody means when they say a video will not play. No
-browser tool can hold one; a WASM ffmpeg's own heap ceiling is 2 GiB before the
-file is counted. The fix is not a larger number but reading the input from disk
-in pieces and writing the output in pieces, which is a change to `ToolValue` —
-every value in this engine is a whole `Uint8Array` — rather than to the tool.
-That is a redesign of the value model, in the same class as the liveness
-deadline and the second worker the
-[feasibility investigation](video-convert-feasibility.md) costed for
-transcoding, and it is not paid for by anything this version does.
+The **output** is the part that cannot be streamed away. It has to become one
+blob for a download, and blob storage is bounded: assembling 8 MB parts in a
+worker and reading the result back after each, Chromium stops at 1.88 GiB with
+a `NotReadableError`, while Gecko and JavaScriptCore both went past 4 GiB. So
+`MAX_BLOB_BYTES` is 1.875 GiB — the largest size measured readable in every
+engine — and a repackage that would exceed it is refused **before anything is
+copied**, naming the size and pointing at the audio operation, which produces a
+few tens of megabytes out of the same file and is unaffected.
 
-**Adding MPEG-TS and AVI made this more pressing rather than less, and that is
-worth recording where the decision lives rather than only in the tool's own
-README.** Every file those two readers exist for is normally over the limit: a
-DivX film is 700 MB to 1.4 GB, an hour of tuner recording is 2 to 4 GB, AVCHD
-clips are split at 2 GB by the format, and an OpenDML AVI exists _because_ the
-format cannot address past 2 GB. Only the short end of each fits — a screen
-recording, a camcorder clip of a few minutes, an HLS segment. So the share of
-real inputs this limitation refuses went up with the coverage, and the value
-model is now the largest single thing standing between this tool and the files
-it was built for. It was not fixed here because it is a change to every tool's
-contract rather than to one tool, and because doing it badly — a streaming
-`ToolValue` that some tools handle and others quietly buffer — would be worse
-than the honest ceiling.
+What that means in practice: a DivX film, an AVCHD clip and a two-gigabyte MKV
+now go through; a four-gigabyte tuner recording can have its audio extracted
+but not its container changed. The remaining fix is not a larger number either
+— it is writing the output somewhere other than a blob, which means the File
+System Access API in Chromium or OPFS in all three, and both are a save flow
+rather than a value. Neither is paid for by anything this version does.
+
+**The fourth copy a transport stream cost is gone too, and it is worth saying
+where it went.** Its frames are not contiguous in the file — one picture is
+spread across dozens of 188-byte packets, each with a header in the middle of
+it — so the samples that get written still have to be gathered before they can
+be indexed. They are gathered into a `ByteSink` rather than into a buffer: a
+small stream stays in memory exactly as it did, and a large one goes to blob
+storage as it fills, and what the writer indexes afterwards is a source over
+it. The measuring pass survives, not to size an allocation but as the bound on
+how much a hostile file may cause to be gathered.
 
 **Progress is not reported through a pipeline.** `runPipeline` passes no
 `onProgress`, so a tool that reports progress shows none on the canvas. No
@@ -2659,7 +2804,11 @@ list of things it found:
   where the source is served from cache. Inputs are borrowed (structured
   cloned), never transferred, from every call site in the app. A file is the
   second source of one buffer reaching several tools and is held to the same
-  line, in both engines.
+  line, in both engines. **A deferred value is held to it a third way**: a blob
+  is immutable and re-readable, so twelve consumers reading one get twelve
+  intact copies, and the test reads every one of them rather than the first —
+  a value that read back correctly only once is the failure that shape could
+  have.
 - **Every legal pair of tools.** Each output/input pair whose declared types
   overlap was run with real data. Every one either produces a correct value or
   fails with a message about the actual input; none crashes, hangs, or produces

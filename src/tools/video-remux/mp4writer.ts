@@ -1,4 +1,5 @@
-import type { Bytes } from '@/features/registry/types';
+import type { ByteSource } from '@/features/registry/types';
+import type { ByteSink } from '@/lib/binary';
 
 import type { CodecId, Edit, SampleTable, TrackKind } from './containers';
 
@@ -321,7 +322,7 @@ export interface OutputTrack {
    * way out, so its reader hands over a buffer it assembled - see
    * `SourceTrack.media`.
    */
-  readonly media: Uint8Array | null;
+  readonly media: ByteSource | null;
 }
 
 /** Three five-bit letters packed into sixteen bits. `und` where unknown. */
@@ -708,16 +709,34 @@ function buildMoov(options: MovieOptions): Uint8Array {
  * ========================================================================== */
 
 export interface WriteOptions {
-  readonly source: Uint8Array;
+  readonly source: ByteSource;
   readonly tracks: readonly OutputTrack[];
   readonly timescale: number;
   /** Major brand: `isom` for a film, `M4A ` for an audio-only file. */
   readonly majorBrand: string;
   readonly compatibleBrands: readonly string[];
+  /** Where the finished file is written. */
+  readonly into: ByteSink;
 }
 
-export function writeMp4(options: WriteOptions): Bytes {
-  const { source, tracks, timescale } = options;
+/**
+ * WHAT IS HELD IN MEMORY WHILE THIS RUNS, AND WHAT IS NOT.
+ *
+ * `moov` is, and has to be: it is one contiguous box whose chunk offsets
+ * depend on its own length, so it is built twice and the second one is
+ * written. Its size is a function of the number of SAMPLES rather than of the
+ * number of bytes - a two-hour film is a few tens of megabytes of index, which
+ * is the price of a seekable file and is paid whatever the media weighs.
+ *
+ * The media is not. It goes into the sink a sample at a time, straight out of
+ * whichever source holds it, and never exists as one buffer anywhere. That is
+ * the difference between a tool with a 256 MB ceiling and one without: the
+ * output used to be a single `Uint8Array` the size of the whole file, which
+ * made the answer to "how big a video can this repackage" a question about
+ * `new Uint8Array` rather than about video.
+ */
+export function writeMp4(options: WriteOptions): void {
+  const { source, tracks, timescale, into } = options;
 
   const chunks = planChunks(tracks);
   const mediaBytes = mediaSize(tracks);
@@ -743,28 +762,22 @@ export function writeMp4(options: WriteOptions): Bytes {
   const mediaStart = ftyp.byteLength + measured.byteLength + 8;
   const moov = buildMoov({ tracks, chunks, timescale, mediaStart });
 
-  const out = new Uint8Array(mediaStart + mediaBytes);
-  out.set(ftyp, 0);
-  out.set(moov, ftyp.byteLength);
-  out.set(u32(8 + mediaBytes), ftyp.byteLength + moov.byteLength);
-  out.set(ascii('mdat'), ftyp.byteLength + moov.byteLength + 4);
+  into.write(ftyp);
+  into.write(moov);
+  into.write(Uint8Array.from([...u32(8 + mediaBytes), ...ascii('mdat')]));
 
-  let at = mediaStart;
   for (const chunk of chunks) {
     const track = tracks[chunk.track];
     if (track === undefined) continue;
     // Per track, because the two containers that cannot promise a sample is a
-    // contiguous run of the input hand over a buffer of their own instead.
+    // contiguous run of the input hand over a source of their own instead.
     const from = track.media ?? source;
     for (let index = 0; index < chunk.count; index += 1) {
       const start = track.samples.offset[chunk.first + index] ?? 0;
       const size = track.samples.size[chunk.first + index] ?? 0;
-      out.set(from.subarray(start, start + size), at);
-      at += size;
+      into.copyFrom(from, start, size);
     }
   }
-
-  return out;
 }
 
 /**

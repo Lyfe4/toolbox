@@ -11,7 +11,7 @@ pixel, and nothing here can be lossy.
 - [Why AVI is mostly a refusal](#why-avi-is-mostly-a-refusal)
 - [What it says it dropped](#what-it-says-it-dropped)
 - [Malformed input](#malformed-input)
-- [The size limit, and the files it rules out](#the-size-limit-and-the-files-it-rules-out)
+- [What it reads, and what it can hand back](#what-it-reads-and-what-it-can-hand-back)
 - [What has not been tested](#what-has-not-been-tested)
 
 ## What it is for
@@ -367,57 +367,64 @@ than as a reason to resynchronise**. Hunting for the next plausible 0x47 inside
 compressed video finds one within a few hundred bytes, so a reader that does it
 carries on confidently through nonsense and reports success.
 
-## The size limit, and the files it rules out
+## What it reads, and what it can hand back
 
-`maxInputBytes` is **256 MB**, four times the largest limit in the rest of the
-set, and it is a memory decision rather than a video one. A run holds the input
-about three times over: the page keeps the chosen file's bytes for the session,
-the worker gets a structured clone of them because
-[inputs are borrowed rather than transferred](../../../docs/architecture.md#the-worker-boundary),
-and the output is built beside that clone.
+This section used to be called "the size limit, and the files it rules out",
+and the limit was **256 MB** — which ruled out very nearly every file this tool
+exists for. That number was never about video. It was about memory: a run held
+the input three times over, because the page kept the chosen file's bytes for
+the session, the worker got a structured clone of them, and the output was
+built beside that clone. A transport stream cost a fourth copy, because its
+frames are not contiguous and had to be gathered before they could be indexed.
 
-**A transport stream costs a fourth copy**, and that is the honest arithmetic
-rather than a footnote: its frames are not contiguous in the file, so the
-samples that get written have to be gathered into a buffer of their own first.
-The peak for a `.ts` is therefore about four times its size rather than three,
-and an AVI whose audio is extracted pays the same on the audio alone, which is
-small. The guard against that being a surprise is that the buffer is sized from
-a measuring pass rather than grown, so the figure is knowable rather than
-whatever the allocator ended up at. It is measured with a quarter of headroom,
-because re-framing can add one byte per NAL unit where the source used a
-three-byte start code, so the real peak for a `.ts` is nearer four and a
-quarter times its size than four.
+**None of those copies exists now**, and the change is in
+[the value model](../../../docs/architecture.md#where-a-values-bytes-are)
+rather than in this directory. A `bytes` value carries a reference to a blob
+instead of the bytes themselves, so:
 
-**So this will not repackage a film, and that is worth stating rather than
-discovering.** About four minutes of 1080p phone video fits. A two-gigabyte MKV
-of a feature — which is exactly the file people most often want to remux — does
-not, and no browser tool can hold one: not this one, and not a WASM ffmpeg
-either, whose own heap ceiling is 2 GiB before the file itself is counted.
+- the page never reads the chosen file — measured at **4096 bytes** for a
+  320 MB video, which is the sniff and nothing else;
+- the worker is handed it by reference, which costs 0.0–6.0 ms at 512 MB rather
+  than a copy;
+- all four readers walk it through a window, synchronously, through
+  `FileReaderSync` — 868 MB/s in JavaScriptCore, 1149 in Chromium, 4163 in
+  Gecko;
+- a transport stream's gathered frames and the finished MP4 both go into a
+  `ByteSink`, which keeps a small result in memory and hands a large one to
+  blob storage as it fills.
 
-**Adding these two containers made that worse, not better, and it is the main
-argument for fixing it.** Every file the two new readers exist for is normally
-over the limit:
+### What it accepts
 
-- A DivX film is 700 MB to 1.4 GB. That is the archetypal "won't play" file,
-  and it is now read, understood and named — and still refused for its size
-  before any of that happens, if it is over 256 MB.
-- An hour of DVB recording is 2 to 4 GB. A tuner writes one every time somebody
-  records a programme.
-- AVCHD camcorder clips are split at 2 GB or 4 GB by the format itself, which
-  tells you what size a single clip reaches.
-- An OpenDML AVI exists **because** the format's 32-bit offsets cannot address
-  past 2 GB.
+`maxInputBytes` is **4 GiB**, and it is a statement about what this tool will
+agree to walk rather than about what fits anywhere. The number comes from the
+formats: AVCHD splits its clips at 2 GB, an OpenDML AVI exists **because** the
+format's 32-bit offsets cannot address past 2 GB, and an hour of DVB recording
+is 2 to 4 GB. Those are the sizes the files this reads actually reach.
 
-Only the short end of each of those fits: a screen recording, a camcorder clip
-of a few minutes, an HLS segment, one song's worth of soundtrack. The reader
-handles OpenDML's second `movi` list precisely because a file **truncated** to
-fit is an ordinary thing to be handed.
+### What it can hand back
 
-The fix is not a bigger number. It is reading the input from disk in pieces and
-writing the output in pieces, which is a change to the execution engine's value
-model — `ToolValue` carries a whole `Uint8Array` — rather than to this tool.
-The investigation did not find this, because it measured a one-minute clip and
-generalised.
+**About 1.9 GB**, and this is the one real limit left. A finished file has to
+become a single blob for a download, and blob storage is bounded — measured by
+assembling 8 MB parts in a worker and reading the result back after each,
+Chromium refuses at 2 GiB with a `NotReadableError` and 1.88 GiB is the largest
+that worked, while Gecko and JavaScriptCore both went past 4 GiB. So the
+ceiling is Chromium's, and a repackage that would exceed it is **refused before
+a byte is copied**, with the size named and the audio operation pointed at.
+
+What that means for the four archetypal files:
+
+| File                               | Repackage                                        | Extract the audio |
+| ---------------------------------- | ------------------------------------------------ | ----------------- |
+| A DivX film, 700 MB – 1.4 GB       | reads it, then refuses the **codec** — see above | yes               |
+| A 2 GB MKV of a feature            | yes                                              | yes               |
+| An AVCHD clip, split at 2 GB       | yes                                              | yes               |
+| An hour of DVB recording, 2 – 4 GB | refused: the answer would not fit                | yes               |
+
+The remaining fix is not a bigger number either. It is writing the output
+somewhere that is not a blob — the File System Access API, which is Chromium
+only, or OPFS, which all three have — and both of those are a save flow with a
+file handle in it rather than a value on a wire. That is a product decision
+about where a result lives, not a parser change.
 
 ## What has not been tested
 
@@ -446,9 +453,14 @@ the first two were:
 - **No AVI carrying H.264 has been read.** That path is the one AVI case that
   produces a file rather than a refusal, and it is also the rarest kind of AVI,
   so it is the least likely to be tried by accident.
-- **Nothing has run on a phone.** The memory arithmetic above is read off the
-  engine rather than measured, which is the same gap the investigation named as
-  its second-least-confident finding — and there is now a fourth copy in it.
+- **Nothing has run on a phone.** The memory arithmetic above is now measured
+  rather than read off the engine — a 320 MB transport stream through the real
+  app in two engines, with the main thread's reads of the file counted — but it
+  is measured on a desktop. A phone has a fraction of the memory and a browser
+  far quicker to discard a tab, and the number that is still a desktop's is how
+  much blob storage one will actually give a page before `FileReaderSync`
+  starts refusing. **That is the first thing to check on a device**, and it is
+  the one claim here a laptop cannot stand in for.
 
 The device checklist is [manual-checks.md](../../../docs/manual-checks.md),
 in priority order, with the failure each step exists to catch.

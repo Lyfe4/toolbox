@@ -1,4 +1,4 @@
-import { fail, ok, type ToolResult } from '@/features/registry/types';
+import { fail, ok, type ByteSource, type ToolResult } from '@/features/registry/types';
 
 import {
   decodeTimes,
@@ -61,9 +61,9 @@ const INVALID_VINT: Vint = { value: 0, length: 0, unknown: false };
  * a length past eight, which EBML does not define - and which, read
  * carelessly, is a zero-length read and therefore a loop that never advances.
  */
-function readVint(bytes: Uint8Array, at: number, end: number): Vint {
+function readVint(bytes: ByteSource, at: number, end: number): Vint {
   if (at >= end) return INVALID_VINT;
-  const first = bytes[at] ?? 0;
+  const first = bytes.u8(at);
   if (first === 0) return INVALID_VINT;
 
   let length = 1;
@@ -77,7 +77,7 @@ function readVint(bytes: Uint8Array, at: number, end: number): Vint {
   let value = first & (mask - 1);
   let allOnes = value === mask - 1;
   for (let index = 1; index < length; index += 1) {
-    const byte = bytes[at + index] ?? 0;
+    const byte = bytes.u8(at + index);
     value = value * 256 + byte;
     if (byte !== 0xff) allOnes = false;
   }
@@ -86,9 +86,9 @@ function readVint(bytes: Uint8Array, at: number, end: number): Vint {
 }
 
 /** An element id keeps its marker: ids are compared as whole byte sequences. */
-function readId(bytes: Uint8Array, at: number, end: number): Vint {
+function readId(bytes: ByteSource, at: number, end: number): Vint {
   if (at >= end) return INVALID_VINT;
-  const first = bytes[at] ?? 0;
+  const first = bytes.u8(at);
   if (first === 0) return INVALID_VINT;
 
   let length = 1;
@@ -100,28 +100,32 @@ function readId(bytes: Uint8Array, at: number, end: number): Vint {
   if (length > 4 || at + length > end) return INVALID_VINT;
 
   let value = 0;
-  for (let index = 0; index < length; index += 1) value = value * 256 + (bytes[at + index] ?? 0);
+  for (let index = 0; index < length; index += 1) value = value * 256 + bytes.u8(at + index);
   return { value, length, unknown: false };
 }
 
-function readUint(bytes: Uint8Array, from: number, to: number): number {
+function readUint(bytes: ByteSource, from: number, to: number): number {
   let value = 0;
-  for (let at = from; at < to && at - from < 8; at += 1) value = value * 256 + (bytes[at] ?? 0);
+  for (let at = from; at < to && at - from < 8; at += 1) value = value * 256 + bytes.u8(at);
   return value;
 }
 
 /** Matroska floats are 4 or 8 bytes, IEEE 754, big-endian. */
-function readFloat(bytes: Uint8Array, from: number, to: number): number | null {
+function readFloat(bytes: ByteSource, from: number, to: number): number | null {
   const length = to - from;
   if (length !== 4 && length !== 8) return null;
-  const view = new DataView(bytes.buffer, bytes.byteOffset + from, length);
+  // Copied rather than viewed in place: the source's own storage is a window
+  // onto a file, and a `DataView` over it would be right only by accident.
+  const copy = bytes.slice(from, length);
+  if (copy.byteLength !== length) return null;
+  const view = new DataView(copy.buffer, copy.byteOffset, length);
   return length === 4 ? view.getFloat32(0) : view.getFloat64(0);
 }
 
-function readString(bytes: Uint8Array, from: number, to: number): string {
+function readString(bytes: ByteSource, from: number, to: number): string {
   let out = '';
   for (let at = from; at < to && at - from < 256; at += 1) {
-    const byte = bytes[at] ?? 0;
+    const byte = bytes.u8(at);
     if (byte === 0) break;
     out += String.fromCharCode(byte);
   }
@@ -191,7 +195,7 @@ interface Walk {
  * silently producing half a file.
  */
 function children(
-  bytes: Uint8Array,
+  bytes: ByteSource,
   from: number,
   to: number,
   walk: Walk,
@@ -321,7 +325,7 @@ interface Frame {
  * past the end.
  */
 function laceFrames(
-  bytes: Uint8Array,
+  bytes: ByteSource,
   from: number,
   to: number,
   lacing: number,
@@ -330,7 +334,7 @@ function laceFrames(
   if (lacing === 0) return to > from ? [{ offset: from, size: to - from }] : [];
 
   if (from >= to) return null;
-  const count = (bytes[from] ?? 0) + 1;
+  const count = bytes.u8(from) + 1;
   if (count > LIMITS.maxLaceFrames) return null;
   let cursor = from + 1;
 
@@ -350,7 +354,7 @@ function laceFrames(
         if (cursor >= to) return null;
         walk.nodes += 1;
         if (walk.nodes > LIMITS.maxNodes) return null;
-        const byte = bytes[cursor] ?? 0;
+        const byte = bytes.u8(cursor);
         cursor += 1;
         size += byte;
         if (byte !== 0xff) break;
@@ -425,7 +429,7 @@ interface TrackDraft {
 }
 
 function readTrackEntry(
-  bytes: Uint8Array,
+  bytes: ByteSource,
   entry: Element,
   position: number,
   walk: Walk,
@@ -490,7 +494,9 @@ function readTrackEntry(
     kind,
     codec: codecOf(readString(bytes, codecField.body, codecField.end)),
     codecPrivate:
-      privateField === null ? null : bytes.subarray(privateField.body, privateField.end),
+      privateField === null
+        ? null
+        : bytes.slice(privateField.body, privateField.end - privateField.body),
     width: width === 0 ? null : width,
     height: height === 0 ? null : height,
     channels: channels === 0 ? null : channels,
@@ -508,9 +514,9 @@ function readTrackEntry(
  * Entry point
  * ========================================================================== */
 
-export function readMatroska(bytes: Uint8Array): ToolResult<SourceFile> {
+export function readMatroska(bytes: ByteSource): ToolResult<SourceFile> {
   const walk: Walk = { nodes: 0, problem: null };
-  const top = children(bytes, 0, bytes.length, walk, 0);
+  const top = children(bytes, 0, bytes.size, walk, 0);
 
   const header = findElement(top, ID.ebml);
   const segment = findElement(top, ID.segment);
@@ -637,9 +643,9 @@ export function readMatroska(bytes: Uint8Array): ToolResult<SourceFile> {
     if (cursor + 3 > element.end) return;
 
     const draft = byNumber.get(trackVint.value);
-    const raw = ((bytes[cursor] ?? 0) << 8) | (bytes[cursor + 1] ?? 0);
+    const raw = (bytes.u8(cursor) << 8) | bytes.u8(cursor + 1);
     const relative = raw >= 0x8000 ? raw - 0x10000 : raw;
-    const flags = bytes[cursor + 2] ?? 0;
+    const flags = bytes.u8(cursor + 2);
     cursor += 3;
 
     if (draft === undefined) return;
@@ -771,9 +777,9 @@ export function readMatroska(bytes: Uint8Array): ToolResult<SourceFile> {
     for (let index = 0; index < track.samples.count; index += 1) {
       const at = track.samples.offset[index] ?? 0;
       const size = track.samples.size[index] ?? 0;
-      if (at < 0 || size < 0 || at + size > bytes.length) {
+      if (at < 0 || size < 0 || at + size > bytes.size) {
         return fail('parse-error', 'That file is truncated: some of its frames are not in it.', {
-          detail: `Track ${String(track.number)} says frame ${String(index + 1)} is ${String(size)} bytes at offset ${String(at)}, and the file is ${String(bytes.length)} bytes long.`,
+          detail: `Track ${String(track.number)} says frame ${String(index + 1)} is ${String(size)} bytes at offset ${String(at)}, and the file is ${String(bytes.size)} bytes long.`,
         });
       }
     }

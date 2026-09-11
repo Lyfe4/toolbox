@@ -1,9 +1,17 @@
-import { fail, ok, type Bytes, type ToolResult } from '@/features/registry/types';
+import {
+  fail,
+  ok,
+  type BinaryData,
+  type ByteSource,
+  type ToolResult,
+} from '@/features/registry/types';
+import { createByteSink, MAX_BLOB_BYTES } from '@/lib/binary';
 
 import { readAvi } from './avi';
 import {
   CODECS,
   detectContainer,
+  LIMITS,
   refuseUnknownContainer,
   type ContainerId,
   type SourceFile,
@@ -56,7 +64,7 @@ export interface StreamFacts {
 }
 
 export interface RemuxOutcome {
-  readonly bytes: Bytes;
+  readonly bytes: BinaryData;
   readonly mediaType: string;
   readonly extension: string;
   readonly from: StreamFacts;
@@ -125,7 +133,7 @@ function trackSeconds(track: SourceTrack): number | null {
  * for an AVI only where a track's samples had to be re-framed or its audio
  * gathered across chunk boundaries.
  */
-function readContainer(container: ContainerId, bytes: Uint8Array): ToolResult<SourceFile> {
+function readContainer(container: ContainerId, bytes: ByteSource): ToolResult<SourceFile> {
   if (container === 'mp4') return readIsoBmff(bytes);
   if (container === 'matroska') return readMatroska(bytes);
   if (container === 'mpegts') return readMpegTs(bytes);
@@ -283,6 +291,32 @@ function outputCeiling(inputBytes: number): number {
   return inputBytes * 2 + 1024 * 1024;
 }
 
+/**
+ * THE CEILING THAT REPLACED THE INPUT LIMIT, and it is on the OUTPUT.
+ *
+ * Reading is no longer the expensive half: the input is a file the operating
+ * system holds and this tool reads it through a window, so a four-gigabyte
+ * recording costs a few megabytes to walk. What cannot be made arbitrarily
+ * large is the ANSWER - a browser has to hand it back as one blob for a
+ * download, and Chromium refuses to read one at 2 GiB. See `MAX_BLOB_BYTES`.
+ *
+ * So the refusal is computed from the media the index describes, BEFORE a byte
+ * of it is copied, and it says which number was exceeded. The alternative is
+ * an hour of work followed by a failure at the moment somebody presses
+ * Download, which is the worst possible place to discover a limit.
+ */
+export function refuseOversizedOutput<T>(outputBytes: number): ToolResult<T> | null {
+  if (outputBytes <= MAX_BLOB_BYTES) return null;
+  const gb = (value: number): string => (value / 1024 / 1024 / 1024).toFixed(1);
+  return fail(
+    'limit-exceeded',
+    'The repackaged file would be too large for a browser to hand back.',
+    {
+      detail: `It would be about ${gb(outputBytes)} GB, and the largest file this can produce is ${gb(MAX_BLOB_BYTES)} GB - a browser limit rather than one chosen here. Extracting the audio track produces a much smaller file and is not affected.`,
+    },
+  );
+}
+
 function toOutputTrack(track: SourceTrack): OutputTrack | null {
   const sampleEntry =
     track.sampleEntry ??
@@ -311,9 +345,12 @@ function toOutputTrack(track: SourceTrack): OutputTrack | null {
   };
 }
 
-export function remux(bytes: Uint8Array, operation: Operation): ToolResult<RemuxOutcome> {
-  const container = detectContainer(bytes);
-  if (container === null) return refuseUnknownContainer(bytes);
+export function remux(bytes: ByteSource, operation: Operation): ToolResult<RemuxOutcome> {
+  // Detection looks at the first few kilobytes and never further, so the head
+  // is the whole of what it can see - see `lib/sniff`.
+  const head = bytes.view(0, LIMITS.tsScanBytes);
+  const container = detectContainer(head);
+  if (container === null) return refuseUnknownContainer(head);
 
   const read = readContainer(container, bytes);
   if (!read.ok) return read;
@@ -386,24 +423,24 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
   const only = kept[0];
   if (operation === 'audio' && kept.length === 1 && only?.codec === 'mp3') {
     const total = only.samples.size.reduce((sum, size) => sum + size, 0);
-    if (total > outputCeiling(bytes.byteLength)) {
+    if (total > outputCeiling(bytes.size)) {
       return fail('limit-exceeded', 'That file describes far more audio than it contains.', {
-        detail: `Its index asks for ${String(Math.round(total / 1024 / 1024))} MB out of a ${String(Math.round(bytes.byteLength / 1024 / 1024))} MB file, which no real recording does.`,
+        detail: `Its index asks for ${String(Math.round(total / 1024 / 1024))} MB out of a ${String(Math.round(bytes.size / 1024 / 1024))} MB file, which no real recording does.`,
       });
     }
 
-    // The track's own buffer where it has one: an MP3 lifted out of a
+    const tooBig = refuseOversizedOutput<RemuxOutcome>(total);
+    if (tooBig !== null) return tooBig;
+
+    // The track's own source where it has one: an MP3 lifted out of a
     // transport stream or an AVI was gathered by the reader, because its
     // frames were never a contiguous run of the file to begin with.
     const from = only.media ?? bytes;
-    const out = new Uint8Array(total);
-    let at = 0;
+    const sink = createByteSink();
     for (let index = 0; index < only.samples.count; index += 1) {
-      const start = only.samples.offset[index] ?? 0;
-      const size = only.samples.size[index] ?? 0;
-      out.set(from.subarray(start, start + size), at);
-      at += size;
+      sink.copyFrom(from, only.samples.offset[index] ?? 0, only.samples.size[index] ?? 0);
     }
+    const out = sink.finish();
 
     notes.push({
       level: 'info',
@@ -416,9 +453,10 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
         file,
         kept,
         bytes: out,
+        outputBytes: total,
         mediaType: 'audio/mpeg',
         extension: 'mp3',
-        sourceBytes: bytes.byteLength,
+        sourceBytes: bytes.size,
         notes,
       }),
     );
@@ -460,14 +498,19 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
   }
 
   const media = mediaSize(tracks);
-  if (media > outputCeiling(bytes.byteLength)) {
+  if (media > outputCeiling(bytes.size)) {
     return fail('limit-exceeded', 'That file describes far more media than it contains.', {
-      detail: `Its index asks for ${String(Math.round(media / 1024 / 1024))} MB out of a ${String(Math.round(bytes.byteLength / 1024 / 1024))} MB file. A repackage copies, so it cannot honestly produce more than it was given.`,
+      detail: `Its index asks for ${String(Math.round(media / 1024 / 1024))} MB out of a ${String(Math.round(bytes.size / 1024 / 1024))} MB file. A repackage copies, so it cannot honestly produce more than it was given.`,
     });
   }
 
+  const tooBig = refuseOversizedOutput<RemuxOutcome>(media);
+  if (tooBig !== null) return tooBig;
+
   const audioOnly = tracks.every((track) => track.kind === 'audio');
-  const out = writeMp4({
+  const sink = createByteSink();
+  writeMp4({
+    into: sink,
     source: bytes,
     tracks,
     /*
@@ -488,6 +531,8 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
       ? ['M4A ', 'isom', 'iso2', 'mp41']
       : ['isom', 'iso2', 'avc1', 'mp41'],
   });
+  const out = sink.finish();
+  const outputBytes = sink.written;
 
   if (file.container === 'mp4' && operation === 'container') {
     notes.push({
@@ -502,9 +547,10 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
       file,
       kept: carried,
       bytes: out,
+      outputBytes,
       mediaType: audioOnly ? 'audio/mp4' : 'video/mp4',
       extension: audioOnly ? 'm4a' : 'mp4',
-      sourceBytes: bytes.byteLength,
+      sourceBytes: bytes.size,
       notes,
     }),
   );
@@ -517,7 +563,8 @@ export function remux(bytes: Uint8Array, operation: Operation): ToolResult<Remux
 interface OutcomeParts {
   readonly file: SourceFile;
   readonly kept: readonly SourceTrack[];
-  readonly bytes: Bytes;
+  readonly bytes: BinaryData;
+  readonly outputBytes: number;
   readonly mediaType: string;
   readonly extension: string;
   readonly sourceBytes: number;
@@ -552,7 +599,7 @@ function outcome(parts: OutcomeParts): RemuxOutcome {
     height: keptVideo?.height ?? null,
     duration: formatDuration(keptSeconds),
     frames: keptVideo?.samples.count ?? null,
-    bytes: parts.bytes.byteLength,
+    bytes: parts.outputBytes,
     /*
      * Not "what we happened to drop" but a promise about every file this tool
      * produces. The writer emits `moov` and `mdat` and nothing else - no

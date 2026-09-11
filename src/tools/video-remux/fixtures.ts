@@ -44,6 +44,9 @@
  *     byte and the dropped frame.
  */
 
+import type { BinaryData, ByteSource, Bytes } from '@/features/registry/types';
+import { residentBytes, residentSource } from '@/lib/binary';
+
 /* ========================================================================== *
  * Bytes
  * ========================================================================== */
@@ -79,6 +82,35 @@ function chars(text: string): number[] {
   const out: number[] = [];
   for (let index = 0; index < text.length; index += 1) out.push(text.charCodeAt(index) & 0xff);
   return out;
+}
+
+/**
+ * A fixture's bytes, as the thing a reader now takes.
+ *
+ * The readers walk a `ByteSource` rather than an array, so that the one this
+ * app actually hands them can be a window onto a four-gigabyte file nobody has
+ * read. A fixture is a few kilobytes, so the resident source over it is a
+ * direct index and the tests are testing the same code the worker runs, with
+ * the cheaper of the two backings under it.
+ */
+export function sourceOf(bytes: Uint8Array): ByteSource {
+  return residentSource(bytes as Bytes);
+}
+
+/**
+ * A result's bytes, for a test that wants to compare them.
+ *
+ * Every fixture here produces an output far below the sink's spill threshold,
+ * so an output that is NOT resident means something has changed about the
+ * sink rather than about the container under test - which is worth a loud
+ * failure rather than a silent materialisation.
+ */
+export function bytesOf(data: BinaryData): Bytes {
+  const bytes = residentBytes(data);
+  if (bytes === null) {
+    throw new Error('this fixture produced an output large enough to spill, which none should');
+  }
+  return bytes;
 }
 
 export function mp4Box(type: string, ...parts: Chunk[]): Uint8Array {

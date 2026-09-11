@@ -1,4 +1,5 @@
-import { fail, ok, type ToolResult } from '@/features/registry/types';
+import { fail, ok, type ByteSource, type ToolResult } from '@/features/registry/types';
+import { canWindowBlobs, createByteSink } from '@/lib/binary';
 
 import {
   ParameterSets,
@@ -179,48 +180,89 @@ interface Packet {
  * that says nothing went wrong.
  */
 function eachPacket(
-  bytes: Uint8Array,
+  bytes: ByteSource,
   packetSize: number,
   firstSync: number,
   walk: Walk,
   visit: (packet: Packet) => void,
+  /**
+   * Checked once per block, and stops the walk when it answers true.
+   *
+   * For the one pass that does not need the whole file: the program tables
+   * repeat, so a reader that has found them has no reason to walk the other
+   * four gigabytes. Per BLOCK rather than per packet because that is the
+   * granularity everything else here works at, and a few hundred extra packets
+   * is not worth a branch in the innermost loop.
+   */
+  until?: () => boolean,
 ): void {
-  for (let at = firstSync; at + 188 <= bytes.length; at += packetSize) {
-    if (bytes[at] !== 0x47) {
-      walk.problem = 'the packet grid stops lining up part of the way through';
-      return;
-    }
-    const b1 = bytes[at + 1] ?? 0;
-    const b3 = bytes[at + 3] ?? 0;
+  /*
+   * A BLOCK OF PACKETS PER READ, rather than a read per field.
+   *
+   * The five bytes this loop looks at are five reads through the source, and
+   * an hour of broadcast is twenty million packets - so a hundred million
+   * calls, each doing the window arithmetic again for a byte it has already
+   * paid for. Pulling a block and indexing inside it does that arithmetic once
+   * per forty-eight kilobytes instead, which is what keeps a walk over a
+   * multi-gigabyte recording in the same order of magnitude as it was when the
+   * whole file was an array.
+   *
+   * The block is deliberately far smaller than a window, so it is a view onto
+   * one rather than an assembly across two.
+   */
+  const BLOCK_PACKETS = 256;
+  let at = firstSync;
 
-    // A packet the transmitter itself flagged as damaged: its payload is
-    // whatever the demodulator guessed, so it is skipped rather than trusted.
-    if ((b1 & 0x80) !== 0) {
-      walk.problem = 'some packets arrived damaged and were left out';
-      continue;
-    }
-    if ((b3 & 0xc0) !== 0) {
-      walk.scrambled = true;
-      continue;
+  while (at + 188 <= bytes.size) {
+    const span = Math.min(BLOCK_PACKETS * packetSize, bytes.size - at);
+    const block = bytes.view(at, span);
+    let within = 0;
+
+    while (within + 188 <= block.length) {
+      const off = within;
+      const base = at + off;
+      within += packetSize;
+
+      if (block[off] !== 0x47) {
+        walk.problem = 'the packet grid stops lining up part of the way through';
+        return;
+      }
+      const b1 = block[off + 1] ?? 0;
+      const b3 = block[off + 3] ?? 0;
+
+      // A packet the transmitter itself flagged as damaged: its payload is
+      // whatever the demodulator guessed, so it is skipped rather than trusted.
+      if ((b1 & 0x80) !== 0) {
+        walk.problem = 'some packets arrived damaged and were left out';
+        continue;
+      }
+      if ((b3 & 0xc0) !== 0) {
+        walk.scrambled = true;
+        continue;
+      }
+
+      const adaptation = (b3 >> 4) & 0x03;
+      if (adaptation === 0 || adaptation === 2) continue; // neither carries payload
+
+      let from = base + 4;
+      if (adaptation === 3) {
+        from += 1 + (block[off + 4] ?? 0);
+        // An adaptation field longer than its own packet is the file lying
+        // about its shape. Reading on would take payload from the one after.
+        if (from > base + 188) continue;
+      }
+
+      visit({
+        pid: ((b1 & 0x1f) << 8) | (block[off + 2] ?? 0),
+        start: (b1 & 0x40) !== 0,
+        from,
+        to: base + 188,
+      });
     }
 
-    const adaptation = (b3 >> 4) & 0x03;
-    if (adaptation === 0 || adaptation === 2) continue; // neither carries payload
-
-    let from = at + 4;
-    if (adaptation === 3) {
-      from += 1 + (bytes[from] ?? 0);
-      // An adaptation field longer than its own packet is the file lying about
-      // its shape. Reading on would take payload from the packet after it.
-      if (from > at + 188) continue;
-    }
-
-    visit({
-      pid: ((b1 & 0x1f) << 8) | (bytes[at + 2] ?? 0),
-      start: (b1 & 0x40) !== 0,
-      from,
-      to: at + 188,
-    });
+    // `within` always advances by at least one packet, so this terminates.
+    at += within;
+    if (until?.() === true) return;
   }
 }
 
@@ -258,12 +300,12 @@ class SectionReader {
   private wanted = 0;
 
   /** The completed section, or null while there is more of it to come. */
-  push(bytes: Uint8Array, packet: Packet): Uint8Array | null {
+  push(bytes: ByteSource, packet: Packet): Uint8Array | null {
     let from = packet.from;
     if (packet.start) {
       // A `pointer_field` says how many bytes of the PREVIOUS section trail
       // into this packet before the new one starts.
-      from += 1 + (bytes[from] ?? 0);
+      from += 1 + bytes.u8(from);
       if (from >= packet.to) return null;
       this.buffer = [];
       this.wanted = 0;
@@ -271,7 +313,8 @@ class SectionReader {
       return null; // a continuation with no beginning
     }
 
-    for (let at = from; at < packet.to; at += 1) this.buffer.push(bytes[at] ?? 0);
+    const run = bytes.view(from, packet.to - from);
+    for (const byte of run) this.buffer.push(byte);
 
     if (this.wanted === 0) {
       if (this.buffer.length < 3) return null;
@@ -345,7 +388,7 @@ function privateCodec(section: Uint8Array, from: number, to: number): CodecId {
  * file has nine channels in it, rather than wondering why the picture is a
  * programme they did not want.
  */
-function readPrograms(bytes: Uint8Array, packetSize: number, firstSync: number): Programs {
+function readPrograms(bytes: ByteSource, packetSize: number, firstSync: number): Programs {
   const walk: Walk = { problem: null, scrambled: false };
   const patReader = new SectionReader();
   const pmtReaders = new Map<number, SectionReader>();
@@ -354,65 +397,79 @@ function readPrograms(bytes: Uint8Array, packetSize: number, firstSync: number):
   let streams: readonly ElementaryStream[] = [];
   let ignored = 0;
 
-  eachPacket(bytes, packetSize, firstSync, walk, (packet) => {
-    if (streams.length > 0) return;
+  eachPacket(
+    bytes,
+    packetSize,
+    firstSync,
+    walk,
+    (packet) => {
+      if (streams.length > 0) return;
 
-    if (packet.pid === 0) {
-      const section = patReader.push(bytes, packet);
-      if (section === null || (section[0] ?? 0xff) !== 0x00) return;
-      // An eight-byte header, then four bytes per programme, then a CRC.
+      if (packet.pid === 0) {
+        const section = patReader.push(bytes, packet);
+        if (section === null || (section[0] ?? 0xff) !== 0x00) return;
+        // An eight-byte header, then four bytes per programme, then a CRC.
+        const end = section.length - 4;
+        let found = 0;
+        for (let at = 8; at + 4 <= end; at += 4) {
+          const number = ((section[at] ?? 0) << 8) | (section[at + 1] ?? 0);
+          // Programme number zero is the network information table rather than a
+          // channel, and pointing the PMT reader at it finds no streams at all.
+          if (number === 0) continue;
+          found += 1;
+          programPid ??= (((section[at + 2] ?? 0) & 0x1f) << 8) | (section[at + 3] ?? 0);
+        }
+        programCount = Math.max(programCount, found);
+        if (programPid !== null && !pmtReaders.has(programPid)) {
+          pmtReaders.set(programPid, new SectionReader());
+        }
+        return;
+      }
+
+      const reader = pmtReaders.get(packet.pid);
+      if (reader === undefined) return;
+      const section = reader.push(bytes, packet);
+      if (section === null || (section[0] ?? 0xff) !== 0x02) return;
+
+      const programInfoLength = (((section[10] ?? 0) & 0x0f) << 8) | (section[11] ?? 0);
       const end = section.length - 4;
-      let found = 0;
-      for (let at = 8; at + 4 <= end; at += 4) {
-        const number = ((section[at] ?? 0) << 8) | (section[at + 1] ?? 0);
-        // Programme number zero is the network information table rather than a
-        // channel, and pointing the PMT reader at it finds no streams at all.
-        if (number === 0) continue;
-        found += 1;
-        programPid ??= (((section[at + 2] ?? 0) & 0x1f) << 8) | (section[at + 3] ?? 0);
-      }
-      programCount = Math.max(programCount, found);
-      if (programPid !== null && !pmtReaders.has(programPid)) {
-        pmtReaders.set(programPid, new SectionReader());
-      }
-      return;
-    }
+      const found: ElementaryStream[] = [];
+      let at = 12 + programInfoLength;
 
-    const reader = pmtReaders.get(packet.pid);
-    if (reader === undefined) return;
-    const section = reader.push(bytes, packet);
-    if (section === null || (section[0] ?? 0xff) !== 0x02) return;
+      while (at + 5 <= end) {
+        const streamType = section[at] ?? 0;
+        const pid = (((section[at + 1] ?? 0) & 0x1f) << 8) | (section[at + 2] ?? 0);
+        const infoLength = (((section[at + 3] ?? 0) & 0x0f) << 8) | (section[at + 4] ?? 0);
+        const infoFrom = at + 5;
+        const infoTo = Math.min(infoFrom + infoLength, end);
 
-    const programInfoLength = (((section[10] ?? 0) & 0x0f) << 8) | (section[11] ?? 0);
-    const end = section.length - 4;
-    const found: ElementaryStream[] = [];
-    let at = 12 + programInfoLength;
+        if (found.length >= LIMITS.maxElementaryStreams) {
+          ignored += 1;
+        } else {
+          found.push({
+            pid,
+            codec:
+              streamType === 0x06
+                ? privateCodec(section, infoFrom, infoTo)
+                : codecForStreamType(streamType),
+            language: languageDescriptor(section, infoFrom, infoTo),
+          });
+        }
 
-    while (at + 5 <= end) {
-      const streamType = section[at] ?? 0;
-      const pid = (((section[at + 1] ?? 0) & 0x1f) << 8) | (section[at + 2] ?? 0);
-      const infoLength = (((section[at + 3] ?? 0) & 0x0f) << 8) | (section[at + 4] ?? 0);
-      const infoFrom = at + 5;
-      const infoTo = Math.min(infoFrom + infoLength, end);
-
-      if (found.length >= LIMITS.maxElementaryStreams) {
-        ignored += 1;
-      } else {
-        found.push({
-          pid,
-          codec:
-            streamType === 0x06
-              ? privateCodec(section, infoFrom, infoTo)
-              : codecForStreamType(streamType),
-          language: languageDescriptor(section, infoFrom, infoTo),
-        });
+        at = infoFrom + infoLength;
       }
 
-      at = infoFrom + infoLength;
-    }
-
-    if (found.length > 0) streams = found;
-  });
+      if (found.length > 0) streams = found;
+    },
+    /*
+     * The tables repeat every second or so, so once they have been read there
+     * is nothing left in the file for this pass to learn - and a walk to the
+     * end of a four-gigabyte recording to learn nothing is a whole pass over
+     * it. Where they are never found the walk runs to the end, which is what
+     * `readMpegTs` needs in order to tell "no tables" apart from "scrambled".
+     */
+    () => streams.length > 0,
+  );
 
   return { streams, programCount: Math.max(programCount, streams.length > 0 ? 1 : 0), ignored };
 }
@@ -426,13 +483,13 @@ const PES_CLOCK = 90_000;
 const PES_WRAP = 0x200000000;
 
 /** A 33-bit timestamp spread over five bytes with a marker bit in each. */
-function readTimestamp(bytes: Uint8Array, at: number): number {
+function readTimestamp(bytes: ByteSource, at: number): number {
   return (
-    (((bytes[at] ?? 0) >> 1) & 0x07) * 0x40000000 +
-    (bytes[at + 1] ?? 0) * 0x400000 +
-    (((bytes[at + 2] ?? 0) >> 1) & 0x7f) * 0x8000 +
-    (bytes[at + 3] ?? 0) * 0x80 +
-    (((bytes[at + 4] ?? 0) >> 1) & 0x7f)
+    ((bytes.u8(at) >> 1) & 0x07) * 0x40000000 +
+    bytes.u8(at + 1) * 0x400000 +
+    ((bytes.u8(at + 2) >> 1) & 0x7f) * 0x8000 +
+    bytes.u8(at + 3) * 0x80 +
+    ((bytes.u8(at + 4) >> 1) & 0x7f)
   );
 }
 
@@ -443,12 +500,12 @@ interface PesHeader {
   readonly dts: number | null;
 }
 
-function readPesHeader(bytes: Uint8Array, from: number, to: number): PesHeader | null {
+function readPesHeader(bytes: ByteSource, from: number, to: number): PesHeader | null {
   if (from + 9 > to) return null;
-  if (bytes[from] !== 0 || bytes[from + 1] !== 0 || bytes[from + 2] !== 1) return null;
+  if (bytes.u8(from) !== 0 || bytes.u8(from + 1) !== 0 || bytes.u8(from + 2) !== 1) return null;
 
-  const flags = bytes[from + 7] ?? 0;
-  const payload = from + 9 + (bytes[from + 8] ?? 0);
+  const flags = bytes.u8(from + 7);
+  const payload = from + 9 + bytes.u8(from + 8);
   if (payload > to) return null;
 
   const present = (flags >> 6) & 0x03;
@@ -522,7 +579,7 @@ class Unit {
   }
 
   /** False when the frame was larger than the cap, so the caller can refuse. */
-  append(bytes: Uint8Array, from: number, to: number): boolean {
+  append(bytes: ByteSource, from: number, to: number): boolean {
     const wanted = this.length + Math.max(0, to - from);
     if (wanted > this.cap) return false;
     if (wanted > this.buffer.length) {
@@ -530,7 +587,7 @@ class Unit {
       grown.set(this.buffer.subarray(0, this.length));
       this.buffer = grown;
     }
-    this.buffer.set(bytes.subarray(from, to), this.length);
+    this.buffer.set(bytes.view(from, to - from), this.length);
     this.length = wanted;
     return true;
   }
@@ -557,7 +614,7 @@ const MAX_ACCESS_UNIT_BYTES = 32 * 1024 * 1024;
  * ========================================================================== */
 
 interface RawVideo {
-  readonly media: Uint8Array;
+  readonly media: ByteSource;
   readonly offset: readonly number[];
   readonly size: readonly number[];
   readonly dts: readonly number[];
@@ -582,7 +639,7 @@ interface RawVideo {
  * every slice in the file and getting the field-coded cases wrong.
  */
 function readVideoStream(
-  bytes: Uint8Array,
+  bytes: ByteSource,
   packetSize: number,
   firstSync: number,
   stream: ElementaryStream,
@@ -590,7 +647,37 @@ function readVideoStream(
   walk: Walk,
 ): RawVideo {
   const codec: AnnexBCodec = stream.codec === 'avc' ? 'avc' : 'hevc';
-  const media = new Uint8Array(reframedCeiling(payloadBytes));
+  /*
+   * THE FOURTH COPY, WHICH IS NO LONGER A COPY OF THE FILE.
+   *
+   * A transport stream's frames are not contiguous - one picture is sprayed
+   * across dozens of 188-byte packets with a header in the middle of each - so
+   * unlike an MP4 or a Matroska, there is nothing in the input to point the
+   * sample table at and the frames have to be gathered. This used to allocate
+   * `reframedCeiling(payloadBytes)` in one go, which for an hour of broadcast
+   * is two to four gigabytes and is the single reason a tuner recording could
+   * not be read at all.
+   *
+   * It goes into a sink instead: small streams stay in memory exactly as
+   * before, and a large one is handed to blob storage as it fills. What comes
+   * back is something the writer indexes the same way it indexes the file.
+   */
+  const media = createByteSink({ spill: canWindowBlobs() });
+  /*
+   * Reframing needs somewhere contiguous to put ONE access unit, and the
+   * reframed unit is a little larger than the Annex B one it came from. Grown
+   * to fit and reused, so a stream of a hundred thousand frames allocates this
+   * a handful of times rather than a hundred thousand.
+   */
+  let scratch = new Uint8Array(0);
+  /*
+   * STILL BOUNDED BY A MEASUREMENT, which is the guarantee the buffer used to
+   * give by being allocated up front. The measuring pass totalled the real PES
+   * payload on this stream, and re-framing cannot turn that into more than
+   * `reframedCeiling` of it - so a file that keeps claiming frames stops here
+   * rather than filling blob storage.
+   */
+  const capacity = reframedCeiling(payloadBytes);
   const offset: number[] = [];
   const size: number[] = [];
   const dts: number[] = [];
@@ -623,7 +710,9 @@ function readVideoStream(
     const nals = splitAnnexB(view, 0, view.length);
     parameterSets.observe(view, nals);
 
-    const framed = reframeInto(media, written, view, nals, codec);
+    const room = reframedCeiling(view.length);
+    if (scratch.byteLength < room) scratch = new Uint8Array(room);
+    const framed = reframeInto(scratch, 0, view, nals, codec);
     if (framed.empty) {
       /*
        * An access unit of nothing but parameter sets, which is what a
@@ -656,11 +745,17 @@ function readVideoStream(
     const monotonic = previous === undefined ? decode : Math.max(decode, previous + 1);
     if (monotonic !== decode) backwards += 1;
 
+    if (written + framed.written > capacity) {
+      oversized += 1;
+      return;
+    }
+
     offset.push(written);
     size.push(framed.written);
     dts.push(monotonic);
     pts.push(Math.max(shown, monotonic));
     sync.push(framed.sync ? 1 : 0);
+    media.write(scratch.subarray(0, framed.written));
     written += framed.written;
   };
 
@@ -690,7 +785,7 @@ function readVideoStream(
   flush();
 
   return {
-    media: media.subarray(0, written),
+    media: media.source(),
     offset,
     size,
     dts,
@@ -709,7 +804,7 @@ interface Anchor {
 }
 
 interface RawAudio {
-  readonly media: Uint8Array;
+  readonly media: ByteSource;
   readonly frames: readonly AudioFrame[];
   readonly anchors: readonly Anchor[];
   readonly sampleRate: number;
@@ -736,14 +831,14 @@ interface RawAudio {
  * the anchors are then used for, which is not what it looks like.
  */
 function readAudioStream(
-  bytes: Uint8Array,
+  bytes: ByteSource,
   packetSize: number,
   firstSync: number,
   stream: ElementaryStream,
   payloadBytes: number,
   walk: Walk,
 ): RawAudio | null {
-  const media = new Uint8Array(payloadBytes);
+  const media = createByteSink({ spill: canWindowBlobs() });
   const anchors: Anchor[] = [];
   const clock = new Clock();
   let written = 0;
@@ -759,14 +854,16 @@ function readAudioStream(
       if (header.pts !== null) anchors.push({ offset: written, pts: clock.unwrap(header.pts) });
     }
 
-    const room = Math.min(packet.to - from, media.length - written);
+    // Bounded by the measuring pass, which is what stops a file that keeps
+    // claiming payload from gathering more than it actually holds.
+    const room = Math.min(packet.to - from, payloadBytes - written);
     if (room <= 0) return;
-    media.set(bytes.subarray(from, from + room), written);
+    media.write(bytes.view(from, room));
     written += room;
   });
 
-  const gathered = media.subarray(0, written);
   if (written === 0 || anchors.length === 0) return null;
+  const gathered = media.source();
 
   if (stream.codec === 'aac') {
     const split = splitAdts(gathered, LIMITS.maxSamplesPerTrack);
@@ -1103,7 +1200,7 @@ function normalise(tracks: readonly SourceTrack[]): SourceTrack[] {
 
 /** The PES payload bytes on each PID, measured before anything is allocated. */
 function measure(
-  bytes: Uint8Array,
+  bytes: ByteSource,
   packetSize: number,
   firstSync: number,
   wanted: ReadonlySet<number>,
@@ -1154,8 +1251,10 @@ function named(
   };
 }
 
-export function readMpegTs(bytes: Uint8Array): ToolResult<SourceFile> {
-  const layout = detectTransportStream(bytes);
+export function readMpegTs(bytes: ByteSource): ToolResult<SourceFile> {
+  // Detection reads the first few kilobytes and no more - the bound belongs to
+  // `lib/sniff`, which has to give the same verdict from a 4 kB slice.
+  const layout = detectTransportStream(bytes.view(0, LIMITS.tsScanBytes));
   if (layout === null) {
     return fail('parse-error', 'That file starts like a transport stream and then does not.', {
       detail:

@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
+import { MAX_BLOB_BYTES } from '@/lib/binary';
+
 import {
+  ROTATION_MATRIX,
   aacConfig,
   avcConfig,
+  bytesOf,
   makeMatroska,
   makeMp4,
-  ROTATION_MATRIX,
   sampleBytes,
+  sourceOf,
   type FixtureTrack,
 } from './fixtures';
 import { readIsoBmff } from './isobmff';
 import { readMatroska } from './matroska';
-import { remux } from './remux';
+import { refuseOversizedOutput, remux } from './remux';
 
 import type { SourceFile } from './containers';
 
@@ -37,7 +41,7 @@ function samplesOf(bytes: Uint8Array): {
   readonly file: SourceFile;
   readonly tracks: Uint8Array[][];
 } {
-  const read = readIsoBmff(bytes);
+  const read = readIsoBmff(sourceOf(bytes));
   if (!read.ok) throw new Error(`the output could not be read back: ${read.error.message}`);
 
   const tracks = read.value.tracks.map((track) => {
@@ -109,20 +113,20 @@ describe('repackaging an ISO base media file', () => {
   const source = makeMp4({ tracks: [videoTrack, audioTrack], location: '+51.5074-0.1278/' });
 
   it('carries every compressed frame across byte for byte', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
 
-    const { tracks } = samplesOf(done.value.bytes);
+    const { tracks } = samplesOf(bytesOf(done.value.bytes));
     expect(tracks).toHaveLength(2);
     expectSame(tracks[0] ?? [], videoSamples);
     expectSame(tracks[1] ?? [], audioSamples);
   });
 
   it('keeps the decode and presentation times apart', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
 
-    const video = samplesOf(done.value.bytes).file.tracks[0];
+    const video = samplesOf(bytesOf(done.value.bytes)).file.tracks[0];
     expect(video?.samples.dts).toEqual([0, 1000, 2000, 3000, 4000, 5000]);
     // The reordering survives: a frame shown two thousand ticks after it
     // decodes is what makes a B-frame stream play in the right order.
@@ -130,20 +134,22 @@ describe('repackaging an ISO base media file', () => {
   });
 
   it('keeps which frames a player may seek to', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
     // An absent `stss` would mean EVERY sample is seekable, which is the
     // plausible wrong answer: the file still plays and scrubbing lands on a
     // frame no decoder can start from.
-    expect(samplesOf(done.value.bytes).file.tracks[0]?.samples.sync).toEqual([1, 0, 0, 0, 1, 0]);
+    expect(samplesOf(bytesOf(done.value.bytes)).file.tracks[0]?.samples.sync).toEqual([
+      1, 0, 0, 0, 1, 0,
+    ]);
   });
 
   it('carries the rotation, so a portrait video is not sideways', () => {
     const rotated = makeMp4({ tracks: [{ ...videoTrack, matrix: ROTATION_MATRIX }] });
-    const done = remux(rotated, 'container');
+    const done = remux(sourceOf(rotated), 'container');
     if (!done.ok) throw new Error(done.error.message);
 
-    const matrix = samplesOf(done.value.bytes).file.tracks[0]?.matrix;
+    const matrix = samplesOf(bytesOf(done.value.bytes)).file.tracks[0]?.matrix;
     expect([...(matrix ?? [])]).toEqual([...ROTATION_MATRIX]);
   });
 
@@ -151,19 +157,19 @@ describe('repackaging an ISO base media file', () => {
     const delayed = makeMp4({
       tracks: [{ ...videoTrack, edits: [{ duration: 100, mediaTime: -1 }] }],
     });
-    const done = remux(delayed, 'container');
+    const done = remux(sourceOf(delayed), 'container');
     if (!done.ok) throw new Error(done.error.message);
 
-    expect(samplesOf(done.value.bytes).file.tracks[0]?.edits).toEqual([
+    expect(samplesOf(bytesOf(done.value.bytes)).file.tracks[0]?.edits).toEqual([
       { segmentDuration: 100, mediaTime: -1, mediaRateInteger: 1, mediaRateFraction: 0 },
     ]);
   });
 
   it('puts the index in front of the media, which the source did not', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
 
-    const text = new TextDecoder('latin1').decode(done.value.bytes);
+    const text = new TextDecoder('latin1').decode(bytesOf(done.value.bytes));
     expect(text.indexOf('moov')).toBeGreaterThan(0);
     expect(text.indexOf('moov')).toBeLessThan(text.indexOf('mdat'));
     // And the fixture really is the other way round, or this proves nothing.
@@ -175,13 +181,13 @@ describe('repackaging an ISO base media file', () => {
     // Version 1 puts sixteen extra bytes before the sub-boxes. Reading it as
     // version 0 looks for `esds` in the middle of them, finds nothing, and
     // reports the track as an unrecognised codec.
-    const read = readIsoBmff(source);
+    const read = readIsoBmff(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     expect(read.value.tracks[1]?.codec).toBe('aac');
   });
 
   it('reports the location it removed, and does not carry it', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
 
     const report = done.value;
@@ -191,13 +197,13 @@ describe('repackaging an ISO base media file', () => {
 
     // Asserted on the bytes rather than on the promise: someone about to share
     // a video is entitled to more than a sentence in a README.
-    const text = new TextDecoder('latin1').decode(done.value.bytes);
+    const text = new TextDecoder('latin1').decode(bytesOf(done.value.bytes));
     expect(text).not.toContain('51.5074');
     expect(text).not.toContain('udta');
   });
 
   it('says what it is, in the language a person uses for it', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
     expect(done.value.from.format).toBe('MP4 · H.264 + AAC');
     expect(done.value.to.format).toBe('MP4 · H.264 + AAC');
@@ -258,7 +264,7 @@ describe('repackaging a Matroska file', () => {
   });
 
   it('takes a laced block apart into one sample per frame', () => {
-    const read = readMatroska(source);
+    const read = readMatroska(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     // Three laced frames plus one ordinary block. A reader that does not
     // understand lacing produces two samples here, both of which decode - the
@@ -267,7 +273,7 @@ describe('repackaging a Matroska file', () => {
   });
 
   it('gives the frames inside a lace consecutive times, not the same one', () => {
-    const read = readMatroska(source);
+    const read = readMatroska(sourceOf(source));
     if (!read.ok) throw new Error(read.error.message);
     const dts = read.value.tracks[1]?.samples.dts ?? [];
     // 1024 samples at 44.1 kHz is 23 ms, and the timescale here is 1000.
@@ -275,19 +281,20 @@ describe('repackaging a Matroska file', () => {
   });
 
   it('carries every frame across byte for byte', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
 
-    const { tracks } = samplesOf(done.value.bytes);
+    const { tracks } = samplesOf(bytesOf(done.value.bytes));
     expectSame(tracks[0] ?? [], videoSamples.slice(0, 3));
     expectSame(tracks[1] ?? [], [...laced, audioSamples[0] ?? new Uint8Array(0)]);
   });
 
   it('builds a sample entry around the file’s own configuration record', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
 
-    const entry = samplesOf(done.value.bytes).file.tracks[0]?.sampleEntry ?? new Uint8Array(0);
+    const entry =
+      samplesOf(bytesOf(done.value.bytes)).file.tracks[0]?.sampleEntry ?? new Uint8Array(0);
     const text = new TextDecoder('latin1').decode(entry);
     expect(text).toContain('avc1');
     expect(text).toContain('avcC');
@@ -297,11 +304,11 @@ describe('repackaging a Matroska file', () => {
   });
 
   it('reads keyframes from the block group, where there is no flag to read', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
     // A SimpleBlock states it in its flags; a Block inside a BlockGroup is a
     // keyframe exactly when nothing references another frame.
-    expect(samplesOf(done.value.bytes).file.tracks[0]?.samples.sync).toEqual([1, 0, 0]);
+    expect(samplesOf(bytesOf(done.value.bytes)).file.tracks[0]?.samples.sync).toEqual([1, 0, 0]);
   });
 
   it('describes the streams that travelled, not the ones that were chosen', () => {
@@ -326,7 +333,7 @@ describe('repackaging a Matroska file', () => {
       ],
     });
 
-    const done = remux(halfBroken, 'container');
+    const done = remux(sourceOf(halfBroken), 'container');
     if (!done.ok) throw new Error(done.error.message);
     // And what is left is audio, so it is written and named as audio - asking
     // to repackage as MP4 and getting a `.mp4` with no picture in it would be
@@ -340,7 +347,7 @@ describe('repackaging a Matroska file', () => {
   });
 
   it('reports the recording date and the tags it left behind', () => {
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
     expect(done.value.from.metadata).toEqual(['Recording date', 'Titles and tags']);
     expect(done.value.from.format).toBe('Matroska · H.264 + AAC');
@@ -355,13 +362,13 @@ describe('repackaging a Matroska file', () => {
 describe('extracting the audio track', () => {
   it('writes AAC into an M4A holding nothing else', () => {
     const source = makeMp4({ tracks: [videoTrack, audioTrack] });
-    const done = remux(source, 'audio');
+    const done = remux(sourceOf(source), 'audio');
     if (!done.ok) throw new Error(done.error.message);
 
     expect(done.value.mediaType).toBe('audio/mp4');
     expect(done.value.extension).toBe('m4a');
 
-    const { file, tracks } = samplesOf(done.value.bytes);
+    const { file, tracks } = samplesOf(bytesOf(done.value.bytes));
     expect(file.tracks).toHaveLength(1);
     expect(file.tracks[0]?.kind).toBe('audio');
     expectSame(tracks[0] ?? [], audioSamples);
@@ -379,12 +386,12 @@ describe('extracting the audio track', () => {
       blocks: frames.map((frame, index) => ({ track: 1, time: index * 26, frames: [frame] })),
     });
 
-    const done = remux(source, 'audio');
+    const done = remux(sourceOf(source), 'audio');
     if (!done.ok) throw new Error(done.error.message);
 
     expect(done.value.extension).toBe('mp3');
     expect(done.value.mediaType).toBe('audio/mpeg');
-    expect([...done.value.bytes]).toEqual([...frames.flatMap((frame) => [...frame])]);
+    expect([...bytesOf(done.value.bytes)]).toEqual([...frames.flatMap((frame) => [...frame])]);
   });
 
   it('says nothing about a picture when the picture was never wanted', () => {
@@ -409,7 +416,7 @@ describe('extracting the audio track', () => {
       ],
     });
 
-    const done = remux(source, 'audio');
+    const done = remux(sourceOf(source), 'audio');
     if (!done.ok) throw new Error(done.error.message);
     expect(done.value.notes.some((note) => note.title.includes('VP9'))).toBe(false);
 
@@ -418,7 +425,7 @@ describe('extracting the audio track', () => {
     // message. It is a refusal rather than a note because handing back the
     // soundtrack of a video the user asked to repackage is the wrong answer to
     // a question they did not ask: see `refuseAudioOnlyRepackage`.
-    const asVideo = remux(source, 'container');
+    const asVideo = remux(sourceOf(source), 'container');
     expect(asVideo.ok).toBe(false);
     if (asVideo.ok) return;
     expect(asVideo.error.message).toContain('VP9');
@@ -426,7 +433,7 @@ describe('extracting the audio track', () => {
 
   it('refuses a file with no audio in it, rather than producing an empty one', () => {
     const source = makeMp4({ tracks: [videoTrack] });
-    const done = remux(source, 'audio');
+    const done = remux(sourceOf(source), 'audio');
     expect(done.ok).toBe(false);
     if (done.ok) return;
     expect(done.error.message).toContain('no audio');
@@ -451,7 +458,7 @@ describe('the refusals', () => {
       ],
     });
 
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     expect(done.ok).toBe(false);
     if (done.ok) return;
     expect(done.error.code).toBe('unsupported-type');
@@ -476,10 +483,10 @@ describe('the refusals', () => {
       ],
     });
 
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
     expect(done.value.notes.some((note) => note.title.includes('Subtitles'))).toBe(true);
-    expect(samplesOf(done.value.bytes).file.tracks).toHaveLength(2);
+    expect(samplesOf(bytesOf(done.value.bytes)).file.tracks).toHaveLength(2);
   });
 
   it('keeps one audio track and names the one it left', () => {
@@ -487,7 +494,7 @@ describe('the refusals', () => {
       tracks: [videoTrack, audioTrack, { ...audioTrack, language: 'deu' }],
     });
 
-    const done = remux(source, 'container');
+    const done = remux(sourceOf(source), 'container');
     if (!done.ok) throw new Error(done.error.message);
     expect(done.value.notes.some((note) => note.title.includes('in deu'))).toBe(true);
   });
@@ -500,17 +507,54 @@ describe('the refusals', () => {
     const broken = new Uint8Array(source);
     broken.set([0x6d, 0x6f, 0x6f, 0x66], at);
 
-    const done = remux(broken, 'container');
+    const done = remux(sourceOf(broken), 'container');
     expect(done.ok).toBe(false);
     if (done.ok) return;
     expect(done.error.message).toContain('fragmented');
   });
 
   it('refuses something that is not a video at all', () => {
-    const done = remux(new Uint8Array(64).fill(0x41), 'container');
+    const done = remux(sourceOf(new Uint8Array(64).fill(0x41)), 'container');
     expect(done.ok).toBe(false);
     if (done.ok) return;
     expect(done.error.code).toBe('unsupported-type');
     expect(done.error.detail).toContain('never from the name');
+  });
+});
+
+/* ========================================================================== *
+ * The ceiling that replaced the input limit
+ * ========================================================================== */
+
+describe('an answer too large for a browser to hand back', () => {
+  /*
+   * THE ONE LIMIT LEFT, AND IT MOVED FROM THE INPUT TO THE OUTPUT.
+   *
+   * Reading is no longer the expensive half - the input is a file the
+   * operating system holds and this tool walks it through a window - so a
+   * four-gigabyte recording can be read. What cannot be made arbitrarily large
+   * is the ANSWER: a download is one blob, and Chromium refuses to read one
+   * back at 2 GiB while Gecko and JavaScriptCore go past 4.
+   *
+   * Asserted here rather than through a real file for the obvious reason: the
+   * smallest input that reaches this refusal is about a gigabyte. What is
+   * worth asserting anyway is the WORDING, because the whole value of refusing
+   * before the copy rather than at the moment somebody presses Download is
+   * that the sentence tells them what to do instead.
+   */
+  it('refuses before copying anything, and says what still works', () => {
+    expect(refuseOversizedOutput(MAX_BLOB_BYTES)).toBeNull();
+
+    const refused = refuseOversizedOutput(MAX_BLOB_BYTES + 1);
+    expect(refused?.ok).toBe(false);
+    if (refused === null || refused.ok) return;
+
+    expect(refused.error.code).toBe('limit-exceeded');
+    expect(refused.error.message).toContain('too large for a browser to hand back');
+    // The number, so nobody has to guess how far over they are.
+    expect(refused.error.detail).toContain('1.9 GB');
+    // And the operation that is not affected, since extracting the audio out
+    // of a four-gigabyte recording produces a few tens of megabytes.
+    expect(refused.error.detail).toContain('audio');
   });
 });

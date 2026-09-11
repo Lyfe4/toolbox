@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
+import { deferredBinary, residentBytes } from '@/lib/binary';
 import { z } from '@/lib/zod';
 
 import {
+  bytesValue,
   canAcceptValue,
   canConnect,
+  defineStreamingTool,
   defineTool,
   eraseTool,
   fail,
@@ -262,5 +265,155 @@ describe('eraseTool', () => {
     const result = await erased.run({ inputs: {}, options: {}, context });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe('invalid-input');
+  });
+});
+
+/* ========================================================================== *
+ * The two classes of tool
+ * ========================================================================== */
+
+/**
+ * THE GUARANTEE THAT MAKES TWO CLASSES SAFE TO HAVE.
+ *
+ * The reason a streaming value model was declined once before is that one some
+ * tools handle and others quietly buffer would be worse than an honest
+ * ceiling. What makes it not that is entirely in `eraseTool`: a resident tool
+ * is handed WHOLE BYTES whatever arrived on the wire, and a windowed one is
+ * handed a source and has no `bytes` member to reach for. Neither has to know
+ * anything about the other, and these are the tests that say so.
+ */
+describe('a tool is handed what its class declared, whatever arrived', () => {
+  const anyOptions = z.object({});
+
+  const ports = {
+    inputs: [{ id: 'in', label: 'In', types: ['bytes'], required: true }],
+    outputs: [{ id: 'out', label: 'Out', types: ['text'] }],
+    optionsSchema: anyOptions,
+    defaultOptions: {},
+    optionFields: [],
+    execution: {
+      strategy: 'worker',
+      requiresOffscreenCanvas: false,
+      reportsProgress: false,
+      timeoutMs: 1000,
+      maxInputBytes: 1024 * 1024,
+    },
+  } as const;
+
+  const residentTool = eraseTool(
+    defineTool({
+      id: 'resident',
+      name: 'Resident',
+      summary: 'Reports what it was handed.',
+      category: 'encoding',
+      ...ports,
+      run: ({ inputs }) =>
+        ok({ out: { type: 'text', text: [...inputs.in.bytes].join(',') } as const }),
+    }),
+  );
+
+  const windowedTool = eraseTool(
+    defineStreamingTool({
+      id: 'windowed',
+      name: 'Windowed',
+      summary: 'Reports what it was handed.',
+      category: 'encoding',
+      ...ports,
+      run: ({ inputs }) =>
+        ok({
+          out: {
+            type: 'text',
+            text: `${String(inputs.in.source.size)}:${String(inputs.in.source.u8(1))}`,
+          } as const,
+        }),
+    }),
+  );
+
+  const bytes = Uint8Array.from([9, 8, 7]);
+  const deferred: ToolValue = {
+    type: 'bytes',
+    data: deferredBinary(new Blob([bytes]), bytes),
+    mediaType: null,
+    filename: null,
+  };
+
+  /*
+   * THE ANSWER TO "WHAT DOES A TOOL THAT DOES NOT STREAM HAVE TO KNOW ABOUT
+   * ONE THAT DOES", AND IT IS NOTHING. A deferred value arriving at a resident
+   * tool is materialised on its behalf, once, in the erasure - and the size of
+   * what that allocates is bounded by the number this tool wrote down about
+   * itself, because the engine refused anything larger before posting it.
+   */
+  it('materialises a deferred value for a resident tool', async () => {
+    const result = await residentTool.run({ inputs: { in: deferred }, options: {}, context });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.out).toEqual({ type: 'text', text: '9,8,7' });
+  });
+
+  it('and hands a windowed tool a source over the same value', async () => {
+    const result = await windowedTool.run({ inputs: { in: deferred }, options: {}, context });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.out).toEqual({ type: 'text', text: '3:8' });
+  });
+
+  /*
+   * And in the other direction: a RESIDENT value reaching a windowed tool is
+   * not a special case either. Both classes take both kinds, which is what
+   * keeps the wire free of a distinction the graph would otherwise have to
+   * carry - a wire is legal or not because of its port TYPES, and never
+   * because of where the bytes on it happen to be.
+   */
+  it('reads a resident value through a source just as well', async () => {
+    const result = await windowedTool.run({
+      inputs: { in: bytesValue(bytes) },
+      options: {},
+      context,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.out).toEqual({ type: 'text', text: '3:8' });
+  });
+
+  /*
+   * A resident tool's output is still an ordinary `Uint8Array` in its own
+   * code, and the transport shape is put back around it by the erasure - so
+   * nothing about writing a resident tool changed, which was the point.
+   */
+  it('wraps a resident tool output back into the transport shape', async () => {
+    const producer = eraseTool(
+      defineTool({
+        id: 'producer',
+        name: 'Producer',
+        summary: 'Produces bytes.',
+        category: 'encoding',
+        inputs: [{ id: 'in', label: 'In', types: ['text'], required: true }],
+        outputs: [{ id: 'out', label: 'Out', types: ['bytes'] }],
+        optionsSchema: anyOptions,
+        defaultOptions: {},
+        optionFields: [],
+        execution: ports.execution,
+        run: () =>
+          ok({
+            out: {
+              type: 'bytes',
+              bytes: Uint8Array.from([1, 2]),
+              mediaType: null,
+              filename: null,
+            } as const,
+          }),
+      }),
+    );
+
+    const result = await producer.run({
+      inputs: { in: { type: 'text', text: 'x' } },
+      options: {},
+      context,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const out = result.value.out;
+    expect(out?.type).toBe('bytes');
+    if (out?.type !== 'bytes') return;
+    expect(out.data.kind).toBe('resident');
+    expect([...(residentBytes(out.data) ?? [])]).toEqual([1, 2]);
   });
 });

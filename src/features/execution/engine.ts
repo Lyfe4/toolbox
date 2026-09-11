@@ -412,6 +412,18 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
       );
     }
 
+    /*
+     * The deadline this request runs under, which is the tool's own budget
+     * plus whatever it granted itself per megabyte.
+     *
+     * Computed here rather than inside `armTimeout` because it is a property
+     * of the REQUEST rather than of the tool: the same tool gets a minute for
+     * a phone clip and twenty for an hour of broadcast, and both are its own
+     * declared rate applied to what actually arrived.
+     */
+    const timeoutMs =
+      meta.timeoutMs + Math.ceil(size / (1024 * 1024)) * (meta.timeoutMsPerMiB ?? 0);
+
     // Declared on the tool, never guessed here.
     if (meta.strategy === 'main') {
       const controller = new AbortController();
@@ -493,7 +505,7 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
       pending.set(requestId, {
         settle,
         onProgress: options.onProgress,
-        timer: armTimeout(requestId, meta.timeoutMs),
+        timer: armTimeout(requestId, timeoutMs),
         postedAt: now(),
         toolId: options.toolId,
         request,
@@ -501,7 +513,7 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
         replayable: transfer.length === 0,
         retried: false,
         cancelled: false,
-        timeoutMs: meta.timeoutMs,
+        timeoutMs,
         timeoutMessage: meta.timeoutMessage,
       });
       options.signal?.addEventListener('abort', onAbort, { once: true });

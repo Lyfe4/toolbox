@@ -161,6 +161,23 @@ strings internally — and buffers are transferred rather than copied. Execution
 never throws across the boundary: a tool returns a result describing success or
 failure, and bad input is a result, not an exception.
 
+**A binary value says where its bytes are.** A `bytes` value carries either a
+`Uint8Array` or a reference to a blob — very often the `File` the user chose,
+still on their disk and never read. A blob crosses `postMessage` by reference
+(0.0–6.0 ms for 512 MB, measured in three engines, against 294 ms merely to
+fill 64 MB of memory), is immutable and re-readable, and costs the result cache
+a pointer rather than a file.
+
+> Why it matters: it is what lets the video tool accept a 4 GiB recording
+> instead of refusing anything over 256 MB. And the reason it was declined once
+> before is the reason there are now **two classes of tool** rather than one
+> leaky value: a streaming value that some tools handle and others quietly
+> buffer would be worse than an honest ceiling. So a tool declares how it reads
+> binary input, and a windowed tool's input **has no `bytes` member to reach
+> for** — it gets a `ByteSource` over bytes that may still be on disk. Nine of
+> the ten tools are resident and not one line of any of them changed. See
+> [where a value's bytes are](docs/architecture.md#where-a-values-bytes-are).
+
 **Incremental caching keyed on upstream cache keys, not values.** Each node's
 key is built from its tool, its options, its typed input, the identity of any
 file chosen for it, and the _keys_ of the nodes feeding it.
@@ -469,8 +486,13 @@ Five things came out of building it that the investigation had not found:
   clip it measured generalises badly: the archetypal "won't play" file is a
   two-gigabyte film, and no browser tool can hold one — not this one at its
   256 MB limit, and not a WASM ffmpeg either, whose heap ceiling is 2 GiB
-  before the file itself is counted. The fix is streaming the input and the
-  output, which is a change to `ToolValue` rather than to a tool.
+  before the file itself is counted. The fix was streaming the input and the
+  output, which is a change to `ToolValue` rather than to a tool — and it has
+  since been made. A `bytes` value carries a reference to a blob rather than
+  the bytes, a chosen file is never read by the page (measured: 4 kB of a
+  320 MB video), and the tool reads it through a window and writes its answer
+  through a sink. The ceiling is now on the ANSWER, at about 1.9 GB, because a
+  download is one blob and Chromium will not read one past 2 GiB.
 - **A repackage silently discards the recording location and date**, which a
   phone writes into every file it produces. That is the image tool's GPS
   finding in a second place, and it is now a warning on the result and an
