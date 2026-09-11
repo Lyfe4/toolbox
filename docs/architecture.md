@@ -429,10 +429,12 @@ bytes are on disk.
 
 Reading no longer has one worth stating. An input arrives as a `File` the
 operating system is holding; the tool walks it through a window; nothing
-assembles. A 320 MB transport stream is repackaged in 2.4 s in Gecko and 3.4 s
-in JavaScriptCore, and **the page reads 4096 bytes of it** — measured in
-`checkLargeVideo`, by counting `Blob.prototype.slice` and `.arrayBuffer` on the
-main thread for `File` receivers.
+assembles. A 320 MB transport stream is repackaged in 2.4–4.0 s in Gecko
+and 3.9–6.0 s in JavaScriptCore, and **the page reads 4096 bytes of it** —
+measured in `checkLargeVideo`, by counting `Blob.prototype.slice` and
+`.arrayBuffer` on the main thread for `File` receivers. The spread is the
+machine's load rather than the file's; a busy laptop took 14.8 s for the same
+work, which is still a repackage of a file the tool used to refuse outright.
 
 The **answer** has one, and it is a browser's rather than a choice here. A
 download is one blob, and blob storage is not unbounded: assembling 8 MB parts
