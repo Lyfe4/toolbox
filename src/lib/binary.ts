@@ -275,16 +275,18 @@ interface Window {
  * else, and a tool that wants one has declared it runs in the worker. The
  * caller checks `canWindowBlobs` rather than this throwing, so the fallback is
  * a decision somewhere a person can read it.
+ *
+ * THE READER IS INJECTABLE, which is the same bargain the execution engine
+ * strikes with its worker and its timers, and for a stronger reason. jsdom has
+ * no `FileReaderSync`, so without this the alignment, the eviction and the
+ * spans that cross two windows would be reachable only by driving a real
+ * browser - and they are exactly the code whose failure mode is a video that
+ * is subtly, silently wrong rather than an error. A fake reader over an array
+ * exercises all of it; `checkLargeVideo` then proves the real one behaves the
+ * same on a real file.
  */
-export function blobSource(blob: Blob): ByteSource {
-  const Reader = syncReaderConstructor();
-  if (Reader === null) {
-    // Unreachable through `sourceFor` and through every sink built with
-    // `spill: canWindowBlobs()`. Stated rather than assumed, because the
-    // alternative to a message is a `TypeError` about an undefined global.
-    throw new Error('Blobs cannot be read synchronously outside a worker.');
-  }
-  const reader = new Reader();
+export function blobSource(blob: Blob, sync?: SyncFileReader): ByteSource {
+  const reader = sync ?? newSyncReader();
   const size = blob.size;
   const windows: Window[] = [];
   /** The last window read from, checked before the rest. See `windowFor`. */
@@ -414,7 +416,7 @@ export function blobSource(blob: Blob): ByteSource {
  * a realm that does not have it, and every caller here has to be able to ASK
  * whether it is there.
  */
-interface SyncFileReader {
+export interface SyncFileReader {
   readAsArrayBuffer: (blob: Blob) => ArrayBuffer;
 }
 
@@ -423,6 +425,17 @@ type SyncFileReaderConstructor = new () => SyncFileReader;
 function syncReaderConstructor(): SyncFileReaderConstructor | null {
   const realm = globalThis as { FileReaderSync?: SyncFileReaderConstructor };
   return realm.FileReaderSync ?? null;
+}
+
+function newSyncReader(): SyncFileReader {
+  const Reader = syncReaderConstructor();
+  if (Reader === null) {
+    // Unreachable through `sourceFor` and through every sink built with
+    // `spill: canWindowBlobs()`. Stated rather than assumed, because the
+    // alternative to a message is a `TypeError` about an undefined global.
+    throw new Error('Blobs cannot be read synchronously outside a worker.');
+  }
+  return new Reader();
 }
 
 /** Whether this realm can read a blob synchronously. True in a worker. */

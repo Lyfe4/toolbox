@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   binaryBlob,
+  blobSource,
   binaryHead,
   binarySize,
   createByteSink,
@@ -14,6 +15,7 @@ import {
   residentSource,
   sourceFor,
   type Bytes,
+  type SyncFileReader,
 } from './binary';
 
 function pattern(length: number, seed = 1): Bytes {
@@ -285,5 +287,216 @@ describe('a byte sink', () => {
       expect(source.u8(at)).toBe(written[at]);
     }
     expect([...source.slice(299_000, 1000)]).toEqual([...written.subarray(299_000)]);
+  });
+});
+
+/* ========================================================================== *
+ * The windowing itself
+ * ========================================================================== */
+
+/**
+ * A blob whose reads can be watched, and a synchronous reader for it.
+ *
+ * jsdom has no `FileReaderSync`, so without this the windowing - the alignment,
+ * the eviction, the spans that cross two windows - would be reachable only by
+ * driving a real browser. That matters more here than it usually would: every
+ * one of those has the same failure mode, which is a file that is subtly and
+ * silently wrong rather than an error, and a video that is wrong in the middle
+ * is not something a test of the ANSWER would catch either.
+ *
+ * The regions are recorded against the sliced blob rather than in call order,
+ * so the assertions below are about which bytes were read and not about the
+ * order the source happened to ask in.
+ */
+function watchedBlob(bytes: Bytes): {
+  readonly blob: Blob;
+  readonly reader: SyncFileReader;
+  readonly reads: [number, number][];
+} {
+  const blob = new Blob([bytes]);
+  const regions = new WeakMap<Blob, Uint8Array>();
+  const reads: [number, number][] = [];
+  const slice = blob.slice.bind(blob);
+
+  Object.defineProperty(blob, 'slice', {
+    value: (start: number, end: number) => {
+      const piece = slice(start, end);
+      regions.set(piece, bytes.subarray(start, end));
+      reads.push([start, end]);
+      return piece;
+    },
+  });
+
+  return {
+    blob,
+    reads,
+    reader: {
+      readAsArrayBuffer: (piece) => {
+        const region = regions.get(piece);
+        if (region === undefined) throw new Error('read a slice this fake did not make');
+        return region.slice().buffer;
+      },
+    },
+  };
+}
+
+const WINDOW = 1024 * 1024;
+
+describe('a windowed source over a blob', () => {
+  /*
+   * ALIGNED TO A GRID, which is the difference between reading each region of
+   * the file once and sliding a window along it a byte at a time. A walk that
+   * asks for byte 5, then 6, then 7 must produce one read, not three.
+   */
+  it('reads a whole aligned window, once, however many bytes are asked for', () => {
+    const bytes = pattern(WINDOW * 3, 21);
+    const { blob, reader, reads } = watchedBlob(bytes);
+    const source = blobSource(blob, reader);
+
+    for (let at = 0; at < 5000; at += 1) expect(source.u8(at)).toBe(bytes[at]);
+    expect(reads).toEqual([[0, WINDOW]]);
+
+    // And the window boundary is a second read, not a re-read of the first.
+    expect(source.u8(WINDOW + 10)).toBe(bytes[WINDOW + 10]);
+    expect(reads).toEqual([
+      [0, WINDOW],
+      [WINDOW, WINDOW * 2],
+    ]);
+  });
+
+  it('clamps the last window to the end of the blob', () => {
+    const bytes = pattern(WINDOW + 100, 22);
+    const { blob, reader, reads } = watchedBlob(bytes);
+    const source = blobSource(blob, reader);
+
+    expect(source.u8(WINDOW + 99)).toBe(bytes[WINDOW + 99]);
+    expect(reads).toEqual([[WINDOW, WINDOW + 100]]);
+    expect(source.u8(WINDOW + 100)).toBe(0);
+    expect(source.size).toBe(WINDOW + 100);
+  });
+
+  /*
+   * FOUR WINDOWS, AND THE WRITER IS WHY. It copies the finished file in
+   * playback order, which alternates between the video track's bytes and the
+   * audio track's every second or so - two cursors, a long way apart. With one
+   * window that pattern reloads it twice per chunk; a two-hour film would read
+   * fourteen gigabytes to copy two.
+   */
+  it('keeps two distant cursors resident instead of thrashing between them', () => {
+    const bytes = pattern(WINDOW * 8, 23);
+    const { blob, reader, reads } = watchedBlob(bytes);
+    const source = blobSource(blob, reader);
+
+    const video = 0;
+    const audio = WINDOW * 5;
+    for (let step = 0; step < 50; step += 1) {
+      expect(source.u8(video + step)).toBe(bytes[video + step]);
+      expect(source.u8(audio + step)).toBe(bytes[audio + step]);
+    }
+
+    expect(reads).toEqual([
+      [0, WINDOW],
+      [WINDOW * 5, WINDOW * 6],
+    ]);
+  });
+
+  it('evicts the least recently read window when a fifth is wanted', () => {
+    const bytes = pattern(WINDOW * 6, 24);
+    const { blob, reader, reads } = watchedBlob(bytes);
+    const source = blobSource(blob, reader);
+
+    // Touch five separate windows, then go back to the second - which is still
+    // held, because the first was the one evicted.
+    for (const window of [0, 1, 2, 3, 4]) source.u8(WINDOW * window);
+    expect(reads).toHaveLength(5);
+
+    source.u8(WINDOW * 1 + 5);
+    expect(reads).toHaveLength(5);
+
+    // And the first is gone, so asking for it again is a sixth read.
+    source.u8(0);
+    expect(reads).toHaveLength(6);
+  });
+
+  /*
+   * THE PROMISE THE TRANSPORT-STREAM WALK DEPENDS ON. It pulls a block of
+   * packets and iterates inside it while the visitor reads elsewhere in the
+   * file - which can evict the very window the block is a view onto. A window
+   * is REPLACED rather than overwritten, so the block stays readable, and that
+   * is a property of this implementation rather than a hope about it.
+   */
+  it('leaves an earlier view readable after its window has been evicted', () => {
+    const bytes = pattern(WINDOW * 8, 25);
+    const { blob, reader } = watchedBlob(bytes);
+    const source = blobSource(blob, reader);
+
+    const held = source.view(0, 64);
+    expect([...held]).toEqual([...bytes.subarray(0, 64)]);
+
+    for (const window of [1, 2, 3, 4, 5]) source.u8(WINDOW * window);
+
+    expect([...held]).toEqual([...bytes.subarray(0, 64)]);
+  });
+
+  it('assembles a span that crosses two windows', () => {
+    const bytes = pattern(WINDOW * 3, 26);
+    const { blob, reader } = watchedBlob(bytes);
+    const source = blobSource(blob, reader);
+
+    const across = source.slice(WINDOW - 8, 16);
+    expect([...across]).toEqual([...bytes.subarray(WINDOW - 8, WINDOW + 8)]);
+
+    // `view` gives the same bytes where it has to assemble them, and the
+    // difference between the two is only whether it may alias.
+    expect([...source.view(WINDOW - 8, 16)]).toEqual([...across]);
+  });
+
+  it('reads a span longer than a window without disturbing the cache', () => {
+    const bytes = pattern(WINDOW * 4, 27);
+    const { blob, reader, reads } = watchedBlob(bytes);
+    const source = blobSource(blob, reader);
+
+    source.u8(0);
+    const big = source.slice(WINDOW, WINDOW * 2 + 10);
+    expect(big).toHaveLength(WINDOW * 2 + 10);
+    expect([...big.subarray(0, 8)]).toEqual([...bytes.subarray(WINDOW, WINDOW + 8)]);
+    expect([...big.subarray(big.length - 8)]).toEqual([
+      ...bytes.subarray(WINDOW * 3 + 2, WINDOW * 3 + 10),
+    ]);
+
+    // One aligned window for the first byte, then the span read whole - and
+    // the window it evicted nothing to make room for is still there.
+    expect(reads).toEqual([
+      [0, WINDOW],
+      [WINDOW, WINDOW * 3 + 10],
+    ]);
+    source.u8(1);
+    expect(reads).toHaveLength(2);
+  });
+
+  it('reads every byte of a blob the same way a resident source does', () => {
+    const bytes = pattern(WINDOW * 2 + 1234, 28);
+    const { blob, reader } = watchedBlob(bytes);
+    const windowed = blobSource(blob, reader);
+    const resident = residentSource(bytes);
+
+    for (const at of [
+      0,
+      1,
+      WINDOW - 1,
+      WINDOW,
+      WINDOW + 1,
+      WINDOW * 2 - 1,
+      WINDOW * 2,
+      bytes.byteLength - 1,
+      bytes.byteLength,
+      bytes.byteLength + 1000,
+    ]) {
+      expect(windowed.u8(at)).toBe(resident.u8(at));
+    }
+    expect([...windowed.slice(bytes.byteLength - 10, 50)]).toEqual([
+      ...resident.slice(bytes.byteLength - 10, 50),
+    ]);
+    expect(windowed.view(bytes.byteLength + 5, 10)).toHaveLength(0);
   });
 });
