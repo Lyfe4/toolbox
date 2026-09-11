@@ -161,6 +161,23 @@
   --pb-border-strong: var(--raw-grey-400);
   --pb-border-accent: var(--raw-amber-500);
 
+  /* --- The canvas grid ------------------------------------------------
+   * Two weights on --pb-surface-sunken, and they are their OWN tokens
+   * rather than borrowed border ones because the canvas backdrop is not a
+   * panel. --pb-border-subtle is specified against --pb-surface-raised,
+   * and on the sunken surface it measures 1.26:1 in graphite and exactly
+   * 1.00:1 in vellum - the minor grid was literally the backdrop colour in
+   * one theme and near it in the rest, which is why it only ever appeared
+   * at the zooms dense enough to sum into a tint.
+   *
+   * Held to a range rather than a threshold, by grid.contrast.test.ts:
+   * minor 1.4-1.7:1 (a line you can see and never read), major 2.4-3.3:1
+   * (structure, but under a node border at 3.5:1 and up). Decorative, so
+   * out of CONTRAST_PAIRS for the reason --pb-border-subtle is.
+   * --------------------------------------------------------------- */
+  --pb-canvas-grid-minor: var(--raw-grey-700);
+  --pb-canvas-grid-major: var(--raw-grey-500);
+
   /* --- Accent: one saturated hue, used sparingly --------------------- */
   --pb-accent: var(--raw-amber-500);
   --pb-accent-hover: var(--raw-amber-400);

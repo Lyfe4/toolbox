@@ -37,6 +37,9 @@
   --pb-border-strong: var(--raw-paper-500);
   --pb-border-accent: var(--raw-vermilion-600);
 
+  --pb-canvas-grid-minor: var(--raw-paper-350);
+  --pb-canvas-grid-major: var(--raw-paper-450);
+
   --pb-accent: var(--raw-vermilion-600);
   --pb-accent-hover: var(--raw-vermilion-700);
   --pb-accent-active: var(--raw-vermilion-800);
@@ -86,6 +89,9 @@
   --pb-border-strong: var(--raw-phos-400);
   --pb-border-accent: var(--raw-phos-400);
 
+  --pb-canvas-grid-minor: var(--raw-phos-700);
+  --pb-canvas-grid-major: var(--raw-phos-500);
+
   --pb-accent: var(--raw-phos-300);
   --pb-accent-hover: var(--raw-phos-200);
   --pb-accent-active: var(--raw-phos-400);
@@ -134,6 +140,9 @@
   --pb-border-hairline: var(--raw-navy-450);
   --pb-border-strong: var(--raw-navy-400);
   --pb-border-accent: var(--raw-cyan-500);
+
+  --pb-canvas-grid-minor: var(--raw-navy-700);
+  --pb-canvas-grid-major: var(--raw-navy-500);
 
   --pb-accent: var(--raw-cyan-400);
   --pb-accent-hover: var(--raw-cyan-300);

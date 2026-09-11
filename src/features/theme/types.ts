@@ -52,6 +52,8 @@ export const THEMED_TOKENS = [
   'border-hairline',
   'border-strong',
   'border-accent',
+  'canvas-grid-minor',
+  'canvas-grid-major',
   'accent',
   'accent-hover',
   'accent-active',

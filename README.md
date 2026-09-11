@@ -174,7 +174,14 @@ itself keeps a short summary of its result — `47 matches`, `2.1 MB PNG image`,
 
 It **starts closed** and slides in when you open it, and it comes back however
 you last left it. Open by default was the wrong first screen: an empty canvas
-beside an empty panel saying there was nothing to inspect. Whether it is open
+beside an empty panel saying there was nothing to inspect.
+
+**A share link is the exception, and opens it on the first node.** A link
+carries no data, so every node on it reads BLOCKED, and with the panel shut
+nothing on the page said where to type — a correctly-framed picture of a
+pipeline and no way in. That is the opposite situation to the empty canvas the
+default was chosen for: a pipeline somebody sent you is nothing but something to
+inspect. Focus stays where it is; the open panel is the signpost, not a grab. Whether it is open
 is still your state and selection only decides what is in it — but where the
 rail's width is deliberately forgotten between sessions, whether the panel is
 showing is not, because it is the difference between seeing what you were

@@ -47,6 +47,7 @@ import { fileTargetPorts, otherInputBytes } from './fileInputs';
 import {
   clamp,
   clearOfExistingNodes,
+  firstTypedInputNode,
   GRID,
   gridStyle,
   MAX_ZOOM,
@@ -72,6 +73,7 @@ import { buildShareUrl, decodeParamToGraph } from './share';
 import { CANVAS_DESCRIPTION } from './shortcuts';
 import { ShortcutsOverlay } from './ShortcutsOverlay';
 import { toWorld, useViewportStore } from './viewportStore';
+import { wheelStep, zoomFactorForNotches, ZOOM_KEY_NOTCHES } from './wheel';
 import { Wires } from './Wires';
 
 import type { EdgeId, GraphData, NodeId, Point, PortRef } from './types';
@@ -377,6 +379,38 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
    */
   const inspectorMounted = inspectorPhase !== 'closed';
   const [railWidth, setRailWidth] = useState(RAIL_DEFAULT);
+
+  /**
+   * SHOW, HIDE AND TOGGLE, in one place, because there are four ways in.
+   *
+   * `I`, the toolbar button, `Enter` on a node, a file dropped on a node with
+   * more than one input, and the panel's own close button all move the panel
+   * between the same states, and every one of them has to go through the phase
+   * rather than setting a boolean - otherwise a close skips its slide, or an
+   * open interrupts one and leaves the panel animating out of a state it is no
+   * longer in.
+   *
+   * Opening from `closing` goes straight to `open` rather than to `entering`.
+   * The panel is already on screen and mid-slide; restarting the enter from
+   * off-screen would make a fast toggle jump backwards before coming in again.
+   *
+   * DECLARED HERE, immediately under the phase it drives, rather than beside
+   * the toggle down in the interaction handlers. A share link arriving opens
+   * the panel from the persistence effect, which is above all of that, and a
+   * `useCallback` referenced in an effect's dependency list has to exist by the
+   * time that list is evaluated - during the render, not when the effect runs.
+   */
+  const showInspector = useCallback(() => {
+    setInspectorPhase((phase) => {
+      if (phase === 'open' || phase === 'entering') return phase;
+      return phase === 'closing' ? 'open' : 'entering';
+    });
+  }, []);
+
+  const hideInspector = useCallback(() => {
+    setInspectorPhase((phase) => (phase === 'closed' ? 'closed' : 'closing'));
+  }, []);
+
   /**
    * The wire being dragged.
    *
@@ -445,10 +479,46 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
             height: rect?.height ?? 600,
           });
 
+          /*
+           * AND THE INSPECTOR IS OPENED ON THE NODE THERE IS SOMETHING TO TYPE
+           * INTO, WHICH LOOKS LIKE A CONTRADICTION AND IS NOT.
+           *
+           * A link's graph arrives correctly framed and completely inert. A
+           * share link carries no data - that is the whole privacy claim - so
+           * every node reads BLOCKED, and since input moved into the inspector
+           * there is nothing on the canvas that says where a value goes. With
+           * the panel closed, the first thing a link shows you is a picture of
+           * a pipeline and no way in.
+           *
+           * The inspector defaults to CLOSED, and that decision stands: it was
+           * made for a first-time visitor on an EMPTY canvas, where an open
+           * panel's entire message was that there was nothing to inspect. That
+           * is the opposite situation to this one in the only way that matters.
+           * An empty canvas has nothing to inspect; a pipeline somebody
+           * deliberately sent you is nothing BUT something to inspect, and the
+           * panel is where its inputs now live.
+           *
+           * ONLY FOR A LINK, never for a restored save. A save's reader has
+           * already answered this question and `inspectorPreference` remembers
+           * it; overriding that on every reload is the self-reopening panel
+           * that decision was about.
+           *
+           * FOCUS IS NOT MOVED, deliberately. This runs in a promise callback -
+           * a page load, not a keystroke - and a focus move from a deferred
+           * task landing in the middle of whatever the user did next is the
+           * most-repeated bug in this repository. The panel being open is the
+           * signpost; Tab or Enter is still the user's move.
+           */
+          const entry = firstTypedInputNode(result.graph);
+          if (entry) {
+            store.getState().select({ nodes: [entry], edges: [] });
+            showInspector();
+          }
+
           store
             .getState()
             .announce(
-              `Loaded a shared pipeline: ${result.graph.nodeOrder.length.toString()} nodes, fitted in view. Inputs are empty - shared links never carry data.`,
+              `Loaded a shared pipeline: ${result.graph.nodeOrder.length.toString()} nodes, fitted in view. Inputs are empty - shared links never carry data${entry ? ', and the inspector is open on the first one' : ''}.`,
             );
         } else {
           notify({ title: 'Shared link rejected', description: result.message, tone: 'error' });
@@ -469,7 +539,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       notify({ title: 'Saved canvas reset', description: result.message, tone: 'warn' });
     }
     return undefined;
-  }, [store, notify, shareParam]);
+  }, [store, notify, shareParam, showInspector]);
 
   /*
    * THE COLD OPEN, AND WHO TAKES IT DOWN.
@@ -631,19 +701,55 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
    * Viewport: pan and zoom, throttled to animation frames
    * ---------------------------------------------------------------------- */
 
-  const pending = useRef<{ pan: Point; zoom: { factor: number; at: Point } | null }>({
+  /*
+   * The canvas's own box, and its middle.
+   *
+   * Declared here rather than beside the toolbar because five things now need
+   * it - fit, reset, the zoom keys and both toolbar buttons - and the fallback
+   * pair matters: a zoom about `(0, 0)` is not a zoom about the centre, so the
+   * one place that guesses a size when there is no layout yet should be one
+   * place rather than four copies of the same two numbers.
+   */
+  const canvasSize = useCallback(() => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    return { width: rect?.width ?? 800, height: rect?.height ?? 600 };
+  }, []);
+
+  const canvasCentre = useCallback((): Point => {
+    const size = canvasSize();
+    return { x: size.width / 2, y: size.height / 2 };
+  }, [canvasSize]);
+
+  /*
+   * ZOOM ACCUMULATES; THE POINTER DOES NOT.
+   *
+   * It used to hold a factor and be ASSIGNED on every event, so of the several
+   * wheel events that arrive between two frames only the last one's zoom was
+   * ever applied and the rest were dropped on the floor. Survivable while one
+   * event was worth 2.7x - losing two of three still moved the zoom further
+   * than anyone wanted - and not survivable now that an event is worth a
+   * fraction of a notch, because a trackpad pinch firing three times a frame
+   * would have had two thirds of the gesture deleted.
+   *
+   * Notches rather than a factor because notches are additive: summing them and
+   * exponentiating once is the same answer as multiplying the factors, and only
+   * one of the two can be written as `+=`. The pointer is the last one seen,
+   * which is the right reading of "where is the gesture now".
+   */
+  const pending = useRef<{ pan: Point; notches: number; at: Point | null }>({
     pan: { x: 0, y: 0 },
-    zoom: null,
+    notches: 0,
+    at: null,
   });
   const frame = useRef<number | null>(null);
 
   const flush = useCallback(() => {
     frame.current = null;
-    const { pan, zoom } = pending.current;
-    pending.current = { pan: { x: 0, y: 0 }, zoom: null };
+    const { pan, notches, at } = pending.current;
+    pending.current = { pan: { x: 0, y: 0 }, notches: 0, at: null };
 
     const viewportStore = useViewportStore.getState();
-    if (zoom) viewportStore.zoomAt(zoom.factor, zoom.at);
+    if (notches !== 0 && at) viewportStore.zoomAt(zoomFactorForNotches(notches), at);
     if (pan.x !== 0 || pan.y !== 0) viewportStore.panBy(pan);
   }, []);
 
@@ -689,16 +795,23 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       const rect = root.getBoundingClientRect();
       const at = { x: event.clientX - rect.left, y: event.clientY - rect.top };
 
+      /*
+       * Both branches go through `wheelStep`, which is where the units are
+       * dealt with. A mouse wheel and a trackpad pinch arrive at this same
+       * line in numbers that differ by a factor of fifty, and Firefox reports
+       * a third unit again - see wheel.ts for why one coefficient could not
+       * serve all three, and what replaced it.
+       */
+      const step = wheelStep(event);
+
       if (event.ctrlKey || event.metaKey) {
         // Trackpad pinch arrives as ctrl+wheel, so this covers both.
-        pending.current.zoom = {
-          factor: Math.exp(-event.deltaY * 0.01),
-          at,
-        };
+        pending.current.notches += step.notches;
+        pending.current.at = at;
       } else {
         pending.current.pan = {
-          x: pending.current.pan.x - event.deltaX,
-          y: pending.current.pan.y - event.deltaY,
+          x: pending.current.pan.x + step.pan.x,
+          y: pending.current.pan.y + step.pan.y,
         };
       }
 
@@ -716,7 +829,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
        */
       if (frame.current !== null) cancelAnimationFrame(frame.current);
       frame.current = null;
-      pending.current = { pan: { x: 0, y: 0 }, zoom: null };
+      pending.current = { pan: { x: 0, y: 0 }, notches: 0, at: null };
     };
   }, [schedule, overlayOpen]);
 
@@ -1064,31 +1177,6 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       },
     );
   }, [store, notify]);
-
-  /**
-   * SHOW, HIDE AND TOGGLE, in one place, because there are four ways in.
-   *
-   * `I`, the toolbar button, `Enter` on a node, a file dropped on a node with
-   * more than one input, and the panel's own close button all move the panel
-   * between the same states, and every one of them has to go through the phase
-   * rather than setting a boolean - otherwise a close skips its slide, or an
-   * open interrupts one and leaves the panel animating out of a state it is no
-   * longer in.
-   *
-   * Opening from `closing` goes straight to `open` rather than to `entering`.
-   * The panel is already on screen and mid-slide; restarting the enter from
-   * off-screen would make a fast toggle jump backwards before coming in again.
-   */
-  const showInspector = useCallback(() => {
-    setInspectorPhase((phase) => {
-      if (phase === 'open' || phase === 'entering') return phase;
-      return phase === 'closing' ? 'open' : 'entering';
-    });
-  }, []);
-
-  const hideInspector = useCallback(() => {
-    setInspectorPhase((phase) => (phase === 'closed' ? 'closed' : 'closing'));
-  }, []);
 
   const onInputChange = useCallback(
     (nodeId: string, portId: string, value: string) => {
@@ -1952,22 +2040,47 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       case 'F': {
         if (meta) return;
         event.preventDefault();
-        const rect = rootRef.current?.getBoundingClientRect();
-        useViewportStore.getState().fitToContent(state.graph, {
-          width: rect?.width ?? 800,
-          height: rect?.height ?? 600,
-        });
+        useViewportStore.getState().fitToContent(state.graph, canvasSize());
         state.announce('Fitted every node in view.');
         return;
       }
 
       case '0': {
         event.preventDefault();
-        const rect = rootRef.current?.getBoundingClientRect();
+        useViewportStore.getState().resetZoom(canvasCentre());
+        state.announce('Zoom reset to 100 percent.');
+        return;
+      }
+
+      /*
+       * ZOOM FROM THE KEYBOARD, WHICH THERE WAS NO WAY TO DO AT ALL.
+       *
+       * `0` reset the zoom and `F` fitted the graph, and between them that was
+       * the entire keyboard zoom vocabulary - both of them jumps to a computed
+       * scale, neither of them a way to move by a step. Every other means of
+       * zooming needed a wheel, a trackpad or two fingers, so a keyboard user
+       * could get to 100% and to whatever `F` decided and nowhere else.
+       *
+       * `meta` is let through deliberately: Ctrl/Cmd with these keys is the
+       * BROWSER's zoom, and taking that would be worse than not having this.
+       */
+      case '+':
+      case '=':
+      case '-':
+      case '_': {
+        if (meta) return;
+        event.preventDefault();
+        const inward = event.key === '+' || event.key === '=';
         useViewportStore
           .getState()
-          .resetZoom({ x: (rect?.width ?? 800) / 2, y: (rect?.height ?? 600) / 2 });
-        state.announce('Zoom reset to 100 percent.');
+          .zoomAt(
+            zoomFactorForNotches(inward ? ZOOM_KEY_NOTCHES : -ZOOM_KEY_NOTCHES),
+            canvasCentre(),
+          );
+        // Read back from the store rather than computed here: the clamp lives
+        // there, so this is the only way the announcement is right at the ends.
+        const percent = Math.round(useViewportStore.getState().viewport.zoom * 100);
+        state.announce(`Zoom ${percent.toString()} percent.`);
         return;
       }
 
@@ -2472,19 +2585,13 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
   const canSelectAll =
     selection.edges.length === 0 && graph.nodeOrder.length > selection.nodes.length;
 
-  const canvasSize = useCallback(() => {
-    const rect = rootRef.current?.getBoundingClientRect();
-    return { width: rect?.width ?? 800, height: rect?.height ?? 600 };
-  }, []);
-
   const onFit = useCallback(() => {
     useViewportStore.getState().fitToContent(store.getState().graph, canvasSize());
   }, [store, canvasSize]);
 
   const onResetZoom = useCallback(() => {
-    const size = canvasSize();
-    useViewportStore.getState().resetZoom({ x: size.width / 2, y: size.height / 2 });
-  }, [canvasSize]);
+    useViewportStore.getState().resetZoom(canvasCentre());
+  }, [canvasCentre]);
 
   /*
    * The overflow's items are the same actions the inline row runs, through the
@@ -2624,15 +2731,19 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
         */}
         <LiveRegion log={announcementLog} testId="canvas-announcer" />
 
-        <div
-          className={styles.grid}
-          aria-hidden="true"
-          style={{
-            ...gridStyle(viewport),
-            // Fade the dense grid out when it would turn into a solid wash.
-            opacity: viewport.zoom < 0.5 ? 0.4 : 1,
-          }}
-        />
+        {/*
+          NO OPACITY ON THIS ELEMENT ANY MORE.
+
+          It used to carry `opacity: zoom < 0.5 ? 0.4 : 1`, to stop the grid
+          turning into a solid wash when the rules closed up. That dimmed the
+          whole layer rather than thinning the grid, so the entire canvas went
+          pale at 33% while still being a wash - and it said nothing at all
+          about the other end of the range, where the rules spread out until
+          only the major ones were left. `gridStyle` writes a per-level ink
+          instead, and the level that would be a wash is the level that is not
+          drawn. See `GRID_SUBDIVISIONS` in geometry.ts.
+        */}
+        <div className={styles.grid} aria-hidden="true" style={gridStyle(viewport)} />
 
         <div
           className={styles.plane}

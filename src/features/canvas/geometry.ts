@@ -88,7 +88,97 @@ export const PORT_SNAP_RADIUS = 28;
 export const GRID_MAJOR_EVERY = 8;
 
 /**
- * The grid's background-size and -position for a viewport.
+ * WHAT CHANGES ABOUT THE GRID WITH SCALE, AND WHY SOMETHING HAS TO
+ *
+ * A grid at a fixed world pitch cannot read the same way at every zoom: `GRID`
+ * world units is 2px apart at the minimum zoom and 20px apart at the maximum,
+ * and a hairline every 2px is a tone rather than a grid. So something has to
+ * change with scale. The previous answer changed the grid's APPEARANCE - one
+ * `opacity: 0.4` below half zoom - which is the wrong variable twice over: it
+ * made the whole canvas lighter at 33% instead of making the grid coarser, and
+ * it did nothing at all about the other end.
+ *
+ * What changes here instead is WHICH WORLD LEVEL IS DRAWN. The ink and the
+ * weight of a rule are the same at every zoom; a square just means more world
+ * when you are further away.
+ *
+ * THE MAJOR SQUARE NEVER MOVES. It is `GRID * GRID_MAJOR_EVERY` world units at
+ * every scale, so a major square always means the same thing - eight snap steps
+ * - and the reference being measured against does not change under the user
+ * while they zoom. Only the subdivisions inside it come and go, and they only
+ * ever appear BETWEEN rules that are already there.
+ *
+ * THE LADDER GOES ONE WAY, which is forced rather than chosen. Nodes snap to
+ * `GRID`, so a rule finer than `GRID` is a line nothing can land on - a picture
+ * of a precision the canvas does not have. `GRID` is the floor, and the cascade
+ * can only coarsen.
+ */
+
+/**
+ * The subdivisions of a major square, as multiples of `GRID`, coarsest first.
+ *
+ * Halves, quarters and eighths of the major square: 32, 16 and 8 world units.
+ * Each is half the one before it, which is what lets exactly one of them be
+ * mid-fade at a time - see `GRID_PITCH_FULL`.
+ */
+export const GRID_SUBDIVISIONS = [4, 2, 1] as const;
+
+/**
+ * On-screen pitch, in px, at and above which a level is drawn at full ink.
+ *
+ * `GRID` ITSELF, which is the one number in range that is not a guess about
+ * legibility. The grid is authored at `GRID` world units, so `GRID` PIXELS is
+ * what one of its squares looks like at 100% zoom - the scale everything about
+ * this canvas was designed at and the one zoom nobody has ever complained
+ * about. A level is fully drawn once it looks the way the grid was drawn.
+ */
+export const GRID_PITCH_FULL = GRID;
+
+/**
+ * On-screen pitch, in px, below which a level is not drawn at all.
+ *
+ * HALF `GRID_PITCH_FULL`, and the factor of two is doing more work than either
+ * number. Twice the pitch is half the ink, so a level at half its design pitch
+ * is twice as dense as the grid was ever meant to be - which is the wash that
+ * 33% zoom was, at 25% coverage.
+ *
+ * And because the levels are themselves an octave apart, a transition band
+ * exactly one octave wide guarantees AT MOST ONE LEVEL IS EVER PARTIALLY
+ * DRAWN: if one level's pitch is mid-band, the level above it is past the top
+ * and the level below is under the bottom. One soft edge at a time rather than
+ * a general haze, asserted across the range in `grid.test.ts`.
+ *
+ * The fade exists at all because the alternative is a pop. Half the rules
+ * vanishing in one frame is very visible during a continuous zoom, and would
+ * undo the point of having made the zoom continuous.
+ */
+export const GRID_PITCH_MIN = GRID_PITCH_FULL / 2;
+
+/**
+ * How strongly one subdivision level is inked at a given zoom, in [0, 1].
+ *
+ * Smoothstep rather than linear, so a level arrives and leaves without a
+ * visible corner at either end of its octave.
+ */
+export function gridLevelStrength(worldPitch: number, zoom: number): number {
+  const pitch = worldPitch * zoom;
+  const t = clamp((pitch - GRID_PITCH_MIN) / (GRID_PITCH_FULL - GRID_PITCH_MIN), 0, 1);
+
+  return t * t * (3 - 2 * t);
+}
+
+/** The subdivision strengths, coarsest first, for a zoom. */
+export function gridStrengths(zoom: number): readonly number[] {
+  return GRID_SUBDIVISIONS.map((multiple) => gridLevelStrength(GRID * multiple, zoom));
+}
+
+/** The on-screen pitch of each subdivision level, coarsest first. */
+export function gridPitches(zoom: number): readonly number[] {
+  return GRID_SUBDIVISIONS.map((multiple) => GRID * multiple * zoom);
+}
+
+/**
+ * The grid's size, offset and per-level ink for a viewport.
  *
  * WHY ONE TILE AND NOT TWO
  *
@@ -101,21 +191,33 @@ export const GRID_MAJOR_EVERY = 8;
  * clustering and the dropout: whole runs of minor lines vanish while the
  * major rules drift out of step.
  *
- * Now there is ONE tile per axis, at the major size, with the minor lines
- * drawn inside it as fractions of that same tile (see canvas.module.css). One
- * rounding, applied once, and the minor lines are positioned as percentages
- * of whatever it rounds to - so they cannot drift from the major rule at any
- * zoom.
+ * There is ONE tile per axis, at the major size, with every subdivision drawn
+ * inside it as a fraction of that same tile (see canvas.module.css). One
+ * rounding, applied once, and the subdivisions are positioned as percentages of
+ * whatever it rounds to - so they cannot drift from the major rule at any zoom.
+ * The scale cascade above changes nothing about that: it changes how many of
+ * those fractions are inked, never where any of them is.
+ *
+ * AND NOW ONE SIZE AND ONE OFFSET FOR ALL EIGHT LAYERS. `background-size` and
+ * `background-position` repeat their value lists to cover the layers, so
+ * emitting a single value each is not shorthand - it is the guarantee, because
+ * there is no second number left that could ever be different.
  *
  * The offset is reduced modulo the tile here rather than left to the browser.
  * `background-position` wraps on its own, but after panning to a large offset
- * the value handed over is a big float and the wrap loses precision; taking
- * the remainder first keeps the number small.
+ * the value handed over is a big float and the wrap loses precision; taking the
+ * remainder first keeps the number small.
  */
-export function gridStyle(viewport: { x: number; y: number; zoom: number }): {
+export interface GridStyle {
   readonly backgroundSize: string;
   readonly backgroundPosition: string;
-} {
+  /** Ink strength of the half, quarter and eighth rules, each in [0, 1]. */
+  readonly '--canvas-grid-half': string;
+  readonly '--canvas-grid-quarter': string;
+  readonly '--canvas-grid-eighth': string;
+}
+
+export function gridStyle(viewport: { x: number; y: number; zoom: number }): GridStyle {
   /*
    * Rounded FIRST, then everything else is measured against the rounded value.
    *
@@ -125,11 +227,14 @@ export function gridStyle(viewport: { x: number; y: number; zoom: number }): {
    * Invisible, but the invariant is worth keeping true rather than nearly so.
    */
   const tile = round(GRID * GRID_MAJOR_EVERY * viewport.zoom);
-  const size = `${tile.toFixed(3)}px ${tile.toFixed(3)}px`;
+  const [half, quarter, eighth] = gridStrengths(viewport.zoom);
 
   return {
-    backgroundSize: `${size}, ${size}`,
+    backgroundSize: `${tile.toFixed(3)}px ${tile.toFixed(3)}px`,
     backgroundPosition: `${offsetFor(viewport.x, tile)}px ${offsetFor(viewport.y, tile)}px`,
+    '--canvas-grid-half': round(half ?? 0).toString(),
+    '--canvas-grid-quarter': round(quarter ?? 0).toString(),
+    '--canvas-grid-eighth': round(eighth ?? 0).toString(),
   };
 }
 
@@ -226,6 +331,31 @@ export function typedInputPorts(graph: GraphData, node: CanvasNode): readonly st
   return getManifestEntry(node.toolId)
     .inputs.filter((port) => !wired.has(port.id))
     .map((port) => port.id);
+}
+
+/**
+ * The node a reader of this graph would type into first, or null if none takes
+ * typed input at all.
+ *
+ * "First" is SPATIAL, not `nodeOrder`: the order nodes were created in is the
+ * author's history and means nothing to the person opening their link, whereas
+ * the leftmost node of a left-to-right chain is the one they are already
+ * looking at as the start.
+ *
+ * And it skips nodes whose every input is wired. A node fed entirely by other
+ * nodes has no editor in the inspector, so landing on it would open the panel
+ * onto the same nothing that made this worth fixing. The first node that will
+ * actually show a text box is the answer.
+ */
+export function firstTypedInputNode(graph: GraphData): NodeId | null {
+  const order = spatialOrder(graph);
+
+  for (const id of order) {
+    const node = graph.nodes[id];
+    if (node && typedInputPorts(graph, node).length > 0) return id;
+  }
+
+  return order[0] ?? null;
 }
 
 export type PortSide = 'input' | 'output';

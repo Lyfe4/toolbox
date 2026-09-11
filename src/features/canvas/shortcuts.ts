@@ -23,6 +23,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: ['Middle-drag'], action: 'Pan the canvas', group: 'Moving around' },
   { keys: ['Scroll'], action: 'Pan vertically and horizontally', group: 'Moving around' },
   { keys: ['Ctrl', 'Scroll'], action: 'Zoom about the pointer', group: 'Moving around' },
+  { keys: ['+'], action: 'Zoom in one step about the centre', group: 'Moving around' },
+  { keys: ['-'], action: 'Zoom out one step about the centre', group: 'Moving around' },
   { keys: ['F'], action: 'Fit every node in view', group: 'Moving around' },
   { keys: ['0'], action: 'Reset zoom to 100%', group: 'Moving around' },
 

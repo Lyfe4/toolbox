@@ -830,6 +830,115 @@ would still cancel the dialog's own scrolling. The inspector is not an overlay
 and is not inside that root; see
 [the note on why](#it-is-a-sibling-of-the-canvas-not-a-child-of-it).
 
+### One listener, three pointing devices
+
+A mouse wheel, a trackpad two-finger scroll and a trackpad pinch all arrive at
+that one listener, and the numbers they arrive in differ by about fifty times.
+The arithmetic that reconciles them is in
+[`wheel.ts`](../src/features/canvas/wheel.ts), DOM-free and unit-tested, for the
+reason `pinch.ts` is.
+
+| Gesture                      | What the engine reports                                                                                                      |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Mouse wheel, Chromium/WebKit | pixels; conventionally 100 per detent, but scaled by the OS "lines to scroll" setting, so 33, 40, 53⅓, 120 and 400 all occur |
+| Mouse wheel, Firefox         | **lines** — `deltaMode` 1, three of them per detent                                                                          |
+| Trackpad pinch               | pixels, synthesised as ctrl+wheel: a stream of one- and two-pixel events, several per frame                                  |
+
+This used to be one expression, `exp(-deltaY * 0.01)`, and that coefficient is
+correct — for a trackpad. It is the convention Chromium and WebKit scale their
+synthesised pinch deltas against, so a two-pixel event moved the zoom by 2%.
+Handed a mouse detent's hundred pixels it returns **e**: one notch of the wheel
+multiplied the zoom by 2.72, the reachable scales were 33%, 90% and 250%, and
+three notches spanned the whole range. In Firefox the same detent arrived as
+`deltaY: 3` and moved the zoom by 3%, and the pan — which used `deltaY` raw —
+moved the canvas three pixels where Chrome moved it a hundred.
+
+Two steps fix all of it, and neither of them sniffs the device:
+
+1. **Normalise to pixels once.** `deltaMode` says which unit, and one detent is
+   100 pixels or 3 lines, so the conversion between them is fixed by the
+   requirement that a detent pan the same distance in every engine. Pan uses the
+   result directly.
+2. **Convert pixels to notches, then cap at one notch per event.** The rate is
+   the trackpad's — 12 pixels per notch, from `100 · ln 2 / 6` — and the cap is
+   the mouse's. Every detent, in every engine and at every OS setting, is over
+   the cap, so every detent is exactly one notch. Every trackpad event is a
+   fiftieth of a notch and never reaches it, so a pinch stays continuous. The
+   magnitude separates the devices on its own.
+
+A notch is `2^(1/6)`, about 1.12. Six notches double the zoom, twenty cross the
+whole 0.25–2.5 range, and the ladder passes exactly through 200%, 50% and 25% —
+so the round scales are reachable rather than lucky. `+` and `-` walk the same
+ladder two notches at a time, which is three presses per doubling; before them
+there was no way to zoom from the keyboard at all, only `0` to reset and `F` to
+fit.
+
+**Notches accumulate; the pointer does not.** The pending buffer used to hold a
+factor and be _assigned_ on every event, so of the several events that arrive
+between two frames only the last one's zoom survived. Notches are additive —
+summing them and exponentiating once is the same answer as multiplying the
+factors, and only one of the two can be written as `+=` — so a trackpad firing
+three times a frame now contributes all three. The pointer is the last one seen.
+
+### What changes about the grid with scale
+
+The grid is a background image on the static root, not scaled geometry, and
+there is **one tile per axis** at the major square's size with every subdivision
+drawn inside it as a percentage. That is the phase-lock fix: two separately
+tiled layers — a 7.2px minor and a 57.6px major at 90% zoom — are rounded to
+device pixels independently and stop agreeing about where the eighth line falls.
+Fractions of a single tile cannot. There is now one `background-size` and one
+`background-position` for all eight layers, which the value lists repeat to
+cover, so there is no second number left that could diverge.
+
+A grid at a fixed world pitch cannot read the same at every zoom, though: `GRID`
+world units is 2px apart at the minimum and 20px at the maximum, and a hairline
+every 2px is a tone rather than a grid. **Something has to change with scale,
+and what changes is which world level is drawn** — never the ink and never the
+weight. A square just means more world when you are further away.
+
+- **The major square never moves.** `GRID * 8` world units at every scale, so a
+  major square always means the same thing — eight snap steps — and the
+  reference does not change under the user mid-zoom.
+- **Three subdivisions inside it** — halves, quarters, eighths of the major
+  square, which is 32, 16 and 8 world units. They come and go, and they only
+  ever appear _between_ rules already on screen.
+- **The ladder only coarsens**, and that is forced rather than chosen. Nodes
+  snap to `GRID`, so a rule finer than `GRID` is a line nothing can land on.
+- **A level is fully inked once its on-screen pitch reaches `GRID` pixels** —
+  the pitch the grid is authored at, which is what one square looks like at 100%
+  zoom — and not drawn at all below half that, where the ink doubles to 25%
+  coverage and the rules stop resolving as lines.
+
+Both ends of that band are derived, and the factor of two between them is what
+does the real work: the levels are themselves an octave apart, so a
+one-octave transition band can hold only one of them. **At most one level is
+ever part-drawn.** The grid has one soft edge at a time rather than a general
+haze, and the finest fully-drawn rules stay between 8 and 20 pixels apart across
+the entire zoom range. `grid.test.ts` asserts each of those as a property over a
+sweep of the range, including that one notch of the wheel cannot switch a level
+on or off — the fade exists because a pop would undo the point of having made
+the zoom continuous.
+
+What this replaced was `opacity: zoom < 0.5 ? 0.4 : 1` on the whole layer, which
+is the wrong variable twice over: it dimmed the entire canvas at 33% instead of
+thinning the grid, and it said nothing at all about the other end.
+
+**And the ink is its own pair of tokens.** The minor rules were
+`--pb-border-subtle`, which is specified against `--pb-surface-raised` — a
+decorative rule inside a panel. Against `--pb-surface-sunken`, which is what the
+canvas is, it measures 1.26:1 in graphite and **exactly 1.00:1 in vellum**, where
+the two tokens resolve to the same paper shade. A line at 1.00:1 is not a faint
+line, it is no line; what hid that is that at 90% the rules were 7.2px apart and
+a field of near-invisible hairlines that dense sums into a perceptible tint. So
+the grid appeared to work at the zoom people looked at, vanished when the rules
+spread out, and washed out when they closed up — one cause, three symptoms, none
+of them looking like a colour problem. `--pb-canvas-grid-minor` and
+`--pb-canvas-grid-major` are held to a _range_ against the backdrop by
+`grid.contrast.test.ts`: a grid rule can fail by being too loud as easily as by
+being too quiet, which is the one contrast assertion in this repo that is not
+"at least".
+
 A pointerdown on the toolbar or the status readout no longer clears the
 selection. Both render inside the canvas root, so a press on either arrived as
 "not a node" and threw the selection away as a silent side effect — survivable
@@ -1552,10 +1661,13 @@ regex; and nothing is fighting a wheel handler for the panel's scrolling.
 
 ### Two shapes, one component
 
-|             |                                                                                                                |
-| ----------- | -------------------------------------------------------------------------------------------------------------- |
-| `>= 1000px` | A docked rail in the workspace grid. It does **not** overlay the canvas — the canvas narrows. Open by default. |
-| `< 1000px`  | A sheet along the bottom, overlaying the canvas, with a usable strip of canvas above it. Closed by default.    |
+|             |                                                                                               |
+| ----------- | --------------------------------------------------------------------------------------------- |
+| `>= 1000px` | A docked rail in the workspace grid. It does **not** overlay the canvas — the canvas narrows. |
+| `< 1000px`  | A sheet along the bottom, overlaying the canvas, with a usable strip of canvas above it.      |
+
+Both shapes start **closed** on a first visit — see below — and a share link is
+the one arrival that overrides that.
 
 **The breakpoint is arithmetic**, the same arithmetic as the tool runner's. The
 rail is 320px at its narrowest and a canvas wants three node widths to still
@@ -1563,6 +1675,24 @@ read as a canvas: `224 × 3 = 672`, plus the rail's border, is 993. 1000 is the
 next round number clear of it.
 
 **Closed on a first visit, and wherever the user last left it after that.**
+
+**Except when a share link arrives**, which is the one case the panel opens
+itself, and it is not the exception it looks like. A link's graph lands
+correctly framed and completely inert: a share link carries no data — that is
+the whole privacy claim — so every node reads BLOCKED, and since input moved
+into the inspector there is nothing on the canvas that says where a value goes.
+Closed, the first thing a link showed you was a picture of a pipeline and no way
+into it. The default exists for a first-time visitor on an EMPTY canvas, where
+an open panel's entire message was that there was nothing to inspect; a pipeline
+somebody deliberately sent you is the opposite case in the one respect that
+matters, because it is nothing but something to inspect. So the panel opens on
+the first node that will actually show a text box — spatially first, skipping
+any whose every input is already wired — and **focus does not move**, because
+this runs in a promise callback rather than from a keystroke and a deferred
+focus move is the [most-repeated defect in this
+repository](../CONTRIBUTING.md#moving-focus). A restored save is not touched:
+its reader has already answered the question and the answer is remembered.
+
 `I` toggles it at both sizes and a toolbar button carries the same toggle with
 an `aria-pressed` that says which state it is in. Selection never opens or
 closes it — on a phone that would bury the canvas on every tap while arranging

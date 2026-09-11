@@ -56,12 +56,21 @@ export const TOKEN_GROUPS: readonly TokenGroup[] = [
   {
     id: 'borders',
     title: 'Borders',
-    summary: 'Rules and edges. Hairline and strong are structural; subtle is decoration.',
+    summary:
+      'Rules and edges. Hairline and strong are structural; subtle and the grid are decoration.',
     tokens: [
       { token: 'border-subtle', hint: 'A decorative rule inside a panel. Carries no meaning.' },
       { token: 'border-hairline', hint: 'The edge of a panel. Structural, so it must be seen.' },
       { token: 'border-strong', hint: 'A divider that separates rather than decorates.' },
       { token: 'border-accent', hint: 'The edge of something selected or active.' },
+      {
+        token: 'canvas-grid-minor',
+        hint: 'The fine rules on the canvas backdrop. Seen, never read.',
+      },
+      {
+        token: 'canvas-grid-major',
+        hint: 'Every eighth rule on the canvas. The one you measure against.',
+      },
     ],
   },
   {

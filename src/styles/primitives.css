@@ -44,6 +44,7 @@
   --raw-paper-150: #ebe8e0;
   --raw-paper-200: #ded9cd;
   --raw-paper-300: #c3bcab;
+  --raw-paper-350: #b8b09f; /* tuned: ~1.5:1 on vellum sunken, for the canvas grid */
   --raw-paper-450: #908777; /* tuned: clears 3:1 on every vellum surface */
   --raw-paper-400: #9d9482;
   --raw-paper-500: #776e5d;

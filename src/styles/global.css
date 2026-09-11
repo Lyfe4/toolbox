@@ -97,6 +97,11 @@ body {
  * -------------------------------------------------------------------- */
 @media (prefers-contrast: more) {
   :root {
+    /*
+     * The canvas grid is deliberately not promoted with the rest. It is behind
+     * the content rather than part of it, and a louder backdrop works against
+     * the one thing this block is for.
+     */
     --pb-border-subtle: var(--pb-border-hairline);
     --pb-border-hairline: var(--pb-border-strong);
     --pb-control-border: var(--pb-border-strong);

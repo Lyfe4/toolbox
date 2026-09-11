@@ -30,6 +30,15 @@ import type { ThemedToken, ThemeName } from './types';
  *   `--pb-border-subtle` draws decorative rules inside a panel and carries no
  *   meaning, so 1.4.11 does not apply to it.
  *
+ *   `--pb-canvas-grid-minor` and `--pb-canvas-grid-major` are the same case
+ *   one surface out: the canvas grid is measurement backing, and nothing about
+ *   identifying a node or a wire depends on seeing it. They are not
+ *   unmeasured, though - being invisible is how the grid was broken, so
+ *   grid.contrast.test.ts holds each of them to a RANGE against
+ *   `--pb-surface-sunken` rather than to a floor. A grid rule can fail by
+ *   being too loud as easily as by being too quiet, and 1.4.11 has nothing to
+ *   say about either.
+ *
  *   `--pb-ink-disabled` on `--pb-control-surface-disabled` is 2.4-2.9:1 in
  *   every preset, and that is the point rather than a bug: 1.4.3 exempts an
  *   inactive component outright, and Button keeps the disabled BORDER
