@@ -880,64 +880,153 @@ summing them and exponentiating once is the same answer as multiplying the
 factors, and only one of the two can be written as `+=` — so a trackpad firing
 three times a frame now contributes all three. The pointer is the last one seen.
 
+### The grid is drawn, not composited
+
+**A CSS gradient cannot put a one-pixel rule on a device pixel**, and every
+remaining defect in the grid followed from that one fact.
+
+The grid was eight `linear-gradient` layers tiled at the major square, with the
+subdivisions at percentages of it. That structure was right — it is what fixed
+the phase-lock bug (two tiles, rounded to device pixels independently, losing
+agreement about where the eighth line falls) — and it could not fix this. The tile is
+`GRID × 8 × zoom`, so at any zoom that is not a clean fraction the rules sit at
+fractional positions. A 1px rule at x = 7.0 rasterises as one pixel of full ink;
+the same rule at x = 7.5 rasterises as two pixels of half ink. Both carry the
+same ink and they do not look the same — and because the subpixel offset marches
+steadily across the tile and across tiles, **the difference between them
+aliases**: crisp rules and split rules group into runs, and the runs read as
+bands at a period of roughly `pitch / frac(pitch)`, which has no relation to the
+grid's own spacing.
+
+It is worse than a wash. Two half-ink pixels are composited in **sRGB**, which
+is not linear, so a split rule reads _lighter_ than a crisp one carrying
+identical ink. The smaller the pitch the larger the share of the grid that is
+split, so the whole surface drifted lighter as you zoomed out.
+
+Both were measured on the gradient build, over a bare strip of canvas at
+twenty-three zooms:
+
+| Measure                                                              | Gradients             | Drawn                 |
+| -------------------------------------------------------------------- | --------------------- | --------------------- |
+| Pixels away from the backdrop, at 100%                               | 44%                   | **23.4%**             |
+| …against the geometry's own answer for one-pixel rules at that pitch | 23.4%                 | 23.4%                 |
+| Distinct shades covering a bare strip                                | a continuum           | **3–6**               |
+| Mean ink, over the whole zoom range                                  | 4.8 → 18.8 (**3.9×**) | 8.3 → 14.2 (**1.7×**) |
+| …between 40% and 200%                                                | 2.6×                  | **1.23×**             |
+
+Twice the geometry's own coverage is the signature: every rule was two pixels
+wide. Now every rule is rounded to a whole device pixel, so every rule is
+exactly one device pixel of full ink — identical weight, no antialiasing, and no
+aliasing of the antialiasing. `GridLayer` owns the bitmap and the ink;
+[`grid.ts`](../src/features/canvas/grid.ts) owns where the rules go and is
+tested without a DOM.
+
+**The price, stated plainly.** Each rule is rounded _independently_, so it sits
+within half a device pixel of where the world says it should and the error never
+accumulates. What that costs is that the gaps are not all equal: each one is
+within a device pixel of the true pitch, so at a pitch of 7.1 they run
+7, 7, 7, 7, 8, 7, 7. A ripple of one part in seven in **spacing** replaced one
+of one part in two in **ink** — and spacing is the axis the eye reads least in a
+fine grid, where luminance is the one it reads most.
+
+#### What was rejected, and why
+
+|                                            | Fixes the rasterising | Cost                                                                                                                                                                                                                   |
+| ------------------------------------------ | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Snap the **tile** to a device pixel        | yes                   | scales the whole grid by up to 3% at the bottom of the range — tens of pixels of drift between the grid and the nodes on it, sliding as you pan                                                                        |
+| Snap the **zoom** so the pitch is integral | yes                   | zoom steps of up to 25%, undoing [the notch ladder](#one-listener-three-pointing-devices); and the quantum depends on the display's density, so the reachable scales differ per monitor and change when a window moves |
+| Soften the rules to 2px                    | partly                | a blurry grid, and the variation is reduced rather than removed                                                                                                                                                        |
+| **Draw it**                                | completely            | one bitmap repaint per viewport change, and ±1 device pixel of gap jitter                                                                                                                                              |
+
 ### What changes about the grid with scale
 
-The grid is a background image on the static root, not scaled geometry, and
-there is **one tile per axis** at the major square's size with every subdivision
-drawn inside it as a percentage. That is the phase-lock fix: two separately
-tiled layers — a 7.2px minor and a 57.6px major at 90% zoom — are rounded to
-device pixels independently and stop agreeing about where the eighth line falls.
-Fractions of a single tile cannot. There is now one `background-size` and one
-`background-position` for all eight layers, which the value lists repeat to
-cover, so there is no second number left that could diverge.
-
-A grid at a fixed world pitch cannot read the same at every zoom, though: `GRID`
-world units is 2px apart at the minimum and 20px at the maximum, and a hairline
+A grid at a fixed world pitch cannot read the same at every zoom: `GRID` world
+units is 2px apart at the minimum zoom and 20px at the maximum, and a hairline
 every 2px is a tone rather than a grid. **Something has to change with scale,
 and what changes is which world level is drawn** — never the ink and never the
 weight. A square just means more world when you are further away.
 
-- **The major square never moves.** `GRID * 8` world units at every scale, so a
+- **The major square never moves.** `GRID × 8` world units at every scale, so a
   major square always means the same thing — eight snap steps — and the
   reference does not change under the user mid-zoom.
-- **Three subdivisions inside it** — halves, quarters, eighths of the major
-  square, which is 32, 16 and 8 world units. They come and go, and they only
-  ever appear _between_ rules already on screen.
-- **The ladder only coarsens**, and that is forced rather than chosen. Nodes
-  snap to `GRID`, so a rule finer than `GRID` is a line nothing can land on.
+- **Four subdivisions inside it** — halves, quarters, eighths and sixteenths of
+  the major square: 32, 16, 8 and 4 world units. They come and go, and only ever
+  appear _between_ rules already on screen.
 - **A level is fully inked once its on-screen pitch reaches `GRID` pixels** —
   the pitch the grid is authored at, which is what one square looks like at 100%
-  zoom — and not drawn at all below half that, where the ink doubles to 25%
-  coverage and the rules stop resolving as lines.
+  zoom — and absent below half that, where the ink doubles to 25% coverage and
+  the rules stop resolving as lines.
 
-Both ends of that band are derived, and the factor of two between them is what
-does the real work: the levels are themselves an octave apart, so a
-one-octave transition band can hold only one of them. **At most one level is
-ever part-drawn.** The grid has one soft edge at a time rather than a general
-haze, and the finest fully-drawn rules stay between 8 and 20 pixels apart across
-the entire zoom range. `grid.test.ts` asserts each of those as a property over a
-sweep of the range, including that one notch of the wheel cannot switch a level
-on or off — the fade exists because a pop would undo the point of having made
-the zoom continuous.
+Both ends of that band are derived, and the factor of two between them does the
+real work: the levels are themselves an octave apart, so a one-octave transition
+band can hold only one of them. **At most one level is ever part-drawn.**
 
-What this replaced was `opacity: zoom < 0.5 ? 0.4 : 1` on the whole layer, which
-is the wrong variable twice over: it dimmed the entire canvas at 33% instead of
-thinning the grid, and it said nothing at all about the other end.
+**The sixteenth is half a snap step, and it is deliberate.** The ladder used to
+stop at `GRID`, on the argument that a rule finer than the snap step is a line
+nothing can land on. The argument is true and it was the wrong conclusion:
+because the ladder stopped, so did the cascade, and from 100% to 250% the finest
+rules simply spread from 8px apart to 20px — three fifths of the grid's ink,
+gone, over the top third of the range. A ruler's finest marks are not places you
+put things either.
 
-**And the ink is its own pair of tokens.** The minor rules were
-`--pb-border-subtle`, which is specified against `--pb-surface-raised` — a
-decorative rule inside a panel. Against `--pb-surface-sunken`, which is what the
-canvas is, it measures 1.26:1 in graphite and **exactly 1.00:1 in vellum**, where
-the two tokens resolve to the same paper shade. A line at 1.00:1 is not a faint
-line, it is no line; what hid that is that at 90% the rules were 7.2px apart and
-a field of near-invisible hairlines that dense sums into a perceptible tint. So
-the grid appeared to work at the zoom people looked at, vanished when the rules
-spread out, and washed out when they closed up — one cause, three symptoms, none
-of them looking like a colour problem. `--pb-canvas-grid-minor` and
-`--pb-canvas-grid-major` are held to a _range_ against the backdrop by
-`grid.contrast.test.ts`: a grid rule can fail by being too loud as easily as by
-being too quiet, which is the one contrast assertion in this repo that is not
-"at least".
+**And the fade is linear, because that is the shape that conserves ink.** It was
+smoothstep, chosen so a level would arrive without a corner. Writing the ink out
+shows why that was wrong:
+
+```
+ink(z) = 1/(64z) + Σ  sⱼ / (2 · pⱼ · z)
+```
+
+While one level is fading every coarser level is at full ink, and their sum
+telescopes — so the total is `(1 + s) / (2ᵏz)`, and holding it constant gives
+`s = (pitch − GRID_PITCH_MIN) / GRID_PITCH_MIN`, the plain linear ramp across
+the octave. Smoothstep sits above that line through the middle of every octave,
+so the surface ran up to 5% denser than it is authored at, peaking around 45%
+zoom. A linear ramp holds the ink **exactly** constant from the minimum zoom to
+200%, and it is gentler per notch than smoothstep was — a sixth rather than a
+quarter, over the six notches an octave takes.
+
+`grid.test.ts` asserts each of these as a property over a sweep of the range,
+including that one notch of the wheel cannot switch a level on or off: the fade
+exists because a pop would undo the point of having made the zoom continuous.
+
+#### The limit that is left
+
+Above 200% there is nothing left to fade in, so the grid can only spread: at
+250% the finest rules are 10px apart rather than 8, which is 10 ink units per
+100px against 12.5. That is the one stretch where density is not flat, and it is
+a fifth of the range.
+
+The other residue is the **proportion of major rules on screen**, which is a
+consequence of anchoring the major square to the world. At 25% a major square is
+16px across, so every second rule is a heavy one; at 250% it is 160px and one
+rule in sixteen is. Measured as mean ink that is a drift of 1.7× across the
+full range and 1.23× between 40% and 200% — the difference is concentrated in
+the bottom and top eighths of the range. Removing it means letting the heavy rule cascade
+too, so that it is always eight fine squares apart on screen; that makes the
+density exactly flat and the picture exactly scale-invariant, and it costs the
+property that a major square always means the same number of snap steps, plus a
+crossfade as a rule changes weight. It has not been done.
+
+### The ink is its own pair of tokens
+
+The minor rules were `--pb-border-subtle`, a token specified against
+`--pb-surface-raised` — a decorative rule inside a panel. Against
+`--pb-surface-sunken`, which is what the canvas is, it measures 1.26:1 in
+graphite and **exactly 1.00:1 in vellum**, where the two tokens resolve to the
+same paper shade. A rule at 1.00:1 is not a faint rule, it is no rule; what hid
+that is that at 90% the rules were 7.2px apart, and a field of invisible
+hairlines that dense sums into a perceptible tint. So the grid appeared to work
+at the zoom people looked at, vanished when the rules spread out, and washed out
+when they closed up — one cause, three symptoms, none of them looking like a
+colour problem.
+
+`--pb-canvas-grid-minor` and `--pb-canvas-grid-major` are held to a _range_
+against the backdrop by `grid.contrast.test.ts`: a grid rule can fail by being
+too loud as easily as by being too quiet, which is the one contrast assertion in
+this repo that is not "at least". `GridLayer` reads them back out of the cascade
+rather than hard-coding them, so `themes.css` stays the only place a grid colour
+is written.
 
 A pointerdown on the toolbar or the status readout no longer clears the
 selection. Both render inside the canvas root, so a press on either arrived as
@@ -2044,11 +2133,16 @@ width animation is within about 2ms of no animation at all in Gecko and
 indistinguishable from it in JavaScriptCore.
 
 It is cheap because nothing inside the canvas depends on the root's width. The
-nodes and the wire layer sit on a 0×0 absolutely positioned transformed plane,
-and the grid is a repeating background image on the static root — so narrowing
-the root changes three boxes and repaints a gradient, and does not reflow or
-re-render a single node. There is no `ResizeObserver` on the canvas either, so
-React is not woken at all.
+nodes and the wire layer sit on a 0×0 absolutely positioned transformed plane, so
+narrowing the root changes three boxes and does not reflow or re-render a single
+node.
+
+**These numbers predate the drawn grid**, which added one thing to that
+accounting: `GridLayer` observes its own size, so a slide now wakes React once
+per frame to repaint the grid's bitmap. That repaint is a few hundred rectangles
+in a single path fill and the layer is the only thing re-rendered — the nodes
+still are not — but it is no longer true that React sleeps through the
+animation, and the figures above were measured when it did.
 
 **What is not free is letting the panel's contents re-wrap.** The last row is
 the naive version of the same animation, and it is the one that stutters: every

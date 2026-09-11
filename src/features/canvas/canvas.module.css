@@ -2,7 +2,9 @@
  * The canvas surface.
  *
  * Only two elements ever move: `.plane` (one transform for pan and zoom) and,
- * during a drag, the node being dragged. Everything else is static.
+ * during a drag, the node being dragged. The grid repaints rather than moving -
+ * it is a bitmap drawn in device pixels, see `GridLayer` - and everything else
+ * is static.
  */
 
 .root {
@@ -31,136 +33,33 @@
 /*
  * THE GRID.
  *
- * It lives on the static root, not on the transformed plane, so it is painted
- * by the compositor from a background image rather than being scaled geometry.
- * Its size, offset and per-level ink are set inline from the viewport.
+ * A canvas, drawn in device pixels by `GridLayer`, not a background image. The
+ * whole argument is in `grid.ts`; the short version is that a CSS gradient
+ * cannot put a one-pixel rule on a device pixel, and at fractional zoom that
+ * shows up as banding, as lines of unequal weight, and as a surface that drifts
+ * lighter the further you zoom out.
  *
- * ONE TILE PER AXIS, AND THE SUBDIVISIONS ARE FRACTIONS OF IT.
- *
- * The tile is the MAJOR square and every subdivision is drawn inside it at a
- * percentage - halves, quarters, eighths. Two separately tiled layers (a 7.2px
- * minor and a 57.6px major at 90% zoom) are rounded to device pixels
- * independently and lose phase; fractions of a single tile cannot. There is one
- * `background-size` and one `background-position` for all eight layers, which
- * the value lists repeat to cover, so there is no second number that could
- * diverge. See `gridStyle` in geometry.ts.
- *
- * WHY EIGHT LAYERS RATHER THAN TWO.
- *
- * A grid at a fixed world pitch is a wash at the minimum zoom and bare rules at
- * the maximum, so a scale cascade fades the finest subdivisions out as they
- * stop resolving - see `GRID_SUBDIVISIONS` in geometry.ts for what changes and
- * why. Each level fades on its own, so each needs its own layer; the major rule
- * never fades and is its own pair. Both axes of four.
- *
- * The strengths arrive as unitless numbers on `--canvas-grid-*`, defaulted to 1
- * here so the stylesheet draws a complete grid on its own - a missing inline
- * property should make the grid coarse-blind, not invisible.
+ * So this rule is only a box and an ink supply. The two tokens are read back
+ * out of the cascade by the layer, which is what keeps `themes.css` the only
+ * place a grid colour is written.
  */
 .grid {
-  /*
-   * `color-mix` against `transparent` is an alpha multiply that keeps the hue:
-   * srgb mixing is premultiplied, so nothing shifts towards black on the way
-   * down. It is the only way to give an individual background layer its own
-   * opacity - `opacity` would take the whole element, which is exactly the
-   * mistake this replaced.
-   */
-  --grid-half: color-mix(
-    in srgb,
-    var(--pb-canvas-grid-minor) calc(var(--canvas-grid-half, 1) * 100%),
-    transparent
-  );
-  --grid-quarter: color-mix(
-    in srgb,
-    var(--pb-canvas-grid-minor) calc(var(--canvas-grid-quarter, 1) * 100%),
-    transparent
-  );
-  --grid-eighth: color-mix(
-    in srgb,
-    var(--pb-canvas-grid-minor) calc(var(--canvas-grid-eighth, 1) * 100%),
-    transparent
-  );
-  --grid-major: var(--pb-canvas-grid-major);
-
   position: absolute;
   inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
   pointer-events: none;
-
-  /*
-   * The major rule is the first stop of the tile, at offset 0, so it sits
-   * exactly on the tile boundary and therefore exactly where a subdivision
-   * would fall. Every other layer is offset into the tile and none of them
-   * coincides, so paint order between them does not matter.
-   */
-  background-image:
-    linear-gradient(to right, var(--grid-major) 0 1px, transparent 1px),
-    linear-gradient(to bottom, var(--grid-major) 0 1px, transparent 1px),
-    linear-gradient(
-      to right,
-      transparent 0 50%,
-      var(--grid-half) 50% calc(50% + 1px),
-      transparent calc(50% + 1px)
-    ),
-    linear-gradient(
-      to bottom,
-      transparent 0 50%,
-      var(--grid-half) 50% calc(50% + 1px),
-      transparent calc(50% + 1px)
-    ),
-    linear-gradient(
-      to right,
-      transparent 0 25%,
-      var(--grid-quarter) 25% calc(25% + 1px),
-      transparent calc(25% + 1px) 75%,
-      var(--grid-quarter) 75% calc(75% + 1px),
-      transparent calc(75% + 1px)
-    ),
-    linear-gradient(
-      to bottom,
-      transparent 0 25%,
-      var(--grid-quarter) 25% calc(25% + 1px),
-      transparent calc(25% + 1px) 75%,
-      var(--grid-quarter) 75% calc(75% + 1px),
-      transparent calc(75% + 1px)
-    ),
-    linear-gradient(
-      to right,
-      transparent 0 12.5%,
-      var(--grid-eighth) 12.5% calc(12.5% + 1px),
-      transparent calc(12.5% + 1px) 37.5%,
-      var(--grid-eighth) 37.5% calc(37.5% + 1px),
-      transparent calc(37.5% + 1px) 62.5%,
-      var(--grid-eighth) 62.5% calc(62.5% + 1px),
-      transparent calc(62.5% + 1px) 87.5%,
-      var(--grid-eighth) 87.5% calc(87.5% + 1px),
-      transparent calc(87.5% + 1px)
-    ),
-    linear-gradient(
-      to bottom,
-      transparent 0 12.5%,
-      var(--grid-eighth) 12.5% calc(12.5% + 1px),
-      transparent calc(12.5% + 1px) 37.5%,
-      var(--grid-eighth) 37.5% calc(37.5% + 1px),
-      transparent calc(37.5% + 1px) 62.5%,
-      var(--grid-eighth) 62.5% calc(62.5% + 1px),
-      transparent calc(62.5% + 1px) 87.5%,
-      var(--grid-eighth) 87.5% calc(87.5% + 1px),
-      transparent calc(87.5% + 1px)
-    );
 }
 
 /*
- * Forced colours gives two weights and no partial ink, so a faded rule is not
- * available at all. The major rule alone is the honest reduction: the grid's job
- * there is to say where the world's axes are, and a full-strength subdivision
- * every few pixels would bury the nodes it is behind.
+ * Forced colours replaces the palette but does not reach inside a canvas
+ * bitmap, so the layer asks for a system colour instead - through `color`,
+ * which is a real property and therefore computes to something every engine's
+ * canvas can parse. See `inkFrom` for why the subdivisions go entirely.
  */
 @media (forced-colors: active) {
   .grid {
-    --grid-half: transparent;
-    --grid-quarter: transparent;
-    --grid-eighth: transparent;
-    --grid-major: GrayText;
+    color: GrayText;
   }
 }
 

@@ -49,7 +49,6 @@ import {
   clearOfExistingNodes,
   firstTypedInputNode,
   GRID,
-  gridStyle,
   MAX_ZOOM,
   MIN_ZOOM,
   nearestEdge,
@@ -61,6 +60,7 @@ import {
   type PortSide,
 } from './geometry';
 import { useCanvasStore, type Selection } from './graphStore';
+import { GridLayer } from './GridLayer';
 import inspectorStyles from './inspector.module.css';
 import { loadInspectorOpen, saveInspectorOpen } from './inspectorPreference';
 import { useKeyboardInset } from './keyboardInset';
@@ -2732,18 +2732,12 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
         <LiveRegion log={announcementLog} testId="canvas-announcer" />
 
         {/*
-          NO OPACITY ON THIS ELEMENT ANY MORE.
-
-          It used to carry `opacity: zoom < 0.5 ? 0.4 : 1`, to stop the grid
-          turning into a solid wash when the rules closed up. That dimmed the
-          whole layer rather than thinning the grid, so the entire canvas went
-          pale at 33% while still being a wash - and it said nothing at all
-          about the other end of the range, where the rules spread out until
-          only the major ones were left. `gridStyle` writes a per-level ink
-          instead, and the level that would be a wash is the level that is not
-          drawn. See `GRID_SUBDIVISIONS` in geometry.ts.
+          A CANVAS, NOT A BACKGROUND IMAGE, and not an opacity on a layer
+          either - which is what used to stand in for a scale cascade and made
+          the whole surface pale at 33% instead of making the grid coarser.
+          `grid.ts` carries both arguments.
         */}
-        <div className={styles.grid} aria-hidden="true" style={gridStyle(viewport)} />
+        <GridLayer viewport={viewport} />
 
         <div
           className={styles.plane}

@@ -7073,43 +7073,266 @@ async function checkPreviewSandbox(browser, label) {
 /**
  * THE CANVAS GRID AND THE ZOOM, IN A REAL ENGINE.
  *
- * Both of the defects this exists for were invisible to every automated gate,
- * and both were invisible for the same structural reason: jsdom resolves no
- * colour, composites no background layer and runs no `requestAnimationFrame`,
- * so the unit suite can check what `gridStyle` EMITS and nothing about what any
- * of it paints.
+ * Every defect this exists for was invisible to the whole gate until somebody
+ * photographed it, and invisible for one structural reason: jsdom resolves no
+ * colour, rasterises nothing and runs no `requestAnimationFrame`, so the unit
+ * suite can check where `grid.ts` says a rule goes and nothing about what any
+ * of it looks like.
  *
- * Four things here can only be known in a browser:
+ * WHAT IS ASSERTED HERE, AND WHY THESE AND NOT THE SYMPTOM.
  *
- *   1. `color-mix(in srgb, <token> calc(var(--x) * 100%), transparent)` RESOLVES.
- *      That is how each subdivision level gets its own alpha - background layers
- *      cannot carry an opacity of their own - and if an engine rejected the
- *      calc'd percentage the declaration would be invalid at computed-value
- *      time and the grid would vanish entirely, with no error anywhere.
+ * The symptom was banding: bands of lighter and darker grid at a period with no
+ * relation to the grid's spacing. Measuring band amplitude directly turns out
+ * to be a poor gate - a grid legitimately puts a large periodic component into
+ * any profile of it, and separating that from the banding needs more sample
+ * than a screenshot of bare canvas gives. So what is measured is the CAUSE,
+ * which is sharp:
  *
- *   2. ONE `background-size` COVERS EIGHT LAYERS. The value lists repeat to
- *      cover the images, which is what makes it impossible for two layers to
- *      round to different tiles - the phase-lock guarantee. It is in the spec;
- *      it is not in jsdom.
+ *   1. CRISPNESS, as the number of distinct shades a bare strip of canvas is
+ *      made of. A rule rounded to a device pixel paints one colour; a rule at a
+ *      fractional position is antialiased into two pixels whose shades depend
+ *      on its subpixel offset, and across a canvas that offset takes every
+ *      value - a continuum of shades, which is what the banding was made of. A
+ *      handful of shades is proof there is no antialiasing to alias.
  *
- *   3. THE RULES ARE A DIFFERENT COLOUR FROM THE BACKDROP. Measured off the
- *      rendered pixels, because this is the bug: the minor rules were
- *      `--pb-border-subtle`, which in vellum is the same paper shade as
- *      `--pb-surface-sunken`, and a grid drawn in the background colour is not
- *      a faint grid.
+ *   2. COVERAGE, against the geometry's own answer. For one-pixel rules at
+ *      pitch p the fraction of pixels away from the backdrop is
+ *      `1 - ((p-1)/p)^2`. The gradient build measured about twice that at every
+ *      zoom, because every rule was two pixels wide. It should now be exact.
+ *
+ *   3. DENSITY, as the mean ink over a bare strip across the range. This is
+ *      "the surface must not get lighter or heavier as you zoom", and it is the
+ *      one thing here that cannot be checked without rendering, because the
+ *      arithmetic answer is in `grid.test.ts` and what the eye gets is the
+ *      arithmetic after rasterisation.
  *
  *   4. A WHEEL DETENT IS ONE NOTCH. `deltaMode` and the detent size are the
- *      engine's business, and Firefox's answer is different from Chromium's -
- *      three LINES rather than a hundred pixels. The old handler read `deltaY`
- *      raw, so the same physical click zoomed by a factor of e in one engine
- *      and 3% in the other. Asserting it here is asserting it in the only place
- *      the difference exists.
+ *      engine's business, and Firefox's answer differs from Chromium's - three
+ *      LINES rather than a hundred pixels. Asserting it here is asserting it in
+ *      the only place the difference exists.
  */
 async function checkCanvasGrid(browser, label) {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const page = await context.newPage();
+  /** Mean ink and shade count over a strip of bare canvas. */
+  const MEASURE = () => {
+    window.__gridMeasure = async (bytes) => {
+      const bitmap = await createImageBitmap(
+        new Blob([new Uint8Array(bytes)], { type: 'image/png' }),
+      );
+      const surface = document.createElement('canvas');
+      surface.width = bitmap.width;
+      surface.height = bitmap.height;
+      const context = surface.getContext('2d');
+      context.drawImage(bitmap, 0, 0);
+      const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height);
+      const total = bitmap.width * bitmap.height;
+
+      const counts = new Map();
+      const luminance = new Float64Array(256);
+      const histogram = new Float64Array(256);
+      for (let i = 0; i < data.length; i += 4) {
+        const key = `${data[i]},${data[i + 1]},${data[i + 2]}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+        const value = Math.round(0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]);
+        histogram[value] += 1;
+        luminance[value] = value;
+      }
+
+      let backdrop = 0;
+      for (let value = 0; value < 256; value += 1) {
+        if (histogram[value] > histogram[backdrop]) backdrop = value;
+      }
+
+      let ink = 0;
+      let away = 0;
+      for (let value = 0; value < 256; value += 1) {
+        ink += histogram[value] * Math.abs(value - backdrop);
+        if (Math.abs(value - backdrop) > 1) away += histogram[value];
+      }
+
+      return {
+        /*
+         * Shades covering more than a thousandth of the strip. The tail below
+         * that is the antialiasing on any text that strays into frame, which is
+         * not what is being measured and would otherwise set the number.
+         */
+        shades: [...counts.values()].filter((n) => n / total > 0.001).length,
+        ink: ink / total,
+        coverage: away / total,
+        backdrop,
+      };
+    };
+  };
+
+  /*
+   * ONE DENSITY, AND IT IS THE ENGINE'S OWN.
+   *
+   * `deviceScaleFactor` is quietly ignored by Gecko and by WebKit's Playwright
+   * build - a context asked for 2x reports `devicePixelRatio` of 1 and renders
+   * at 1x - so a sweep over it here would assert the same thing twice and call
+   * it coverage. Which it did, until the coverage figure was computed from the
+   * REQUESTED density and came out against a 2x ideal on a 1x render.
+   *
+   * So everything below is derived from what the page reports, and higher
+   * densities are covered where they can be: `grid.test.ts` asserts every rule
+   * lands on a whole device pixel at 1x, 1.25x, 1.5x, 2x and 3x.
+   */
+  {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+
+    try {
+      await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+      await page.evaluate(() => {
+        window.localStorage.setItem('patchbay:cold-open:v1', String(Date.now()));
+      });
+      await gotoCanvas(page);
+      await page.locator('[data-testid="canvas-grid"]').waitFor({ timeout: 15_000 });
+      await page.evaluate(MEASURE);
+      await page.evaluate(() => {
+        const root = document.querySelector('[data-testid="canvas-root"]');
+        window.__setZoom = async (target) => {
+          const readout = () =>
+            Number(
+              document
+                .querySelector('[data-testid="canvas-readout"]')
+                .textContent.match(/(\d+)%/)[1],
+            ) / 100;
+          for (let attempt = 0; attempt < 200; attempt += 1) {
+            const current = readout();
+            if (Math.abs(current - target) < 0.0015) break;
+            const box = root.getBoundingClientRect();
+            const step = Math.max(-1, Math.min(1, Math.log2(target / current) * 6));
+            root.dispatchEvent(
+              new WheelEvent('wheel', {
+                deltaY: -step * 12,
+                ctrlKey: true,
+                clientX: box.left + box.width / 2,
+                clientY: box.top + box.height / 2,
+                bubbles: true,
+                cancelable: true,
+              }),
+            );
+            await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+          }
+          return readout();
+        };
+      });
+
+      /* -- The layer really is drawing in device pixels ------------------- */
+
+      const backing = await page.evaluate(() => {
+        const canvas = document.querySelector('[data-testid="canvas-grid"]');
+        return {
+          tag: canvas.tagName,
+          width: canvas.width,
+          height: canvas.height,
+          css: Math.round(canvas.clientWidth),
+          ratio: window.devicePixelRatio,
+          opacity: window.getComputedStyle(canvas).opacity,
+        };
+      });
+
+      const dpr = backing.ratio;
+
+      check(
+        label,
+        'the grid is a canvas with a device-pixel backing store',
+        backing.tag === 'CANVAS' && backing.width === Math.round(backing.css * dpr),
+        `${backing.width}px of bitmap for ${backing.css}px of layer at ${dpr}x`,
+      );
+
+      check(
+        label,
+        'the grid layer carries no opacity of its own',
+        backing.opacity === '1',
+        `opacity ${backing.opacity} - a per-level ink replaced the whole-layer fade`,
+      );
+
+      /* -- Crispness, coverage and density across the range --------------- */
+
+      const strip = { x: 24, y: 150, width: 320, height: 620 };
+      const readings = [];
+
+      for (const zoom of [0.25, 0.33, 0.4, 0.56, 0.71, 0.79, 0.89, 1, 1.12, 1.41, 1.59, 2, 2.5]) {
+        const reached = await page.evaluate((target) => window.__setZoom(target), zoom);
+        await page.waitForTimeout(70);
+        const shot = await page.screenshot({ clip: strip });
+        const reading = await page.evaluate((bytes) => window.__gridMeasure(bytes), [...shot]);
+        readings.push({ zoom: reached, ...reading });
+      }
+
+      const worstShades = readings.reduce((a, b) => (a.shades > b.shades ? a : b));
+      check(
+        label,
+        'a bare strip of grid is a handful of shades at every zoom',
+        worstShades.shades <= 8,
+        `worst ${worstShades.shades} shades at ${Math.round(worstShades.zoom * 100)}% - antialiased rules give a continuum, which is what the banding was`,
+      );
+
+      /*
+       * Coverage against the geometry, at the two zooms where every inked level
+       * is at FULL ink and the pitch is therefore unambiguous. In between, a
+       * part-drawn level adds rules of its own and the closed form stops
+       * applying - which is why this is checked where it is exact rather than
+       * with a tolerance wide enough to cover the fade.
+       */
+      for (const [zoom, pitch] of [
+        [1, 8],
+        [2, 8],
+      ]) {
+        const reading = readings.find((one) => Math.abs(one.zoom - zoom) < 0.02);
+        if (!reading) continue;
+        const devicePitch = pitch * dpr;
+        const ideal = 1 - ((devicePitch - 1) / devicePitch) ** 2;
+
+        check(
+          label,
+          `at ${zoom * 100}% every rule is one device pixel wide`,
+          Math.abs(reading.coverage - ideal) < 0.02,
+          `${(reading.coverage * 100).toFixed(1)}% of pixels inked against the geometry's ${(ideal * 100).toFixed(1)}% - the gradient build measured about twice this`,
+        );
+      }
+
+      const inks = readings.map((one) => one.ink);
+      const lo = Math.min(...inks);
+      const hi = Math.max(...inks);
+
+      check(
+        label,
+        'the surface keeps its density across the whole zoom range',
+        hi / lo < 1.8,
+        `mean ink ${lo.toFixed(2)} to ${hi.toFixed(2)} luminance units, ${(hi / lo).toFixed(2)}x - the gradient build ran to 3.9x`,
+      );
+
+      /*
+       * And the working range on its own, which is tighter: the ends of the
+       * zoom range are where the proportion of MAJOR rules on screen changes
+       * most, because the major square is anchored to the world rather than to
+       * the screen. See the note in grid.ts.
+       */
+      const working = readings.filter((one) => one.zoom >= 0.4 && one.zoom <= 2);
+      const workingLo = Math.min(...working.map((one) => one.ink));
+      const workingHi = Math.max(...working.map((one) => one.ink));
+
+      check(
+        label,
+        'and holds it to within a quarter between 40% and 200%',
+        workingHi / workingLo < 1.3,
+        `mean ink ${workingLo.toFixed(2)} to ${workingHi.toFixed(2)}, ${(workingHi / workingLo).toFixed(3)}x`,
+      );
+    } finally {
+      await context.close();
+    }
+  }
+
+  /* -- Both weights of ink, in two themes ------------------------------- */
+
+  const themed = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await themed.newPage();
 
   try {
+    await page.evaluate(MEASURE).catch(() => undefined);
+
     for (const theme of ['graphite', 'vellum']) {
       await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
       await page.evaluate((name) => {
@@ -7117,135 +7340,59 @@ async function checkCanvasGrid(browser, label) {
           'patchbay:theme:v1',
           JSON.stringify({ version: 1, selection: { kind: 'preset', name } }),
         );
+        window.localStorage.setItem('patchbay:cold-open:v1', String(Date.now()));
       }, theme);
       await gotoCanvas(page);
-      await page.locator('[data-testid="canvas-root"]').waitFor({ timeout: 15_000 });
+      await page.locator('[data-testid="canvas-grid"]').waitFor({ timeout: 15_000 });
 
-      const grid = await page.evaluate(() => {
-        const root = document.querySelector('[data-testid="canvas-root"]');
-        const layer = [...root.children].find(
-          (el) =>
-            el.getAttribute('aria-hidden') === 'true' &&
-            getComputedStyle(el).backgroundImage.includes('gradient'),
-        );
-        if (!layer) return null;
-
-        const style = getComputedStyle(layer);
-        const images = style.backgroundImage;
-
-        /*
-         * COUNTED BY GRADIENT, NOT BY COMMA. Splitting the computed value on
-         * commas counts the ones INSIDE each gradient's stop list - eight
-         * layers came out as seventy-two - and no amount of lookahead fixes
-         * that once `rgb(r, g, b)` is in there too. Counting the function
-         * openings is the question that was being asked anyway.
-         */
-        const gradients = (images.match(/linear-gradient\(/g) ?? []).length;
-
-        /*
-         * The two inks this theme should be painting with, resolved by the
-         * engine itself rather than hard-coded here. They are checked against
-         * the RENDERED PIXELS below, not against the computed
-         * `background-image`: a `color-mix` result does not come back in the
-         * same syntax a plain `var()` does, and chasing that is chasing a
-         * serialiser rather than testing the grid.
-         */
+      const tokens = await page.evaluate(() => {
+        const canvas = document.querySelector('[data-testid="canvas-grid"]');
+        const style = window.getComputedStyle(canvas);
         const probe = document.createElement('span');
-        probe.style.color = 'var(--pb-canvas-grid-minor)';
-        layer.append(probe);
-        const minorInk = getComputedStyle(probe).color;
-        probe.style.color = 'var(--pb-canvas-grid-major)';
-        const majorInk = getComputedStyle(probe).color;
-        probe.remove();
-
-        const channels = (value) => (value.match(/[\d.]+/g) ?? []).slice(0, 3).join(',');
-
-        return {
-          layers: gradients,
-          minorInk: channels(minorInk),
-          majorInk: channels(majorInk),
-          // Every layer's size and offset, as the engine resolved them.
-          sizes: [...new Set(style.backgroundSize.split(',').map((part) => part.trim()))],
-          positions: [...new Set(style.backgroundPosition.split(',').map((part) => part.trim()))],
-          opacity: style.opacity,
-          backdrop: getComputedStyle(root).backgroundColor,
-          minor: style.getPropertyValue('--pb-canvas-grid-minor').trim(),
-          major: style.getPropertyValue('--pb-canvas-grid-major').trim(),
+        canvas.parentElement.append(probe);
+        const channels = (value) => {
+          probe.style.color = value;
+          return (window.getComputedStyle(probe).color.match(/[\d.]+/g) ?? [])
+            .slice(0, 3)
+            .join(',');
         };
+        const minor = channels(style.getPropertyValue('--pb-canvas-grid-minor').trim());
+        const major = channels(style.getPropertyValue('--pb-canvas-grid-major').trim());
+        probe.remove();
+        return { minor, major };
       });
 
-      check(
-        label,
-        `${theme}: the grid paints its eight layers`,
-        grid?.layers === 8,
-        `${grid?.layers ?? 'no grid layer'}`,
-      );
-
-      check(
-        label,
-        `${theme}: one background-size and one offset cover every layer`,
-        grid?.sizes.length === 1 && grid?.positions.length === 1,
-        `${String(grid?.sizes.length)} sizes, ${String(grid?.positions.length)} offsets`,
-      );
-
-      check(
-        label,
-        `${theme}: the layer carries no opacity of its own`,
-        grid?.opacity === '1',
-        `opacity ${String(grid?.opacity)} - the per-level ink replaced the whole-layer fade`,
-      );
-
-      check(
-        label,
-        `${theme}: the grid rules are not the backdrop colour`,
-        grid !== null && grid.minor !== '' && grid.minor !== grid.major,
-        `minor ${String(grid?.minor)}, major ${String(grid?.major)}, backdrop ${String(grid?.backdrop)}`,
-      );
-
-      /*
-       * AND THE INK IS MEASURED OFF THE PIXELS, which is the only version of
-       * this that could not have passed against the broken build - and the only
-       * one that does not depend on how an engine chooses to serialise a
-       * `color-mix`. A screenshot of a node-free strip of canvas must contain
-       * BOTH grid inks as well as the backdrop: a grid drawn in the backdrop's
-       * own shade produces a flat image, which is exactly what vellum had, and a
-       * `color-mix` an engine refused would leave the whole `background-image`
-       * invalid and produce the same flat image for a different reason.
-       */
-      const strip = await page.screenshot({
-        clip: { x: 0, y: 300, width: 320, height: 320 },
-      });
-      const shades = await page.evaluate(
+      const shot = await page.screenshot({ clip: { x: 24, y: 150, width: 320, height: 620 } });
+      const drawn = await page.evaluate(
         async (bytes) => {
-          const blob = new Blob([new Uint8Array(bytes)], { type: 'image/png' });
-          const bitmap = await createImageBitmap(blob);
+          const bitmap = await createImageBitmap(
+            new Blob([new Uint8Array(bytes)], { type: 'image/png' }),
+          );
           const surface = document.createElement('canvas');
           surface.width = bitmap.width;
           surface.height = bitmap.height;
-          const context2d = surface.getContext('2d');
-          context2d.drawImage(bitmap, 0, 0);
-          const { data } = context2d.getImageData(0, 0, bitmap.width, bitmap.height);
-
+          const context = surface.getContext('2d');
+          context.drawImage(bitmap, 0, 0);
+          const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height);
           const seen = new Set();
           for (let i = 0; i < data.length; i += 4) {
             seen.add(`${data[i]},${data[i + 1]},${data[i + 2]}`);
           }
           return [...seen];
         },
-        [...strip],
+        [...shot],
       );
 
-      const drawn = new Set(shades);
-
+      const present = new Set(drawn);
       check(
         label,
         `${theme}: both weights of ink reached real pixels`,
-        drawn.has(grid?.minorInk) && drawn.has(grid?.majorInk),
-        `minor ${String(grid?.minorInk)} ${drawn.has(grid?.minorInk) ? 'drawn' : 'MISSING'}, major ${String(grid?.majorInk)} ${drawn.has(grid?.majorInk) ? 'drawn' : 'MISSING'}, in ${String(drawn.size)} distinct colours over a 320x320 strip of bare canvas`,
+        present.has(tokens.minor) && present.has(tokens.major),
+        `minor ${tokens.minor} ${present.has(tokens.minor) ? 'drawn' : 'MISSING'}, major ${tokens.major} ${present.has(tokens.major) ? 'drawn' : 'MISSING'} - vellum's minor rule used to BE the backdrop`,
       );
     }
 
-    /* -- And the zoom, in the units this engine actually reports ----------- */
+    /* -- And the zoom, in the units this engine actually reports --------- */
 
     await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
     await page.evaluate(() => {
@@ -7265,29 +7412,21 @@ async function checkCanvasGrid(browser, label) {
     /*
      * A REAL WHEEL EVENT FROM PLAYWRIGHT, not a synthesised one: `mouse.wheel`
      * goes through the browser's own input pipeline, so the `deltaMode` and the
-     * detent size are whatever this engine would really send. That is the whole
-     * point of asserting it here - Firefox reports lines and Chromium reports
-     * pixels, and the numbers only differ where the engine does.
-     *
-     * Six notches double the zoom, so six detents in must land on exactly 200%
-     * and six out on exactly 50%. The old handler reached 250% - the clamp - on
-     * the first one.
+     * detent size are whatever this engine would really send.
      */
     const box = await page.locator('[data-testid="canvas-root"]').boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.keyboard.down('Control');
 
-    const zoomAfterOne = await (async () => {
-      await page.mouse.wheel(0, -120);
-      await page.waitForTimeout(120);
-      return readZoom();
-    })();
+    await page.mouse.wheel(0, -120);
+    await page.waitForTimeout(120);
+    const afterOne = await readZoom();
 
     check(
       label,
       'one wheel detent is one notch, not a jump to the clamp',
-      zoomAfterOne >= 110 && zoomAfterOne <= 114,
-      `100% -> ${String(zoomAfterOne)}% (one notch is 112%; the old handler reached the 250% clamp)`,
+      afterOne >= 110 && afterOne <= 114,
+      `100% -> ${afterOne}% (one notch is 112%; the old handler reached the 250% clamp)`,
     );
 
     for (let detent = 0; detent < 5; detent += 1) {
@@ -7297,12 +7436,7 @@ async function checkCanvasGrid(browser, label) {
     await page.waitForTimeout(150);
     const doubled = await readZoom();
 
-    check(
-      label,
-      'six detents double the zoom exactly',
-      doubled === 200,
-      `${String(doubled)}% after six notches in`,
-    );
+    check(label, 'six detents double the zoom exactly', doubled === 200, `${doubled}%`);
 
     for (let detent = 0; detent < 12; detent += 1) {
       await page.mouse.wheel(0, 120);
@@ -7316,14 +7450,9 @@ async function checkCanvasGrid(browser, label) {
       label,
       'and twelve back out halve it, so the ladder is symmetric',
       halved === 50,
-      `${String(halved)}% after twelve notches out`,
+      `${halved}%`,
     );
 
-    /*
-     * The keyboard walks the same ladder. Three presses per doubling, which is
-     * the only reason `+` after a scroll lands anywhere predictable - and before
-     * this there was no way to zoom from a keyboard at all.
-     */
     await page.locator('[data-testid="canvas-root"]').click({ position: { x: 40, y: 400 } });
     for (let press = 0; press < 3; press += 1) await page.keyboard.press('+');
     await page.waitForTimeout(120);
@@ -7332,10 +7461,67 @@ async function checkCanvasGrid(browser, label) {
       label,
       'three presses of + double the zoom',
       (await readZoom()) === 100,
-      `${String(await readZoom())}% from 50% after three presses`,
+      `${await readZoom()}% from 50%`,
     );
   } finally {
-    await context.close();
+    await themed.close();
+  }
+
+  /* -- Forced colours, where a faded rule is not available -------------- */
+
+  const forced = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+    forcedColors: 'active',
+  });
+  const forcedPage = await forced.newPage();
+
+  try {
+    await forcedPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await forcedPage.evaluate(() => {
+      window.localStorage.setItem('patchbay:cold-open:v1', String(Date.now()));
+    });
+    await gotoCanvas(forcedPage);
+    await forcedPage.locator('[data-testid="canvas-grid"]').waitFor({ timeout: 15_000 });
+
+    const shot = await forcedPage.screenshot({
+      clip: { x: 24, y: 150, width: 320, height: 620 },
+    });
+    const shades = await forcedPage.evaluate(
+      async (bytes) => {
+        const bitmap = await createImageBitmap(
+          new Blob([new Uint8Array(bytes)], { type: 'image/png' }),
+        );
+        const surface = document.createElement('canvas');
+        surface.width = bitmap.width;
+        surface.height = bitmap.height;
+        const context = surface.getContext('2d');
+        context.drawImage(bitmap, 0, 0);
+        const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height);
+        const counts = new Map();
+        for (let i = 0; i < data.length; i += 4) {
+          const key = `${data[i]},${data[i + 1]},${data[i + 2]}`;
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+        }
+        const total = bitmap.width * bitmap.height;
+        return [...counts.values()].filter((n) => n / total > 0.002).length;
+      },
+      [...shot],
+    );
+
+    /*
+     * Two: the forced backdrop and one weight of rule. The subdivisions are
+     * dropped on purpose - system colours come in two weights and a faded rule
+     * is not among them, so a full-strength subdivision every few pixels would
+     * bury the nodes it is behind. See `inkFrom`.
+     */
+    check(
+      label,
+      'forced colours draws one weight of rule and no faded ones',
+      shades === 2,
+      `${shades} shades covering the strip, where the grid draws only its major rule`,
+    );
+  } finally {
+    await forced.close();
   }
 }
 
