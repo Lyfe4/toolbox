@@ -33,6 +33,17 @@ deleted; every figure below can be reproduced from the method given.
 > one-minute clip measured here generalises badly — the archetypal "won't play"
 > file is a two-gigabyte film, and holding one is beyond this tool's 256 MB
 > limit and beyond a WASM ffmpeg's 2 GiB heap ceiling alike.
+>
+> **That has since been fixed, and not by holding more.** A binary value now
+> carries a reference to a blob rather than the bytes, so the input is never
+> held at all: it stays on disk, crosses into the worker by reference, and is
+> read through a window. The limit moved to the OUTPUT, at about 1.9 GB,
+> because a download is one blob and Chromium will not read one past 2 GiB. So
+> `maxInputBytes` is 4 GiB, and what a 4 GB tuner recording cannot do is have
+> its container changed — its audio comes out fine. The arithmetic in
+> [Memory](#memory) below is therefore about a design that no longer exists,
+> and is kept as the reasoning that led to the ceiling rather than as a
+> description of the tool.
 
 - [The verdict](#the-verdict)
 - [How this was measured](#how-this-was-measured)

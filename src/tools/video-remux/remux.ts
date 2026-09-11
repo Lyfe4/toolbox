@@ -128,10 +128,11 @@ function trackSeconds(track: SourceTrack): number | null {
  * how much of a `SourceFile` a format can actually fill in, and the two later
  * arrivals fill in less: neither states its own duration and neither has
  * anywhere to put a rotation. They are also the two that can hand over a
- * buffer of their own instead of pointing into the input - always for a
+ * source of their own instead of pointing into the input - always for a
  * transport stream, whose frames are not contiguous in the file at all, and
  * for an AVI only where a track's samples had to be re-framed or its audio
- * gathered across chunk boundaries.
+ * gathered across chunk boundaries. That source is a sink's output: in memory
+ * where the stream is small, and in blob storage where it is not.
  */
 function readContainer(container: ContainerId, bytes: ByteSource): ToolResult<SourceFile> {
   if (container === 'mp4') return readIsoBmff(bytes);

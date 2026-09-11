@@ -460,6 +460,7 @@ function buildAnnexBVideo(bytes: ByteSource, draft: StreamDraft): Built | null {
   // a sink for the same reason the transport-stream reader uses one: an AVI
   // that carries H.264 is a capture file, and capture files are large.
   const media = createByteSink({ spill: canWindowBlobs() });
+  const capacity = reframedCeiling(total);
   let scratch = new Uint8Array(0);
   const parameterSets = new ParameterSets(codec);
 
@@ -479,7 +480,9 @@ function buildAnnexBVideo(bytes: ByteSource, draft: StreamDraft): Built | null {
     if (scratch.byteLength < room) scratch = new Uint8Array(room);
     const framed = reframeInto(scratch, 0, view, nals, codec);
     if (framed.empty) continue;
-    if (written + framed.written > reframedCeiling(total)) continue;
+    // Bounded by the chunk sizes the `movi` walk actually found, so a file
+    // that keeps claiming frames cannot gather more than it holds.
+    if (written + framed.written > capacity) continue;
     media.write(scratch.subarray(0, framed.written));
 
     offset.push(written);

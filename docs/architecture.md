@@ -347,7 +347,7 @@ preset wire goes through `firstRefusedEdge` in `ports.test.ts`.
 
 ## Where a value's bytes are
 
-A `bytes` value used to be a whole `Uint8Array`, and for eight of the ten tools
+A `bytes` value used to be a whole `Uint8Array`, and inside every tool but one
 it still is. It carries a **`BinaryData`** now, which says where the bytes are
 rather than holding them:
 

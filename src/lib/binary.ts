@@ -287,13 +287,28 @@ export function blobSource(blob: Blob): ByteSource {
   const reader = new Reader();
   const size = blob.size;
   const windows: Window[] = [];
+  /** The last window read from, checked before the rest. See `windowFor`. */
+  let recent: Window | undefined;
   let clock = 0;
 
   function windowFor(at: number): Window {
     clock += 1;
+    /*
+     * The last window first, because a walk is overwhelmingly sequential: the
+     * Matroska reader alone asks for something like ten million single bytes
+     * on a two-hour film, and almost every one of them is in the window the
+     * one before it was in. The loop below is then the cost of a cursor
+     * genuinely moving, rather than of reading the next byte.
+     */
+    if (recent !== undefined && at >= recent.start && at < recent.end) {
+      recent.used = clock;
+      return recent;
+    }
+
     for (const held of windows) {
       if (at >= held.start && at < held.end) {
         held.used = clock;
+        recent = held;
         return held;
       }
     }
@@ -313,13 +328,22 @@ export function blobSource(blob: Blob): ByteSource {
     if (oldest === undefined) {
       const fresh: Window = { start, end, bytes, used: clock };
       windows.push(fresh);
+      recent = fresh;
       return fresh;
     }
 
+    /*
+     * REPLACED, NEVER OVERWRITTEN. A view handed out earlier is a subarray of
+     * the array being dropped here, so it stays readable for as long as its
+     * holder keeps it - which is the promise `view` makes, and which the
+     * transport-stream walk depends on: it holds a block of packets while the
+     * visitor reads elsewhere in the file.
+     */
     oldest.start = start;
     oldest.end = end;
     oldest.bytes = bytes;
     oldest.used = clock;
+    recent = oldest;
     return oldest;
   }
 

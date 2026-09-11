@@ -233,5 +233,8 @@ export function sniffBytes(bytes: Uint8Array): SniffResult {
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes.toString()} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} kB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  // A GB tier, because the video tool's own limit is four of them and
+  // "4096.0 MB" is a number nobody reads as four gigabytes.
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }

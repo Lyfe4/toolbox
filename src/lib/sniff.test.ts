@@ -190,5 +190,9 @@ describe('formatBytes', () => {
     expect(formatBytes(512)).toBe('512 B');
     expect(formatBytes(2048)).toBe('2.0 kB');
     expect(formatBytes(5 * 1024 * 1024)).toBe('5.0 MB');
+    // The tier the video tool's 4 GiB limit needed: "4096.0 MB" is a number
+    // nobody reads as four gigabytes.
+    expect(formatBytes(1024 * 1024 * 1024)).toBe('1.0 GB');
+    expect(formatBytes(4 * 1024 * 1024 * 1024)).toBe('4.0 GB');
   });
 });

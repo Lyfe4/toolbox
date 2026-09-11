@@ -167,10 +167,11 @@ interface Packet {
  * Every packet in the file, as a callback rather than as an array.
  *
  * A 200 MB transport stream is a million packets, and an array of a million
- * small objects is tens of megabytes of garbage on top of a tool already
- * holding the file three times over. The walk is run once per thing that needs
- * it instead - for the program tables, to measure each stream, and to read
- * each stream - and every pass is a scan of headers rather than of data.
+ * small objects is tens of megabytes of garbage in a tool whose whole point is
+ * that it does not hold the file at all. The walk is run once per thing that
+ * needs it instead - for the program tables, to measure each stream, and to
+ * read each stream - and every pass is a scan of headers rather than of data,
+ * through a window onto the file rather than over an array.
  *
  * LOSING THE PACKET GRID IS TREATED AS DAMAGE, NOT AS A REASON TO
  * RESYNCHRONISE. A transport stream whose 0x47s stop lining up is a file with
@@ -623,7 +624,7 @@ interface RawVideo {
   readonly config: VideoConfig | null;
   /** Access units holding only configuration, which are not frames. */
   readonly configOnly: number;
-  /** Access units too large for the assembly buffer, which were skipped. */
+  /** Access units past what the measuring pass said this stream holds. */
   readonly oversized: number;
   /** Frames whose stated decode time went backwards and had to be clamped. */
   readonly backwards: number;
