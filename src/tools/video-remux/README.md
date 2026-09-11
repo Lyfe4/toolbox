@@ -460,6 +460,13 @@ the first two were:
 - **No AVI carrying H.264 has been read.** That path is the one AVI case that
   produces a file rather than a refusal, and it is also the rarest kind of AVI,
   so it is the least likely to be tried by accident.
+- **Only a transport stream has been read at scale.** `checkLargeVideo` drives
+  a 320 MB `.ts` through the real app in two engines, which is the path that
+  gathers and spills as well as the one that windows. MP4 and Matroska go
+  through the same `ByteSource` and the same writer, and their own logic is
+  covered by unit tests on fixtures — but neither has been handed a
+  multi-gigabyte file, so what is unproven for them is the windowing over a
+  large one rather than the parsing.
 - **Nothing has run on a phone.** The memory arithmetic above is now measured
   rather than read off the engine — a 320 MB transport stream through the real
   app in two engines, with the main thread's reads of the file counted — but it
