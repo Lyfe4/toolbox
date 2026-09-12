@@ -26,6 +26,13 @@ export interface GridLayerProps {
 interface GridInk {
   readonly minor: string;
   readonly major: string;
+  /**
+   * Whether a rule may be drawn part of the way between the two inks.
+   *
+   * True everywhere except forced colours, where there is no minor ink to
+   * crossfade from - see {@link inkFrom}.
+   */
+  readonly crossfade: boolean;
 }
 
 /**
@@ -47,17 +54,26 @@ interface GridInk {
  * Only the major rule survives: system colours come in two weights and a faded
  * rule is not available, so the honest reduction is the one rank that says
  * where the world's axes are.
+ *
+ * WHICH IS ALSO WHY THE CROSSFADE IS OFF THERE. The heavy rule cascades, so at
+ * most one rank is part of the way from minor to major at any zoom, and with no
+ * minor ink to fade from that rank would arrive as a translucent system colour
+ * - exactly the washed-out rule forced colours exists to prevent. So the
+ * crossfade collapses to its midpoint and the rank is heavy or absent. It pops
+ * once per octave, which is the smallest possible price for a grid with one ink
+ * that is still the same grid at every zoom.
  */
 function inkFrom(canvas: HTMLCanvasElement): GridInk {
   const style = window.getComputedStyle(canvas);
 
   if (window.matchMedia('(forced-colors: active)').matches) {
-    return { minor: 'transparent', major: style.color };
+    return { minor: 'transparent', major: style.color, crossfade: false };
   }
 
   return {
     minor: style.getPropertyValue('--pb-canvas-grid-minor').trim(),
     major: style.getPropertyValue('--pb-canvas-grid-major').trim(),
+    crossfade: true,
   };
 }
 
@@ -102,9 +118,9 @@ function draw(canvas: HTMLCanvasElement, viewport: Viewport, dpr: number): void 
     if (level.strength <= 0) continue;
 
     /*
-     * BOTH AXES IN ONE PATH, FILLED ONCE.
+     * BOTH AXES IN ONE PATH, FILLED ONCE PER INK.
      *
-     * Two fills would composite twice wherever a rule crosses a rule, so every
+     * Two paths would composite twice wherever a rule crosses a rule, so every
      * intersection of a part-drawn level would come out darker than the rules
      * that make it - a field of dots over the grid, at exactly the zooms where a
      * level is fading in. One fill of a self-overlapping path paints each pixel
@@ -118,9 +134,34 @@ function draw(canvas: HTMLCanvasElement, viewport: Viewport, dpr: number): void 
       if (rule.level === index) path.rect(0, rule.at, width, thickness);
     }
 
-    context.globalAlpha = level.strength;
-    context.fillStyle = index === 0 ? ink.major : ink.minor;
-    context.fill(path);
+    /*
+     * THE CROSSFADE, AS ONE FILL OVER ANOTHER RATHER THAN A MIXED COLOUR.
+     *
+     * The heavy rule cascades with the rest of the ladder, so once an octave a
+     * rank has to travel from the minor ink to the major one - `grid.ts` has
+     * the derivation of the ramp. Mixing the two tokens numerically would mean
+     * parsing them, and they arrive here as whatever string a theme declared.
+     * Painting the minor ink and then the major over it at the weight is the
+     * same answer for opaque inks, and it needs to know nothing about them.
+     *
+     * It is only correct because a part-weighted rank is never a part-inked one
+     * - they sit three ranks apart on a five-rank ladder, which `grid.test.ts`
+     * asserts across the range. Were both partial at once, the second fill
+     * would land on a rule the first had already made translucent and the
+     * result would be lighter than either ink.
+     */
+    const weight = ink.crossfade ? level.weight : Math.round(level.weight);
+
+    if (weight < 1) {
+      context.globalAlpha = level.strength;
+      context.fillStyle = ink.minor;
+      context.fill(path);
+    }
+    if (weight > 0) {
+      context.globalAlpha = level.strength * weight;
+      context.fillStyle = ink.major;
+      context.fill(path);
+    }
   }
 
   context.globalAlpha = 1;

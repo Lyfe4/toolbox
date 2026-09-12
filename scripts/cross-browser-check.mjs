@@ -2248,7 +2248,8 @@ async function checkInspectorTouch(engine, label) {
  * width animation's worst frame is within about 2ms of no animation at all in
  * Gecko and indistinguishable from it in JavaScriptCore, because nothing inside
  * the canvas depends on the root's width - the nodes and wires sit on a 0x0
- * transformed plane and the grid is a repeating background image. What is NOT
+ * transformed plane, and the grid, which does resize with the root, repaints in
+ * well under a frame. See the measured table in architecture.md. What is NOT
  * free is letting the panel's contents re-wrap at every intermediate width:
  * that doubled the worst frame in JavaScriptCore (72ms against 36ms) and halved
  * the number of frames actually painted, which is why the content column is
@@ -7106,6 +7107,14 @@ async function checkPreviewSandbox(browser, label) {
  *      arithmetic answer is in `grid.test.ts` and what the eye gets is the
  *      arithmetic after rasterisation.
  *
+ *   4. SCALE INVARIANCE, as the same strip measured an octave apart. The whole
+ *      ladder - the heavy rule included - steps in powers of two, so the view at
+ *      63% and the view at 126% are the same five ranks at the same five screen
+ *      pitches. `grid.test.ts` proves that about the numbers; this proves it
+ *      about the pixels, which is where it was false before: the heavy rule used
+ *      to be pinned to the world, so 25% showed a heavy rule every second line
+ *      and 250% every sixteenth.
+ *
  *   4. A WHEEL DETENT IS ONE NOTCH. `deltaMode` and the detent size are the
  *      engine's business, and Firefox's answer differs from Chromium's - three
  *      LINES rather than a hundred pixels. Asserting it here is asserting it in
@@ -7253,7 +7262,15 @@ async function checkCanvasGrid(browser, label) {
       const strip = { x: 24, y: 150, width: 320, height: 620 };
       const readings = [];
 
-      for (const zoom of [0.25, 0.33, 0.4, 0.56, 0.71, 0.79, 0.89, 1, 1.12, 1.41, 1.59, 2, 2.5]) {
+      /*
+       * The sweep is chosen so that five of these are OCTAVE PAIRS - 25/50,
+       * 50/100, 63/126, 79/158 and 125/250 - because the strongest thing that
+       * can be said about the grid is that the two halves of a pair are the
+       * same picture. The rest fill in the gaps between them.
+       */
+      for (const zoom of [
+        0.25, 0.33, 0.4, 0.5, 0.63, 0.79, 0.89, 1, 1.12, 1.25, 1.26, 1.41, 1.58, 2, 2.5,
+      ]) {
         const reached = await page.evaluate((target) => window.__setZoom(target), zoom);
         await page.waitForTimeout(70);
         const shot = await page.screenshot({ clip: strip });
@@ -7261,22 +7278,45 @@ async function checkCanvasGrid(browser, label) {
         readings.push({ zoom: reached, ...reading });
       }
 
+      /*
+       * TEN, AND THE BUDGET IS SPENT RATHER THAN GUESSED. Mid-octave a strip
+       * carries the backdrop, the minor ink, the major ink, the rank fading in,
+       * the rank crossfading from minor to major, and the two crossings where
+       * the translucent fading rank paints over each of the two heavy ranks -
+       * seven, plus whatever a hairline of chrome clipped into the strip
+       * contributes. It was 8 before the heavy rule cascaded and there was no
+       * crossfade to account for; Gecko measures 8 now and WebKit 7.
+       *
+       * What this is really testing for is a CONTINUUM, which is what
+       * antialiased rules give and what the banding was made of. That runs to
+       * hundreds, so ten leaves the check its whole meaning and stops the
+       * accounting above from being one theme tweak away from a false failure.
+       */
       const worstShades = readings.reduce((a, b) => (a.shades > b.shades ? a : b));
       check(
         label,
         'a bare strip of grid is a handful of shades at every zoom',
-        worstShades.shades <= 8,
+        worstShades.shades <= 10,
         `worst ${worstShades.shades} shades at ${Math.round(worstShades.zoom * 100)}% - antialiased rules give a continuum, which is what the banding was`,
       );
 
       /*
-       * Coverage against the geometry, at the two zooms where every inked level
-       * is at FULL ink and the pitch is therefore unambiguous. In between, a
+       * Coverage against the geometry, at the zooms where every inked level is
+       * at FULL ink and the pitch is therefore unambiguous. In between, a
        * part-drawn level adds rules of its own and the closed form stops
        * applying - which is why this is checked where it is exact rather than
        * with a tolerance wide enough to cover the fade.
+       *
+       * THE PITCH IS 8 AT ALL FOUR, and that is the cascade stated as a number
+       * somebody can check by hand: the finest fully inked rank is `GRID` pixels
+       * apart wherever the zoom folds to the bottom of an octave, whether that
+       * is 25% or 200%. Before the heavy rule cascaded this was still true of
+       * the fine rules and false of the picture, because the heavy rule was 16px
+       * apart at 25% and 128px apart at 200%.
        */
       for (const [zoom, pitch] of [
+        [0.25, 8],
+        [0.5, 8],
         [1, 8],
         [2, 8],
       ]) {
@@ -7297,29 +7337,57 @@ async function checkCanvasGrid(browser, label) {
       const lo = Math.min(...inks);
       const hi = Math.max(...inks);
 
+      /*
+       * ONE BOUND OVER THE WHOLE RANGE, where there used to be two.
+       *
+       * The pair of thresholds - 1.8 across the range and 1.3 between 40% and
+       * 200% - existed because the ends of the range were genuinely worse than
+       * the middle, and for one reason: the heavy rule was pinned to the world
+       * while everything else cascaded, so the proportion of heavy rules on
+       * screen swept from one in two to one in sixteen. Measured here that was
+       * 8.25 to 14.18 luminance units, 1.72x, with 1.23x across the middle.
+       *
+       * The heavy rule cascades now, so there is no worse end to carve out and
+       * nothing left that varies with the zoom except the half-pixel each rule
+       * is rounded by and the phase the pan happens to sit at. What is left is
+       * a few percent, and it is asserted as one number over every zoom sampled.
+       */
       check(
         label,
         'the surface keeps its density across the whole zoom range',
-        hi / lo < 1.8,
-        `mean ink ${lo.toFixed(2)} to ${hi.toFixed(2)} luminance units, ${(hi / lo).toFixed(2)}x - the gradient build ran to 3.9x`,
+        hi / lo < 1.12,
+        `mean ink ${lo.toFixed(2)} to ${hi.toFixed(2)} luminance units, ${(hi / lo).toFixed(3)}x - the gradient build ran to 3.9x and the world-anchored heavy rule to 1.72x`,
       );
 
       /*
-       * And the working range on its own, which is tighter: the ends of the
-       * zoom range are where the proportion of MAJOR rules on screen changes
-       * most, because the major square is anchored to the world rather than to
-       * the screen. See the note in grid.ts.
+       * AND THE SAME PICTURE AN OCTAVE APART, which is the claim the density
+       * bound is a consequence of rather than the other way round. Two zooms a
+       * factor of two apart draw the same five ranks at the same five screen
+       * pitches, so the strip they cover has to carry the same ink - and unlike
+       * the bound above, this one does not average over the sweep, so a ladder
+       * that stepped at the wrong zoom would show up here as one bad pair
+       * rather than as a slightly wider range.
        */
-      const working = readings.filter((one) => one.zoom >= 0.4 && one.zoom <= 2);
-      const workingLo = Math.min(...working.map((one) => one.ink));
-      const workingHi = Math.max(...working.map((one) => one.ink));
+      for (const [low, high] of [
+        [0.25, 0.5],
+        [0.5, 1],
+        [0.63, 1.26],
+        [0.79, 1.58],
+        [1.25, 2.5],
+      ]) {
+        const under = readings.find((one) => Math.abs(one.zoom - low) < 0.02);
+        const over = readings.find((one) => Math.abs(one.zoom - high) < 0.02);
+        if (!under || !over) continue;
 
-      check(
-        label,
-        'and holds it to within a quarter between 40% and 200%',
-        workingHi / workingLo < 1.3,
-        `mean ink ${workingLo.toFixed(2)} to ${workingHi.toFixed(2)}, ${(workingHi / workingLo).toFixed(3)}x`,
-      );
+        const drift = Math.abs(under.ink - over.ink) / Math.min(under.ink, over.ink);
+
+        check(
+          label,
+          `${low * 100}% and ${high * 100}% are the same picture`,
+          drift < 0.06,
+          `${under.ink.toFixed(2)} against ${over.ink.toFixed(2)} luminance units, ${(drift * 100).toFixed(1)}% apart`,
+        );
+      }
     } finally {
       await context.close();
     }
@@ -7513,6 +7581,12 @@ async function checkCanvasGrid(browser, label) {
      * dropped on purpose - system colours come in two weights and a faded rule
      * is not among them, so a full-strength subdivision every few pixels would
      * bury the nodes it is behind. See `inkFrom`.
+     *
+     * WHICH ALSO RULES OUT THE CROSSFADE. The heavy rule cascades, so once an
+     * octave a rank travels from the minor ink to the major one - and with no
+     * minor ink to travel from, that rank would arrive as a translucent system
+     * colour. So the crossfade is rounded to its nearer end and a rank here is
+     * heavy or absent. Still two shades, which is what this counts.
      */
     check(
       label,

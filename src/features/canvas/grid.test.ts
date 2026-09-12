@@ -5,22 +5,26 @@ import {
   GRID_MAJOR_EVERY,
   GRID_PITCH_FULL,
   GRID_PITCH_MIN,
-  GRID_SUBDIVISIONS,
+  GRID_RANKS,
   gridLevels,
   gridLevelStrength,
+  gridLevelWeight,
+  gridOctave,
   gridPitches,
   gridRules,
   gridStrengths,
+  gridWeights,
 } from './grid';
 import { zoomFactorForNotches } from './wheel';
 
 /**
  * THE GRID.
  *
- * Three defects have been fixed here in turn, and every one of them was
+ * Four defects have been fixed here in turn, and every one of them was
  * invisible to the whole gate until a person photographed it. The groups below
- * are named for which one they hold down, because the third fix subsumed the
- * MECHANISM of the first and it is worth saying what still needs checking.
+ * are named for which one they hold down, because the later fixes subsumed the
+ * MECHANISM of the earlier ones and it is worth saying what still needs
+ * checking.
  *
  * 1. PHASE-LOCK. A minor pair tiled at `GRID * zoom` and a major pair at eight
  *    times that are rasterised independently, each rounded to device pixels on
@@ -28,7 +32,7 @@ import { zoomFactorForNotches } from './wheel';
  *    one tile with the subdivisions as fractions of it, and there is no tile at
  *    all now - every rule is placed individually. What survives is the
  *    PROPERTY: the rules form one lattice with nothing missing and nothing
- *    extra, and the major always sits on it.
+ *    extra, and the heavy rule always sits on it.
  *
  * 2. THE SCALE CASCADE. A grid at a fixed world pitch is a wash at one end of
  *    the range and bare rules at the other, and the answer had been an
@@ -42,6 +46,14 @@ import { zoomFactorForNotches } from './wheel';
  *    bands at a period unrelated to the grid. Fixed by drawing the grid with
  *    every rule rounded to a whole device pixel; the last group is about that
  *    rounding, including the price it charges.
+ *
+ * 4. THE HEAVY RULE DID NOT CASCADE. Everything else about the ladder was
+ *    anchored to the screen and the major square was anchored to the world, so
+ *    the PROPORTION of heavy rules on screen swept from one in two at 25% to
+ *    one in sixteen at 250%: the same ink arranged into a different picture at
+ *    each end of the range. Fixed by moving the whole ladder in octaves, which
+ *    is what the scale-invariance group asserts and what makes the density
+ *    group exact rather than bounded.
  */
 
 /** Every zoom in the range, at a given resolution. The bugs were never at the round numbers. */
@@ -91,6 +103,41 @@ function inkedPitches(zoom: number): readonly number[] {
   return gridPitches(zoom).filter((_, index) => (levels[index]?.strength ?? 0) > 0);
 }
 
+/**
+ * A rank named by the world it measures rather than by its slot in the array.
+ *
+ * WHICH IS THE ONLY WAY TO COMPARE TWO ZOOMS NOW THE LADDER MOVES. Index 4 is
+ * the finest rank at whatever octave the zoom folds to, so it names a 16-world-
+ * unit rule at 49% and an 8-world-unit rule at 51% - and an assertion that
+ * compares index against index across that boundary reads a continuous picture
+ * as a jump from full ink to none. `key` is `log2(pitch / GRID)`, an integer
+ * that names the same rule at every zoom.
+ *
+ * Off the end of the ladder the answer is the rank's limit rather than nothing:
+ * anything coarser than the heavy rule would be drawn heavy, anything finer
+ * than the finest is not drawn at all. Those are the values that make the
+ * comparison continuous, and they are also simply true.
+ */
+function rankAt(zoom: number, key: number): { strength: number; weight: number } {
+  const levels = gridLevels(zoom);
+  const keys = levels.map((level) => Math.round(Math.log2(level.pitch / GRID)));
+  const found = levels[keys.indexOf(key)];
+
+  if (found) return found;
+  return key > Math.max(...keys) ? { strength: 1, weight: 1 } : { strength: 0, weight: 0 };
+}
+
+/** Every rank on screen at either of two zooms, named the same way in both. */
+function keysAcross(...zooms: readonly number[]): readonly number[] {
+  return [
+    ...new Set(
+      zooms.flatMap((zoom) =>
+        gridLevels(zoom).map((level) => Math.round(Math.log2(level.pitch / GRID))),
+      ),
+    ),
+  ];
+}
+
 describe('the scale cascade', () => {
   it('never inks a level whose rules are closer than the legibility floor', () => {
     /*
@@ -110,16 +157,17 @@ describe('the scale cascade', () => {
     }
   });
 
-  it('always has a fully drawn level, between 8 and 20 px apart', () => {
+  it('always has a fully drawn level, between 8 and 16 px apart', () => {
     /*
      * THE 250% BUG, AS A PROPERTY. At every zoom SOME level must be at full ink
      * and its pitch has to stay inside a narrow band, or the backdrop is either
-     * bare major rules or a haze of half-drawn ones.
+     * bare heavy rules or a haze of half-drawn ones.
      *
-     * Both ends are derived. It can never be finer than `GRID_PITCH_FULL` - the
-     * pitch the grid is authored at - and never coarser than `GRID * MAX_ZOOM`,
-     * which is what an eighth of a major square measures at the top of the
-     * range.
+     * Both ends are derived and the band is now exactly an octave: the finest
+     * fully inked rank can never be finer than `GRID_PITCH_FULL` - the pitch the
+     * grid is authored at - and never coarser than twice that, because at twice
+     * that the ladder has already stepped an octave. It used to run to
+     * `GRID * MAX_ZOOM`, which is 20px, because above 200% the ladder ran out.
      */
     for (const zoom of SWEEP) {
       const levels = gridLevels(zoom);
@@ -132,7 +180,7 @@ describe('the scale cascade', () => {
         finest,
         `zoom ${zoom.toString()}: the finest full level is ${finest.toFixed(1)}px apart`,
       ).toBeGreaterThanOrEqual(GRID_PITCH_FULL - 1e-9);
-      expect(finest).toBeLessThanOrEqual(GRID * MAX_ZOOM + 1e-9);
+      expect(finest).toBeLessThan(2 * GRID_PITCH_FULL);
     }
   });
 
@@ -153,13 +201,47 @@ describe('the scale cascade', () => {
     }
   });
 
-  it('brings every level in coarsest first, and never out of order', () => {
-    // A finer level must never be inked more heavily than a coarser one, or the
-    // grid would show its subdivisions before the squares they subdivide.
+  it('has at most one level part-major, and never the one that is part-drawn', () => {
+    /*
+     * WHAT LETS `GridLayer` PAINT THE CROSSFADE AS ONE FILL OVER ANOTHER.
+     *
+     * A rank on its way from the minor ink to the major one is drawn twice: the
+     * minor ink at full alpha, then the major over it at the weight. That is
+     * exactly a mix of the two ONLY while the rank underneath is opaque. If a
+     * rank could be part-inked and part-heavy at once, the second fill would
+     * land on rules the first had already made translucent and the result would
+     * read lighter than either ink - a rank that dips as it changes weight.
+     *
+     * It cannot happen, and not by luck: the two ramps are `GRID_MAJOR_EVERY`
+     * apart in pitch, which is three doublings, on a ladder five ranks long.
+     */
     for (const zoom of SWEEP) {
-      const strengths = gridStrengths(zoom);
-      for (let index = 1; index < strengths.length; index += 1) {
-        expect(strengths[index] ?? 0).toBeLessThanOrEqual((strengths[index - 1] ?? 0) + 1e-9);
+      const levels = gridLevels(zoom);
+      const partlyHeavy = levels.filter((level) => level.weight > 0 && level.weight < 1);
+
+      expect(
+        partlyHeavy.length,
+        `zoom ${zoom.toString()}: ${partlyHeavy.length.toString()} levels part-major`,
+      ).toBeLessThanOrEqual(1);
+
+      for (const level of levels) {
+        const both = level.strength > 0 && level.strength < 1 && level.weight > 0;
+        expect(both, `zoom ${zoom.toString()}: a level is part-drawn and heavy at once`).toBe(
+          false,
+        );
+      }
+    }
+  });
+
+  it('brings every level in coarsest first, and never out of order', () => {
+    // A finer level must never be inked more heavily, or weighted more heavily,
+    // than a coarser one - or the grid would show its subdivisions before the
+    // squares they subdivide.
+    for (const zoom of SWEEP) {
+      for (const ladder of [gridStrengths(zoom), gridWeights(zoom)]) {
+        for (let index = 1; index < ladder.length; index += 1) {
+          expect(ladder[index] ?? 0).toBeLessThanOrEqual((ladder[index - 1] ?? 0) + 1e-9);
+        }
       }
     }
   });
@@ -177,46 +259,160 @@ describe('the scale cascade', () => {
      * six notches cover an octave, and the ramp is linear - so a sixth is the
      * worst case. A hard switch would score 1.0 here, which is what this is
      * really testing for, and the smoothstep this replaced scored a quarter.
+     *
+     * THE WEIGHT IS HELD TO THE SAME BOUND, because a rule changing weight is
+     * exactly as visible as one appearing, and it is the new thing the cascade
+     * introduced. Both ramps are linear over an octave, so both score a sixth.
+     *
+     * AND IT IS ASKED RANK BY RANK, NOT SLOT BY SLOT - see `rankAt`. The whole
+     * ladder shifts by one slot every time the zoom crosses a power of two, so
+     * comparing index against index across that boundary would report the
+     * smoothest moment in the range as the most violent one.
      */
     const step = zoomFactorForNotches(1);
     for (let zoom = MIN_ZOOM; zoom <= MAX_ZOOM; zoom *= step ** 0.25) {
-      const before = gridStrengths(zoom);
-      const after = gridStrengths(Math.min(zoom * step, MAX_ZOOM));
+      const next = Math.min(zoom * step, MAX_ZOOM);
 
-      after.forEach((value, index) => {
-        expect(
-          Math.abs(value - (before[index] ?? 0)),
-          `level ${index.toString()} moves too far in one notch from ${zoom.toFixed(3)}`,
-        ).toBeLessThan(1 / 3);
+      for (const key of keysAcross(zoom, next)) {
+        const before = rankAt(zoom, key);
+        const after = rankAt(next, key);
+
+        for (const measure of ['strength', 'weight'] as const) {
+          expect(
+            Math.abs(after[measure] - before[measure]),
+            `${measure} of the ${(GRID * 2 ** key).toString()}-unit rule moves too far in one notch from ${zoom.toFixed(3)}`,
+          ).toBeLessThan(1 / 3);
+        }
+      }
+    }
+  });
+
+  it('fades a rank in, and changes its weight, over exactly one octave each', () => {
+    /*
+     * Stated directly rather than inferred from a sweep: the zoom at which a
+     * rank reaches full ink is exactly twice the zoom at which it starts to
+     * appear, and the same is true of its weight. That doubling is what makes
+     * "at most one level part-drawn" true, and it is the one relationship in the
+     * cascade that has to be exact.
+     */
+    for (const multiple of GRID_RANKS) {
+      const worldPitch = GRID * multiple;
+
+      for (const [ramp, over] of [
+        [gridLevelStrength, worldPitch],
+        [gridLevelWeight, worldPitch / GRID_MAJOR_EVERY],
+      ] as const) {
+        const starts = GRID_PITCH_MIN / over;
+        const completes = GRID_PITCH_FULL / over;
+
+        expect(completes / starts).toBeCloseTo(2, 12);
+        expect(ramp(worldPitch, starts)).toBe(0);
+        expect(ramp(worldPitch, completes)).toBe(1);
+        expect(ramp(worldPitch, Math.sqrt(starts * completes))).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('refuses a nonsense zoom rather than returning nonsense pitches', () => {
+    /*
+     * `gridOctave` raises two to a computed power, so a zoom of zero would put
+     * every world pitch at infinity and `gridRules` would then step the lattice
+     * by NaN. The guard is in the octave rather than at each caller because it
+     * is the only place a zoom becomes an exponent.
+     */
+    for (const zoom of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(gridOctave(zoom)).toBe(1);
+      for (const level of gridLevels(zoom)) expect(Number.isFinite(level.pitch)).toBe(true);
+    }
+  });
+});
+
+/**
+ * SCALE INVARIANCE
+ *
+ * The point of the whole ladder, and the thing the fourth fix bought. Everything
+ * about the grid used to be anchored to the screen except the heavy rule, which
+ * was anchored to the world at `GRID * GRID_MAJOR_EVERY`. So a major square was
+ * 16px across at 25%, where every second rule on screen was heavy, and 160px at
+ * 250%, where one in sixteen was - the same ink arranged into two different
+ * pictures.
+ *
+ * Now the heavy rule cascades with the rest, and what falls out is stronger than
+ * "looks similar": the picture depends on `log2(zoom)` MOD 1 and on nothing
+ * else, so the view at any zoom is pixel-for-pixel the ladder at twice that
+ * zoom. What it costs is the property this replaced - a major square is 32 snap
+ * steps at the bottom of the range and 4 at the top - and that is asserted too,
+ * because a price that is not written down gets paid twice.
+ */
+describe('scale invariance', () => {
+  it('draws the same picture at every octave', () => {
+    // The headline. Same screen pitches, same ink, same weights, at z and 2z.
+    for (const zoom of [...SWEEP, ...ZOOMS]) {
+      const here = gridLevels(zoom);
+      const octaveUp = gridLevels(zoom * 2);
+
+      expect(octaveUp.length).toBe(here.length);
+      here.forEach((level, index) => {
+        const other = octaveUp[index];
+        const at = `zoom ${zoom.toFixed(4)}, level ${index.toString()}`;
+
+        expect((other?.pitch ?? 0) * zoom * 2, `${at}: screen pitch`).toBeCloseTo(
+          level.pitch * zoom,
+          9,
+        );
+        expect(other?.strength, `${at}: ink`).toBeCloseTo(level.strength, 9);
+        expect(other?.weight, `${at}: weight`).toBeCloseTo(level.weight, 9);
       });
     }
   });
 
-  it('fades each level over exactly one octave of zoom', () => {
-    /*
-     * Stated directly rather than inferred from a sweep: the zoom at which a
-     * level reaches full ink is exactly twice the zoom at which it starts to
-     * appear. That doubling is what makes "at most one level part-drawn" true,
-     * and it is the one relationship in the cascade that has to be exact.
-     */
-    for (const multiple of GRID_SUBDIVISIONS) {
-      const worldPitch = GRID * multiple;
-      const starts = GRID_PITCH_MIN / worldPitch;
-      const completes = GRID_PITCH_FULL / worldPitch;
+  it('keeps the ladder inside one octave of the zoom', () => {
+    // `gridOctave` is the only thing that varies with zoom, and all it does is
+    // fold the zoom into [1, 2). Everything downstream reads that fold.
+    for (const zoom of [...SWEEP, ...ZOOMS]) {
+      const folded = zoom * gridOctave(zoom);
 
-      expect(completes / starts).toBeCloseTo(2, 12);
-      expect(gridLevelStrength(worldPitch, starts)).toBe(0);
-      expect(gridLevelStrength(worldPitch, completes)).toBe(1);
-      expect(gridLevelStrength(worldPitch, Math.sqrt(starts * completes))).toBeGreaterThan(0);
+      expect(Number.isInteger(Math.log2(gridOctave(zoom))), `zoom ${zoom.toString()}`).toBe(true);
+      expect(folded, `zoom ${zoom.toString()}`).toBeGreaterThanOrEqual(1 - 1e-12);
+      expect(folded, `zoom ${zoom.toString()}`).toBeLessThanOrEqual(2 + 1e-12);
     }
   });
 
-  it('keeps the major square the same world size at every zoom', () => {
-    // The reference the user measures against does not move under them; it is
-    // the subdivisions inside it that come and go.
-    for (const zoom of SWEEP) {
-      expect(gridLevels(zoom)[0]).toEqual({ pitch: GRID * GRID_MAJOR_EVERY, strength: 1 });
+  it('puts a heavy rule every eight fully drawn squares, at every zoom', () => {
+    /*
+     * WHAT THE MAJOR SQUARE MEANS NOW. Not a fixed amount of world - a fixed
+     * amount of SCREEN, measured in the squares that are actually on it. The
+     * heavy rank is `GRID_MAJOR_EVERY` times the finest rank at full ink, which
+     * is the sentence "eight squares to a major square" said about the picture
+     * instead of about the document.
+     */
+    for (const zoom of [...SWEEP, ...ZOOMS]) {
+      const levels = gridLevels(zoom);
+      const heavy = levels[0];
+      const finestFull = levels.filter((level) => level.strength >= 1).at(-1);
+
+      expect(heavy?.strength).toBe(1);
+      expect(heavy?.weight).toBe(1);
+      expect((heavy?.pitch ?? 0) / (finestFull?.pitch ?? 1), `zoom ${zoom.toString()}`).toBeCloseTo(
+        GRID_MAJOR_EVERY,
+        9,
+      );
     }
+  });
+
+  it('no longer means a fixed number of snap steps, which is the price', () => {
+    /*
+     * THE COST, ASSERTED SO IT IS NOT REDISCOVERED AS A BUG. A major square was
+     * always eight snap steps and now it is 32 at the bottom of the range and 4
+     * at the top. Nothing reads it: there is no ruler, no readout in squares,
+     * and `snap` is `GRID` whatever the grid is drawing. If something ever does
+     * read it, this test is where the conflict shows up.
+     */
+    const steps = (zoom: number): number => (gridLevels(zoom)[0]?.pitch ?? 0) / GRID;
+
+    expect(steps(MIN_ZOOM)).toBe(32);
+    expect(steps(1)).toBe(GRID_MAJOR_EVERY);
+    expect(steps(MAX_ZOOM)).toBe(4);
   });
 });
 
@@ -227,76 +423,97 @@ describe('the scale cascade', () => {
  * lighter and grainier than at 89%, and the whole range was asked to look the
  * same in character. Most of that was rasterisation - a split rule is
  * composited in sRGB and reads lighter than a crisp one carrying identical ink
- * - but not all of it. The ladder used to stop at `GRID`, so above 100% the
- * cascade stopped too and the grid simply thinned: the finest rules went from
- * 8px apart to 20px apart between 100% and 250%, which is three fifths of the
- * ink.
+ * - but not all of it, and the residue took two more passes. The ladder used to
+ * stop at `GRID`, so above 100% the cascade stopped too and the grid simply
+ * thinned; then, once it did not, what was left was the heavy rule being
+ * anchored to the world while everything else was anchored to the screen.
  *
  * Ink per unit length is the thing to hold, and it can be computed exactly
- * rather than photographed. A level's rules land every `pitch`, but half of
- * them are claimed by the level above, so each level below the major
- * contributes `strength / (2 * pitch)`.
+ * rather than photographed. A rank's rules land every `pitch`, but half of them
+ * are claimed by the rank above, so each rank below the heaviest contributes
+ * `strength / (2 * pitch)` - weighted by how heavy its own ink is.
  */
-function inkPerHundredPixels(zoom: number, levels = gridLevels(zoom)): number {
-  const major = levels[0];
-  if (!major) return 0;
+function inkPerHundredPixels(
+  zoom: number,
+  levels = gridLevels(zoom),
+  major = 1,
+  minor = 1,
+): number {
+  const heavy = levels[0];
+  if (!heavy) return 0;
 
-  let ink = 1 / (major.pitch * zoom);
-  for (const level of levels.slice(1)) ink += level.strength / (2 * level.pitch * zoom);
+  /** A rank's ink per screen pixel: how often it lands, times how dark it is. */
+  const contribution = (level: (typeof levels)[number], every: number): number =>
+    (level.strength * (minor + (major - minor) * level.weight)) / (every * zoom);
+
+  let ink = contribution(heavy, heavy.pitch);
+  for (const level of levels.slice(1)) ink += contribution(level, 2 * level.pitch);
 
   return ink * 100;
 }
 
 describe('apparent density', () => {
-  it('is exactly the authored density from the minimum zoom to 200%', () => {
+  it('is exactly the authored density across the whole zoom range', () => {
     /*
-     * EXACTLY, not approximately, and that is what fixes the fade's shape. The
-     * linear ramp is the unique strength curve that conserves ink while a level
-     * fades - the derivation is on `gridLevelStrength` - so from `MIN_ZOOM` up
-     * to the zoom where the ladder runs out, the surface carries precisely the
-     * ink it is authored with: one hairline every `GRID` pixels.
+     * EXACTLY, not approximately, and ACROSS THE WHOLE RANGE rather than up to
+     * 200%. Two separate facts hold it there:
      *
-     * Smoothstep put this up to 5% over, peaking around 45%, which is what was
-     * left of "the whole surface goes lighter at one zoom than another" once
-     * the rasterisation was dealt with.
+     *   - the linear ramp is the unique ink curve that conserves ink while a
+     *     rank fades, derived on `gridLevelStrength`;
+     *   - the ladder is anchored to the screen, so it never runs out. It used to
+     *     stop at `GRID * 0.5` in the world, and above 200% there was nothing
+     *     left to fade in: the grid could only spread, to 10px at 250% against
+     *     the 8px it is authored at, which was a fifth of the range at 80% of
+     *     the right density. That stretch is gone rather than bounded.
+     *
+     * Smoothstep, for its part, put this up to 5% over, peaking around 45%.
      */
-    for (const zoom of sweep(MIN_ZOOM, 2, 400)) {
+    for (const zoom of SWEEP) {
       expect(inkPerHundredPixels(zoom), `zoom ${zoom.toFixed(4)}`).toBeCloseTo(100 / GRID, 9);
     }
   });
 
-  it('thins by no more than a quarter above 200%, where the ladder runs out', () => {
+  it('holds it whatever the two inks weigh', () => {
     /*
-     * THE HONEST BOUND. Past 200% every level is at full ink, so there is
-     * nothing left to fade in and the grid can only spread: at 250% the finest
-     * rules are 10px apart rather than 8, which is 10 units of ink per 100px
-     * against 12.5. That is the one stretch of the range where the density is
-     * not flat, it is a fifth of the range, and the alternative is a rule finer
-     * than half a snap step.
+     * THE CROSSFADE'S SHAPE, AS THE REASON IT IS NOT A FREE CHOICE. A rank
+     * changing from minor to major changes the surface's ink unless the ramp is
+     * exactly linear in the folded zoom - and that is true for ANY pair of inks,
+     * which is what keeps a theme from being able to break the density by
+     * picking a heavier major rule. `themes.css` can, and does, vary the ratio.
      */
-    const inks = sweep(MIN_ZOOM, MAX_ZOOM, 400).map((zoom) => inkPerHundredPixels(zoom));
-    const lo = Math.min(...inks);
-    const hi = Math.max(...inks);
+    for (const [major, minor] of [
+      [1, 1],
+      [2, 1],
+      [3, 1],
+      [1.4, 0.9],
+      [8, 1],
+    ]) {
+      const authored = (100 * ((major ?? 1) + 7 * (minor ?? 1))) / (GRID * GRID_MAJOR_EVERY);
 
-    expect(hi).toBeCloseTo(100 / GRID, 9);
-    expect(hi / lo, `ink runs ${lo.toFixed(2)} to ${hi.toFixed(2)} per 100px`).toBeLessThanOrEqual(
-      1.25 + 1e-9,
-    );
+      for (const zoom of SWEEP) {
+        expect(
+          inkPerHundredPixels(zoom, gridLevels(zoom), major, minor),
+          `zoom ${zoom.toFixed(4)} at major ${String(major)} / minor ${String(minor)}`,
+        ).toBeCloseTo(authored, 9);
+      }
+    }
   });
 
-  it('would have varied by more than half without the finest level', () => {
+  it('would swing by an octave without the finest rank', () => {
     /*
      * THE REASON THE LADDER GOES BELOW THE SNAP STEP, stated as the number it
-     * buys. Dropping the sixteenth-of-a-major rule is exactly the old ladder,
-     * and it is what made 250% a different surface from 100%.
+     * buys. Drop the finest rank and there is nothing fading in, so the grid
+     * spreads from 8px to 16px across every octave and snaps back - a factor of
+     * two in density at every power of two, rather than the once-across-the-
+     * range it used to be.
      */
     const inks = SWEEP.map((zoom) => inkPerHundredPixels(zoom, gridLevels(zoom).slice(0, -1)));
 
-    expect(Math.max(...inks) / Math.min(...inks)).toBeGreaterThan(2);
+    expect(Math.max(...inks) / Math.min(...inks)).toBeGreaterThan(1.9);
   });
 
-  it.each(ZOOMS)('is close to the authored density at zoom %s', (zoom) => {
-    expect(inkPerHundredPixels(zoom)).toBeGreaterThan(9.5);
+  it.each(ZOOMS)('is the authored density at zoom %s', (zoom) => {
+    expect(inkPerHundredPixels(zoom)).toBeCloseTo(100 / GRID, 9);
   });
 });
 
@@ -402,11 +619,11 @@ describe('where the rules land', () => {
 
   it('gives each rule to the coarsest level that lands on it', () => {
     /*
-     * PHASE-LOCK, RESTATED FOR A GRID WITH NO TILE. World 64 is a multiple of 4,
-     * 8, 16 and 32 as well, so without this every major rule would also be
-     * drawn as an eighth, a quarter and a half - four inks stacked, making every
-     * eighth rule heavier than its token asks for. That is the same visual
-     * defect the original bug produced, by a different route.
+     * PHASE-LOCK, RESTATED FOR A GRID WITH NO TILE. A multiple of 64 is a
+     * multiple of 4, 8, 16 and 32 as well, so without this every heavy rule
+     * would also be drawn as an eighth, a quarter and a half - four inks
+     * stacked, making every eighth rule darker than its token asks for. That is
+     * the same visual defect the original bug produced, by a different route.
      */
     for (const { zoom, origin, dpr } of CASES) {
       const levels = gridLevels(zoom);

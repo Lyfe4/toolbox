@@ -903,16 +903,28 @@ is not linear, so a split rule reads _lighter_ than a crisp one carrying
 identical ink. The smaller the pitch the larger the share of the grid that is
 split, so the whole surface drifted lighter as you zoomed out.
 
-Both were measured on the gradient build, over a bare strip of canvas at
-twenty-three zooms:
+Both were measured on the gradient build, over a bare strip of canvas at a
+sweep of zooms. The third column is the same strip once the heavy rule cascaded
+too — [below](#the-heavy-rule-cascades-and-that-is-what-makes-the-picture-the-same):
 
-| Measure                                                              | Gradients             | Drawn                 |
-| -------------------------------------------------------------------- | --------------------- | --------------------- |
-| Pixels away from the backdrop, at 100%                               | 44%                   | **23.4%**             |
-| …against the geometry's own answer for one-pixel rules at that pitch | 23.4%                 | 23.4%                 |
-| Distinct shades covering a bare strip                                | a continuum           | **3–6**               |
-| Mean ink, over the whole zoom range                                  | 4.8 → 18.8 (**3.9×**) | 8.3 → 14.2 (**1.7×**) |
-| …between 40% and 200%                                                | 2.6×                  | **1.23×**             |
+| Measure                                                              | Gradients             | Drawn             | Screen-anchored         |
+| -------------------------------------------------------------------- | --------------------- | ----------------- | ----------------------- |
+| Pixels away from the backdrop, at 100%                               | 44%                   | **23.4%**         | 23.5%                   |
+| …against the geometry's own answer for one-pixel rules at that pitch | 23.4%                 | 23.4%             | 23.4%                   |
+| Distinct shades covering a bare strip                                | a continuum           | **3–6**           | 3–8                     |
+| Mean ink, over the whole zoom range                                  | 4.8 → 18.8 (**3.9×**) | 8.3 → 14.2 (1.7×) | 10.6 → 10.9 (**1.03×**) |
+| …between 40% and 200%                                                | 2.6×                  | 1.23×             | not carved out          |
+| Two zooms one octave apart                                           | —                     | —                 | **within 1.8%**         |
+
+The working range stopped being worth stating separately. It was there because
+the ends of the range were genuinely worse than the middle, and the reason they
+were is the row above them: the whole-range figure is now inside what used to be
+the exemption, so the harness asserts one bound over every zoom it samples.
+
+The extra shades in the third column are the crossfade: mid-octave a rank is
+part of the way from the minor ink to the major, and the rank fading in crosses
+both of the heavy ones. Seven is the accounting, and the check is really looking
+for the hundreds that antialiasing produces.
 
 Twice the geometry's own coverage is the signature: every rule was two pixels
 wide. Now every rule is rounded to a whole device pixel, so every rule is
@@ -946,12 +958,17 @@ every 2px is a tone rather than a grid. **Something has to change with scale,
 and what changes is which world level is drawn** — never the ink and never the
 weight. A square just means more world when you are further away.
 
-- **The major square never moves.** `GRID × 8` world units at every scale, so a
-  major square always means the same thing — eight snap steps — and the
-  reference does not change under the user mid-zoom.
-- **Four subdivisions inside it** — halves, quarters, eighths and sixteenths of
-  the major square: 32, 16, 8 and 4 world units. They come and go, and only ever
-  appear _between_ rules already on screen.
+- **The ladder is anchored to the screen, not to the world.** Five ranks, every
+  one a power of two times `GRID` world units, and which power is read off the
+  zoom so that the finest fully-inked rank is always between eight and sixteen
+  pixels apart. The whole ladder steps by an octave every time the zoom crosses
+  a power of two.
+- **The heavy rule steps with it.** It used to be pinned at `GRID × 8` world
+  units so that a major square always meant eight snap steps; now it is eight
+  _fully drawn squares_, which is the same sentence said about the picture
+  rather than about the document. See [the heavy rule
+  cascades](#the-heavy-rule-cascades-and-that-is-what-makes-the-picture-the-same)
+  for what that bought and what it cost.
 - **A level is fully inked once its on-screen pitch reaches `GRID` pixels** —
   the pitch the grid is authored at, which is what one square looks like at 100%
   zoom — and absent below half that, where the ink doubles to 25% coverage and
@@ -961,13 +978,25 @@ Both ends of that band are derived, and the factor of two between them does the
 real work: the levels are themselves an octave apart, so a one-octave transition
 band can hold only one of them. **At most one level is ever part-drawn.**
 
-**The sixteenth is half a snap step, and it is deliberate.** The ladder used to
-stop at `GRID`, on the argument that a rule finer than the snap step is a line
+What falls out is stronger than "reads the same at every zoom". The picture is a
+function of `log2(zoom) mod 1` and of nothing else, so **the view at any zoom is
+the view at twice that zoom, rule for rule and shade for shade.** Measured off
+the bitmap in a real engine, a row of canvas at 25%, 50%, 100% and 200% is the
+same 50 rules at the same 8px pitch with the same 7 of them heavy; at 63% and
+126% it is the same 80 rules at 5 and 6 px with the same four shades in the same
+proportions.
+
+**The finest rank is below the snap step, and it is deliberate.** The ladder used
+to stop at `GRID`, on the argument that a rule finer than the snap step is a line
 nothing can land on. The argument is true and it was the wrong conclusion:
 because the ladder stopped, so did the cascade, and from 100% to 250% the finest
 rules simply spread from 8px apart to 20px — three fifths of the grid's ink,
 gone, over the top third of the range. A ruler's finest marks are not places you
 put things either.
+
+Once the ladder cascades the argument stops being coherent as well as wrong: no
+rank has a fixed relationship to the snap step any more, and the finest one runs
+from two snap steps at 25% to a quarter of one at 250%.
 
 **And the fade is linear, because that is the shape that conserves ink.** It was
 smoothstep, chosen so a level would arrive without a corner. Writing the ink out
@@ -982,31 +1011,82 @@ telescopes — so the total is `(1 + s) / (2ᵏz)`, and holding it constant give
 `s = (pitch − GRID_PITCH_MIN) / GRID_PITCH_MIN`, the plain linear ramp across
 the octave. Smoothstep sits above that line through the middle of every octave,
 so the surface ran up to 5% denser than it is authored at, peaking around 45%
-zoom. A linear ramp holds the ink **exactly** constant from the minimum zoom to
-200%, and it is gentler per notch than smoothstep was — a sixth rather than a
-quarter, over the six notches an octave takes.
+zoom. A linear ramp holds the ink **exactly** constant across the whole range,
+and it is gentler per notch than smoothstep was — a sixth rather than a quarter,
+over the six notches an octave takes.
 
 `grid.test.ts` asserts each of these as a property over a sweep of the range,
 including that one notch of the wheel cannot switch a level on or off: the fade
 exists because a pop would undo the point of having made the zoom continuous.
 
-#### The limit that is left
+### The heavy rule cascades, and that is what makes the picture the same
 
-Above 200% there is nothing left to fade in, so the grid can only spread: at
-250% the finest rules are 10px apart rather than 8, which is 10 ink units per
-100px against 12.5. That is the one stretch where density is not flat, and it is
-a fifth of the range.
+It did not, and that was the last thing about the grid that changed with the
+zoom. `GRID × 8` world units at every scale is a major square 16px across at 25%
+— every second rule on screen a heavy one — and 160px at 250%, where one rule in
+sixteen is. Same ink, wholly different picture, and it read as the surface
+getting heavier as you zoomed out: **1.72× of mean ink across the range, 1.23×
+between 40% and 200%**, measured over a bare strip in both engines. It is
+**1.03×** now, over the whole range with no working-range exemption, and the
+five octave pairs the harness samples agree to within 1.8% — which is the claim
+the density bound is a consequence of rather than the other way round.
 
-The other residue is the **proportion of major rules on screen**, which is a
-consequence of anchoring the major square to the world. At 25% a major square is
-16px across, so every second rule is a heavy one; at 250% it is 160px and one
-rule in sixteen is. Measured as mean ink that is a drift of 1.7× across the
-full range and 1.23× between 40% and 200% — the difference is concentrated in
-the bottom and top eighths of the range. Removing it means letting the heavy rule cascade
-too, so that it is always eight fine squares apart on screen; that makes the
-density exactly flat and the picture exactly scale-invariant, and it costs the
-property that a major square always means the same number of snap steps, plus a
-crossfade as a rule changes weight. It has not been done.
+The property it was defended with is that a major square always means the same
+number of snap steps. That property is real and **nothing reads it**: there is no
+ruler, no readout in squares, and `snap` is `GRID` whatever the grid happens to
+be drawing. So the trade went the other way. A major square is now 32 snap steps
+at the bottom of the range and 4 at the top, and the backdrop is the same
+backdrop at every zoom — which is the thing a person does read. `grid.test.ts`
+asserts the price as well as the gain, so it cannot be rediscovered as a bug.
+
+**The crossfade is forced rather than chosen**, which is the part worth writing
+down. Once an octave, a rank has to travel from the minor ink to the major one.
+Write the weighted ink out with `M` for the heavy rule's ink per pixel and `m`
+for the minor's, over an octave parameterised by `t = zoom × octave` in [1, 2),
+multiplied through by the heavy rank's screen pitch of `64t`:
+
+```
+64t · ink = M + [m + (M − m)·g] + 2m + 4m + 8m(t − 1)
+```
+
+— the heavy rank, the rank taking the weight over at `g`, the two ranks between
+them, and the rank fading in. Holding the ink per pixel still gives
+`(M − m)·g = (M − m)(t − 1)`, so **`g = t − 1` whatever the two inks are**: the
+same linear ramp as the fade, and a theme cannot break the density by picking a
+heavier major. It is one line in the code — a rank is heavy to the degree that
+the rank eight times finer than it is itself drawn — and that line is the
+conserving answer rather than a curve somebody liked.
+
+At most one rank is part-inked and at most one is part-heavy, and they are never
+the same rank: the two ramps sit three octaves apart on a five-rank ladder. That
+is what lets `GridLayer` paint the crossfade as the minor ink with the major over
+it at the weight, rather than having to interpolate two tokens it only holds as
+strings.
+
+#### What is left
+
+Three things, and none of them is the picture changing between one octave and
+the next.
+
+- **Gap jitter, which varies _within_ an octave.** Each rule is rounded to its
+  own device pixel, so at the bottom of an octave the pitch is a whole 8px and
+  every gap is equal, while at `t = 1.26` it is 5.04px and the gaps run
+  5, 5, 5, 5, 6. That is octave-periodic like everything else — 63% and 126%
+  jitter identically — but it is not flat across the octave, and it is the one
+  residue of the drawn grid that a person could in principle see. It is bounded
+  per gap in `grid.test.ts` and it is what the scale-invariance pairs measure at
+  1.8% rather than 0%.
+- **A major square is no longer a fixed amount of world.** Stated above; it is
+  the thing that was traded away.
+- **Forced colours still pops once an octave.** There is one ink there and no
+  faded rule is available, so the crossfade is rounded to its nearer end. A grid
+  with a single weight that is also the same at every zoom has to change rank
+  somewhere, and a pop at the octave boundary is the smallest place to put it.
+
+Above 200% is no longer on that list. The ladder used to run out — nothing left
+to fade in, so the grid could only spread, to 10px at 250% against the 8px it is
+authored at — and a screen-anchored ladder does not run out, because there is
+always another power of two below the one it is standing on.
 
 ### The ink is its own pair of tokens
 
@@ -2137,12 +2217,29 @@ nodes and the wire layer sit on a 0×0 absolutely positioned transformed plane, 
 narrowing the root changes three boxes and does not reflow or re-render a single
 node.
 
-**These numbers predate the drawn grid**, which added one thing to that
-accounting: `GridLayer` observes its own size, so a slide now wakes React once
-per frame to repaint the grid's bitmap. That repaint is a few hundred rectangles
-in a single path fill and the layer is the only thing re-rendered — the nodes
-still are not — but it is no longer true that React sleeps through the
-animation, and the figures above were measured when it did.
+**The drawn grid added one thing to that accounting**, and it turns out not to
+change the answer. `GridLayer` observes its own size, so a slide wakes React once
+per frame to repaint the grid's bitmap, and the table above was measured when
+React slept through the animation instead. Measured again on the same canvas,
+against a control that keeps the layer in the paint tree at a fixed size so that
+nothing wakes React — which isolates the repaint from the mere existence of a
+full-viewport canvas — over six alternated passes per variant:
+
+| Variant, worst frame over the slide | Gecko       | JavaScriptCore |
+| ----------------------------------- | ----------- | -------------- |
+| Grid repainting every frame         | 22.2–33.3ms | 45.1–48.2ms    |
+| Grid pinned, so React is not woken  | 22.2–27.8ms | 46.9–47.1ms    |
+| No grid layer at all                | 22.2–27.8ms | 35.5–40.0ms    |
+
+**The repaint is below the noise floor.** The first two rows differ by less than
+a frame's slack and the sign of the difference flips between runs; what is
+consistent is the third row, and that is the cost of compositing a
+viewport-sized canvas rather than of repainting it. The repaint itself is a few
+hundred rectangles in at most six path fills into a bitmap the compositor is
+re-rastering anyway, because it just changed size.
+
+So the figures above stand as written, with one word corrected: React does not
+sleep through the animation any more, and it does not need to.
 
 **What is not free is letting the panel's contents re-wrap.** The last row is
 the naive version of the same animation, and it is the one that stutters: every
