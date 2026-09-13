@@ -881,6 +881,108 @@ async function checkInspector(browser, label) {
       divider === null ? 'no handle' : `${String(divider.hit)}px target around a 1px rule`,
     );
 
+    /*
+     * ONE RULE AT THE BOUNDARY, COUNTED IN PAINTED PIXELS.
+     *
+     * Everything above describes the HANDLE, and all of it stayed true while
+     * the panel drew a second hairline of its own four pixels away: the rail
+     * nulled three of its four borders and kept `border-inline-start`, so the
+     * boundary was two 1px rules in the same `--pb-border-hairline` with a gap
+     * down the middle. Every assertion here passed throughout, because not one
+     * of them asked how many lines there are - they all asked about the one
+     * they already knew the name of.
+     *
+     * So this counts ink instead of reading declarations. A strip one pixel
+     * tall is taken across the boundary and the runs matching the rule's own
+     * colour are counted; the canvas grid is a different token and does not
+     * answer. Exactly one, or the divider has grown a twin again.
+     */
+    const boundary = await page.evaluate(() => {
+      const handle = document.querySelector('[data-testid="inspector-handle"]');
+      const panel = document.querySelector('[data-testid="node-inspector"]');
+      if (!handle || !panel) return null;
+      const hb = handle.getBoundingClientRect();
+      const pb = panel.getBoundingClientRect();
+      const cs = getComputedStyle(panel);
+      return {
+        /*
+         * THE BOUNDARY, AND NOT A PIXEL OF CANVAS.
+         *
+         * This overhung the handle by 6px on the canvas side at first, and
+         * caught the grid's heavy rule - which is drawn in the SAME ink as the
+         * hairline, so it counted as a second boundary and failed against a
+         * build that was correct. Measured at 1440px: canvas rule at x1088,
+         * handle's rule at x1096, panel edge at x1100.
+         *
+         * The boundary is exactly the handle's track plus the panel's first two
+         * columns: the handle's rule lives in the first, and a border on the
+         * panel - the defect this exists to catch - would paint in the second.
+         * Nothing on the canvas can reach either.
+         */
+        clip: {
+          x: Math.round(hb.left),
+          // Mid-panel, which is inside the body and clear of the head's own rule.
+          y: Math.round(pb.top + pb.height / 2),
+          width: Math.round(pb.left - hb.left) + 2,
+          height: 1,
+        },
+        ink: getComputedStyle(handle, '::before').backgroundColor,
+        panelBorders: [
+          cs.borderTopWidth,
+          cs.borderRightWidth,
+          cs.borderBottomWidth,
+          cs.borderLeftWidth,
+        ].join('/'),
+      };
+    });
+
+    let rules = null;
+    if (boundary !== null) {
+      const strip = await page.screenshot({ clip: boundary.clip });
+      rules = await page.evaluate(
+        async ({ bytes, ink }) => {
+          const bitmap = await createImageBitmap(
+            new Blob([new Uint8Array(bytes)], { type: 'image/png' }),
+          );
+          const surface = document.createElement('canvas');
+          surface.width = bitmap.width;
+          surface.height = 1;
+          const context = surface.getContext('2d');
+          context.drawImage(bitmap, 0, 0);
+          const { data } = context.getImageData(0, 0, bitmap.width, 1);
+          const want = (ink.match(/\d+/g) ?? []).slice(0, 3).map(Number);
+          const runs = [];
+          let inRun = false;
+          for (let x = 0; x < bitmap.width; x += 1) {
+            const hit =
+              Math.abs(data[x * 4] - want[0]) +
+                Math.abs(data[x * 4 + 1] - want[1]) +
+                Math.abs(data[x * 4 + 2] - want[2]) <=
+              12;
+            if (hit && !inRun) runs.push(1);
+            else if (hit) runs[runs.length - 1] += 1;
+            inRun = hit;
+          }
+          return runs;
+        },
+        { bytes: [...strip], ink: boundary.ink },
+      );
+    }
+
+    /*
+     * The COUNT is this check's whole job - the rule's width is the first
+     * check above, and a check that asserts two things fails without saying
+     * which.
+     */
+    check(
+      label,
+      'the boundary is one hairline, not the handle’s rule beside a panel border',
+      rules !== null && rules.length === 1,
+      rules === null
+        ? 'no handle'
+        : `${String(rules.length)} run(s) of the rule colour [${rules.join(', ')}]px wide, panel borders ${boundary.panelBorders}`,
+    );
+
     /* -- The handle really moves the boundary ---------------------------- */
     const before = docked.canvas.width;
     await page.getByTestId('inspector-handle').focus();

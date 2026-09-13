@@ -18,7 +18,7 @@
  *
  * THE BREAKPOINT IS ARITHMETIC, the same arithmetic as the tool runner's. The
  * rail is 320px at its narrowest and the canvas wants three node widths to
- * still read as a canvas: 224 * 3 = 672, plus the rail's own border, is 993.
+ * still read as a canvas: 224 * 3 = 672, plus the divider between them, is 993.
  * 1000 is the next round number clear of it. Below that the rail would be
  * taking width from the graph in order to show four select boxes.
  */
@@ -422,8 +422,26 @@
   }
 
   .inspector {
-    border-block: none;
-    border-inline-end: none;
+    /*
+     * NO BORDER AT ALL HERE, BECAUSE THE HANDLE OWNS THE BOUNDARY.
+     *
+     * This used to null three sides and keep `border-inline-start`, which drew
+     * a SECOND hairline four pixels from the handle's own. Both were
+     * `--pb-border-hairline`, so it read as one thick divider with a gap down
+     * the middle rather than as two mistakes - measured at 1400px: the handle's
+     * rule at x1056 and the panel's border at x1060, identical colour.
+     *
+     * The handle's `::before` is the one that has to survive, because it is the
+     * only one that behaves like a boundary: it thickens and accents on hover
+     * and focus, it carries the focus ring, and it is repainted in `CanvasText`
+     * under forced colours. A static border on the panel can do none of that,
+     * so keeping it would have meant the live half and the dead half of one
+     * line sitting side by side.
+     *
+     * `border: none` rather than a fourth `border-*: none`, so a side added to
+     * the base rule later cannot quietly reappear here.
+     */
+    border: none;
 
     /*
      * A FIXED WIDTH, AND A CONTENT COLUMN THAT DOES NOT MOVE WITH THE BOX.

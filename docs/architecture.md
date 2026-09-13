@@ -1849,8 +1849,8 @@ the one arrival that overrides that.
 
 **The breakpoint is arithmetic**, the same arithmetic as the tool runner's. The
 rail is 320px at its narrowest and a canvas wants three node widths to still
-read as a canvas: `224 × 3 = 672`, plus the rail's border, is 993. 1000 is the
-next round number clear of it.
+read as a canvas: `224 × 3 = 672`, plus the divider between them, is 993. 1000
+is the next round number clear of it.
 
 **Closed on a first visit, and wherever the user last left it after that.**
 
@@ -2173,6 +2173,46 @@ in every other mode. On hover and on focus the **rule** responds rather than a b
 it thickens to `--pb-border-width-strong` and takes the accent, and the focus
 ring goes on the rule rather than around the whole grab column, where it would
 have drawn a box four times the width of the thing it was describing.
+
+**And the panel drew a second one, four pixels away.** The rail nulled three of
+the panel's four borders and kept `border-inline-start`, so the boundary was two
+1px rules in the same `--pb-border-hairline` with a gap down the middle —
+measured at 1400px in both engines, the handle's rule at x1056 and the panel's
+border at x1060, identical colour. Only one of them was the drag handle.
+
+Everything written above stayed true throughout, and that is the point: each
+assertion describes the **handle**, and the handle was never wrong. `the divider
+paints a one-pixel rule and nothing else`, `no background and no border of its
+own`, `easier to grab than a one-pixel line` — all three passed while the
+boundary was visibly doubled, because not one of them asked _how many lines
+there are_. They asked about the one they already knew the name of.
+
+The handle's `::before` is the half that had to survive, because it is the only
+half that behaves like a boundary: it thickens and accents on hover and focus,
+it carries the focus ring, and it is repainted in `CanvasText` under forced
+colours. A static border on the panel can do none of that, so keeping it would
+have meant the live half and the dead half of one line side by side. The rail
+declares `border: none` on the panel now — the whole shorthand, so a side added
+to the base rule later cannot quietly reappear here — and the handle owns the
+edge outright.
+
+`check:browsers` counts **painted ink** rather than declarations now: a strip one
+pixel tall is taken across the boundary and the runs matching the rule's own
+colour are counted, which is exactly one. Verified to fail against the previous
+build — 2 runs, panel borders `0px/0px/0px/1px`, in both engines.
+
+The strip is the handle's track plus the panel's first two columns, and that
+bound is load-bearing rather than tidy. The first version overhung the handle by
+6px on the canvas side and caught the **grid's heavy rule**, which is drawn in
+the same ink as the hairline — so it reported two boundaries on a build that had
+one, and failed for a reason that had nothing to do with the panel. Measured at
+1440px: canvas rule at x1088, the handle's rule at x1096, the panel's edge at
+x1100. A check that counts ink has to be told exactly which ink is the subject.
+
+The sheet was checked for the same doubling and does not have it: below the
+breakpoint the handle is not rendered at all, and the panel keeps only
+`border-block-start`. Measured at 390px, one 1px hairline at the sheet's top
+edge in both engines.
 
 ### Opening and closing is a slide
 
