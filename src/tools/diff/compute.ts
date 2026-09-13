@@ -728,11 +728,20 @@ interface Span {
   end: number;
 }
 
-function hunkSpans(rows: readonly DiffRow[], context: number): readonly Span[] {
+/**
+ * `alsoAnchor` is a row index that must land in a hunk even though it compared
+ * equal - used for the last line when only its terminator changed. It is
+ * applied after the real changes because anchors have to arrive in ascending
+ * index order for the merge below to be correct, and it is always the last row.
+ */
+function hunkSpans(
+  rows: readonly DiffRow[],
+  context: number,
+  alsoAnchor: number | null,
+): readonly Span[] {
   const spans: Span[] = [];
 
-  rows.forEach((row, index) => {
-    if (row.kind === 'same') return;
+  const anchor = (index: number): void => {
     const start = Math.max(0, index - context);
     const end = Math.min(rows.length - 1, index + context);
     const last = spans[spans.length - 1];
@@ -741,7 +750,13 @@ function hunkSpans(rows: readonly DiffRow[], context: number): readonly Span[] {
     // what makes a real unified diff readable rather than a stutter of @@s.
     if (last && start <= last.end + 1) last.end = Math.max(last.end, end);
     else spans.push({ start, end });
+  };
+
+  rows.forEach((row, index) => {
+    if (row.kind !== 'same') anchor(index);
   });
+
+  if (alsoAnchor !== null) anchor(alsoAnchor);
 
   return spans;
 }
@@ -815,15 +830,53 @@ function endsWithoutNewline(
  * first; the hunks themselves are correct as written.
  */
 export function toUnified(report: DiffReport, context: number): string {
-  if (report.equal) return '';
-
   const rows = report.rows;
+
+  /*
+   * THE TRAILING NEWLINE, WHEN IT IS THE ONLY THING THAT CHANGED ABOUT THE
+   * LAST LINE.
+   *
+   * `\ No newline at end of file` is a note attached to a `-` or `+` line, so
+   * unified format has no way to say "the terminator changed" except by
+   * rewriting the last line as itself. `git diff` does exactly that, and emits
+   * a second hunk at the end of the file to carry it:
+   *
+   *     @@ -9,4 +9,4 @@
+   *      line 11
+   *     -line 12
+   *     \ No newline at end of file
+   *     +line 12
+   *
+   * Without it the last line is an ordinary context row, so it falls outside
+   * every hunk unless an edit happens to be within `context` lines of the end -
+   * and the change is silently dropped. Found by applying this tool's own
+   * patches with real `git apply`: they applied cleanly and produced a file
+   * that still had (or still lacked) the newline it was supposed to change.
+   *
+   * Only when the last row compared EQUAL. If it was added or removed it is in
+   * a hunk already, and `endsWithoutNewline` marks it correctly.
+   */
+  const lastRow = rows.length - 1;
+  const terminatorOnly =
+    report.notes.finalNewline.original !== report.notes.finalNewline.changed &&
+    rows[lastRow]?.kind === 'same';
+
+  /*
+   * `equal` alone is not "no patch needed". It means no line was added or
+   * removed, and losing a trailing newline adds and removes nothing - so
+   * `'a\nb\n'` against `'a\nb'` returned the EMPTY STRING, the one answer that
+   * says the two files are the same. The terminator is the only difference
+   * unified format can carry without a changed row, so it is the only thing
+   * that can override this.
+   */
+  if (report.equal && !terminatorOnly) return '';
+
   const lines: string[] = ['--- original', '+++ changed'];
 
   const lastOldLine = rows.reduce((best, row) => Math.max(best, row.oldLine ?? 0), 0);
   const lastNewLine = rows.reduce((best, row) => Math.max(best, row.newLine ?? 0), 0);
 
-  for (const span of hunkSpans(rows, context)) {
+  for (const span of hunkSpans(rows, context, terminatorOnly ? lastRow : null)) {
     const slice = rows.slice(span.start, span.end + 1);
 
     const oldNumbers = slice.flatMap((row) => (row.oldLine === null ? [] : [row.oldLine]));
@@ -836,9 +889,19 @@ export function toUnified(report: DiffReport, context: number): string {
       `@@ -${oldStart.toString()},${oldNumbers.length.toString()} +${newStart.toString()},${newNumbers.length.toString()} @@`,
     );
 
-    for (const row of slice) {
+    for (const [offset, row] of slice.entries()) {
       // The pre-image for a context line; the row's own text otherwise.
       const text = row.kind === 'same' ? (row.oldText ?? row.text) : row.text;
+
+      // The last line, rewritten as itself, because its terminator changed.
+      if (terminatorOnly && span.start + offset === lastRow) {
+        lines.push(`-${text}`);
+        if (!report.notes.finalNewline.original) lines.push(NO_NEWLINE);
+        lines.push(`+${row.text}`);
+        if (!report.notes.finalNewline.changed) lines.push(NO_NEWLINE);
+        continue;
+      }
+
       lines.push(`${SIGN[row.kind]}${text}`);
       if (endsWithoutNewline(report, row, lastOldLine, lastNewLine)) lines.push(NO_NEWLINE);
     }

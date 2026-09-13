@@ -92,7 +92,7 @@ describe('format detection', () => {
     // came back as the single string "a;b;c 1;2;3" - a confident wrong answer
     // for one of the most common files anybody would paste in here.
     const detected = detectSource('name;age\nada;36\ngrace;45', DELIMITERS.comma);
-    expect(detected).toEqual({ format: 'csv', delimiter: ';' });
+    expect(detected).toEqual({ format: 'csv', delimiter: ';', fellBack: false });
 
     expect(parseAuto('name;age\nada;36', DELIMITERS.comma)).toEqual({
       ok: true,
@@ -127,7 +127,7 @@ describe('format detection', () => {
     // Without this the directive line becomes the header, and the table comes
     // back with a column literally named `sep=`.
     const detected = detectSource('sep=;\nname;age\nada;36', DELIMITERS.comma);
-    expect(detected).toEqual({ format: 'csv', delimiter: ';' });
+    expect(detected).toEqual({ format: 'csv', delimiter: ';', fellBack: false });
     expect(parseAuto('sep=;\nname;age\nada;36', DELIMITERS.comma)).toEqual({
       ok: true,
       value: [{ name: 'ada', age: '36' }],
@@ -140,6 +140,76 @@ describe('format detection', () => {
     const table = '| a | b |\n| - | - |\n| 1 | 2 |';
     expect(detect(table, DELIMITERS.comma)).toBe('yaml');
     expect(detect('a|b\n1|2', DELIMITERS.pipe)).toBe('csv');
+  });
+
+  /*
+   * FOUND BY PASTING A PIPE-SEPARATED FILE PYTHON'S `csv` MODULE WROTE, AND
+   * READING THE ANSWER INSTEAD OF ASSERTING ON IT.
+   *
+   * `name|age\nada|36\ngrace|45` came back as the STRING
+   * "name|age ada|36 grace|45", successfully, with no error. That is valid
+   * YAML - a multi-line plain scalar, folded to one line - and it is word for
+   * word the failure the semicolon test above describes: "a confident wrong
+   * answer for one of the most common files anybody would paste in here",
+   * still alive for the one delimiter detection will not try on its own.
+   *
+   * Detection still will not TRY pipe unasked - see the test above, a Markdown
+   * table has consistent pipe counts, so trying it would read prose as a
+   * table. What changed is that falling back to YAML and finding NO STRUCTURE
+   * is now reported rather than returned.
+   */
+  it('refuses a pipe table rather than folding it into one string', () => {
+    const result = parseAuto('name|age\nada|36\ngrace|45', DELIMITERS.comma);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toBe('This looks like pipe-separated text, not YAML.');
+    expect(result.error.detail).toContain('delimiter');
+  });
+
+  it('says the same thing when the YAML fallback fails outright', () => {
+    // A colon in a cell, which is what the real file found this had - the YAML
+    // parser reads the folded scalar as an implicit key and gives up. Both
+    // branches have to reach the same message, or the advice depends on
+    // whether the user's data happened to contain a colon.
+    const source = 'id|text\n1|note: a thing\n2|other: thing';
+    expect(parseSource(source, 'yaml', DELIMITERS.comma).ok).toBe(false);
+
+    const result = parseAuto(source, DELIMITERS.comma);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('pipe-separated');
+  });
+
+  it('reads the pipe table happily once the option says pipe', () => {
+    // The suggestion has to be actionable, so the thing it suggests must work.
+    expect(parseAuto('name|age\nada|36\ngrace|45', DELIMITERS.pipe)).toEqual({
+      ok: true,
+      value: [
+        { name: 'ada', age: '36' },
+        { name: 'grace', age: '45' },
+      ],
+    });
+  });
+
+  it('still blames YAML when the document really is broken YAML', () => {
+    // A document that fell back to YAML and is not a table in any delimiter
+    // must keep its YAML error rather than gain a misleading suggestion.
+    const result = parseAuto('a: 1\n b: [2\n', DELIMITERS.comma);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('YAML');
+  });
+
+  it('leaves prose that merely fell back to YAML alone', () => {
+    // Prose folds to a scalar too. The discriminator is a CONSISTENT field
+    // count, which prose does not have - so nothing is suggested about it.
+    const result = parseAuto('Hello there.\nThis is prose.\nNo structure.', DELIMITERS.comma);
+    expect(result).toEqual({ ok: true, value: 'Hello there. This is prose. No structure.' });
+  });
+
+  it('does not second-guess YAML that found real structure', () => {
+    expect(parseAuto('name: ada\nage: 36', DELIMITERS.comma)).toEqual({
+      ok: true,
+      value: { name: 'ada', age: 36 },
+    });
   });
 
   it('agrees with the parser about where a quote opens a field', () => {

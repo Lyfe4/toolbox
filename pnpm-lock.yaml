@@ -32,6 +32,9 @@ importers:
       diff:
         specifier: 9.0.0
         version: 9.0.0
+      hast-util-phrasing:
+        specifier: 3.0.1
+        version: 3.0.1
       hast-util-to-html:
         specifier: 9.0.5
         version: 9.0.5

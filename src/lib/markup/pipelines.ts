@@ -1,3 +1,4 @@
+import { phrasing } from 'hast-util-phrasing';
 import { toHtml } from 'hast-util-to-html';
 import { defaultHandlers } from 'hast-util-to-mdast';
 import { toText } from 'hast-util-to-text';
@@ -667,6 +668,77 @@ const orderedList: Handle = (state, node) => {
 };
 
 /**
+ * Elements whose children are their own STRUCTURAL PARTS rather than a run of
+ * sibling blocks. See `listItem` below for why that distinction is load-bearing.
+ */
+const STRUCTURAL_PARTS = new Set(['ul', 'ol', 'menu', 'dl', 'table', 'thead', 'tbody', 'tfoot']);
+
+/**
+ * Upstream's `spreadout`, with the one recursion it should not make removed.
+ *
+ * hast-util-to-mdast@10.1.2, lib/handlers/li.js. The question it answers is
+ * "would writing this item in Markdown produce a SPREAD item?" - a spread item
+ * being one whose content is wrapped in `<p>`, which is what a reader sees as
+ * extra vertical space between bullets. Its two rules are sound: a direct `<p>`
+ * child means spread, and two or more block children mean spread, because
+ * blocks are joined by blank lines.
+ *
+ * The third clause is where it goes wrong. To cope with content wrapped in a
+ * `<div>`, it DELVES INTO any non-phrasing child and applies the same two rules
+ * to that child's children. A `<div>` is transparent, so that is right for a
+ * `<div>` - but a nested `<ul>` is not transparent, and its children are `<li>`
+ * elements. Two nested bullets therefore read as "two block things were written
+ * in this item", and the whole list is marked loose.
+ *
+ * The result: `- one / <indent>- a / <indent>- b / - two` - a tight list, and
+ * one of the commonest shapes in any README - came back with a blank line
+ * between every bullet, which renders with `<p>` wrappers and different
+ * spacing. ONE nested bullet was fine and two were not, which is why this read
+ * as something about long documents rather than about nesting.
+ *
+ * So: keep the delve, but not through an element whose children are its own
+ * parts. A nested list is ONE block no matter how many items it has, and the
+ * `seenFlow` below still counts it as one.
+ */
+function spreadout(node: HastElement): boolean {
+  let seenFlow = false;
+
+  for (const child of node.children) {
+    if (child.type !== 'element') continue;
+    if (phrasing(child)) continue;
+
+    if (
+      child.tagName === 'p' ||
+      seenFlow ||
+      (!STRUCTURAL_PARTS.has(child.tagName) && spreadout(child))
+    ) {
+      return true;
+    }
+
+    seenFlow = true;
+  }
+
+  return false;
+}
+
+/**
+ * `<li>`, with `spread` recomputed. See `spreadout` above for the defect.
+ *
+ * The default handler is called and its answer corrected, the same bargain
+ * `orderedList` makes: `extractLeadingCheckbox` and `state.toFlow` are internal,
+ * and the children it produces are right. Only the one boolean is wrong.
+ *
+ * Recomputed against `node` rather than against the checkbox-stripped clone the
+ * default handler uses, because the two cannot differ: a leading `<input>` is
+ * phrasing content, so the loop above skips it either way.
+ */
+const listItem: Handle = (state, node) => {
+  const result = defaultHandlers.li(state, node);
+  result.spread = spreadout(node);
+  return result;
+};
+
+/**
  * Undoes Google Docs' habit of wrapping a whole paste in a bold that is not.
  *
  * A copy out of Google Docs arrives inside
@@ -889,6 +961,7 @@ export function htmlToMarkdown(html: string, options: HtmlToMarkdownOptions): st
       .use(rehypeRemark, {
         handlers: {
           ...unsupportedHandlers(options.unsupported),
+          li: listItem,
           ol: orderedList,
           pre: codeBlock(verbatim),
           code: inlineCode(verbatim),

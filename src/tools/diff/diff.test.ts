@@ -226,10 +226,64 @@ describe('the final newline', () => {
   });
 
   it('does not claim a missing terminator on a context line when only one side lacks it', () => {
-    // The marker describes both sides at once. Emitting it here would say
-    // something false about the side that does have a final newline.
-    const patch = toUnified(report('x\na\n', 'y\na'), 3);
-    expect(patch).not.toContain('\\ No newline at end of file');
+    // The marker describes both sides at once, so it may never sit on a
+    // context line unless BOTH sides lack the terminator.
+    const lines = toUnified(report('x\na\n', 'y\na'), 3).split('\n');
+    const marked = lines.filter((_, index) => lines[index + 1] === '\\ No newline at end of file');
+
+    expect(marked).not.toHaveLength(0);
+    expect(marked.every((line) => line.startsWith('-') || line.startsWith('+'))).toBe(true);
+  });
+
+  /*
+   * FOUND BY APPLYING THIS TOOL'S OWN PATCHES WITH REAL `git apply`, OVER
+   * EVERY FILE REVISION IN THIS REPOSITORY'S HISTORY.
+   *
+   * The patches applied cleanly and produced the wrong file: one whose final
+   * newline had not changed. `\ No newline at end of file` is a note on a `-`
+   * or `+` line, so the only way unified format can say "the terminator
+   * changed" is to rewrite the last line as itself - which means the last line
+   * cannot stay a context row. `git diff` opens a second hunk at the end of
+   * the file to do exactly that.
+   *
+   * The test this replaced asserted the absence of the marker here, and its
+   * reasoning was right as far as it went: the marker cannot go on a context
+   * line. The missing half was that the answer is to stop making it one.
+   */
+  it.each([
+    ['loses its final newline', 'x\na\n', 'y\na'],
+    ['gains a final newline', 'x\na', 'y\na\n'],
+  ])('writes the last line as a change when the file %s', (_name, before, after) => {
+    const patch = toUnified(report(before, after), 3);
+    expect(patch).toContain('\\ No newline at end of file');
+    // The last line appears on both sides rather than as context.
+    expect(patch).toContain('-a');
+    expect(patch).toContain('+a');
+  });
+
+  it('writes a patch when the terminator is the only change at all', () => {
+    /*
+     * `equal` means no line was added or removed, and losing a trailing
+     * newline adds and removes nothing - so this returned the empty string,
+     * which is how this format says "the two files are the same".
+     */
+    const patch = toUnified(report('a\nb\n', 'a\nb'), 3);
+    expect(patch).not.toBe('');
+    expect(patch).toContain('@@');
+    expect(patch).toContain('\\ No newline at end of file');
+  });
+
+  it('still writes nothing when the two texts really are the same', () => {
+    expect(toUnified(report('a\nb\n', 'a\nb\n'), 3)).toBe('');
+    expect(toUnified(report('', ''), 3)).toBe('');
+  });
+
+  it('leaves a far-away edit its own hunk rather than one huge one', () => {
+    // The terminator hunk must not swallow the whole file to reach the end.
+    const before = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'].join('\n') + '\n';
+    const after = ['X', '2', '3', '4', '5', '6', '7', '8', '9', '10'].join('\n');
+    const patch = toUnified(report(before, after), 3);
+    expect(patch.match(/^@@/gm)).toHaveLength(2);
   });
 });
 

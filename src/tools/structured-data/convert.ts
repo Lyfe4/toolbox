@@ -243,6 +243,13 @@ export interface Detected {
   readonly format: Format;
   /** The delimiter to parse with. Meaningless unless `format` is csv or tsv. */
   readonly delimiter: string;
+  /**
+   * True when YAML was reached by running out of other options rather than by
+   * finding YAML. `parseAuto` needs the distinction: a document that announced
+   * itself with `---` and then failed to parse has a YAML problem, and one that
+   * merely fell through here may not be YAML at all.
+   */
+  readonly fellBack: boolean;
 }
 
 /** How many records the delimited-text test looks at before deciding. */
@@ -276,27 +283,31 @@ export function detectSource(source: string, configuredDelimiter: string): Detec
   const { delimiter: declared, body } = readSepDirective(stripped);
   const text = body.trim();
 
-  if (text === '') return { format: 'json', delimiter: configuredDelimiter };
+  if (text === '') return { format: 'json', delimiter: configuredDelimiter, fellBack: false };
 
   if (text.startsWith('{') || text.startsWith('[')) {
-    return { format: 'json', delimiter: configuredDelimiter };
+    return { format: 'json', delimiter: configuredDelimiter, fellBack: false };
   }
 
   // A YAML document marker or a directive settles it immediately.
   if (text.startsWith('---') || text.startsWith('%YAML')) {
-    return { format: 'yaml', delimiter: configuredDelimiter };
+    return { format: 'yaml', delimiter: configuredDelimiter, fellBack: false };
   }
 
   // A block sequence item. `- a, b` has one comma on every line and used to be
   // read as a two-column CSV whose header was `- a`, which is nonsense that
   // looks like a table. The trailing space is required, so `-1,2` is unaffected.
   if (text.startsWith('- ') || text === '-' || text.startsWith('-\n') || text.startsWith('-\r')) {
-    return { format: 'yaml', delimiter: configuredDelimiter };
+    return { format: 'yaml', delimiter: configuredDelimiter, fellBack: false };
   }
 
   // The file said what its delimiter is. Believe it.
   if (declared !== null) {
-    return { format: declared === DELIMITERS.tab ? 'tsv' : 'csv', delimiter: declared };
+    return {
+      format: declared === DELIMITERS.tab ? 'tsv' : 'csv',
+      delimiter: declared,
+      fellBack: false,
+    };
   }
 
   /*
@@ -312,11 +323,42 @@ export function detectSource(source: string, configuredDelimiter: string): Detec
 
   for (const delimiter of new Set(candidates)) {
     if (looksDelimited(body, delimiter)) {
-      return { format: delimiter === DELIMITERS.tab ? 'tsv' : 'csv', delimiter };
+      return { format: delimiter === DELIMITERS.tab ? 'tsv' : 'csv', delimiter, fellBack: false };
     }
   }
 
-  return { format: 'yaml', delimiter: configuredDelimiter };
+  return { format: 'yaml', delimiter: configuredDelimiter, fellBack: true };
+}
+
+/**
+ * A delimiter this tool offers that detection never tried on this document.
+ *
+ * Only ever pipe, in practice, and deliberately so: `| a | b |` is a Markdown
+ * table with a perfectly consistent pipe count, so trying pipe on every input
+ * would read ordinary prose as a five-column table. Choosing Pipe in the
+ * options puts it in the candidate list above, which is the intended way in.
+ *
+ * The whole cost of that trade was being paid by the user, though. A
+ * pipe-separated export pasted with the options untouched fell through to YAML
+ * and came back as "That is not valid YAML - implicit keys need to be on a
+ * single line", which names a construct that is not in the document and a
+ * format nobody mentioned. Neither the file nor the tool is broken; one control
+ * is set wrong. So when the fallback fails, say which one.
+ */
+function untriedDelimiter(source: string, configuredDelimiter: string): DelimiterName | null {
+  const tried = new Set([
+    DELIMITERS.tab,
+    configuredDelimiter,
+    DELIMITERS.comma,
+    DELIMITERS.semicolon,
+  ]);
+
+  for (const [name, delimiter] of Object.entries(DELIMITERS) as [DelimiterName, string][]) {
+    if (tried.has(delimiter)) continue;
+    if (looksDelimited(source, delimiter)) return name;
+  }
+
+  return null;
 }
 
 /**
@@ -718,6 +760,32 @@ function parseJsonLines(text: string): ToolResult<JsonValue> | null {
 export function parseAuto(source: string, configuredDelimiter: string): ToolResult<JsonValue> {
   const detected = detectSource(source, configuredDelimiter);
   const first = parseSource(source, detected.format, detected.delimiter);
+
+  /*
+   * YAML was the fallback rather than a finding, AND IT FOUND NOTHING - either
+   * it failed outright, or it returned a scalar, which for a multi-line
+   * document means it folded the whole thing into one string.
+   *
+   * The second case is the dangerous one and it is why this test is not simply
+   * `!first.ok`. `name|age\nada|36\ngrace|45` parses as perfectly valid YAML:
+   * a multi-line plain scalar, folded to "name|age ada|36 grace|45". No error,
+   * no clue, and the newlines gone - which is word for word the failure the
+   * semicolon work above was written to kill, still alive for the one
+   * delimiter detection will not try on its own.
+   *
+   * A scalar result is the usable tell: YAML found no structure, so there is
+   * nothing to second-guess. When YAML returns a mapping or a sequence it has
+   * found real structure and this never fires.
+   */
+  const foundNothing = !first.ok || first.value === null || typeof first.value !== 'object';
+  if (detected.fellBack && foundNothing) {
+    const name = untriedDelimiter(stripBom(source), configuredDelimiter);
+    if (name !== null) {
+      return fail('invalid-input', `This looks like ${name}-separated text, not YAML.`, {
+        detail: `Set the CSV delimiter option to ${name} to read it as a table.`,
+      });
+    }
+  }
 
   if (first.ok || detected.format !== 'json' || first.error.code !== 'parse-error') return first;
 

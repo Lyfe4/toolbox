@@ -6,6 +6,7 @@ import { bestLevel, contrastRatio, relativeLuminance } from '@/lib/wcag';
 
 import { formatColor, hslToRgb, oklchToRgb, parseColor, rgbToHsl, rgbToOklch } from './color';
 import colorTool from './index';
+import { colorDefaultOptions } from './options';
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
@@ -151,6 +152,58 @@ describe('round trips', () => {
     // Maximum chroma at mid lightness is far outside anything sRGB can show.
     const { inGamut } = oklchToRgb(0.7, 0.37, 150);
     expect(inGamut).toBe(false);
+  });
+
+  /*
+   * FOUND BY PAINTING THE TOOL'S OWN oklch() OUTPUT IN FIREFOX AND READING
+   * THE PIXEL BACK.
+   *
+   * 23 of 266 real colours - this repository's primitives, the hex literals in
+   * the CSS shipped in node_modules, and the sRGB corners - came back a
+   * different colour at the old default precision of three. `#ff00ff` wrote as
+   * `oklch(0.702 0.322 328.36)`, which paints rgb(255, 3, 255).
+   *
+   * The test above did not see it and could not have: it formats at precision
+   * SIX, which is not what anybody gets, and allows one 8-bit step of drift.
+   * This one uses the DEFAULT and demands the colour back exactly, because
+   * that is the promise a converter makes.
+   */
+  it('round-trips every notation exactly at the default precision', () => {
+    const { precision } = colorDefaultOptions;
+
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: 0xffffff }),
+        fc.constantFrom('hex' as const, 'rgb' as const, 'hsl' as const, 'oklch' as const),
+        (value, format) => {
+          const source = `#${value.toString(16).padStart(6, '0')}`;
+          const back = parse(formatColor(parse(source), format, precision));
+          expect(formatColor(back, 'hex', precision)).toBe(source);
+        },
+      ),
+      { numRuns: 400 },
+    );
+  });
+
+  it.each([
+    ['#ff00ff', 'the magenta corner, worst at three places'],
+    ['#00ffff', 'the cyan corner'],
+    ['#bf8700', 'a saturated amber with a channel pinned at zero'],
+    ['#10301f', 'a dark green from this repo’s own primitives'],
+  ])('%s survives oklch at the default precision (%s)', (hex) => {
+    const written = formatColor(parse(hex), 'oklch', colorDefaultOptions.precision);
+    expect(formatColor(parse(written), 'hex', colorDefaultOptions.precision)).toBe(hex);
+  });
+
+  it('is the lowest precision that round-trips, so the default is not arbitrary', () => {
+    // These three are wrong at three places and right at four. If that ever
+    // stops being true the default could come down, and this is what says so.
+    const sample = ['#ff00ff', '#bf8700', '#10301f'];
+    const survives = (hex: string, precision: number): boolean =>
+      formatColor(parse(formatColor(parse(hex), 'oklch', precision)), 'hex', precision) === hex;
+
+    expect(sample.filter((hex) => survives(hex, 3))).toEqual([]);
+    expect(sample.filter((hex) => survives(hex, 4))).toEqual(sample);
   });
 });
 

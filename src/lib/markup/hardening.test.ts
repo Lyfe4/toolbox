@@ -283,6 +283,63 @@ describe('round-tripping', () => {
   it('still numbers a list with no start attribute from one', () => {
     expect(htmlToMarkdown('<ol><li>a</li></ol>', MD)).toBe('1. a' + LF);
   });
+
+  /*
+   * FOUND BY ROUND-TRIPPING 97 READMEs OUT OF node_modules: 74 of them came
+   * back with a different document structure, and this was most of it.
+   *
+   * hast-util-to-mdast@10.1.2 lib/handlers/li.js decides whether an item is
+   * "spread" - whether its content gets wrapped in `<p>`, which a reader sees
+   * as extra space between bullets. To cope with content wrapped in a `<div>`
+   * it delves into any non-phrasing child and asks whether THAT contains two
+   * or more blocks. A nested `<ul>` is not a wrapper, and its children are
+   * `<li>` elements - so two nested bullets counted as two blocks and the
+   * whole list came back loose.
+   *
+   * ONE nested bullet was fine and TWO were not, which is why this looked like
+   * something about document length rather than about nesting. `spreadout` is
+   * now reimplemented with that one recursion removed.
+   */
+  it('keeps a tight list with a nested list tight', () => {
+    const source = ['- one', '  - a', '  - b', '- two'].join(LF) + LF;
+
+    // The nesting survives and no blank line is introduced between bullets.
+    expect(roundTrip(source)).toBe(source);
+    // And the rendered document is unchanged, which is what a reader sees.
+    expect(markdownToHtml(roundTrip(source), HTML)).toBe(markdownToHtml(source, HTML));
+  });
+
+  it.each([1, 2, 3, 4])('keeps it tight with %i nested items', (count) => {
+    const nested = Array.from({ length: count }, (_, i) => '  - n' + String(i));
+    const source = ['- one', ...nested, '- two'].join(LF) + LF;
+    expect(roundTrip(source)).toBe(source);
+  });
+
+  /*
+   * The other half of the same fix: a list that IS loose has to stay loose,
+   * and an item with two real blocks in it has to stay spread. Getting the
+   * first test to pass by always writing `spread: false` would break both.
+   */
+  it('keeps a genuinely loose list loose', () => {
+    const source = ['- one', '', '- two'].join(LF) + LF;
+    expect(roundTrip(source)).toBe(source);
+  });
+
+  it('keeps an item holding two blocks spread', () => {
+    const source = ['- one', '', '  ' + FENCE, '  x', '  ' + FENCE, '', '- two'].join(LF) + LF;
+    expect(roundTrip(source)).toBe(source);
+  });
+
+  it('keeps six levels of tight nesting tight', () => {
+    const source =
+      Array.from({ length: 6 }, (_, depth) =>
+        [
+          '  '.repeat(depth) + '- a' + String(depth),
+          '  '.repeat(depth) + '- b' + String(depth),
+        ].join(LF),
+      ).join(LF) + LF;
+    expect(roundTrip(source)).not.toContain(LF + LF);
+  });
 });
 
 /* ========================================================================== *
