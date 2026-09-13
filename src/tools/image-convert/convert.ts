@@ -1,7 +1,7 @@
 import { fail, ok, type Bytes, type ToolResult } from '@/features/registry/types';
 import { sniffBytes } from '@/lib/sniff';
 
-import { inspectImage, type DecodableType, type ImageHeader } from './inspect';
+import { inspectImage, type DecodableType, type ImageHeader, type MetadataKind } from './inspect';
 
 /**
  * Image decoding and re-encoding.
@@ -106,6 +106,17 @@ export interface ConvertResult {
    * source declaring alpha on its way to a JPEG.
    */
   readonly usedAlpha: boolean | null;
+  /**
+   * What the OUTPUT carries, read back out of the bytes that were produced.
+   *
+   * Not assumed to be empty. The encoder here is the browser's, not ours, and
+   * what it writes beside the pixels is its decision rather than this tool's -
+   * measured, Playwright's WebKit tags every PNG, JPEG and WebP it encodes
+   * with an ICC profile, and Playwright's Firefox appends a private `deBG`
+   * chunk. The tool used to state `metadata: []` as a flat fact about every
+   * output it had never looked at.
+   */
+  readonly outputMetadata: readonly MetadataKind[];
   readonly notes: readonly ConvertNote[];
 }
 
@@ -386,6 +397,8 @@ export function buildNotes(
   source: { readonly width: number; readonly height: number },
   /** From `usesTransparency`. Null means it was not examined. */
   usedAlpha: boolean | null = null,
+  /** Measured from the encoded output, never assumed. */
+  outputMetadata: readonly MetadataKind[] = [],
 ): readonly ConvertNote[] {
   const notes: ConvertNote[] = [];
 
@@ -420,7 +433,31 @@ export function buildNotes(
     notes.push({
       level: carriesLocation ? 'warn' : 'info',
       title: carriesLocation ? 'GPS location was removed' : 'Metadata was removed',
-      body: `The source carried ${header.metadata.join(', ')}. None of it is in the output - re-encoding through a canvas keeps the pixels and nothing else.`,
+      body: `The source carried ${header.metadata.join(', ')}. None of it is in the output - re-encoding through a canvas keeps the pixels and drops everything that travelled beside them.`,
+    });
+  }
+
+  /*
+   * AND WHAT THE ENCODER PUT BACK, WHICH IS NOT THE SAME QUESTION.
+   *
+   * Dropping the source's metadata is this tool's doing; what the browser's
+   * own encoder writes beside the pixels is not. Measured: Playwright's WebKit
+   * tags every PNG, JPEG and WebP it produces with an ICC profile named
+   * `Skia`. The output is still free of the source's EXIF and GPS - but
+   * "keeps the pixels and nothing else" was a promise about bytes this tool
+   * had never read back, and on one of the two engines the harness drives it
+   * was not true.
+   *
+   * Reported rather than stripped. A colour profile describes how the pixels
+   * are meant to be interpreted, and removing one silently is a way to make an
+   * image render differently somewhere else - which is the class of change
+   * this whole report exists to stop happening quietly.
+   */
+  if (outputMetadata.length > 0) {
+    notes.push({
+      level: 'info',
+      title: 'The encoder added its own metadata',
+      body: `This browser wrote ${outputMetadata.join(', ')} into the output. That is the encoder's doing rather than anything carried over from the source, and it is left in place because a colour profile changes how the image is read elsewhere.`,
     });
   }
 
@@ -542,6 +579,17 @@ export async function convertImage(request: ConvertRequest): Promise<ToolResult<
 
     const bytes = new Uint8Array(await blob.arrayBuffer());
 
+    /*
+     * The output, read with the same parser the input got.
+     *
+     * Every output format here is one `inspectImage` understands, so this
+     * costs another forty bytes of header walk and replaces a hard-coded
+     * `metadata: []` with an answer. The old claim was asserted by a unit test
+     * that stubs the canvas, so the bytes it checked were never produced by an
+     * encoder at all and the assertion could not fail.
+     */
+    const outputMetadata = inspectImage(bytes, request.format).metadata;
+
     return ok({
       bytes,
       mediaType: request.format,
@@ -553,12 +601,14 @@ export async function convertImage(request: ConvertRequest): Promise<ToolResult<
       sourceBytes: request.bytes.byteLength,
       header,
       usedAlpha: encoded.usedAlpha,
+      outputMetadata,
       notes: buildNotes(
         header,
         request,
         { width, height },
         { width: sourceWidth, height: sourceHeight },
         encoded.usedAlpha,
+        outputMetadata,
       ),
     });
   } finally {

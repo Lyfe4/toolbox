@@ -137,13 +137,22 @@ export const imageConvertTool = defineTool({
             hasAlpha: result.mediaType !== 'image/jpeg' && result.header.hasAlpha,
             frames: 1,
             /*
-             * Not "what we happened to drop" but a promise about every output
-             * this tool produces. A canvas re-encode carries pixels and
-             * nothing else: no EXIF, no GPS, no timestamps, no ICC profile, no
-             * maker notes. `image.test.ts` asserts it byte by byte rather than
-             * trusting the sentence.
+             * MEASURED FROM THE OUTPUT, NOT PROMISED ABOUT IT.
+             *
+             * This was the literal `[]`, described as a promise that a canvas
+             * re-encode carries pixels and nothing else - no EXIF, no GPS, no
+             * ICC profile. The first half holds: nothing from the source
+             * survives. The second half was never checked against a real
+             * encoder, because the test that "asserted it byte by byte" runs
+             * in jsdom against a stubbed canvas whose blob no encoder ever
+             * touched. Driven for real, Playwright's WebKit writes an ICC
+             * profile into every PNG, JPEG and WebP it produces.
+             *
+             * So the tool reads its own output back with the same parser it
+             * used on the input. A report that states what is there beats a
+             * promise about what should be.
              */
-            metadata: [],
+            metadata: [...result.outputMetadata],
           },
           // Signed, and rounded to one place: "-62.4%" is the number people
           // actually want from a converter.

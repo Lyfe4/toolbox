@@ -50,12 +50,33 @@ const PROBE_BUDGET_MS = 50;
 /** A long pattern has a lot of top-level terms; the search is not the point. */
 const MAX_PREFIX_PROBES = 24;
 
-/** True when `pattern` finds anything in `subject`. Never throws. */
+/**
+ * True when `pattern` finds anything in `subject`. Never throws.
+ *
+ * `g` IS DROPPED AND `y` IS KEPT, and the asymmetry is the whole point.
+ *
+ * Dropping `g` cannot change the answer - a fresh RegExp starts at
+ * lastIndex 0, so "does this match anywhere" is the same question with or
+ * without it - and it keeps a global copy from carrying lastIndex between
+ * probes.
+ *
+ * `y` is not like that. Sticky decides WHERE the engine is allowed to
+ * start, so dropping it turns "does this match at position 0" into "does
+ * this match anywhere", which is a different question with a different
+ * answer. Every note in this file is a claim the user is invited to act on,
+ * and a probe run under flags the user does not have produces advice that
+ * is simply false: `/CONTRIBUTING/y` against `See CONTRIBUTING.md` finds
+ * nothing, and the tool used to answer with "it matches if you ignore
+ * case" - which, taken, still finds nothing, because `y` was never the
+ * case-sensitivity of the pattern.
+ *
+ * Measured over 1,299 regex literals harvested from real packages, crossed
+ * with six real files: 4,214 of the 8,063 hints this module produced were
+ * false, and every single one of them was a probe that had dropped a `y`.
+ */
 function wouldMatch(pattern: string, flags: string, subject: string): boolean {
   try {
-    // Non-global: one `exec` is all that is being asked, and a global copy
-    // would carry lastIndex between calls for no benefit.
-    return new RegExp(pattern, flags.replace(/[gy]/g, '')).test(subject);
+    return new RegExp(pattern, flags.replace(/g/g, '')).test(subject);
   } catch {
     return false;
   }
@@ -464,6 +485,22 @@ function prefixNote(
 function matchNotes(input: DiagnoseInput, parsed: ParsedPattern | null, notes: Note[]): void {
   const { flags, subject, report } = input;
 
+  /*
+   * WHETHER THE LISTING IS THE WHOLE STORY.
+   *
+   * `report.matches` stops at the listing cap while `report.total` carries on
+   * counting, so a note phrased as a fact about "the matches" is really a fact
+   * about the ones that were DESCRIBED - and past the cap those are two
+   * different populations. This is the same mistake that once had this tool
+   * report its own display cap as a match count: a claim that looks like a
+   * fact about the run and is really a fact about the limit.
+   *
+   * Found with `x*` against `aaaaaxxx` and a small cap. Seven matches, the
+   * last of which is `xxx`, and the tool announced that every match was empty
+   * and that the `*` should probably have been a `+`.
+   */
+  const listed = report.truncated || report.stoppedBecause === 'budget' ? 'some' : 'all';
+
   if (report.stoppedBecause === 'budget') {
     notes.push({
       level: 'warn',
@@ -499,15 +536,15 @@ function matchNotes(input: DiagnoseInput, parsed: ParsedPattern | null, notes: N
 
     notes.push({
       level: consuming ? 'warn' : 'info',
-      title: 'Every match is empty',
+      title: listed === 'all' ? 'Every match is empty' : 'Every match listed is empty',
       body: consuming
-        ? 'The pattern can match nothing at all, so it matches at every position without consuming anything. That is usually a quantifier that should be `+` rather than `*`.'
+        ? `The pattern can match nothing at all, so it matches at every position ${listed === 'all' ? '' : 'listed '}without consuming anything. That is usually a quantifier that should be \`+\` rather than \`*\`.`
         : 'This pattern matches a position rather than any text - an anchor, a boundary or a lookaround - so every result is a place rather than a piece of the subject.',
     });
   } else if (empties > 0) {
     notes.push({
       level: 'info',
-      title: `${empties.toString()} of the matches are empty`,
+      title: `${empties.toString()} of the matches ${listed === 'all' ? 'are' : 'listed are'} empty`,
       body: 'An empty match is a position rather than a piece of text. They are marked in the listing and drawn as a caret in the highlight.',
     });
   }
@@ -531,11 +568,24 @@ function matchNotes(input: DiagnoseInput, parsed: ParsedPattern | null, notes: N
     });
   }
 
-  unusedGroupNote(parsed, report, notes);
+  unusedGroupNote(parsed, report, listed, notes);
 }
 
-/** A group that never captured anything, across every match found. */
-function unusedGroupNote(parsed: ParsedPattern | null, report: RegexReport, notes: Note[]): void {
+/**
+ * A group that never captured anything, across every match that was DESCRIBED.
+ *
+ * Which is not the same as every match found, once the listing cap is in
+ * play - so the note says which of the two it means. A group that first
+ * participates in match 7,000 is invisible here, and "took no part in any of
+ * the matches found" would be a flat untruth about a run the tool counted
+ * itself.
+ */
+function unusedGroupNote(
+  parsed: ParsedPattern | null,
+  report: RegexReport,
+  listed: 'all' | 'some',
+  notes: Note[],
+): void {
   if (!parsed || parsed.capturingGroups === 0 || report.matches.length === 0) return;
 
   const used = new Set<number>();
@@ -553,7 +603,10 @@ function unusedGroupNote(parsed: ParsedPattern | null, report: RegexReport, note
   notes.push({
     level: 'info',
     title: `Group ${idle.map((number) => number.toString()).join(', ')} never captured`,
-    body: `${idle.length === 1 ? 'That group' : 'Those groups'} took no part in any of the matches found - an alternative that was never taken, or an optional part that was never present.`,
+    body:
+      listed === 'all'
+        ? `${idle.length === 1 ? 'That group' : 'Those groups'} took no part in any of the matches found - an alternative that was never taken, or an optional part that was never present.`
+        : `${idle.length === 1 ? 'That group' : 'Those groups'} took no part in any of the ${report.matches.length.toLocaleString('en')} matches described above - but there are more matches than that, and they were not examined.`,
   });
 }
 

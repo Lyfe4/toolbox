@@ -78,10 +78,10 @@ safe direction.
 
 ### Metadata is stripped, and the tool says what it removed
 
-Re-encoding through a canvas carries the pixels and nothing else. That has
-always been true here; what is new is that it is a **stated guarantee** rather
-than a side effect, that the tool tells you what it dropped, and that the
-promise is asserted on the output bytes.
+Re-encoding through a canvas carries the pixels and drops everything that
+travelled beside them. That is a **stated guarantee** rather than a side
+effect, the tool tells you what it dropped, and it is asserted on the output
+bytes.
 
 This is the decision this app's premise makes sharpest. A tool that silently
 keeps GPS coordinates in an image somebody is about to post is a different
@@ -93,9 +93,43 @@ is still asking to be trusted rather than showing your working.
 So `inspect.ts` reads the container before anything is decoded and names what
 it finds: `EXIF`, `GPS location`, `ICC colour profile`, `XMP`, `IPTC`, `Text
 comments`. Location is promoted from a list item to its own warning, because it
-is the one with consequences. `report.to.metadata` is `[]` on every output, and
-the cross-browser check greps the produced file for the EXIF header and for a
-comment it planted in the source.
+is the one with consequences. The cross-browser check greps the produced file
+for the EXIF header and for a comment it planted in the source.
+
+#### `report.to.metadata` used to be the literal `[]`
+
+It was written as a promise — _a canvas re-encode carries pixels and nothing
+else: no EXIF, no GPS, no timestamps, no ICC profile, no maker notes_ — and the
+unit test said it asserted that byte by byte. It did not. That test runs in
+jsdom, where there is no encoder: the stubbed canvas hands back a blob of
+zeroes, so the list it checked described bytes nothing had ever produced.
+
+Driven for real against twenty files from real encoders — ffmpeg's PNG, JPEG,
+WebP and GIF output, four stock Windows photographs and three camera
+photographs off Wikimedia Commons — **Playwright's WebKit writes an ICC profile
+into every single file it encodes**: an `iCCP` chunk named `Skia` in PNG, an
+`ICC_PROFILE` APP2 in JPEG, an `ICCP` chunk in WebP — 26 of 26 PNGs, and the
+same for every JPEG and WebP. Playwright's Firefox writes no profile and
+appends a private 16-byte `deBG` chunk instead, also 26 of 26. On one of the
+two engines the project already drives, the report was flatly wrong about its
+own output, on every conversion, and had been the whole time.
+
+Both are the browsers this repository actually tests in, which is the point:
+whatever a given engine does, the tool was in no position to know it.
+
+The half of the promise that holds is the half that matters: nothing from the
+**source** survives, and that is still greped for on the bytes. What the
+browser's own encoder writes afterwards was never this tool's decision to make
+— and asserting it away was the part that was untrue.
+
+So the tool now **reads its own output back** with the same parser it used on
+the input, and `report.to.metadata` says what is in the file. A note names it
+in words as well. Nothing is stripped: a colour profile says how the pixels are
+meant to be read, and quietly deleting one is a way to make an image render
+differently somewhere else — exactly the class of silent change this whole
+report exists to prevent. The cross-browser check no longer asserts the list is
+empty; it asserts **the list matches the file**, which is a question with an
+answer in both engines.
 
 There is no option to keep it. A "preserve metadata" toggle would have to
 re-inject the block by hand after encoding, which is a metadata writer's worth

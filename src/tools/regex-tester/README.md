@@ -233,6 +233,30 @@ main scan already took more than 50 ms — a pattern that took half a second to
 find nothing must not be run eight more times to explain itself. When that
 happens the tool says so, rather than being silently unhelpful.
 
+**And the probe runs under the user's own flags, which it did not always.** The
+copy dropped `g` _and_ `y`. Dropping `g` is free — a fresh `RegExp` starts at
+`lastIndex` 0, so "does this match anywhere" is the same question either way —
+but `y` decides where the engine is allowed to start, so dropping it turns
+"does this match at position 0" into "does this match anywhere". Every probe
+was then answering a question the user had not asked, and every note derived
+from one was advice about a pattern they were not running:
+
+> `/CONTRIBUTING/y` against `See CONTRIBUTING.md for the six gates.`
+> — 0 matches, and the tool said **It matches if you ignore case. Turn on
+> Ignore case (i).** Turn it on: `/CONTRIBUTING/iy`, still 0 matches. `y` was
+> never the case-sensitivity of the pattern.
+
+Measured over 1,299 regex literals harvested out of real packages in
+`node_modules` — patterns written by other people, for their own purposes —
+crossed with six real files: **4,214 of the 8,063 hints this tool produced were
+false, and every one of them was a probe that had dropped a `y`.** None of them
+was a failing test, because every test in the suite was written with the same
+assumption the code was.
+
+The repair is one character of the flag filter. What it does _not_ do is make
+the probes quieter where they were right: `/abc/y` against `ABCdef` still gets
+told that `i` would help, because with `y` kept it genuinely would.
+
 The CRLF check is worth singling out. Text pasted from a Windows file ends its
 lines `\r\n`; a pattern written against `\n` meets a `\r` it never allowed for,
 because `.` and `[^\n]` both stop at one. It is the archetypal "works in my
@@ -249,6 +273,24 @@ being empty, the count exceeding the listing, and offsets being in UTF-16 code
 units when the subject contains astral characters. A pattern that simply worked
 gets no notes at all — asserted by a test, because the fastest way to make
 advice worthless is to give it every time.
+
+**Two of those notes used to describe the listing and call it the run.** The
+count and the listing are deliberately separate numbers — that split is the
+whole of [the four numbers](#the-four-numbers-and-why-each-is-what-it-is) — but
+the notes were computed over `report.matches`, which stops at the cap, and
+phrased as facts about every match found:
+
+| The run                              | It said                                                                      | The truth                                                 |
+| ------------------------------------ | ---------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `x*` over `aaaaaxxx`, listing cap 4  | **Every match is empty** — "that is usually a quantifier that should be `+`" | Seven matches. The last one is `xxx`.                     |
+| `a(?:b\|(Z))` over 19 `ab` then `aZ` | **Group 1 never captured** — "took no part in any of the matches found"      | It captures in match 20, which the listing never reached. |
+
+This is the same error as reporting the display cap as the match count, which
+this tool has already made once: a statement that sounds like a fact about the
+run and is a fact about the limit. Past the cap both notes now say which of the
+two they mean — _"every match **listed**"_, _"any of the **10 matches
+described above**, but there are more"_ — and below it they are unchanged,
+because there the listing _is_ the run.
 
 ## Flags
 

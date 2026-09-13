@@ -84,6 +84,36 @@ function chunk(type, data) {
  * tool sniffs magic bytes, decodes it with `createImageBitmap` and re-encodes
  * it, so nothing short of a real PNG would exercise the path.
  */
+/**
+ * The ancillary chunks a PNG really carries, read here rather than asked of
+ * the tool.
+ *
+ * This exists because the tool used to STATE that its output carried no
+ * metadata - a hard-coded empty list, asserted by a unit test running against
+ * a stubbed canvas whose blob no encoder had ever touched. Driven for real,
+ * Playwright's WebKit writes an `iCCP` profile named `Skia` into every PNG it
+ * encodes. The claim and the bytes disagreed, in a real engine, on every
+ * conversion, and nothing in the suite was in a position to notice.
+ *
+ * So the assertion below is no longer "the list is empty". It is "the list
+ * matches the file", which is the question that has an answer.
+ */
+function pngMetadataChunks(bytes) {
+  const carriers = new Set(['iCCP', 'eXIf', 'tEXt', 'zTXt', 'iTXt']);
+  const found = [];
+  let at = 8;
+  while (at + 8 <= bytes.length) {
+    const length = bytes.readUInt32BE(at);
+    const type = bytes.toString('latin1', at + 4, at + 8);
+    if (type === 'IEND') break;
+    if (carriers.has(type)) found.push(type);
+    const next = at + 12 + length;
+    if (next <= at || next > bytes.length) break;
+    at = next;
+  }
+  return found;
+}
+
 function makePng(size = 8) {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(size, 0);
@@ -9670,9 +9700,28 @@ async function checkImageConvert(browser, label) {
     check(
       label,
       'and the tool named what it removed',
-      (upright.report?.from?.metadata ?? []).includes('GPS location') &&
-        (upright.report?.to?.metadata ?? []).length === 0,
+      (upright.report?.from?.metadata ?? []).includes('GPS location'),
       JSON.stringify(upright.report?.from?.metadata ?? null),
+    );
+
+    /*
+     * AND WHAT THE ENCODER PUT BACK, WHICH THE TOOL USED TO ASSERT AWAY.
+     *
+     * `to.metadata` was the literal `[]`. It is now read back out of the
+     * bytes, so this check is a comparison rather than a restatement: the
+     * report has to agree with the file, whatever the file turns out to be.
+     * In Firefox the answer is nothing; in Playwright's WebKit it is an ICC
+     * profile, and both are correct reports of what happened.
+     */
+    const carried = pngMetadataChunks(uprightBytes);
+    const reportedTo = upright.report?.to?.metadata ?? [];
+    const saysIcc = reportedTo.includes('ICC colour profile');
+    check(
+      label,
+      'the output metadata it reports is the output metadata it produced',
+      saysIcc === carried.includes('iCCP') &&
+        (carried.includes('eXIf') ? reportedTo.includes('EXIF') : !reportedTo.includes('EXIF')),
+      `chunks [${carried.join(', ')}] against report ${JSON.stringify(reportedTo)}`,
     );
 
     /* -- 5. Animation, flattened but not silently -------------------------- */

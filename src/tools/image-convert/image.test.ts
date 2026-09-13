@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { isJsonArray, isJsonObject } from '@/features/registry/types';
 import type { Bytes, JsonValue, ToolRunContext, ToolValue } from '@/features/registry/types';
 import { sniffBytes } from '@/lib/sniff';
 
@@ -92,6 +93,15 @@ interface StubOptions {
   /** What the encoder produces. `null` stands for a browser that refused. */
   readonly blobType?: string | null;
   readonly blobBytes?: number;
+  /**
+   * The exact bytes the encoder produces.
+   *
+   * `blobBytes` gives a run of zeroes, which is enough for a length assertion
+   * and is not a file. A real encoder writes a real container, and the tool
+   * now reads its own output back - so anything asserting what the output
+   * CONTAINS has to hand it something a parser can walk.
+   */
+  readonly blobContent?: Uint8Array<ArrayBuffer>;
   /** Throw from the encode step, as a real canvas does on a bad allocation. */
   readonly encodeThrows?: Error;
   /** Use the DOM canvas branch, i.e. the machine with no OffscreenCanvas. */
@@ -151,7 +161,7 @@ function stubCanvas(options: StubOptions = {}): CanvasStub {
   const blob =
     options.blobType === null
       ? null
-      : new Blob([new Uint8Array(options.blobBytes ?? 32)], {
+      : new Blob([options.blobContent ?? new Uint8Array(options.blobBytes ?? 32)], {
           type: options.blobType ?? 'image/webp',
         });
 
@@ -917,10 +927,16 @@ describe('the tool', () => {
     });
   });
 
-  it('promises an empty metadata list on every output', async () => {
-    stubCanvas({ bitmap: fakeBitmap(4, 4), blobType: 'image/webp' });
+  it('reports an empty metadata list when the encoder wrote none', async () => {
+    stubCanvas({
+      bitmap: fakeBitmap(4, 4),
+      blobType: 'image/png',
+      blobContent: png({ width: 4, height: 4, colourType: 2 }),
+    });
 
-    const result = await run(jpeg({ segments: [jpegExif({ gps: true })] }), 'holiday.jpg');
+    const result = await run(jpeg({ segments: [jpegExif({ gps: true })] }), 'holiday.jpg', {
+      format: 'image/png',
+    });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -928,6 +944,52 @@ describe('the tool', () => {
       from: { metadata: ['EXIF', 'GPS location'] },
       to: { metadata: [] },
     });
+  });
+
+  /*
+   * REGRESSION: `to.metadata` was the literal `[]`.
+   *
+   * It was described as a promise - "a canvas re-encode carries pixels and
+   * nothing else: no EXIF, no GPS, no ICC profile" - and asserted by the test
+   * above, which passed because the stubbed canvas hands back a blob of
+   * zeroes that no encoder ever touched. The claim was about bytes that
+   * nothing had ever read.
+   *
+   * Driven for real against twenty files from real encoders, Playwright's
+   * WebKit writes an `iCCP` chunk named `Skia` into every PNG it encodes, an
+   * `ICC_PROFILE` APP2 into every JPEG and an `ICCP` chunk into every WebP -
+   * and the report said the output carried nothing, on every one of them.
+   *
+   * The half of the promise that holds is that nothing from the SOURCE
+   * survives, and that is still asserted above. What the encoder adds
+   * afterwards is not this tool's decision, and the only honest thing to do
+   * with it is read it back and say so.
+   */
+  it('reports metadata the encoder itself wrote into the output', async () => {
+    const iccProfile = pngChunk('iCCP', concat([ascii('Skia  '), new Uint8Array(32)]));
+
+    stubCanvas({
+      bitmap: fakeBitmap(4, 4),
+      blobType: 'image/png',
+      blobContent: png({ width: 4, height: 4, colourType: 2, before: [iccProfile] }),
+    });
+
+    const result = await run(png({ colourType: 2 }), 'photo.png', { format: 'image/png' });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const report = jsonOf(result.value.report);
+    expect(report).toMatchObject({ to: { metadata: ['ICC colour profile'] } });
+
+    // And said in words as well as in the table, because the table is the
+    // half nobody reads.
+    const rawNotes = isJsonObject(report) ? report.notes : undefined;
+    const notes = rawNotes !== undefined && isJsonArray(rawNotes) ? rawNotes : [];
+    const titles = notes
+      .filter(isJsonObject)
+      .map((note) => (typeof note.title === 'string' ? note.title : ''));
+    expect(titles).toContain('The encoder added its own metadata');
   });
 
   it.each([

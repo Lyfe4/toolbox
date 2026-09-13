@@ -438,28 +438,51 @@ about where a result lives, not a parser change.
 Named here rather than left to be assumed, in the same spirit as the rest of
 this repository.
 
-**One file produced by this tool has been played by a real player**: a `.mov`
-off one phone, repackaged, which came out the right way up, scrubbed correctly
-and kept its sound in step. That is one file, from one encoder, in one
-container — and it is the whole of the evidence that the writer, the rotation
-matrix and the timing tables work on anything real.
+### What a pass against real encoder output has now covered
 
-**The two new readers put that back where it was**, and are more exposed than
-the first two were:
+Three of the entries that used to head this list are closed, and the evidence
+is written down here rather than assumed. **22 files from ffmpeg 6.1.1**
+(x264, x265, libvpx, libaom, LAME, Opus, Vorbis, AAC) were put through the
+tool in Firefox and WebKit, and every file it produced was judged by ffmpeg
+and by Firefox's own media stack rather than by this repository:
 
-- **No transport stream written by a real encoder has been read.** Every
-  fixture is hand-built, including the parameter sets — which are written out
-  bit by bit through the real syntax precisely so that the size the reader
-  reports is a size an encoder would have written, rather than one this
-  repository invented. It is still not a camcorder.
-- **HEVC is the least-supported thing here.** It was already exercised only
-  through the code path and not through a file; it now also has the most
-  delicate function in the tool in front of it, `readHevcSps`, whose twelve
-  bytes of profile-tier-level sit behind variable-length fields and cannot be
-  checked against anything except a decoder.
-- **No AVI carrying H.264 has been read.** That path is the one AVI case that
-  produces a file rather than a refusal, and it is also the rarest kind of AVI,
-  so it is the least likely to be tried by accident.
+| Was unproven                      | What was run                                                                                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No **real transport stream** read | ffmpeg's `.ts` (H.264 + AAC) read, repackaged, and its decoded frames compared to the source: **75 of 75 identical**. Audio likewise, 131 of 131.       |
+| **HEVC** never seen in a file     | ffmpeg's `hvc1` MP4 read and repackaged: 75 of 75 decoded frames identical, and the output plays in Firefox at the right size and duration.             |
+| No **AVI carrying H.264** read    | ffmpeg's H.264-in-AVI read and repackaged: 75 of 75 decoded frames identical. The Annex B to length-prefixed re-framing is exactly what this path does. |
+| One file played by **one** player | **27 produced files** opened by ffprobe and played by Firefox, duration and dimensions agreeing with ffprobe on every one.                              |
+
+The frame comparison is the load-bearing part. A remux is lossless or it is
+not a remux, so the **decoded** pictures either side have to match hash for
+hash — which catches a dropped frame, a reordered one and a mangled parameter
+set alike, and is a much sharper question than whether the file opens. It was
+also asked of B-frames, a 30000/1001 frame rate, a rotation matrix, a
+faststart file, a 0.2-second file, MOV and Matroska.
+
+The refusals held up too, on files this repository did not write: VP8, VP9,
+Opus and Vorbis in both WebM and Matroska; MPEG-4 Part 2 in AVI, whose audio
+is still extracted; a fragmented MP4; and raw H.264 and AAC elementary
+streams.
+
+**Audio extraction to `.mp3` loses the container's encoder-delay trim**, which
+is inherent rather than a defect: the MP4 carries a 47-sample trim on the
+first frame and a raw MP3 stream has nowhere to put one, so the output is one
+frame — 26 ms — longer. Every frame after the first is identical.
+
+### And what is still unproven
+
+- **Nothing here came off a camera or a phone.** ffmpeg is a real encoder and
+  not a camcorder, and the files above are all 320x240 and three seconds. What
+  a real recording adds is scale, odd frame rates and vendor boxes, not new
+  syntax — but it is not the same thing.
+- **WebKit could not act as the second player.** Playwright's WebKit on
+  Windows reports `canPlayType: probably` for H.264, AAC, VP8 and VP9 and then
+  fails every one of them with `MEDIA_ERR_SRC_NOT_SUPPORTED`, **including
+  files ffmpeg itself wrote** — so it says nothing about these files either
+  way. Real Safari remains the one player that matters most here and the one
+  that has never seen this tool's output. That is
+  [a manual check](../../../docs/manual-checks.md), and it is still owed.
 - **Only a transport stream has been read at scale.** `checkLargeVideo` drives
   a 320 MB `.ts` through the real app in two engines, which is the path that
   gathers and spills as well as the one that windows. MP4 and Matroska go
