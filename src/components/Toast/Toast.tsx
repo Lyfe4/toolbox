@@ -1,5 +1,14 @@
 import * as RadixToast from '@radix-ui/react-toast';
-import { createContext, use, useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import { Button } from '@/components/Button';
 import { CheckIcon, CloseIcon, ErrorIcon, InfoIcon, WarningIcon } from '@/components/Icon';
@@ -46,6 +55,8 @@ export interface ToastInput {
 interface ToastRecord extends ToastInput {
   readonly id: string;
   readonly tone: ToastTone;
+  /** Milliseconds of un-paused time before this one takes itself down. */
+  readonly lifetime: number;
 }
 
 interface ToastContextValue {
@@ -65,44 +76,96 @@ const TONE_ICONS: Record<ToastTone, ReactNode> = {
   error: <ErrorIcon size={14} />,
 };
 
-export interface ToastProviderProps {
-  readonly children: ReactNode;
-  /** Milliseconds a toast stays up before dismissing itself. */
-  readonly duration?: number;
-}
-
 /**
- * How long each tone stays up.
+ * HOW LONG EACH KIND STAYS UP, and the question behind the numbers.
  *
- * An error is the durable copy of something the live region may already have
- * lost - the canvas has one polite region shared with the pipeline, so a
- * connection refusal can be overwritten a few hundred milliseconds later by
- * "Pipeline finished". Six seconds is fine for "Copied"; it is not long
- * enough to read a refusal, decide what to do, and reach the toast. Errors
- * therefore stay twice as long.
+ * The split is not by severity. It is by what the reader has to DO with the
+ * message before it is safe to take it away.
  *
- * Nothing here is a substitute for being able to summon it: Radix binds F8 to
- * move focus to the toast viewport, which is listed in the shortcuts
- * reference so it is discoverable rather than folklore.
+ *  1. NOTICE IT. `Copied`, `Downloaded`, `Theme applied` - the effect is
+ *     already visible somewhere else, so the toast is a receipt. Missing one
+ *     costs nothing. Six seconds.
+ *
+ *  2. READ IT AND DECIDE. Every refusal and every caveat: `Connection
+ *     refused`, `File rejected`, `Nothing to drop that on`, `Theme saved with
+ *     failing contrast`. These carry the REASON something did not happen the
+ *     way it was asked for, and they are the durable copy of it - the canvas
+ *     has one polite live region shared with the pipeline, so a refusal can be
+ *     overwritten by "Pipeline finished" a few hundred milliseconds later.
+ *     Twice the receipt, because reading a sentence and working out what to do
+ *     about it is not the same act as noticing a word.
+ *
+ *     `warn` sits with `error` here rather than with the receipts, which is
+ *     the one row that changed for a reason other than the bug: `File
+ *     rejected` is an error and `Nothing to drop that on` is a warning, they
+ *     are the same sentence to the person reading them, and there is no
+ *     defending one lasting half as long as the other.
+ *
+ *  3. REACH IT - see ACTION_LIFETIME.
  */
-const TONE_DURATION: Partial<Record<ToastTone, number>> = {
+const TONE_LIFETIME: Record<ToastTone, number> = {
+  info: 6_000,
+  ok: 6_000,
+  warn: 12_000,
   error: 12_000,
 };
 
 /**
- * The floor for a toast that carries a control.
+ * THE FLOOR FOR A TOAST THAT CARRIES A CONTROL.
  *
- * Six seconds is fine for a message: it is read or it is not, and nothing is
- * lost either way. It is not enough for an OFFER. "Deleted Base64 / Undo" has
- * to be noticed, understood as reversible, and reached - and on a phone
- * reaching it means moving a thumb across the screen to a control that was not
- * there a moment ago. A toast that expires mid-reach is worse than one with no
- * button at all, because it teaches that the escape hatch is unreliable.
+ * An offer is not read, it is TAKEN, and the window has to cover the whole
+ * approach: notice that something was deleted, understand that the thing
+ * beside it undoes that, and get a pointer or a focus ring onto it. On a phone
+ * that is a thumb travelling to a control that was not there a moment ago; on
+ * a keyboard it is noticing, remembering that F8 exists, and pressing it -
+ * the viewport is last in the tab order, so F8 is the only way in that is not
+ * a walk through the whole page.
  *
- * Matched to the error duration rather than picked separately: both are "long
- * enough to act on", and two numbers meaning the same thing drift.
+ * Twenty seconds, and the figure is borrowed rather than invented: WCAG 2.2.1
+ * draws its line at twenty, treating any limit at or under it as one the user
+ * has to be given a way out of. It is the smallest number this repo can point
+ * at and say the reader was not being raced.
+ *
+ * It is enough, rather than merely generous, BECAUSE THE COUNTDOWN STOPS WHEN
+ * THE VIEWPORT IS REACHED. Hovering it, or focusing anything inside it,
+ * freezes every countdown - so the twenty seconds only has to cover ARRIVING.
+ * Reading, deciding and pressing all happen with the clock stopped. That is
+ * the whole argument for a bounded lifetime over a permanent one.
+ *
+ * And permanent was the tempting answer, so it is worth saying why it is
+ * wrong: a toast that never leaves turns four deletions into four
+ * notifications closed by hand, which is the complaint this change exists to
+ * fix. The offer is also not the only way back - Ctrl+Z is, and `altText`
+ * says so to the people who cannot reach the button at all.
  */
-const ACTION_DURATION = 12_000;
+const ACTION_LIFETIME = 20_000;
+
+/**
+ * HOW MANY MAY BE ON SCREEN AT ONCE.
+ *
+ * The viewport is 320px wide, pinned to the bottom-right corner, and stacks
+ * upwards over the canvas. Unbounded, five deletions in a row is a column of
+ * notifications tall enough to cover the node the sixth one is about - the
+ * feedback for what the user is doing now hidden by the feedback for what they
+ * did a moment ago, which is exactly backwards.
+ *
+ * Three, oldest evicted. Three fits above the fold on the shortest phone this
+ * app supports, and an offer somebody has walked past while performing three
+ * more actions has been declined in every sense that matters; Ctrl+Z is still
+ * there for the one who changes their mind.
+ */
+const MAX_ON_SCREEN = 3;
+
+/** A running countdown. `handle` is 0 when it is frozen or not yet started. */
+interface Countdown {
+  remaining: number;
+  startedAt: number;
+  handle: number;
+}
+
+export interface ToastProviderProps {
+  readonly children: ReactNode;
+}
 
 /**
  * Announces asynchronous results to screen readers.
@@ -112,20 +175,166 @@ const ACTION_DURATION = 12_000;
  * assistive technology never notices the change. Errors go in as `foreground`
  * (aria-live="assertive") so they interrupt; everything else is `background`
  * (polite) and waits its turn.
+ *
+ * WHAT IT NO LONGER BORROWS FROM RADIX IS THE CLOCK, and that is a bug fix
+ * rather than a preference. Radix keeps ONE pause flag for the whole provider,
+ * raises it on the first `pointermove` or `focusin` over the viewport, and
+ * lowers it on the matching `pointerleave` or `focusout` - but it only has
+ * those listeners attached while at least one toast exists. Press the dismiss
+ * button and the pointer is, necessarily, over the toast: the flag goes up,
+ * the last toast leaves, the listeners come down in the same commit, and the
+ * `pointerleave` that would have lowered it arrives at nothing. Every toast
+ * after that mounts into a provider that believes it is paused, and starts no
+ * timer at all.
+ *
+ * It sustains itself, which is why it presents as permanent rather than
+ * intermittent: the only way to clear a toast with no timer is to press
+ * dismiss, and pressing dismiss is what re-arms the leak.
+ *
+ * The one thing that lowers the flag again is a `pointerleave` or a window
+ * refocus that arrives WHILE some toast exists - so on a desktop it reads as
+ * "the notification sits there until I happen to sweep the mouse across it",
+ * and on a phone, or from the keyboard, where no pointer ever crosses the
+ * viewport, it reads as "notifications stopped timing out".
+ *
+ * So the countdown lives here, and the pause condition is DERIVED rather than
+ * latched: focus-inside and tab-hidden are read from the DOM at the moment
+ * they are needed and cannot go stale. Only "the pointer is over the viewport"
+ * has to be remembered, because nothing can be asked where the pointer is -
+ * and that one is cleared whenever the viewport empties, since an empty
+ * viewport is not something anybody can be hovering.
  */
-export function ToastProvider({ children, duration = 6000 }: ToastProviderProps) {
+export function ToastProvider({ children }: ToastProviderProps) {
   const [toasts, setToasts] = useState<readonly ToastRecord[]>([]);
   // A plain counter, so ids are deterministic and tests never flake.
   const nextId = useRef(0);
+  const viewportRef = useRef<HTMLOListElement>(null);
+  const countdowns = useRef(new Map<string, Countdown>());
+  const pointerInside = useRef(false);
 
   const notify = useCallback((toast: ToastInput) => {
     nextId.current += 1;
     const id = `toast-${nextId.current.toString()}`;
-    setToasts((current) => [...current, { ...toast, id, tone: toast.tone ?? 'info' }]);
+    const tone = toast.tone ?? 'info';
+    // The longer of the two, so an actionable error is not cut to the action
+    // floor and an actionable receipt is not cut to the tone default.
+    const lifetime =
+      toast.action === undefined
+        ? TONE_LIFETIME[tone]
+        : Math.max(TONE_LIFETIME[tone], ACTION_LIFETIME);
+    setToasts((current) => [...current, { ...toast, id, tone, lifetime }].slice(-MAX_ON_SCREEN));
   }, []);
 
   const dismiss = useCallback((id: string) => {
     setToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
+
+  /*
+   * Everything that stops the clock, asked fresh every time it is needed.
+   *
+   * `document.hidden` rather than a window blur listener: a hidden tab is the
+   * mechanism that actually costs somebody a message - its timers are
+   * throttled and the toast burns its life where nobody can see it - and it is
+   * the one that can be observed without guessing. A blurred window is not the
+   * same thing, and pausing on it would leave a toast sitting there because
+   * the user glanced at another application.
+   */
+  const isPaused = useCallback((): boolean => {
+    const viewport = viewportRef.current;
+    if (viewport === null) return false;
+    return pointerInside.current || viewport.contains(document.activeElement) || document.hidden;
+  }, []);
+
+  /** Freeze or run every countdown, to match whatever is true right now. */
+  const sync = useCallback(() => {
+    const paused = isPaused();
+    const now = Date.now();
+    for (const [id, countdown] of countdowns.current) {
+      if (paused) {
+        if (countdown.handle === 0) continue;
+        window.clearTimeout(countdown.handle);
+        countdown.handle = 0;
+        countdown.remaining = Math.max(0, countdown.remaining - (now - countdown.startedAt));
+      } else {
+        if (countdown.handle !== 0) continue;
+        countdown.startedAt = now;
+        countdown.handle = window.setTimeout(() => {
+          dismiss(id);
+        }, countdown.remaining);
+      }
+    }
+  }, [dismiss, isPaused]);
+
+  /*
+   * One countdown per toast on screen, created and destroyed with it.
+   *
+   * Reconciled from the rendered list rather than started inside `notify`, so
+   * that a toast evicted by the cap takes its timer with it and no path can
+   * leave a timer running against an id that is no longer on screen.
+   */
+  useEffect(() => {
+    const running = countdowns.current;
+    for (const toast of toasts) {
+      if (running.has(toast.id)) continue;
+      running.set(toast.id, { remaining: toast.lifetime, startedAt: 0, handle: 0 });
+    }
+    for (const [id, countdown] of running) {
+      if (toasts.some((toast) => toast.id === id)) continue;
+      window.clearTimeout(countdown.handle);
+      running.delete(id);
+    }
+    // THE LINE THAT CLOSES THE LEAK described above. An empty viewport cannot
+    // be hovered, so a pointer that left while the DOM under it was being
+    // removed can no longer strand every toast that comes after it.
+    if (running.size === 0) pointerInside.current = false;
+    sync();
+  }, [toasts, sync]);
+
+  /*
+   * `pointermove` rather than `pointerenter`, for the reason Radix uses it: a
+   * toast that appears under a stationary cursor does not reliably get a
+   * boundary event in every engine, and a move is what says somebody is
+   * actually there.
+   *
+   * `focusin` on the document rather than `focusout` on the viewport, because
+   * `focusout` fires BEFORE the new element is focused - `activeElement` still
+   * reads as the control being left, so a countdown would stay frozen after
+   * focus had already gone. Radix works around that with `relatedTarget`,
+   * which is null both for a click on unfocusable chrome and for focus leaving
+   * the document; reading the DOM after the move has landed needs no such
+   * special case.
+   */
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (viewport === null) return undefined;
+
+    const enter = () => {
+      pointerInside.current = true;
+      sync();
+    };
+    const leave = () => {
+      pointerInside.current = false;
+      sync();
+    };
+    viewport.addEventListener('pointermove', enter);
+    viewport.addEventListener('pointerleave', leave);
+    document.addEventListener('focusin', sync);
+    document.addEventListener('visibilitychange', sync);
+    return () => {
+      viewport.removeEventListener('pointermove', enter);
+      viewport.removeEventListener('pointerleave', leave);
+      document.removeEventListener('focusin', sync);
+      document.removeEventListener('visibilitychange', sync);
+    };
+  }, [sync]);
+
+  // Clear every pending timeout if the provider itself goes away.
+  useEffect(() => {
+    const running = countdowns.current;
+    return () => {
+      for (const countdown of running.values()) window.clearTimeout(countdown.handle);
+      running.clear();
+    };
   }, []);
 
   // useMemo keeps the context value referentially stable, so consumers do not
@@ -134,7 +343,13 @@ export function ToastProvider({ children, duration = 6000 }: ToastProviderProps)
 
   return (
     <ToastContext value={value}>
-      <RadixToast.Provider duration={duration} swipeDirection="right">
+      {/*
+        `duration={Infinity}` switches Radix's own timer off - see the note on
+        ToastProvider for why it cannot be trusted. Radix still owns the live
+        region, the F8 hotkey, the focus loop and the swipe; only the clock
+        moved.
+      */}
+      <RadixToast.Provider duration={Infinity} swipeDirection="right">
         {children}
 
         {toasts.map((toast) => (
@@ -142,7 +357,6 @@ export function ToastProvider({ children, duration = 6000 }: ToastProviderProps)
             key={toast.id}
             className={cx(styles.toast, styles[toast.tone])}
             type={toast.tone === 'error' ? 'foreground' : 'background'}
-            {...durationFor(toast)}
             onOpenChange={(open) => {
               if (!open) dismiss(toast.id);
             }}
@@ -176,26 +390,10 @@ export function ToastProvider({ children, duration = 6000 }: ToastProviderProps)
           </RadixToast.Root>
         ))}
 
-        <RadixToast.Viewport className={styles.viewport} label="Notifications" />
+        <RadixToast.Viewport ref={viewportRef} className={styles.viewport} label="Notifications" />
       </RadixToast.Provider>
     </ToastContext>
   );
-}
-
-/**
- * The duration override for a toast, as props to spread.
- *
- * Spread rather than passed as `duration={...}` because
- * `exactOptionalPropertyTypes` refuses an explicit `undefined` for an
- * optional prop - and omitting it is exactly what "use the provider default"
- * has to mean.
- */
-function durationFor(toast: ToastRecord): { duration?: number } {
-  const tone = TONE_DURATION[toast.tone];
-  // The longer of the two, so an actionable error is not shortened to the
-  // action floor and an actionable message is not cut to the tone default.
-  const duration = toast.action === undefined ? tone : Math.max(tone ?? 0, ACTION_DURATION);
-  return duration === undefined ? {} : { duration };
 }
 
 /** Typed access to `notify`. Throws if used outside a ToastProvider. */

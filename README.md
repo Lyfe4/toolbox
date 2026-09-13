@@ -400,7 +400,10 @@ unrelated wire is added.
 in the notification. Undo has existed since the canvas had a history, but below
 640px the toolbar collapses and it moves into an overflow menu — so on the one
 device where deleting is a tap, reversing it was three taps behind a control
-whose label says nothing about deletion.
+whose label says nothing about deletion. The offer stands for twenty seconds,
+and the countdown stops the moment you hover it or put focus in it, so the
+window has to cover reaching the button and not using it — see
+[Notifications](docs/architecture.md#notifications).
 
 **And a wired input carries `Disconnect` in the inspector**, which is the route
 with no aiming in it and the only one a keyboard can reach: nothing on the

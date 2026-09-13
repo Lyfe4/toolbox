@@ -16,6 +16,7 @@ way they are.
 - [A file as an input](#a-file-as-an-input)
 - [The tool runner page](#the-tool-runner-page)
 - [Between tools](#between-tools)
+- [Notifications](#notifications)
 - [State](#state)
 - [Build and deployment](#build-and-deployment)
 
@@ -1428,11 +1429,19 @@ Three details are load-bearing:
   on a canvas of six nodes the question after a tap that deleted something is
   which one, and the answer has to be beside the offer for the offer to mean
   anything. Everything else is counted, because six tool names is a paragraph.
-- **A toast with a control stays up for twelve seconds, not six.** Six is fine
+- **A toast with a control stays up for twenty seconds, not six.** Six is fine
   for a message — it is read or it is not. An offer has to be noticed,
   understood as reversible, and reached, and on a phone reaching it means
-  moving a thumb to a control that was not there a moment ago. A toast that
-  expires mid-reach teaches that the escape hatch is unreliable.
+  moving a thumb to a control that was not there a moment ago; on a keyboard it
+  means noticing and then remembering that `F8` exists, because the viewport is
+  last in the tab order. A toast that expires mid-reach teaches that the escape
+  hatch is unreliable. Twenty is [WCAG 2.2.1](https://www.w3.org/WAI/WCAG22/Understanding/timing-adjustable)'s
+  own threshold rather than a number that felt right, and it is enough rather
+  than merely generous because **the countdown stops the moment the viewport is
+  reached** — hovering it or focusing anything inside it freezes every toast on
+  screen, so the twenty seconds has to cover arriving and nothing else. See
+  [Notifications](#notifications) for the whole table, and for the bug that
+  meant none of these numbers were being applied at all.
 - **The number of history steps to undo is measured, not assumed.**
   `deleteSelection` pushes one command for wires and one for nodes, so a
   selection holding both is two entries and a single `undo()` would restore
@@ -3320,6 +3329,118 @@ list of things it found:
   height, every interactive target against 44px and every typeable field against
   16px. It found a good deal the first time it ran — see the commit — and the
   measurements, not the controls' existence, are what it keeps asserting.
+
+## Notifications
+
+One provider, mounted at the root, because a result has to be announceable
+from anywhere: [`src/components/Toast`](../src/components/Toast/Toast.tsx).
+Radix Toast owns the live region, the `F8` hotkey that moves focus to the
+viewport, the focus loop inside it and the swipe-to-dismiss. What it does not
+own is the clock — see [How long one lives](#how-long-one-lives).
+
+A toast is **not** the announcement. The canvas has its own polite live region,
+shared with the pipeline, and a refusal announced there can be replaced by
+"Pipeline finished" a few hundred milliseconds later. The toast is the durable
+copy: the thing that is still on screen when the announcement has gone, and the
+only copy a sighted user ever had. That is why a refusal is usually both.
+
+### How long one lives
+
+The split is by **what the reader has to do with the message** before it is
+safe to take away, which is not the same as how bad the news is.
+
+| Kind                            | Lives | Because                                                                                                                                         |
+| ------------------------------- | ----: | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Receipt — `info`, `ok`          |    6s | `Copied`, `Downloaded`, `Theme applied`. The effect is visible elsewhere, so the toast confirms rather than informs. Missing one costs nothing. |
+| Refusal — `warn`, `error`       |   12s | `Connection refused`, `File rejected`, `Nothing to drop that on`. Carries the reason something did not happen, and is the durable copy of it.   |
+| Offer — anything with an action |   20s | `Deleted Base64` with an `Undo`. Has to be **reached**, not merely read.                                                                        |
+
+Two of those rows moved, and the last one is the one that matters.
+
+**`warn` was six seconds and is now twelve**, which is the only change here that
+is not about the bug below. `File rejected` is an error and `Nothing to drop
+that on` is a warning; they are the same sentence to the person reading them,
+and there was no defending one lasting half as long as the other. The tone
+still decides the icon, the colour and whether the announcement interrupts —
+it just no longer decides how long there is to read it.
+
+**An offer gets twenty seconds**, borrowed from
+[WCAG 2.2.1](https://www.w3.org/WAI/WCAG22/Understanding/timing-adjustable),
+which draws its line at twenty. It is the smallest figure this repo can point
+at and say the reader was not being raced — and reaching one is a genuinely
+longer trip for some people than for others: a thumb has to travel to a control
+that was not there a moment ago, and a keyboard user has to notice, then
+remember that `F8` exists, because the viewport is last in the tab order.
+
+Twenty is enough rather than merely generous **because the countdown stops the
+moment the viewport is reached**. Hovering it, or focusing anything inside it,
+freezes every toast on screen; reading, deciding and pressing `Undo` all happen
+with the clock stopped. So the twenty seconds has to cover _arriving_ and
+nothing else, which is what makes a bounded lifetime defensible against a
+permanent one — and permanent is the wrong answer, because a toast that never
+leaves turns four deletions into four notifications closed by hand.
+
+Three things stop the clock, and none of them is remembered any longer than it
+is true:
+
+- **the pointer resting on the viewport**, cleared on `pointerleave` and, as a
+  backstop, whenever the viewport empties — an empty viewport is not something
+  anybody can be hovering;
+- **focus inside the viewport**, read from `document.activeElement` at the
+  moment it is needed rather than tracked;
+- **a hidden tab**, read from `document.hidden`. A background tab throttles its
+  timers rather than stopping them, so without this a message spends its life on
+  a screen nobody is looking at. A merely _blurred_ window is deliberately not
+  on this list: the toast is still on screen next to whatever took focus.
+
+### At most three on screen
+
+The viewport is 320px wide, pinned bottom-right, and stacks upwards over the
+canvas. Unbounded, five deletions in a row is a column tall enough to cover the
+node the sixth one is about — the feedback for what you are doing now hidden by
+the feedback for what you did a moment ago.
+
+Three, oldest evicted. An offer somebody has walked past while performing three
+more actions has been declined in every sense that matters, and `Ctrl`+`Z` is
+still there for the one who changes their mind.
+
+### Why the clock is ours and not Radix's
+
+This is a fixed bug rather than a preference, and it is worth writing down
+because the shape of it is easy to reintroduce.
+
+Radix keeps **one pause flag for the whole provider**. It goes up on the first
+`pointermove` or `focusin` over the viewport and comes down on the matching
+`pointerleave` or `focusout` — but the listeners that would lower it are
+attached only while at least one toast exists. Press the dismiss button and the
+pointer is, necessarily, over the toast: the flag goes up, the last toast
+leaves, the listeners come down in the same commit, and the `pointerleave` that
+would have lowered it arrives at nothing. From then on every toast mounts into
+a provider that believes it is paused and **starts no timer at all**.
+
+It sustains itself, which is why it presented as permanent rather than
+intermittent: the only way to clear a toast with no timer is to press dismiss,
+and pressing dismiss is what re-arms it. The only thing that lowers the flag
+again is a `pointerleave` or a window refocus arriving _while some toast
+exists_ — so on a desktop it reads as "the notification sits there until I
+happen to sweep the mouse across it", and on a phone or from the keyboard,
+where no pointer ever crosses the viewport, it reads as "notifications stopped
+timing out". Because the durations were still right there in the source, the
+obvious first guess was that they were simply too long.
+
+So `duration={Infinity}` switches Radix's timer off and the countdown lives in
+our provider, where the pause condition is **derived rather than latched**. Two
+of the three conditions above are read from the DOM when they are needed and
+cannot go stale; the third — where the pointer is — is the only thing nothing
+can be asked, so it is the only thing remembered, and it is cleared whenever
+the viewport empties.
+
+The unit suite now asserts each lifetime, each thing that stops the clock, and
+that a hand dismissal does not strand the notification after it. What it cannot
+assert is that a real pointer reaches the viewport element at all — jsdom has
+no layout, so its `pointermove` is an event a test dispatched rather than one a
+mouse produced, and that distinction is the entire bug. `checkNotifications` in
+`check:browsers` drives all of it with the mouse in both engines.
 
 ## State
 

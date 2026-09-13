@@ -2816,6 +2816,162 @@ async function checkRouteFeedback(browser, label) {
 }
 
 /**
+ * WHETHER A NOTIFICATION EVER LEAVES ON ITS OWN.
+ *
+ * This is the only check in this file that spends most of its time waiting,
+ * and it is here because the defect it covers survived a unit suite that had
+ * six tests on the toast and hit production anyway. Every one of those tests
+ * asserted something about a toast that was on screen; none asked whether it
+ * was still there a minute later.
+ *
+ * The unit suite can ask that now, with a fake clock. What it still cannot ask
+ * is whether a REAL pointer reaches the viewport element - jsdom has no
+ * layout, so `pointermove` and `pointerleave` there are events a test dispatched
+ * rather than events a mouse produced, and the original bug was precisely a
+ * pause raised by one of those and never lowered. So the three things below
+ * are each driven by the mouse:
+ *
+ *  1. resting on a notification stops its countdown,
+ *  2. taking the pointer away finishes it,
+ *  3. a notification raised AFTER one was dismissed by hand still expires -
+ *     the reported bug, whose whole mechanism was that the hand dismissal
+ *     happens with the pointer over the toast.
+ *
+ * And one thing about the stack rather than the clock: several deletions in a
+ * row leave three notifications, not several.
+ */
+async function checkNotifications(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+
+  /*
+   * Seven base64 nodes in one flat row. The canvas fits a share link to the
+   * content on arrival, so a row is centred vertically and leaves the
+   * bottom-right corner - where the notifications stack - clear of anything
+   * this check needs to click.
+   */
+  const nodes = [];
+  for (let index = 1; index <= 7; index += 1) {
+    nodes.push([`n${String(index)}`, 'base64', (index - 1) * 300, 0, { mode: 'encode' }]);
+  }
+
+  const notifications = page.getByRole('region', { name: /notifications/i }).locator('li');
+  const centreOf = async (locator) => {
+    const box = await locator.boundingBox();
+    return box === null ? null : { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  };
+
+  try {
+    await page.goto(`${ORIGIN}/?p=${shareParam({ v: 3, n: nodes, e: [] })}`, {
+      waitUntil: 'networkidle',
+    });
+    await page.locator('[data-testid="node-n7"]').waitFor({ timeout: 15_000 });
+
+    const deleteNode = async (id) => {
+      await page.locator(`[data-testid="node-${id}"]`).click({ timeout: 10_000 });
+      await page.keyboard.press('Delete');
+      await page
+        .locator(`[data-testid="node-${id}"]`)
+        .waitFor({ state: 'detached', timeout: 10_000 });
+      await notifications.first().waitFor({ timeout: 5_000 });
+    };
+
+    /* -- The clock stops under the pointer, and only under the pointer ---- */
+
+    /*
+     * The hover arrives LATE in the toast's life on purpose. A deletion offers
+     * an Undo and so lives twenty seconds; resting on it from the start and
+     * waiting past twenty proves the freeze but costs the whole twenty again
+     * to prove the thaw. Fourteen seconds in, twelve seconds held, is past the
+     * deadline either way and leaves only the remainder to wait out.
+     */
+    await deleteNode('n1');
+    await page.waitForTimeout(14_000);
+
+    const overToast = await centreOf(notifications.first());
+    if (overToast !== null) await page.mouse.move(overToast.x, overToast.y);
+    await page.waitForTimeout(12_000);
+
+    const held = await notifications.count();
+    check(
+      label,
+      'a pointer resting on a notification stops its countdown',
+      overToast !== null && held === 1,
+      `${String(held)} on screen 26s into a 20s life`,
+    );
+
+    await page.mouse.move(20, 20);
+    const thawed = await notifications
+      .first()
+      .waitFor({ state: 'detached', timeout: 15_000 })
+      .then(
+        () => true,
+        () => false,
+      );
+    check(label, 'and finishes it once the pointer has left', thawed, '');
+
+    /* -- The bug, with the mouse that caused it --------------------------- */
+
+    await deleteNode('n2');
+    const overClose = await centreOf(
+      page.getByRole('button', { name: 'Dismiss notification' }).first(),
+    );
+    if (overClose !== null) {
+      await page.mouse.move(overClose.x, overClose.y);
+      await page.mouse.click(overClose.x, overClose.y);
+    }
+    const dismissed = await notifications
+      .first()
+      .waitFor({ state: 'detached', timeout: 5_000 })
+      .then(
+        () => true,
+        () => false,
+      );
+
+    await deleteNode('n3');
+    const raisedAt = Date.now();
+    const expired = await notifications
+      .first()
+      .waitFor({ state: 'detached', timeout: 26_000 })
+      .then(
+        () => true,
+        () => false,
+      );
+    check(
+      label,
+      'a notification raised after one was dismissed by hand still expires on its own',
+      dismissed && expired,
+      `dismissed=${String(dismissed)}, gone after ${String(Date.now() - raisedAt)}ms`,
+    );
+
+    /* -- And the stack has a ceiling -------------------------------------- */
+
+    for (const id of ['n4', 'n5', 'n6', 'n7']) await deleteNode(id);
+    const stacked = await notifications.count();
+    const viewportBox = await page
+      .getByRole('region', { name: /notifications/i })
+      .locator('ol')
+      .boundingBox();
+    check(
+      label,
+      'four deletions in a row leave three notifications, not four',
+      stacked === 3,
+      `${String(stacked)} on screen`,
+    );
+    check(
+      label,
+      'and the stack stays inside the window it is pinned to',
+      viewportBox !== null && viewportBox.y >= 0 && viewportBox.y + viewportBox.height <= 900,
+      viewportBox
+        ? `top ${String(Math.round(viewportBox.y))}, bottom ${String(Math.round(viewportBox.y + viewportBox.height))}`
+        : 'no viewport box',
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
  * The deployment contract, checked against the BUILT output.
  *
  * There is no Netlify account in this environment, so what is checked here is
@@ -8500,6 +8656,7 @@ async function runChecks(engine, label) {
     await checkVideoRemux(browser, label);
     await checkLargeVideo(browser, label);
     await checkThemeEditor(browser, label);
+    await checkNotifications(browser, label);
   } finally {
     await browser.close();
   }
