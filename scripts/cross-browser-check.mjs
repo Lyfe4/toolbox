@@ -19,7 +19,7 @@
  * Deliberately NOT part of the CI gate: it needs ~165 MB of browser binaries.
  * Run it with `pnpm check:browsers` after `pnpm build`.
  */
-import { deflateRawSync, deflateSync } from 'node:zlib';
+import { deflateRawSync, deflateSync, inflateRawSync } from 'node:zlib';
 import { createWriteStream } from 'node:fs';
 import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -355,6 +355,7 @@ function withExif(jpegBytes, orientation) {
  * ========================================================================== */
 
 const failures = [];
+const skipped = [];
 
 /**
  * Records something that could NOT be checked here, and why.
@@ -363,9 +364,17 @@ const failures = [];
  * is worse than one that fails, because the summary then reads as full
  * coverage - so anything the harness cannot do gets a visible line naming the
  * engine limitation behind it.
+ *
+ * AND THAT LINE HAS TO REACH THE SUMMARY, which for a long time it did not.
+ * The reason above is the whole point of this function, and the final line
+ * still said `OK - Firefox and WebKit both pass` with no mention of how many
+ * checks had quietly stood down - eight hundred lines above, where nobody
+ * scrolls. Every skip is counted now and named at the end, so the shape of the
+ * coverage is visible in the same glance as the verdict.
  */
 function skip(browser, name, reason) {
   console.log(`  skip ${name} - ${reason}`);
+  skipped.push(`${browser}: ${name}`);
 }
 
 /**
@@ -2766,21 +2775,40 @@ async function checkRouteFeedback(browser, label) {
      * few frames, and a poll could step straight over it and call the flicker
      * fixed when it is not.
      */
-    const flashed = await fastPage.evaluate(async () => {
+    /*
+     * THE NAVIGATION HAS TO HAVE HAPPENED. `?.click()` on a link that is not
+     * there navigates nowhere, sees no mutation, and reports a clean run - so
+     * the negative below passed just as happily against a broken selector as
+     * against a fast route. It returns what it did as well as what it saw now,
+     * and the check asserts both halves.
+     */
+    const fastNav = await fastPage.evaluate(async () => {
       const track = document.querySelector('[data-testid="route-progress"]');
-      if (!track) return true;
-      let seen = false;
+      if (!track)
+        return { clicked: false, arrived: false, flashed: true, why: 'no progress track' };
+      let flashed = false;
       const observer = new MutationObserver(() => {
-        if (track.hasAttribute('data-pending')) seen = true;
+        if (track.hasAttribute('data-pending')) flashed = true;
       });
       observer.observe(track, { attributes: true });
-      document.querySelector('a[href="/tools"]')?.click();
+      const link = document.querySelector('a[href="/tools"]');
+      link?.click();
       await new Promise((resolve) => setTimeout(resolve, 600));
       observer.disconnect();
-      return seen;
+      return {
+        clicked: link !== null,
+        arrived: window.location.pathname === '/tools',
+        flashed,
+        why: link === null ? 'no /tools link to click' : '',
+      };
     });
 
-    check(label, 'a fast navigation shows nothing at all', !flashed, '');
+    check(
+      label,
+      'a fast navigation really navigates, and shows nothing at all',
+      fastNav.clicked && fastNav.arrived && !fastNav.flashed,
+      fastNav.why || `arrived ${String(fastNav.arrived)}, flashed ${String(fastNav.flashed)}`,
+    );
   } finally {
     await fast.close().catch(() => {});
   }
@@ -3274,6 +3302,26 @@ async function checkAxe(browser, label) {
   /** Runs axe and returns the violations, most serious first. */
   const scan = () =>
     page.evaluate(async () => {
+      /*
+       * A BLANK DOCUMENT HAS NO VIOLATIONS, AND THAT IS NOT A PASS.
+       *
+       * Every one of the six scans below asserts `violations.length === 0`,
+       * which a route that rendered nothing at all satisfies perfectly - a
+       * lazy chunk that failed to load, a router that matched nothing, a theme
+       * switch that threw. `networkidle` does not mean "the app drew
+       * something". Guarding here rather than at the six call sites so the
+       * protection cannot be forgotten when a seventh is added.
+       */
+      if (document.querySelectorAll('body *').length < 10) {
+        return [
+          {
+            id: 'harness:empty-document',
+            impact: 'critical',
+            nodes: document.querySelectorAll('body *').length,
+            target: 'nothing rendered - axe was asked about a blank page',
+          },
+        ];
+      }
       const results = await window.axe.run(document, {
         resultTypes: ['violations'],
         // WCAG 2.2 AA is the bar the design system is already held to.
@@ -5189,12 +5237,32 @@ async function checkMobileLayout(engine, label) {
         await page.locator('[data-node-id]').first().focus();
         await page.keyboard.press('c');
         await page.waitForTimeout(300);
-        if ((await page.locator('[role="dialog"]').count()) > 0) {
+        /*
+         * A FAILURE, NOT A SKIP, WHEN IT DOES NOT OPEN.
+         *
+         * This was a `skip` reading "it did not open from the C key", which is
+         * an observation rather than a mechanism - and it is the branch a
+         * regression in the C binding would take. Measured: the dialog opens at
+         * all four widths in both engines, every run. So the branch was dead
+         * code whose only remaining purpose was to absorb the defect it was
+         * standing next to, and it would have absorbed it silently, because a
+         * skip carries no failure and until now reached no summary either.
+         *
+         * What a phone genuinely cannot do is press C - that is the gap the
+         * comment above names, and it is a gap in the touch model rather than
+         * something the harness is unable to reach. The harness has a keyboard.
+         */
+        const opened = (await page.locator('[role="dialog"]').count()) > 0;
+        check(
+          label,
+          `C on a focused node opens the connect dialog at ${String(width)}px`,
+          opened,
+          '',
+        );
+        if (opened) {
           assess(width, 'the connect dialog', await page.evaluate(MOBILE_PROBE));
           await page.keyboard.press('Escape');
           await page.waitForTimeout(150);
-        } else {
-          skip(label, `the connect dialog at ${String(width)}px`, 'it did not open from the C key');
         }
 
         /* -- The theme editor ---------------------------------------------- */
@@ -6139,13 +6207,21 @@ async function checkRichTextClipboard(browser, label) {
         };
 
         /*
-         * Recorded BEFORE forwarding, and the forward's outcome recorded
-         * beside it. The payload is the app's, whatever the engine does with
-         * it - so a headless refusal costs the acceptance line and not the
-         * eight assertions about what was built. The error is re-thrown so
-         * the app takes its own failure path and the toast stays truthful.
+         * ASSIGNED EXACTLY ONCE, AND ONLY WHEN THE OUTCOME IS KNOWN.
+         *
+         * This used to publish `captured` here and then overwrite it with the
+         * engine's verdict when the forward settled, which made
+         * `window.__clipboard` a value that meant three different things at
+         * three different times - and the reader below could not tell them
+         * apart. Both races were real and both were measured; see the note
+         * above the read. One terminal assignment means a non-null read is
+         * always a settled one, so `refusal` is never merely "not yet".
+         *
+         * The payload is the app's, whatever the engine does with it - so a
+         * headless refusal costs the acceptance line and not the eight
+         * assertions about what was built. The error is re-thrown so the app
+         * takes its own failure path and the toast stays truthful.
          */
-        window.__clipboard = captured;
         try {
           const result = await real(items);
           window.__clipboard = { ...captured, refusal: null };
@@ -6185,7 +6261,43 @@ async function checkRichTextClipboard(browser, label) {
     await richCopy.waitFor({ timeout: 20_000 });
     await richCopy.click();
 
-    const written = await page.evaluate(() => window.__clipboard);
+    /*
+     * WAITED FOR, NOT READ ON THE WAY PAST. THIS IS THE FIX FOR THE NINE.
+     *
+     * `click()` resolves when the click has been dispatched, not when what it
+     * started has finished. The app calls `navigator.clipboard.write`
+     * synchronously inside the handler - measured, every run - but the wrapper
+     * above cannot record the payload synchronously, because reading a `Blob`
+     * is asynchronous by construction: two `getType().text()` awaits stand
+     * between entering the wrapper and having anything to publish.
+     *
+     * So the old `page.evaluate` immediately after the click was racing the
+     * harness's OWN instrumentation, and losing. Measured against this build,
+     * with the wrapper marking wrapper-entry synchronously so the two could be
+     * told apart:
+     *
+     *   Gecko, idle machine:  2 of 5 runs read before the payload was there.
+     *   Gecko, page under CPU load: 11 of 12, with the read landing 40-60 ms
+     *     early against an `enteredAt` that was already in the past.
+     *   JavaScriptCore: never lost that race, and always lost the second one -
+     *     8 of 8 runs read the record before the engine's refusal arrived,
+     *     ~18 ms early, so the acceptance line below reported that the engine
+     *     ACCEPTED a write it had in fact refused with `NotAllowedError`.
+     *
+     * `entered` was true in all 20 runs and the engine's verdict, once it
+     * arrived, never varied. Nothing about the app was ever intermittent.
+     *
+     * A timeout rather than an unbounded wait, because "the button never
+     * reaches the clipboard API at all" is a real defect this check must still
+     * be able to fail on - it now fails as itself instead of as eight
+     * assertions about an empty string.
+     */
+    const settled = await page
+      .waitForFunction(() => window.__clipboard !== null, undefined, { timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false);
+
+    const written = settled ? await page.evaluate(() => window.__clipboard) : null;
 
     /*
      * WHETHER THE ENGINE TOOK IT. A headless build that refuses clipboard
@@ -6194,14 +6306,26 @@ async function checkRichTextClipboard(browser, label) {
      * having, because `ClipboardItem` with two flavours at once is exactly
      * what older builds restricted.
      */
-    if (written?.refusal) {
+    if (written === null) {
+      /*
+       * Named as its own failure rather than left to be inferred from the
+       * eight assertions below going red against an empty string. If the copy
+       * button stops reaching the clipboard API, THIS is the line that says so.
+       */
+      check(
+        label,
+        'the copy button reaches navigator.clipboard.write, and it settles',
+        false,
+        'nothing reached it within 15 s',
+      );
+    } else if (written.refusal !== null) {
       skip(
         label,
         'the engine accepting a two-flavour ClipboardItem',
         `this build refused the write (${String(written.refusal).slice(0, 80)}); the payload it was given is still asserted below`,
       );
     } else {
-      check(label, 'the engine accepts a two-flavour ClipboardItem', written !== null, '');
+      check(label, 'the engine accepts a two-flavour ClipboardItem', written.refusal === null, '');
     }
 
     check(
@@ -6257,11 +6381,21 @@ async function checkRichTextClipboard(browser, label) {
       /<pre[^>]*>/.exec(html)?.[0].slice(0, 90) ?? 'no pre',
     );
 
+    /*
+     * THE `html !== ''` IS LOAD-BEARING, AND IS WHY THE COUNT WAS NINE.
+     *
+     * Two negative assertions over a string that is `''` whenever nothing
+     * reached the wrapper - so this was the one check in this function that
+     * PASSED in the exact failure mode the other nine reported. A check that
+     * cannot fail when everything around it is failing is worse than absent:
+     * it made the block read as "nine of ten", which invites the reader to
+     * hunt for what was special about the ten.
+     */
     check(
       label,
       'no <style> element, which Google Docs discards, and no stylesheet link',
-      !/<style[\s>]/i.test(html) && !/<link[^>]*stylesheet/i.test(html),
-      '',
+      html !== '' && !/<style[\s>]/i.test(html) && !/<link[^>]*stylesheet/i.test(html),
+      html === '' ? 'no payload to inspect' : '',
     );
 
     /*
@@ -8529,15 +8663,31 @@ async function runChecks(engine, label) {
     }
 
     /* -- Zero network: nothing may leave the page ------------------------ */
-    const external = await page.evaluate(
-      (origin) =>
-        performance
-          .getEntriesByType('resource')
-          .map((entry) => entry.name)
-          .filter((name) => !name.startsWith(origin) && !name.startsWith('data:')),
-      ORIGIN,
+    /*
+     * THE `seen > 0` IS WHAT MAKES THIS AN ASSERTION.
+     *
+     * An absence proves nothing until you know the instrument was looking. If
+     * the resource buffer were empty - cleared, never populated, or a timing
+     * API that stopped recording - the filter below returns `[]` and a check
+     * reading only that would report the zero-network guarantee as held
+     * without having observed a single request either way. So the count of
+     * what WAS recorded is asserted beside the count of what left.
+     */
+    const network = await page.evaluate((origin) => {
+      const names = performance.getEntriesByType('resource').map((entry) => entry.name);
+      return {
+        seen: names.length,
+        external: names.filter((name) => !name.startsWith(origin) && !name.startsWith('data:')),
+      };
+    }, ORIGIN);
+    check(
+      label,
+      'no request left the origin, out of the requests this page really made',
+      network.seen > 0 && network.external.length === 0,
+      network.seen === 0
+        ? 'no resource timings recorded at all - the instrument saw nothing'
+        : `${String(network.seen)} request(s) seen${network.external.length > 0 ? `, off-origin: ${network.external.join(', ')}` : ''}`,
     );
-    check(label, 'no request left the origin', external.length === 0, external.join(', '));
 
     /* -- image-convert, which is where OffscreenCanvas actually matters -- */
     await page.goto(`${ORIGIN}/tools/image-convert`, { waitUntil: 'networkidle' });
@@ -9177,20 +9327,78 @@ async function checkCanvasFileInput(browser, label) {
 
     /*
      * A filename is often the most revealing single string in a document, and
-     * a link is something people paste into chat. Checked against the REAL URL
-     * the app builds, because that is the artefact that leaves the machine.
+     * a link is something people paste into chat.
+     *
+     * A WRAPPER OVER THE THING THAT ACTUALLY CARRIES THE LINK, AND A DECODE.
+     *
+     * What stood here read `window.location.href` after clicking Share, and
+     * asserted the word `holiday` was not in it. It could not fail, for two
+     * independent reasons, and it is the privacy claim:
+     *
+     *  1. `onShare` never touches `window.location`. It builds the URL and
+     *     hands it to `navigator.clipboard.writeText` - which this check used
+     *     to replace with a STUB that discarded its argument. The address bar
+     *     has never held the share link at any point in this flow, so the
+     *     assertion was made against the canvas URL, which is
+     *     `http://127.0.0.1:4319/` and contains no filenames by construction.
+     *  2. Even reading the right string would not have helped. The payload is
+     *     `deflate-raw` then base64url - so a filename inside it cannot appear
+     *     as the literal bytes `holiday` in the URL whether it is there or
+     *     not. The absence being asserted was an absence the ENCODING
+     *     guarantees, not one the app does.
+     *
+     * It would have passed against a build that put the whole file in the
+     * link. So: capture what is really copied, prove it really is a share
+     * link, and look inside the decoded payload - which is the only place the
+     * filename could ever have been.
      */
     await page.evaluate(() => {
-      navigator.clipboard.writeText = () => Promise.resolve();
+      window.__shareUrl = null;
+      navigator.clipboard.writeText = (text) => {
+        window.__shareUrl = String(text);
+        return Promise.resolve();
+      };
     });
     await page.getByRole('button', { name: /Share/i }).click();
-    await page.waitForTimeout(500);
-    const shareUrl = await page.evaluate(() => window.location.href);
+    const copied = await page
+      .waitForFunction(() => window.__shareUrl !== null, undefined, { timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false);
+    const shareUrl = copied ? await page.evaluate(() => window.__shareUrl) : '';
+
+    const param = /[?&]p=([^&#]+)/.exec(shareUrl)?.[1] ?? '';
+    /*
+     * POSITIVE FIRST. A link with no payload trivially carries no filename,
+     * and that is the failure this check kept mistaking for a pass.
+     */
+    check(
+      label,
+      'the Share button copies a link that really carries the pipeline',
+      param.length > 0,
+      copied ? shareUrl.slice(0, 80) : 'nothing was copied',
+    );
+
+    let decoded = '';
+    try {
+      decoded = inflateRawSync(
+        Buffer.from(param.replaceAll('-', '+').replaceAll('_', '/'), 'base64'),
+      ).toString('utf8');
+    } catch (error) {
+      decoded = `<undecodable: ${String(error).slice(0, 60)}>`;
+    }
+
+    check(
+      label,
+      'and the decoded payload is a share payload, not an opaque blob',
+      /"v":\s*\d/.test(decoded) && decoded.includes('image-convert'),
+      decoded.slice(0, 100),
+    );
+
     check(
       label,
       'a share link built from a canvas with a file carries no filename',
-      !shareUrl.includes('holiday'),
-      shareUrl.slice(0, 80),
+      param.length > 0 && !decoded.includes('holiday') && !decoded.includes('.png'),
+      decoded.slice(0, 160),
     );
   } finally {
     await context.close().catch(() => {});
@@ -10754,10 +10962,17 @@ async function checkLargeVideo(browser, label) {
     const chooseMs = Date.now() - chosenAt;
 
     const afterChoosing = await page.evaluate(() => window.__fileBytesRead);
+    /*
+     * `> 0` PROVES THE COUNTER IS LIVE. The interesting half of this is the
+     * ceiling, but a ceiling alone is satisfied by an instrument that recorded
+     * nothing - a wrapper that failed to install reads 0, and 0 is `<= 8192`.
+     * The sniff genuinely needs 4 kB, so a run that read none of the file did
+     * not measure it.
+     */
     check(
       label,
       'choosing a 320 MB video reads 4 kB of it and no more',
-      afterChoosing <= 8192,
+      afterChoosing > 0 && afterChoosing <= 8192,
       `${String(afterChoosing)} bytes read on the main thread, in ${String(chooseMs)} ms`,
     );
 
@@ -10802,7 +11017,7 @@ async function checkLargeVideo(browser, label) {
     check(
       label,
       'and the page never reads the file, whatever the worker does with it',
-      duringRun <= 8192,
+      duringRun > 0 && duringRun <= 8192,
       `${String(duringRun)} bytes read on the main thread across the whole run`,
     );
 
@@ -10845,9 +11060,17 @@ try {
 }
 
 console.log('');
+if (skipped.length > 0) {
+  console.log(`cross-browser: ${skipped.length} skipped\n  ${skipped.join('\n  ')}`);
+  console.log('');
+}
 if (failures.length > 0) {
   console.error(`cross-browser: ${failures.length} failure(s)\n  ${failures.join('\n  ')}`);
   process.exitCode = 1;
 } else {
-  console.log('cross-browser: OK - Firefox and WebKit both pass.');
+  console.log(
+    `cross-browser: OK - Firefox and WebKit both pass${
+      skipped.length > 0 ? `, with ${skipped.length} check(s) skipped as listed above` : ''
+    }.`,
+  );
 }

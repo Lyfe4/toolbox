@@ -3492,6 +3492,168 @@ validated with Zod and cross-checked against the live registry; anything
 corrupt, older, or naming a tool that no longer exists yields an empty canvas
 and a message, never a crash.
 
+## The cross-browser harness, held to its own standard
+
+`scripts/cross-browser-check.mjs` is the only thing in this repository that
+asserts against a real layout engine, which makes it the only thing whose
+mistakes nothing else can catch. Two of them had been standing for a while.
+
+### What the nine "known flaky" clipboard failures actually were
+
+Nine checks in `checkRichTextClipboard` failed roughly one run in three, in
+both engines, and had been written off as environmental by three separate
+sessions — each of which re-ran on an idle machine, saw green, and moved on.
+The failing lines always included `nothing reached navigator.clipboard.write`,
+which reads like a statement about the app. It was a statement about the
+harness.
+
+**The wrapper records asynchronously; the reader read synchronously.**
+`checkRichTextClipboard` replaces `navigator.clipboard.write` with a wrapper
+that forwards to the engine and captures the payload on the way past. That
+design is deliberate and right — a stub would hide whether the engine accepts a
+two-flavour `ClipboardItem`, which is one of the four things the check exists to
+answer. But capturing the payload means reading two `Blob`s, and reading a
+`Blob` is asynchronous by construction:
+
+```
+click dispatched
+  └─ app handler (synchronous) ──> navigator.clipboard.write(items)
+        └─ wrapper entered
+             └─ await item.getType('text/html').text()   ─┐  the gap the
+             └─ await item.getType('text/plain').text()  ─┤  harness read
+             └─ window.__clipboard = captured            ─┘  into
+```
+
+The check did `await richCopy.click()` and then `await page.evaluate(() =>
+window.__clipboard)` with nothing in between. `click()` resolves when the click
+has been dispatched, not when what it started has finished — so the read was
+landing inside the harness's own wrapper, before the wrapper had anything to
+publish.
+
+**Measured, with the wrapper marking its entry synchronously** so that "the app
+never called write" and "the wrapper has not recorded it yet" could be told
+apart — the two states the old code could not distinguish, and the reason the
+failure text blamed the app:
+
+| Engine / condition         | Read before payload recorded | `entered` | Engine verdict |
+| -------------------------- | ---------------------------- | --------- | -------------- |
+| Gecko, idle                | 2 of 5                       | always    | accepted       |
+| Gecko, page under CPU load | 11 of 12, 40–60 ms early     | always    | accepted       |
+| JavaScriptCore, under load | 0 of 8                       | always    | **refused**    |
+
+`entered` was true in all twenty runs. The app calls `navigator.clipboard.write`
+synchronously inside the click handler — `onCopyRich` builds the document with
+`richTextDocument(html)` and `copyRichText` reaches `write` before its first
+`await`, so the user gesture is never spent — and the engine's verdict never
+varied within an engine. **There was no intermittency in the app to find.**
+
+**The second race, which had been green the whole time.** The wrapper published
+`captured` first and overwrote it with `{...captured, refusal}` when the forward
+settled, so `window.__clipboard` meant three different things at three different
+times: not yet recorded, recorded but undecided, and settled. The acceptance
+check read it as two:
+
+```js
+if (written?.refusal) skip(...);
+else check(label, 'the engine accepts a two-flavour ClipboardItem', written !== null, '');
+```
+
+In JavaScriptCore the refusal arrives about 18 ms after the payload, and the
+harness read the record in between — `refusal` still undefined, so the `else`
+branch ran and the check reported that the engine **accepts** a two-flavour
+`ClipboardItem`. It does not: 8 runs out of 8 refused it with
+`NotAllowedError: The request is not allowed by the user agent`. The skip branch
+that exists precisely for that outcome was effectively unreachable under load.
+
+**And the tenth assertion passed in the failure mode**, which is why the count
+everyone reported was nine. `no <style> element, which Google Docs discards` is
+two negatives over `html`, which is `''` whenever nothing reached the wrapper:
+
+```js
+!/<style[\s>]/i.test('') && !/<link[^>]*stylesheet/i.test(''); // true
+```
+
+A check that cannot fail while everything around it fails is worse than one
+that is absent, because it makes the block read as "nine of ten" and sends the
+reader looking for what was special about the ten.
+
+**The fix is shape, not cleverness.** The wrapper assigns `window.__clipboard`
+exactly once and only when the outcome is known, so a non-null read is always a
+settled read and `refusal` can never mean "not yet". The harness waits for it
+with `waitForFunction` — which is what the image-jump check forty lines away in
+the same file already did — instead of reading on the way past. The wait has a
+timeout rather than being unbounded, because "the copy button never reaches the
+clipboard API" is a real defect this check must still be able to fail on; it now
+fails as one named line instead of as eight assertions about an empty string.
+`html !== ''` guards the tenth.
+
+Verified against the same CPU load that produced 11 failures in 12: **12 of 12
+clean in Gecko**, and JavaScriptCore now records an honest skip naming
+`NotAllowedError` where it used to record a false pass.
+
+The harness's own comment about not passing `permissions: ['clipboard-write']`
+was checked at the same time and is **accurate, not stale**: Gecko throws
+`Unknown permission: clipboard-write` from `newContext`, and WebKit accepts it
+there and throws the same message from `newPage`. Neither engine's Playwright
+build knows the name, so the write has to stand on being a trusted gesture over
+a secure origin — which in Gecko it does.
+
+### The negative assertions whose subject might not be there
+
+Looking for the same shape on purpose, rather than one at a time by accident,
+found four more. The common form is worth stating because it caught five
+people: **`!x.includes(s)`, `xs.length === 0` and `!/re/.test(s)` are each
+satisfied by the subject being absent exactly as well as by the subject being
+correct** — and absence is what a broken harness produces.
+
+- **The share-link privacy check could not fail, twice over.** It clicked Share
+  and asserted `holiday` was not in `window.location.href`. `onShare` never
+  touches `window.location` — it hands the URL to
+  `navigator.clipboard.writeText`, which the check had replaced with a stub
+  that discarded its argument — so the subject was the canvas URL, which has no
+  filenames in it by construction. And the payload is `deflate-raw` then
+  base64url, so a filename could not appear as the literal bytes `holiday` even
+  in a correctly captured link. The absence being asserted was one the encoding
+  guarantees, not one the app does; it would have passed against a build that
+  put the whole file in the link. It now wraps `writeText` rather than stubbing
+  it, asserts the link really carries a `p=` payload, inflates it, and looks for
+  the filename in the decoded graph — the only place it could ever have been.
+  This sits directly below a comment, added when the node-summary check was
+  fixed, saying that a negative assertion cannot tell a result from a different
+  failure.
+- **`skip()` never reached the summary.** Its docstring is explicit that a check
+  which silently disappears is worse than one that fails, "because the summary
+  then reads as full coverage" — and the last line of the run said `OK —
+Firefox and WebKit both pass` regardless of how many checks had stood down
+  several hundred lines earlier. Skips are counted and listed at the end now.
+- **`a fast navigation shows nothing at all` passed when nothing navigated.**
+  The click was `document.querySelector('a[href="/tools"]')?.click()`; a
+  selector that stopped matching navigates nowhere, sees no progress bar, and
+  reports a clean run. It asserts the link existed and the route actually
+  changed before asserting nothing flashed.
+- **`no request left the origin` did not check the instrument was looking.** It
+  filtered `performance.getEntriesByType('resource')` and asserted the result
+  was empty, which an empty buffer satisfies. The count of requests actually
+  recorded is asserted beside the count that left.
+- **A blank page has no axe violations.** Six scans assert
+  `violations.length === 0`, which a route that rendered nothing satisfies —
+  `networkidle` does not mean the app drew anything. The guard lives inside
+  `scan` rather than at the six call sites so a seventh cannot forget it.
+- **`choosing a 320 MB video reads 4 kB of it and no more` passed at zero.**
+  The interesting half is the ceiling, but a ceiling alone is satisfied by an
+  instrument that recorded nothing: a `slice`/`arrayBuffer` wrapper that failed
+  to install reads 0, and 0 is `<= 8192`. The sniff genuinely needs 4 kB —
+  measured at exactly 4096 in both engines — so a run that read none of the
+  file did not measure it. Both reads of that counter assert `> 0` now.
+
+And one skip was retired rather than reworded: `the connect dialog at {width}px`
+skipped with the reason "it did not open from the C key", which is an
+observation and not a mechanism. The dialog opens at all four widths in both
+engines on every run, so that branch was dead code whose only remaining function
+was to absorb a regression in the C binding — silently, since a skip carries no
+failure and, until this pass, reached no summary either. It is a `check` now.
+What a phone genuinely cannot do is press C; the harness has a keyboard.
+
 ## Build and deployment
 
 ```mermaid

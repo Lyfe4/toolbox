@@ -460,7 +460,7 @@ about.
 
 ## Testing
 
-2,764 tests across 104 files. The count is not the interesting part; what the
+2,971 tests across 112 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Conformance, measured against the specifications
@@ -1136,6 +1136,141 @@ So the rule is: before writing something down as unreachable, say precisely what
 the mechanism is, and check whether the mechanism can be produced separately
 from the thing that usually causes it. A hidden tab cannot be produced; late
 timers, which is all a hidden tab does to this app, can be.
+
+### The nine checks that were "known flaky", and what they were racing
+
+Nine rich-text clipboard checks in `check:browsers` failed about one run in
+three. Three separate sessions hit them, found them unrelated to the work in
+hand, re-ran on an idle machine, watched them pass, and moved on. Each of those
+judgements was locally correct and the conclusion was wrong: the failure had a
+mechanism, and it was in the harness.
+
+**The harness was racing its own instrumentation.** `checkRichTextClipboard`
+wraps `navigator.clipboard.write` to read the payload on its way past, which is
+the right design — a stub would hide whether the engine accepts the item. But
+reading a `Blob` is asynchronous by construction: two `getType().text()` awaits
+stand between entering the wrapper and having anything to publish. The check
+clicked Copy and then read `window.__clipboard` immediately, with nothing in
+between. `click()` resolves when the click has been _dispatched_, not when what
+it started has finished.
+
+So the read was landing in the gap inside the harness's own wrapper. Measured
+against this build, with the wrapper marking its entry synchronously so
+"never called" and "not recorded yet" could be told apart:
+
+| Condition                  | Read before the payload was recorded |
+| -------------------------- | ------------------------------------ |
+| Gecko, idle machine        | 2 of 5 runs                          |
+| Gecko, page under CPU load | **11 of 12 runs**, 40–60 ms early    |
+| JavaScriptCore             | 0 of 8 — it lost the other race      |
+
+`entered` was true in all twenty runs. **The app calls
+`navigator.clipboard.write` synchronously inside the click handler, every
+time, and the engine's verdict never varied.** Nothing about the app was ever
+intermittent, and a user on a slow machine sees none of this — the failure
+needed a harness reading a variable the app never knew existed.
+
+**The same function was lying in the other engine, and nobody had noticed
+because it was green.** The wrapper published the captured payload first and
+overwrote it with the engine's verdict when the forward settled, so
+`window.__clipboard` meant three different things at three different times and
+the reader could not tell them apart. In WebKit the refusal arrives about 18 ms
+after the payload — so the harness read the record while `refusal` was still
+undefined, took the "not refused" branch, and reported **"the engine accepts a
+two-flavour ClipboardItem"** for an engine that had refused it with
+`NotAllowedError` on 8 runs out of 8. A green line asserting the opposite of the
+truth is worse than the nine red ones, and it had been green all along.
+
+**And the count was nine rather than ten for a reason.** The tenth assertion —
+"no `<style>` element, which Google Docs discards" — is two negatives over a
+string that is `''` whenever nothing reached the wrapper, so it _passed_ in
+exactly the failure mode the other nine reported. A check that cannot fail when
+everything around it is failing is worse than an absent one: it made the block
+read as "nine of ten", which invites the reader to look for what was special
+about the ten.
+
+The fix is three lines of shape rather than cleverness. The wrapper assigns
+`window.__clipboard` **exactly once, and only when the outcome is known**, so a
+non-null read is always a settled one. The harness waits for it with
+`waitForFunction` — the pattern the image-jump check in the same file already
+used — rather than reading on the way past. A timeout, not an unbounded wait,
+because "the button never reaches the clipboard API" is a real defect this
+check must still be able to fail on, and it now fails as itself instead of as
+eight assertions about an empty string. Under the load that failed 11 of 12,
+the fixed check passes 12 of 12; WebKit now records an honest skip naming
+`NotAllowedError` instead of a false pass.
+
+So the standing excuse is gone, and with it the judgement call. The rule the
+soft-keyboard check produced — say precisely what the mechanism is before
+writing something down as unreachable — turns out to apply to "flaky" too.
+
+The full measurements, the two races side by side and what was checked and
+found accurate are in
+[architecture.md](docs/architecture.md#what-the-nine-known-flaky-clipboard-failures-actually-were).
+
+### What else in the harness was asserting less than it appeared to
+
+The three findings that produced that rule were each found one at a time, by
+accident. Looking on purpose, in one pass, found four more of the same shape —
+and the worst of them was the privacy claim.
+
+**A share-link check that could not fail, for two independent reasons.** It
+clicked Share and asserted the word `holiday` was not in `window.location.href`.
+But `onShare` never touches `window.location`: it builds the URL and hands it to
+`navigator.clipboard.writeText`, which the check had replaced with a stub that
+discarded its argument. The address bar has never held the share link at any
+point in that flow, so the assertion was made against
+`http://127.0.0.1:4319/`, which contains no filenames by construction. And
+reading the right string would not have saved it either — the payload is
+`deflate-raw` then base64url, so a filename inside it cannot appear as the
+literal bytes `holiday` whether it is there or not. **The absence being asserted
+was one the encoding guarantees, not one the app does.** It would have passed
+against a build that put the whole file in the link. It captures what is really
+copied now, asserts the link really carries a pipeline, inflates the payload,
+and looks for the filename in the decoded graph — which is the only place it
+could ever have been.
+
+**`skip()` never reached the summary.** Its own docstring says a check that
+silently disappears is worse than one that fails, "because the summary then
+reads as full coverage" — and the final line said `OK — Firefox and WebKit both
+pass` with no mention of how many checks had stood down, eight hundred lines
+above where nobody scrolls. Skips are counted and named at the end now, so the
+shape of the coverage is visible in the same glance as the verdict.
+
+**"A fast navigation shows nothing at all" passed when nothing navigated.** The
+click was `document.querySelector('a[href="/tools"]')?.click()` — an optional
+call on a selector that, if it ever stopped matching, navigates nowhere, sees no
+progress bar, and reports a clean run. It asserts that the link existed and that
+the route actually changed before asserting that nothing flashed.
+
+**"No request left the origin" did not check that the instrument was looking.**
+It filtered `performance.getEntriesByType('resource')` for off-origin names and
+asserted the result was empty — which an empty buffer satisfies. An absence
+proves nothing until you know something was recorded, so the count of requests
+actually seen is asserted beside the count that left.
+
+**And two ceilings were satisfied by measuring nothing.** `choosing a 320 MB
+video reads 4 kB of it and no more` asserted only `<= 8192`, which an
+instrument that recorded zero bytes satisfies perfectly — a wrapper that failed
+to install reads 0. The sniff really needs 4 kB, measured at exactly 4096, so a
+run that read none of the file did not measure it. Both reads assert `> 0` now.
+
+**And a blank page has no accessibility violations.** Six axe scans each assert
+`violations.length === 0`, which a route that rendered nothing satisfies
+perfectly — a lazy chunk that failed to load, a router that matched nothing.
+`networkidle` does not mean the app drew anything. The guard is inside `scan`
+rather than at the six call sites, so it cannot be forgotten when a seventh is
+added.
+
+The common shape is worth naming, because it is not carelessness and it caught
+five people: **every one of these is a negative assertion whose subject might
+not be there.** `!x.includes(s)`, `xs.length === 0`, `!/re/.test(s)` — each is
+satisfied by the thing being absent just as well as by the thing being correct,
+and absence is what a broken harness produces. The repository already knew this
+— `a converted node reports the sniffed summary` carries a comment saying a
+negative assertion cannot tell a result from a different failure — and the
+share-link check thirty-six lines below it was doing exactly that. So: **pair
+every negative assertion with a positive one that proves the subject exists.**
 
 ## Performance
 
