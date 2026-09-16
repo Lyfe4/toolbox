@@ -541,8 +541,39 @@ Replay is refused in exactly two cases, both deliberate:
   so a replay would post zero-length views and compute a confident wrong answer
   — worse than the error it was avoiding. In practice nothing in the app
   transfers (see below), so this is a guard rather than a live path.
-- **It has already been replayed once.** Otherwise two tools that both wedge
-  would loop, rebuilding a worker for the same doomed request forever.
+- **Its budget is spent.** The budget counts **starts, not replays**, and that
+  distinction is the whole of it: a request still queued behind a wedged worker
+  has not executed one instruction, so it cannot be the poison the cap exists to
+  contain. A request that has never started keeps its budget however many times
+  a neighbour destroys the worker underneath it; one that ran and was killed
+  anyway gets a single further attempt and then reports. There is an absolute
+  ceiling above both, because a worker death is cheap to cause and a worker boot
+  is not.
+
+#### Why the budget counts starts
+
+It used to be one replay per request, full stop, and a canvas produces two
+worker deaths without anything unusual happening.
+
+Type a catastrophically backtracking pattern into a regex node; pause past the
+pipeline's 300 ms debounce; type into a base64 node beside it. The second edit
+cancels the first run, and a cancelled run is deliberately **not cached** (see
+below), so the new run re-posts the runaway — two copies of it are now queued.
+The first copy's deadline destroys worker one and the base64 request is
+replayed; the replayed runaway wedges worker two, whose death finds the base64
+request out of budget and fails it with _"This run was interrupted before it
+could finish."_
+
+Measured on an idle machine with no CPU load, **10 runs out of 10 in both
+engines**: the base64 node reported `error` at ~3.6 s, the node downstream of it
+reported `upstream`, and the worker had never sent a `started` for the base64
+request at all. It is not a slow-machine problem — what decides it is whether
+two edits fall more than 300 ms apart, which is what typing into one node and
+then another looks like. Load only widens the gap.
+
+`check:browsers` now drives that scenario with the pause in on purpose, in both
+engines, because the version that typed as fast as the driver could was passing
+for a reason unrelated to the app being right.
 
 A worker `error` event is treated differently: nothing is replayed. A timeout
 tells us exactly which tool misbehaved and that the others were innocent; an
@@ -2619,7 +2650,7 @@ Binary payload ownership has bitten before, which is why inputs are **borrowed**
 (structured cloned) by default and transferred only on an explicit opt-in: a
 fan-out to two consumers detaches the second. A file is a second source of one
 buffer reaching several tools, so the same guarantee is asserted for it —
-`fanout.test.ts` holds the line for a wired output, `attachments.test.ts` and
+`fanout.test.ts` holds the line for a wired output, `attachments.test.tsx` and
 `graph.test.ts` hold it for a file, and `check:browsers` crosses a real
 `postMessage` with two hashes of one file and compares both digests against
 known values. An empty input has its own well-known digest, so a detached buffer
@@ -3693,6 +3724,56 @@ engines on every run, so that branch was dead code whose only remaining function
 was to absorb a regression in the C binding — silently, since a skip carries no
 failure and, until this pass, reached no summary either. It is a `check` now.
 What a phone genuinely cannot do is press C; the harness has a keyboard.
+
+### The nine skips, audited one at a time
+
+Two skips in this project have turned out to be harness misconfiguration
+hiding real coverage, which makes a standing skip worth re-asking rather than
+re-reading. Every one of the nine is a claim about the HARNESS — "this build
+has no X" — and a harness claim goes stale silently: the browser gains the
+feature, the skip keeps printing, and nothing restores the coverage it was
+standing in for.
+
+So each was put to the engines directly rather than taken from the text beside
+it. Playwright 1.63, Firefox 155 and WebKit 26.6:
+
+| Skip                                 | Engines | Claim                               | Measured                                                                                                                                                                                                                                                     |
+| ------------------------------------ | ------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Reloading with the network off       | WebKit  | the driver cannot navigate offline  | Confirmed: `page.reload` throws "WebKit encountered an internal error". Firefox does it, and does not skip.                                                                                                                                                  |
+| A real on-screen keyboard            | both    | neither engine can open one         | Confirmed by construction. The geometry is produced instead, by shadowing `visualViewport`.                                                                                                                                                                  |
+| A genuinely hidden tab               | both    | `visibilityState` stays `visible`   | Confirmed: with a second page fronted, both engines still report `visible` on the first.                                                                                                                                                                     |
+| Pasting into Word, Docs and Outlook  | both    | no harness can open them            | Confirmed by construction.                                                                                                                                                                                                                                   |
+| A two-flavour `ClipboardItem`        | WebKit  | this build refuses the write        | Confirmed: `NotAllowedError`, from a real click on a secure origin. **And the suggested way out is not available** — Playwright's `grantPermissions` does not know `clipboard-write` for either engine and throws on the context. Firefox accepts the write. |
+| The worker path for image conversion | WebKit  | this build has no `OffscreenCanvas` | Confirmed: `typeof OffscreenCanvas` is `undefined`, in the page and in a worker. **Converted, in part** — see below.                                                                                                                                         |
+
+**Eight of the nine are genuinely unavoidable**, and what each leaves untested
+is now stated in the skip's own text rather than left to be inferred.
+
+The clipboard one is the narrowest of them, which is worth saying because it is
+the rich-text copy path and the only other check on it is a person with Word
+open. What WebKit refuses is the WRITE. The item is still constructed, and the
+wrapper still captures both flavours on the way past — so the bytes the
+application hands to the clipboard are asserted in both engines, in full. The
+only thing not proved in a JavaScriptCore is that the engine would accept a
+two-flavour item, and Safari's own behaviour there differs from this headless
+build's in any case.
+
+**The ninth was converted.** `image-convert` declares
+`requiresOffscreenCanvas`, and `resolveExecutionMeta` downgrades it to the main
+thread where the API is missing — so Gecko was proving the worker branch and
+WebKit the fallback, each in isolation. That leaves a hole neither green line
+shows: real Safari has had `OffscreenCanvas` since 16.4, so the branch a Safari
+user takes is the one WebKit here never reaches, and the branch WebKit does
+reach is one almost nobody is on. **Nothing asked whether the two produce the
+same file.**
+
+Naming the mechanism rather than the situation — the rule from CONTRIBUTING.md
+— "a browser without `OffscreenCanvas`" cannot be obtained, but the absence of
+the global can: `checkOffscreenFallback` deletes it with `addInitScript` before
+the bundle loads, in the engine that has it, and runs the same PNG down both
+branches. It compares every decoded sample, and it reads the performance
+timeline to confirm the downgrade actually happened, so a fallback that quietly
+failed to engage cannot pass as agreement.
 
 ## Build and deployment
 

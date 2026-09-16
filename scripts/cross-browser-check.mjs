@@ -6424,7 +6424,7 @@ async function checkRichTextClipboard(browser, label) {
       skip(
         label,
         'the engine accepting a two-flavour ClipboardItem',
-        `this build refused the write (${String(written.refusal).slice(0, 80)}); the payload it was given is still asserted below`,
+        `this build refused the write (${String(written.refusal).slice(0, 80)}); the payload it was given is still asserted below, in full, so what is unproved is only that an engine would ACCEPT a two-flavour item. Measured: Playwright's grantPermissions does not know clipboard-write for either engine and throws on the context, so a permission grant is not a way round this`,
       );
     } else {
       check(label, 'the engine accepts a two-flavour ClipboardItem', written.refusal === null, '');
@@ -8865,7 +8865,7 @@ async function runChecks(engine, label) {
       skip(
         label,
         'the worker path for image conversion in a WebKit',
-        'this build has no OffscreenCanvas, so it takes the fallback; real Safari has had OffscreenCanvas since 16.4 and takes the worker path, which is therefore proved only in Gecko. Six minutes on a Mac: docs/manual-checks.md',
+        'this build has no OffscreenCanvas at all - measured here, not assumed: `typeof OffscreenCanvas` is undefined, so the branch this engine takes is the FALLBACK. Real Safari has had OffscreenCanvas since 16.4 and takes the worker path, which is therefore proved in Gecko and in no JavaScriptCore. What is no longer unproved is that the two branches agree - checkOffscreenFallback produces the missing API in Gecko and compares the decoded pixels. Six minutes on a Mac: docs/manual-checks.md',
       );
     }
 
@@ -8905,6 +8905,7 @@ async function runChecks(engine, label) {
     await checkCanvasFileInput(browser, label);
     await checkFileInputTouch(engine, label);
     await checkImageConvert(browser, label);
+    await checkOffscreenFallback(browser, label);
     await checkVideoRemux(browser, label);
     await checkLargeVideo(browser, label);
     await checkThemeEditor(browser, label);
@@ -9143,6 +9144,10 @@ async function checkPipeline(browser, label) {
       label,
       'and it does not sit out its own 15s deadline first',
       bystanderMs < 12_000,
+      // `check` prints the detail whether or not it passed, so this line is a
+      // measurement in every log rather than only in a red one - which matters
+      // here, because the threshold hid a real defect for a round. What the
+      // number separates is 2.4s from 3.7s, not 2.4s from 15s.
       `${String(bystanderMs)}ms`,
     );
     check(
@@ -9152,6 +9157,67 @@ async function checkPipeline(browser, label) {
       // document, and this node would report a parse error rather than `ok`.
       downstream === 'ok',
       String(downstream),
+    );
+
+    /* -- A second worker death the bystander also did not cause ----------- */
+
+    /*
+     * THE SAME TWO NODES, WITH A PAUSE BETWEEN THE TWO EDITS. THAT IS THE
+     * WHOLE DIFFERENCE, AND IT USED TO BE THE DIFFERENCE BETWEEN PASS AND A
+     * NODE FAILING FOR SOMETHING IT DID NOT DO.
+     *
+     * The check above types into both nodes as fast as the driver can, so the
+     * pipeline's 300 ms debounce absorbs the two edits into ONE run and the
+     * runaway is posted once. A person does not type that fast. Pause past the
+     * debounce and there are two runs: the second cancels the first, and
+     * because a cancelled run is deliberately not cached, it RE-POSTS the
+     * runaway. Two copies, two worker deaths - and the bystander's replay
+     * budget used to be one.
+     *
+     * Measured before the fix, idle, no load, 10 runs out of 10 in both
+     * engines: `n2` reported `error` at ~3.6s with "This run was interrupted
+     * before it could finish.", `n3` reported `upstream`, and the worker had
+     * never started the base64 request at all. Round one saw this under CPU
+     * load and recorded it as 29,370ms, which was its own polling budget
+     * rather than anything the node did.
+     *
+     * The gap is 800ms rather than 400: it has to clear the debounce with
+     * room, and it has to stay well inside the regex tool's 2s deadline, or
+     * the runaway settles first and there is only one copy again.
+     */
+    await page.goto(
+      link(
+        [
+          ['n1', 'regex-tester', 0, 0, { pattern: WEDGE_PATTERN, mode: 'match' }],
+          ['n2', 'base64', 0, 320, { mode: 'decode' }],
+          ['n3', 'structured-data', 320, 320, { source: 'auto', target: 'yaml', indent: 2 }],
+        ],
+        [['n2', 'output', 'n3', 'input']],
+      ),
+      { waitUntil: 'networkidle' },
+    );
+    await page.locator('[data-testid="node-n3"]').waitFor({ timeout: 15_000 });
+
+    await typeInto('n1', `${'a'.repeat(40)}!`);
+    await page.waitForTimeout(800);
+
+    const pausedAt = Date.now();
+    await typeInto('n2', 'eyJuYW1lIjoiYWRhIn0=');
+    const paused = await untilStatus('n2', 'ok', 30_000);
+    const pausedMs = Date.now() - pausedAt;
+    const pausedDownstream = await untilStatus('n3', 'ok', 30_000);
+
+    check(
+      label,
+      'a node edited a moment after a runaway one still produces its own answer',
+      paused === 'ok',
+      `${String(paused)} after ${String(pausedMs)}ms`,
+    );
+    check(
+      label,
+      'and the node downstream of it is not told its input failed',
+      pausedDownstream === 'ok',
+      String(pausedDownstream),
     );
 
     /* -- Editing while a runaway node is in flight ------------------------ */
@@ -9233,6 +9299,194 @@ async function checkPipeline(browser, label) {
   } finally {
     await context.close();
   }
+}
+
+/* ========================================================================== *
+ * THE OFFSCREENCANVAS FALLBACK, IN AN ENGINE THAT HAS OFFSCREENCANVAS
+ * ========================================================================== */
+
+/**
+ * THE SKIP THIS EXISTS TO SHRINK.
+ *
+ * `image-convert` declares `requiresOffscreenCanvas`, and `resolveExecutionMeta`
+ * downgrades it from `worker` to `main` on a browser without one. So the two
+ * engines here take DIFFERENT branches, and each proves only its own: Gecko has
+ * OffscreenCanvas and runs the tool in the worker, Playwright's WebKit has none
+ * and runs it on the main thread.
+ *
+ * That leaves a hole neither green line shows. Real Safari has had
+ * OffscreenCanvas since 16.4, so a Safari user takes the WORKER path - the one
+ * WebKit here never reaches - and the fallback WebKit does reach is a path
+ * almost nobody is on. Nothing had ever asked the question that decides whether
+ * the downgrade is safe, which is whether the two branches produce the same
+ * file.
+ *
+ * NAMING THE MECHANISM RATHER THAN THE SITUATION, which is the rule in
+ * CONTRIBUTING.md. "A browser without OffscreenCanvas" cannot be obtained. THE
+ * ABSENCE OF THE GLOBAL, which is the entirety of what such a browser does to
+ * this app, can be: `addInitScript` deletes it before the bundle runs, so the
+ * downgrade happens where it really happens - when the manifest entry is
+ * resolved - rather than being simulated further down.
+ *
+ * So this runs one PNG through one tool twice in one engine, once down each
+ * branch, and compares the decoded pixels. It runs only where the API is
+ * present, because producing its absence is the whole point; where it is
+ * absent already there is nothing to remove, and the ordinary image checks in
+ * that engine are the fallback's coverage.
+ */
+async function checkOffscreenFallback(browser, label) {
+  const png = makePng();
+
+  /** Converts the fixture PNG and returns the branch taken and the pixels. */
+  const convert = async (removeOffscreen) => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+
+    if (removeOffscreen) {
+      // BEFORE THE BUNDLE. The global is read once, when the manifest entry is
+      // resolved, so an override applied afterwards would arrive to find the
+      // strategy already chosen and would prove nothing.
+      await context.addInitScript(() => {
+        delete window.OffscreenCanvas;
+      });
+    }
+    await context.addInitScript(() => {
+      const original = URL.createObjectURL.bind(URL);
+      window.__lastBlob = null;
+      URL.createObjectURL = (blob) => {
+        window.__lastBlob = blob;
+        return original(blob);
+      };
+    });
+
+    const page = await context.newPage();
+    try {
+      await page.goto(`${ORIGIN}/tools/image-convert`, { waitUntil: 'networkidle' });
+      await page.getByRole('heading', { level: 1, name: 'Image' }).waitFor({ timeout: 15_000 });
+
+      const present = await page.evaluate(() => typeof OffscreenCanvas !== 'undefined');
+
+      await page.locator('input[type="file"]').setInputFiles({
+        name: 'fixture.png',
+        mimeType: 'image/png',
+        buffer: png,
+      });
+      await page.getByRole('button', { name: 'Run' }).click();
+      await page.getByRole('button', { name: 'Raw' }).click({ timeout: 30_000 });
+      await page.waitForFunction(
+        () =>
+          [...document.querySelectorAll('textarea[readonly]')].some((box) =>
+            box.value.includes('changePercent'),
+          ),
+        undefined,
+        { timeout: 30_000 },
+      );
+
+      const report = await page.evaluate(() => {
+        const box = [...document.querySelectorAll('textarea[readonly]')].find((candidate) =>
+          candidate.value.includes('changePercent'),
+        );
+        return box ? JSON.parse(box.value) : null;
+      });
+
+      // WHICH BRANCH ACTUALLY RAN, read from the timeline rather than inferred
+      // from the global. Only the worker path emits this span, so a downgrade
+      // that silently failed to happen would be visible here rather than
+      // hiding behind two identical answers.
+      const usedWorker = await page.evaluate(() =>
+        performance
+          .getEntriesByType('measure')
+          .some((entry) => entry.name === 'patchbay:execute:image-convert'),
+      );
+
+      await page.getByRole('button', { name: 'Download' }).first().click();
+      const pixels = await page.evaluate(async () => {
+        const blob = window.__lastBlob;
+        if (!blob) return null;
+        const bitmap = await createImageBitmap(blob);
+        const canvas = document.createElement('canvas');
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const context2d = canvas.getContext('2d');
+        context2d.drawImage(bitmap, 0, 0);
+        const data = context2d.getImageData(0, 0, bitmap.width, bitmap.height).data;
+        return { width: bitmap.width, height: bitmap.height, data: [...data] };
+      });
+
+      return { present, usedWorker, report, pixels };
+    } finally {
+      await context.close();
+    }
+  };
+
+  const withApi = await convert(false);
+  if (!withApi.present) {
+    /*
+     * NOT A SILENT RETURN, AND NOT A SKIP EITHER.
+     *
+     * There is nothing to remove in an engine that has no OffscreenCanvas - so
+     * the comparison belongs in the other engine, which is where it runs. What
+     * CAN be asserted here is the claim the skip beside the image checks makes
+     * about this engine, which is otherwise taken on trust: that the missing
+     * API really does put the tool on the main thread. A check that vanishes
+     * leaves a summary reading as full coverage, which is the failure this
+     * file has had before.
+     */
+    check(
+      label,
+      'with no OffscreenCanvas at all, image conversion really runs on the main thread',
+      !withApi.usedWorker,
+      `usedWorker=${String(withApi.usedWorker)}`,
+    );
+    return;
+  }
+
+  const withoutApi = await convert(true);
+
+  check(
+    label,
+    'removing OffscreenCanvas really moves image conversion off the worker',
+    withApi.usedWorker && !withoutApi.usedWorker,
+    `with=${String(withApi.usedWorker)}, without=${String(withoutApi.usedWorker)}`,
+  );
+
+  /*
+   * The comparison, which is the reason for all of the above. A fallback that
+   * RUNS is not a fallback that AGREES: the two paths reach different encoder
+   * entry points, and "it produced an image" is satisfied by a wrong one.
+   */
+  const left = withApi.pixels;
+  const right = withoutApi.pixels;
+  const samePixels =
+    left !== null &&
+    right !== null &&
+    left.width === right.width &&
+    left.height === right.height &&
+    left.data.length === right.data.length &&
+    left.data.every((value, index) => value === right.data[index]);
+
+  const firstDifference =
+    samePixels || left === null || right === null
+      ? -1
+      : left.data.findIndex((value, index) => value !== right.data[index]);
+
+  check(
+    label,
+    'the main-thread fallback decodes to the same pixels as the worker path',
+    samePixels,
+    samePixels
+      ? `${String(left.width)}x${String(left.height)}, ${String(left.data.length)} samples equal`
+      : `first difference at sample ${String(firstDifference)}`,
+  );
+
+  check(
+    label,
+    'and reports the same dimensions and format down either branch',
+    withApi.report?.to?.width === withoutApi.report?.to?.width &&
+      withApi.report?.to?.height === withoutApi.report?.to?.height &&
+      withApi.report?.to?.format === withoutApi.report?.to?.format,
+    `${String(withApi.report?.to?.format)} ${String(withApi.report?.to?.width)}x${String(withApi.report?.to?.height)} vs ` +
+      `${String(withoutApi.report?.to?.format)} ${String(withoutApi.report?.to?.width)}x${String(withoutApi.report?.to?.height)}`,
+  );
 }
 
 /* ========================================================================== *

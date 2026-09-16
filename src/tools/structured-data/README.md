@@ -13,6 +13,7 @@ of what follows is about that.
 - [Type coercion](#type-coercion)
 - [What happens to data that cannot survive the conversion](#what-happens-to-data-that-cannot-survive-the-conversion)
 - [YAML: which library, and why](#yaml-which-library-and-why)
+- [Held to the yaml-test-suite, both ways](#held-to-the-yaml-test-suite-both-ways)
 - [CSV: hand-written, deliberately](#csv-hand-written-deliberately)
 - [The JSON boundary](#the-json-boundary)
 - [Limits](#limits)
@@ -295,6 +296,38 @@ wrong.
 The asymmetry is documented rather than hidden: converting that array **to**
 YAML writes a sequence, not a stream. Emitting documents instead would mean any
 array became a multi-document file, which is worse.
+
+**And a trailing `---` is not the only document that disappears.** "A trailing
+`---` does not add a `null`" is the comfortable half of a broader rule: ANY
+document with no content — a bare `---`, a lone comment, a `%YAML` directive on
+its own — is dropped, wherever it is in the stream. In the single-document case
+that is right, and it is why an empty box says "nothing to parse" instead of
+producing `null`. In a stream it means **the array can be shorter than the
+file**, with nothing said. Five cases in the yaml-test-suite land on it, and
+they are listed by id in
+[`yaml.oracle.test.ts`](yaml.oracle.test.ts) rather than filtered out.
+
+### Held to the yaml-test-suite, both ways
+
+Everything above used to rest on examples written by reading this file. It now
+rests on the corpus every YAML implementation is measured against, committed as
+[`spec/yaml-test-suite.json`](spec/yaml-test-suite.json) from the suite's own
+`data-2022-01-17` release:
+
+- **402 cases.** 94 the suite marks as errors, all refused. 279 carry the value
+  a conforming parser must produce, and 258 match exactly. The 21 that do not
+  are named with a reason and asserted to **still** differ, so a behaviour
+  change arrives with the list edited rather than silently.
+- **They are three groups and no others.** A value JSON cannot hold, refused by
+  path (`!!set`, `!!omap`, `!!binary`); an empty document dropped, as above; and
+  one case where the suite prints a mapping in a different order from the
+  document, which JSON does not make meaningful either way.
+- **And the writer is read by somebody else.** Every document the tool can read
+  is re-serialised and handed to **js-yaml**, a separate implementation with a
+  separate ancestry, as a dev-only oracle that reaches no chunk the browser
+  loads. 278 of 279 come back as the same value. The one that does not is a
+  string of nothing but newlines; CPython's PyYAML reads our spelling of it
+  correctly, so it is recorded as js-yaml's limit rather than as our defect.
 
 ## CSV: hand-written, deliberately
 

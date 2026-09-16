@@ -273,6 +273,110 @@
       "rows": [["a"], ["x "]]
     }
   ],
+  "records": [
+    {
+      "name": "even rows",
+      "delimiter": ",",
+      "source": "name,age\nada,36\ngrace,45\n",
+      "records": [
+        {
+          "name": "ada",
+          "age": "36"
+        },
+        {
+          "name": "grace",
+          "age": "45"
+        }
+      ]
+    },
+    {
+      "name": "short row",
+      "delimiter": ",",
+      "source": "a,b,c\n1,2\n",
+      "records": [
+        {
+          "a": "1",
+          "b": "2",
+          "c": null
+        }
+      ]
+    },
+    {
+      "name": "short row, one field",
+      "delimiter": ",",
+      "source": "a,b,c\n1\n",
+      "records": [
+        {
+          "a": "1",
+          "b": null,
+          "c": null
+        }
+      ]
+    },
+    {
+      "name": "long row",
+      "delimiter": ",",
+      "source": "a,b\n1,2,3\n",
+      "records": [
+        {
+          "a": "1",
+          "b": "2",
+          "null": ["3"]
+        }
+      ]
+    },
+    {
+      "name": "long row by two",
+      "delimiter": ",",
+      "source": "a,b\n1,2,3,4\n",
+      "records": [
+        {
+          "a": "1",
+          "b": "2",
+          "null": ["3", "4"]
+        }
+      ]
+    },
+    {
+      "name": "header only",
+      "delimiter": ",",
+      "source": "a,b,c\n",
+      "records": []
+    },
+    {
+      "name": "present but empty",
+      "delimiter": ",",
+      "source": "a,b\n1,\n",
+      "records": [
+        {
+          "a": "1",
+          "b": ""
+        }
+      ]
+    },
+    {
+      "name": "duplicate column names",
+      "delimiter": ",",
+      "source": "a,a\n1,2\n",
+      "records": [
+        {
+          "a": "2"
+        }
+      ]
+    },
+    {
+      "name": "empty header cell",
+      "delimiter": ",",
+      "source": "a,,c\n1,2,3\n",
+      "records": [
+        {
+          "a": "1",
+          "": "2",
+          "c": "3"
+        }
+      ]
+    }
+  ],
   "write": [
     {
       "name": "plain",

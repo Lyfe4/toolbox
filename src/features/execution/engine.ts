@@ -122,8 +122,16 @@ interface Pending {
    * confidently wrong answer - much worse than the error it was avoiding.
    */
   readonly replayable: boolean;
-  /** At most one replay per request, so a wedging tool cannot loop forever. */
-  retried: boolean;
+  /**
+   * How many times the worker has told us this request BEGAN RUNNING.
+   *
+   * Zero is the load-bearing value: a request still queued behind a wedged
+   * worker has not executed a single instruction, so whatever killed the
+   * worker, it was not this. See `recover`.
+   */
+  starts: number;
+  /** How many times this request has been put back onto a fresh worker. */
+  replays: number;
   /**
    * True once the caller has stopped waiting for this request.
    *
@@ -139,6 +147,16 @@ interface Pending {
 function now(): number {
   return typeof performance === 'undefined' ? 0 : performance.now();
 }
+
+/**
+ * The absolute ceiling on replays, whatever else is true.
+ *
+ * Every replay costs one worker boot and is only reachable when some OTHER
+ * request's deadline destroyed the worker, so this bounds a cascade rather
+ * than a single input. The cascade a canvas with one runaway node produces is
+ * two; this is well clear of that and well short of anything that could spin.
+ */
+const MAX_REPLAYS = 8;
 
 let nextRequestId = 0;
 
@@ -210,6 +228,7 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
       }
 
       if (response.kind === 'started') {
+        entry.starts += 1;
         /*
          * RE-ARMING, NOT EXTENDING.
          *
@@ -317,10 +336,35 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
    * They are REPLAYED rather than failed, because a tool is a pure function of
    * its inputs and options: running it again on a fresh worker produces the
    * same answer it would have produced, and reporting a failure the user's
-   * node did not cause is the thing worth avoiding. Replay is refused in
-   * exactly two cases - a request whose buffers were transferred (they are
-   * detached, so a replay would silently compute over nothing) and one that
-   * has already been replayed once (or a genuinely poisonous input would loop).
+   * node did not cause is the thing worth avoiding. Replay is refused for a
+   * request whose buffers were transferred - they are detached, so a replay
+   * would silently compute over nothing - and past the budget below.
+   *
+   * THE BUDGET COUNTS STARTS, NOT REPLAYS, AND THAT IS THE WHOLE POINT.
+   *
+   * It used to be one replay per request, full stop, to stop a genuinely
+   * poisonous input looping. But a request that is still QUEUED behind a
+   * wedged worker has not executed a single instruction, so it cannot be the
+   * poison - and spending its one replay on a neighbour's misbehaviour is
+   * exactly how an untouched node came to fail.
+   *
+   * Measured, on an idle machine, in both engines, 10 runs out of 10: type a
+   * catastrophically backtracking pattern into a regex node, pause long enough
+   * for the pipeline's 300 ms debounce to close (`RERUN_DEBOUNCE_MS`), then
+   * type into a base64 node beside it. The edit cancels the first run and
+   * starts a second, which re-posts the runaway - a cancelled run is not
+   * cached, deliberately - so there are now TWO copies of it. The first copy's
+   * deadline destroys worker one, taking the base64 request with it; the
+   * replayed second copy wedges worker two, whose death then found the base64
+   * request already `retried` and failed it with "This run was interrupted
+   * before it could finish." The base64 node was never started once. Its
+   * downstream node reported `upstream`.
+   *
+   * So a request that has never started keeps its budget, and what is capped
+   * is re-running something that DID run and was killed anyway. The absolute
+   * ceiling is there because a worker death is a cheap thing to cause and a
+   * worker boot is not; it is far above the two cascades a real canvas can
+   * produce and far below anything that could spin.
    */
   function recover(
     casualties: readonly (readonly [string, Pending])[],
@@ -338,7 +382,13 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
        */
       if (entry.cancelled) continue;
 
-      if (!replay || !entry.replayable || entry.retried) {
+      /*
+       * A request the worker never began is not the reason the worker died, so
+       * it keeps its budget; one that ran and was killed anyway gets a single
+       * further attempt and then reports.
+       */
+      const budget = entry.starts === 0 ? MAX_REPLAYS : 1;
+      if (!replay || !entry.replayable || entry.replays >= budget) {
         entry.settle(
           fail('internal', 'This run was interrupted before it could finish.', { detail: cause }),
         );
@@ -346,7 +396,7 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
       }
 
       try {
-        entry.retried = true;
+        entry.replays += 1;
         entry.postedAt = now();
         entry.timer = armTimeout(id, entry.timeoutMs);
         pending.set(id, entry);
@@ -511,7 +561,8 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
         request,
         transfer,
         replayable: transfer.length === 0,
-        retried: false,
+        starts: 0,
+        replays: 0,
         cancelled: false,
         timeoutMs,
         timeoutMessage: meta.timeoutMessage,

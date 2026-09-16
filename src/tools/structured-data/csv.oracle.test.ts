@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseCsvRows, recordsToCsv } from './csv';
+import { parseCsvRows, recordsToCsv, rowsToRecords } from './csv';
 import oracle from './spec/csv-oracle.json';
 
 /**
@@ -185,5 +185,145 @@ describe('writing, against CPython csv.writer', () => {
     const result = recordsToCsv([{ name: 'ada', age: '36' }], ',');
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.endsWith('\n')).toBe(false);
+  });
+});
+
+/* ========================================================================== *
+ * Records, against CPython csv.DictReader
+ * ========================================================================== */
+
+/**
+ * THE STEP AFTER PARSING, WHICH IS WHERE THIS TOOL'S OWN DECISIONS LIVE.
+ *
+ * `csv.reader` answers "what are the fields". Everything above holds this
+ * parser to that answer and it matches it exactly. But a CSV becomes JSON here
+ * through a SECOND step - `rowsToRecords` - which has to say what a row of the
+ * wrong length means, and `csv.reader` has no opinion about that because it
+ * never builds a record.
+ *
+ * `csv.DictReader` does, and it is what a Python program reading the same file
+ * into dictionaries actually uses. So the four places this tool decides
+ * differently are asserted against it rather than merely written down. Each is
+ * a decision and each is defensible; what was not defensible was that none of
+ * them had ever been compared with anything.
+ *
+ * THE INTERESTING ONE IS THE DUPLICATE COLUMN. DictReader keeps the LAST value
+ * and silently loses the column before it; this tool refuses the document.
+ * That is the one case here where the reference implementation is the one
+ * losing data.
+ */
+interface RecordCase {
+  readonly name: string;
+  readonly delimiter: string;
+  readonly source: string;
+  readonly records: readonly Record<string, unknown>[];
+}
+
+const recordCases = oracle.records as readonly RecordCase[];
+
+/** This tool's own answer for a document, as records or as a refusal. */
+function recordsOf(entry: RecordCase): { ok: boolean; value: unknown; message: string } {
+  const rows = parseCsvRows(entry.source, entry.delimiter);
+  if (!rows.ok) return { ok: false, value: null, message: rows.error.message };
+  const records = rowsToRecords(rows.value);
+  return records.ok
+    ? { ok: true, value: records.value, message: '' }
+    : { ok: false, value: null, message: records.error.message };
+}
+
+/**
+ * Where this tool answers something other than DictReader, and why.
+ *
+ * Exact rather than a threshold: a case that starts agreeing has to be moved
+ * out of this list by hand, which is the point.
+ */
+const RECORD_DIFFERENCES: Readonly<Record<string, string>> = {
+  'short row': 'a missing column is padded with the empty string, where DictReader uses None',
+  'short row, one field': 'the same, for two missing columns',
+  'long row': 'refused by row number, where DictReader files the extras under the key None',
+  'long row by two': 'the same, for two extra fields',
+  'duplicate column names':
+    'refused, where DictReader keeps the last value and silently drops the column before it',
+  'empty header cell':
+    'an unquoted empty header becomes column_2, where DictReader uses the empty string as a key',
+};
+
+describe('records, against CPython csv.DictReader', () => {
+  it('has a corpus to check at all', () => {
+    expect(recordCases.length).toBeGreaterThan(5);
+    expect(recordCases.some((entry) => entry.name === 'long row')).toBe(true);
+  });
+
+  it.each(
+    recordCases
+      .filter((entry) => !(entry.name in RECORD_DIFFERENCES))
+      .map((entry) => [entry.name, entry] as const),
+  )('shapes %s into the records DictReader builds', (_name, entry) => {
+    const mine = recordsOf(entry);
+    expect(mine.ok).toBe(true);
+    expect(mine.value).toEqual(entry.records);
+  });
+
+  it.each(Object.entries(RECORD_DIFFERENCES))('differs on %s: %s', (name) => {
+    const entry = recordCases.find((candidate) => candidate.name === name);
+    expect(entry).toBeDefined();
+    if (!entry) return;
+
+    const mine = recordsOf(entry);
+    const same = mine.ok && JSON.stringify(mine.value) === JSON.stringify(entry.records);
+    expect(same).toBe(false);
+  });
+
+  /*
+   * And the shape of each difference, stated rather than left as "not equal".
+   * "It differs" is satisfied by any wrong answer at all.
+   */
+  it('pads a short row with the empty string, not null', () => {
+    const entry = recordCases.find((candidate) => candidate.name === 'short row');
+    expect(entry).toBeDefined();
+    if (!entry) return;
+
+    expect(entry.records[0]).toEqual({ a: '1', b: '2', c: null });
+    expect(recordsOf(entry).value).toEqual([{ a: '1', b: '2', c: '' }]);
+  });
+
+  it('refuses a long row rather than filing the extras under a key JSON cannot spell', () => {
+    const entry = recordCases.find((candidate) => candidate.name === 'long row');
+    expect(entry).toBeDefined();
+    if (!entry) return;
+
+    // Python's answer really does contain a key that started life as None.
+    expect(Object.keys(entry.records[0] ?? {})).toContain('null');
+
+    const mine = recordsOf(entry);
+    expect(mine.ok).toBe(false);
+    expect(mine.message).toContain('3 fields');
+  });
+
+  it('refuses a duplicate column where DictReader keeps the last one', () => {
+    const entry = recordCases.find((candidate) => candidate.name === 'duplicate column names');
+    expect(entry).toBeDefined();
+    if (!entry) return;
+
+    // One key for two columns: the first value is gone and nothing said so.
+    expect(entry.records).toEqual([{ a: '2' }]);
+
+    const mine = recordsOf(entry);
+    expect(mine.ok).toBe(false);
+    expect(mine.message).toContain('Duplicate column');
+  });
+
+  /*
+   * A NEGATIVE CONTROL. Every case above that is supposed to agree agreed on
+   * the first run, so this says the comparison can see a wrong answer at all.
+   */
+  it('can tell a matching record set from one that does not match', () => {
+    const entry = recordCases.find((candidate) => candidate.name === 'even rows');
+    expect(entry).toBeDefined();
+    if (!entry) return;
+
+    const mine = recordsOf(entry);
+    expect(mine.value).toEqual(entry.records);
+    expect(mine.value).not.toEqual([{ name: 'ada', age: '36' }]);
   });
 });

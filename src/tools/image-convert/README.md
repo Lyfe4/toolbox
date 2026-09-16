@@ -270,6 +270,15 @@ asserted rather than assumed:
   `OffscreenCanvas`, and in Playwright's WebKit, which **has none at all** — so
   the two paths are each held to the same colour, orientation and transparency
   assertions in a real engine, for free.
+- And then to **each other**, which is a different question and the one that
+  had never been asked. Each engine was proving only the branch it happens to
+  take, so nothing said the two produce the same file — and the branch WebKit
+  takes is not the branch a Safari user takes, because Safari has had
+  `OffscreenCanvas` since 16.4. `checkOffscreenFallback` deletes the global
+  before the bundle loads in the engine that HAS it, runs the same PNG down
+  both branches, and compares every decoded sample. It also reads the
+  performance timeline to confirm the downgrade really happened, so a fallback
+  that quietly failed to engage could not pass as agreement.
 
 ## Other things that would otherwise be quiet failures
 

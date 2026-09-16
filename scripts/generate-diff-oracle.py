@@ -20,6 +20,17 @@ import subprocess
 import sys
 import tempfile
 
+# STDOUT IS FORCED TO UTF-8, AND THAT IS NOT A DETAIL.
+#
+# Python writes `sys.stdout` in the platform's preferred encoding, which on a
+# Windows console is cp1252. `ensure_ascii=False` below writes the real
+# characters, so on Windows this generator SUCCEEDED and wrote mojibake: the
+# `unicode changed` case came out holding a cp1252 byte that is not valid
+# UTF-8, exit code 0, and the one case in the fixture that is about non-ASCII
+# text no longer contained any. That is the quiet half of the same fault the
+# CSV generator has - there it crashes, here it does not.
+sys.stdout.reconfigure(encoding="utf-8", newline="")
+
 # (name, original, changed) - written verbatim, in binary, so a line ending is
 # whatever the case says it is rather than whatever the platform prefers.
 CASES = [

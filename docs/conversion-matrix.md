@@ -22,8 +22,10 @@ passes" is not an entry in it.
 - [Regex](#regex)
 - [Image](#image)
 - [Video](#video)
+- [The canvas: one node's failure reaching another](#the-canvas-one-nodes-failure-reaching-another)
 - [The canvas: what a wire does to a value](#the-canvas-what-a-wire-does-to-a-value)
 - [Decisions this round did not take](#decisions-this-round-did-not-take)
+- [Found this round](#found-this-round)
 - [What was looked for and not found](#what-was-looked-for-and-not-found)
 - [Still unverified, and how to verify it](#still-unverified-and-how-to-verify-it)
 
@@ -37,11 +39,13 @@ passes" is not an entry in it.
 | **broken**        | The output is wrong, for input a person would realistically produce.                                                                |
 | **not verified**  | It may be right. Nothing outside this repository has said so.                                                                       |
 
-`lossy, silent` is deliberately not a comfortable category. **Eleven cells are
-in it**, counted from the tables below, and every one either has an entry in
+`lossy, silent` is deliberately not a comfortable category. **Twelve cells are
+in it** — eleven, plus one the yaml-test-suite found in round two —, counted from the tables below, and every one either has an entry in
 [the decisions](#decisions-this-round-did-not-take) or is named in a table with
-what is lost. Seven cells that were **broken** at the start of this round are
-marked `fixed this round`; none of them was failing a test.
+what is lost. Seven cells that were **broken** at the start of round one are
+marked `fixed this round`; none of them was failing a test. Round two added two
+more, both on the canvas rather than inside a conversion: a node reporting a
+failure a neighbour caused, and the node downstream of it.
 
 ## What counts as evidence
 
@@ -81,35 +85,36 @@ auto-detected unless you say otherwise; the target is always explicit.
 
 ### Reading
 
-| From | Verdict           | Evidence                                                                                                                                                                                                                                                                                                       |
-| ---- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CSV  | **exact**         | 32 documents read by CPython's `csv.reader` and by this parser, field for field, including a lone CR terminator, a NUL byte, a quote opening mid-field, a field of four quotes, CRLF inside a quoted cell and every delimiter offered. [`csv.oracle.test.ts`](../src/tools/structured-data/csv.oracle.test.ts) |
-| TSV  | **exact**         | Same corpus, tab delimiter.                                                                                                                                                                                                                                                                                    |
-| JSON | **lossy, silent** | Structure and strings are exact — it is `JSON.parse`. **Integers past 2^53 are silently rounded**, and that is the one loss. See [Numbers](#numbers-past-253-the-one-silent-loss-left).                                                                                                                        |
-| YAML | **not verified**  | The parser is the `yaml` package, which is itself held to the YAML test suite upstream; what is unverified is the wrapper around it — the JSON boundary, the duplicate-key rule and the alias limit — which has example-based tests only.                                                                      |
+| From | Verdict                             | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CSV  | **exact**                           | 32 documents read by CPython's `csv.reader` and by this parser, field for field, including a lone CR terminator, a NUL byte, a quote opening mid-field, a field of four quotes, CRLF inside a quoted cell and every delimiter offered. [`csv.oracle.test.ts`](../src/tools/structured-data/csv.oracle.test.ts)                                                                                                                                                                                                                        |
+| TSV  | **exact**                           | Same corpus, tab delimiter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| JSON | **lossy, silent**                   | Structure and strings are exact — it is `JSON.parse`. **Integers past 2^53 are silently rounded**, and that is the one loss. See [Numbers](#numbers-past-253-the-one-silent-loss-left).                                                                                                                                                                                                                                                                                                                                               |
+| YAML | **exact**, with 21 named exceptions | 402 cases from the [yaml-test-suite](https://github.com/yaml/yaml-test-suite)'s own `data-2022-01-17` release, committed as [`spec/yaml-test-suite.json`](../src/tools/structured-data/spec/yaml-test-suite.json). 94 documents the suite marks as errors are all refused; 279 carry the value a conforming parser must produce and 258 of them match exactly. The 21 that do not are listed by id with a reason, and each is asserted to **still** differ. [`yaml.oracle.test.ts`](../src/tools/structured-data/yaml.oracle.test.ts) |
 
 ### Writing
 
-| To   | Verdict                              | Evidence                                                                                                                                                                                                                                                                                                                                                                        |
-| ---- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| JSON | **exact**                            | `JSON.stringify`. Subject to the same integer ceiling on the way in.                                                                                                                                                                                                                                                                                                            |
-| YAML | **not verified**                     | The `yaml` package's serialiser. No external reading of its output.                                                                                                                                                                                                                                                                                                             |
-| CSV  | **exact**, with two stated spellings | 12 record sets written by CPython's `csv.writer` and by this writer, byte for byte. Two deliberate differences, each asserted as itself: no terminator after the last record (RFC 4180 permits both), and a field with leading or trailing whitespace is quoted where Python leaves it bare — the oracle was asked to read both spellings and returned the same field for each. |
-| TSV  | **exact**                            | Same corpus, tab delimiter.                                                                                                                                                                                                                                                                                                                                                     |
+| To   | Verdict                              | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JSON | **exact**                            | `JSON.stringify`. Subject to the same integer ceiling on the way in.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| YAML | **exact**, with one named exception  | Every document the tool can read from the yaml-test-suite is re-serialised and read back by **js-yaml**, a separate implementation with a separate ancestry, as a dev-only oracle. 278 of 279 come back as the same value. The one that does not is NAT4, whose strings are nothing but newlines: our writer emits `\n` as a keep-chomped `\|+` block scalar, js-yaml 5.4.2 refuses it, and CPython's PyYAML 6.0.3 — asked as a third opinion, because two implementations disagreeing is evidence about neither — reads it correctly. Recorded as js-yaml's limit, and asserted as itself. |
+| CSV  | **exact**, with two stated spellings | 12 record sets written by CPython's `csv.writer` and by this writer, byte for byte. Two deliberate differences, each asserted as itself: no terminator after the last record (RFC 4180 permits both), and a field with leading or trailing whitespace is quoted where Python leaves it bare — the oracle was asked to read both spellings and returned the same field for each.                                                                                                                                                                                                             |
+| TSV  | **exact**                            | Same corpus, tab delimiter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 ### Between formats
 
 Every conversion goes through the same JSON-shaped value, so the cell is the
 combination of the two halves above plus what the target format cannot hold.
 
-| From → To           | Verdict           | What is lost, and whether you are told                                                                                                                                                                                                                                                                                                                   |
-| ------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| JSON → YAML         | **exact**         | Nothing. Key order is preserved unless `sortKeys` is on.                                                                                                                                                                                                                                                                                                 |
-| YAML → JSON         | **lossy, told**   | Comments, anchors, tags and the choice of block style are not JSON and are dropped. Anything JSON genuinely cannot hold — a `!!binary`, a `!!set`, a collection used as a key, a 1.1 timestamp — is **refused by path**, not mangled.                                                                                                                    |
-| JSON/YAML → CSV/TSV | **lossy, silent** | Three losses, all real and none reported: a nested value becomes compact JSON inside the cell; a key absent from one row becomes an empty cell indistinguishable from a present-and-empty one; and every value becomes text. A non-array, or an array of non-objects, is refused clearly. See [the decisions](#2-how-nested-json-should-flatten-to-csv). |
-| CSV/TSV → JSON/YAML | **lossy, told**   | Every cell becomes a **string**, deliberately — `01234` is a part number, not the number 1234 — and the tool's README states it. Line endings inside quoted cells survive verbatim.                                                                                                                                                                      |
-| YAML stream → any   | **lossy, silent** | A `---`-separated stream becomes a JSON array, and converting back to YAML produces a **sequence**, not a stream. A Kubernetes manifest does not survive the round trip as a manifest. Nothing says so.                                                                                                                                                  |
-| Anything → CSV      | **lossy, silent** | The output has no terminator after the last record and uses LF, whatever the input used. RFC 4180 specifies CRLF; every reader accepts LF. Worth knowing when the next step is a byte comparison.                                                                                                                                                        |
+| From → To                     | Verdict           | What is lost, and whether you are told                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JSON → YAML                   | **exact**         | Nothing. Key order is preserved unless `sortKeys` is on.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| YAML → JSON                   | **lossy, told**   | Comments, anchors, tags and the choice of block style are not JSON and are dropped. Anything JSON genuinely cannot hold — a `!!binary`, a `!!set`, a collection used as a key, a 1.1 timestamp — is **refused by path**, not mangled.                                                                                                                                                                                                                                                                                                                                                                                            |
+| JSON/YAML → CSV/TSV           | **lossy, silent** | Three losses, all real and none reported: a nested value becomes compact JSON inside the cell; a key absent from one row becomes an empty cell indistinguishable from a present-and-empty one; and every value becomes text. A non-array, or an array of non-objects, is refused clearly. See [the decisions](#2-how-nested-json-should-flatten-to-csv).                                                                                                                                                                                                                                                                         |
+| CSV/TSV → JSON/YAML           | **lossy, told**   | Every cell becomes a **string**, deliberately — `01234` is a part number, not the number 1234 — and the tool's README states it. Line endings inside quoted cells survive verbatim.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| YAML stream → any             | **lossy, silent** | A `---`-separated stream becomes a JSON array, and converting back to YAML produces a **sequence**, not a stream. A Kubernetes manifest does not survive the round trip as a manifest. Nothing says so.                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| An empty document in a stream | **lossy, silent** | Found by the yaml-test-suite this round. A document holding only a directive, a comment or a bare `---` is `null` to every conforming parser and **nothing at all** to this tool, so a five-document stream can come back as a four-element array with no error. `isEmptyDocument` exists for the single-document case, where "nothing to parse" is the right answer for an empty box; in a stream it changes the length of the file. Five suite cases shorten a stream; twelve more are documents that are empty throughout, where "nothing to parse" is the answer this tool gives and `null` is the answer the suite expects. |
+| Anything → CSV                | **lossy, silent** | The output has no terminator after the last record and uses LF, whatever the input used. RFC 4180 specifies CRLF; every reader accepts LF. Worth knowing when the next step is a byte comparison.                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 ### Detection
 
@@ -270,6 +275,62 @@ re-encode.
 | Codecs an MP4 cannot carry    | **lossy, told**  | Refused by name.                                                                                                                    |
 | Playback of the produced file | **not verified** | Nothing in this repository has ever played a file this tool made. It is the last item on [docs/manual-checks.md](manual-checks.md). |
 
+## The canvas: one node's failure reaching another
+
+A `lossy, silent` cell is a value that changes. This is the other kind of
+wrongness a canvas can have: a node that reports a failure it did not cause.
+
+| Case                                      | Verdict              | Evidence                                                                                                                                                                       |
+| ----------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A node beside one that runs away          | **fixed this round** | Was **broken**, and not on a slow machine — on an idle one, 10 runs out of 10 in both engines. See [The bystander](#the-bystander-a-node-failing-for-something-it-did-not-do). |
+| A node downstream of that node            | **fixed this round** | Reported `upstream` for the same reason, on every one of those runs.                                                                                                           |
+| A node whose own tool really did run over | **exact**            | Reports `timeout` with the tool's own message, and the worker is destroyed. Unchanged.                                                                                         |
+| A node whose buffers were transferred     | **lossy, told**      | Refused a replay, because a transferred buffer is detached and a replay would compute over nothing. Told as an interrupted run rather than as a wrong answer.                  |
+
+### The bystander: a node failing for something it did not do
+
+Round one saw three WebKit checks fail under CPU load — an unrelated `base64`
+node reporting `error` after 29,370 ms — and could not tell a harness artefact
+from a product defect. It is settled, by measurement rather than by a re-run.
+
+**It is the app.** And the 29,370 ms was the harness's own polling budget, not
+a latency: the node's real time to failure is 3.5–5 s.
+
+**It is not about slow machines.** What decides it is whether two edits fall
+more than 300 ms apart, which is `RERUN_DEBOUNCE_MS` — in other words, whether
+a person types into one node and then into another the way people do. CPU load
+only widens the gap; it does not create it.
+
+What was measured, in Gecko and JavaScriptCore, with the message traffic on the
+worker port recorded:
+
+| Condition                                    | Bystander           | Posts to a worker                   |
+| -------------------------------------------- | ------------------- | ----------------------------------- |
+| Idle, two edits as fast as a driver can type | `ok` in ~2.4 s      | regex, base64, base64               |
+| 16 busy processes on 16 cores                | `error` 7 / 16      | regex, regex, base64, regex, base64 |
+| **Idle, 800 ms between the two edits**       | **`error` 10 / 10** | regex, regex, base64, regex, base64 |
+
+The mechanism, from the recording. The second edit cancels the first run; a
+cancelled run is deliberately not cached, so the new run **re-posts the
+runaway**. Two copies of it are now queued. The first copy's deadline destroys
+worker one and the base64 request is replayed onto worker two; the replayed
+runaway wedges worker two, and its death finds the base64 request already
+`retried` and fails it with _"This run was interrupted before it could
+finish."_ The worker never sent a `started` for that request at all — it had
+not executed one instruction.
+
+The fix is in the replay budget, and it is a change of question rather than of
+number: the cap now counts **starts, not replays**. A request the worker never
+began cannot be the poison the cap exists to contain, so a neighbour's
+misbehaviour no longer spends it. A request that did run and was killed anyway
+still gets one further attempt and then reports. Measured after: 10 of 10 `ok`
+in both engines, in 3.7 s, with the bystander posted three times and started
+once.
+
+Held by [`engine.test.ts`](../src/features/execution/engine.test.ts), which was
+checked to fail against the old rule, and by two new checks in
+`cross-browser-check.mjs` that put the 800 ms pause in on purpose.
+
 ## The canvas: what a wire does to a value
 
 A value does not go through a text form between two nodes. It moves as a typed
@@ -302,6 +363,12 @@ output and pasting it into B on `/tools` gives?
 Each of these is a real defect or a real loss, and each turns on a judgement
 that is not mine to make. They are listed with the options and a
 recommendation, not fixed.
+
+**Still not taken after round two, on purpose.** Round two was asked to close
+the evidence gaps round one left rather than to take these, and nothing it did
+forced one of them. The nearest thing to a collision is the new
+`An empty document in a stream` row, which wants the same report channel
+decision 4 describes; it is recorded rather than fixed for exactly that reason.
 
 ### 1. How eager delimited detection should be
 
@@ -408,6 +475,33 @@ actually are.
 fallback, so the comment is removed rather than folded into a key. Not done
 this round because it is a new capability rather than a correction.
 
+## Found this round
+
+Two defects outside any conversion, both of which made evidence elsewhere less
+true than it looked.
+
+**`scripts/generate-diff-oracle.py` silently corrupted its own fixture on
+Windows.** Python writes `sys.stdout` in the platform's encoding, which is
+cp1252 on a Windows console, and the generator writes `ensure_ascii=False`. Run
+there, it exited 0 and wrote `café` as a cp1252 byte that is not valid UTF-8 —
+so the one case in the git fixture that is about non-ASCII text stopped
+containing any, and the corrupted fixture would have been committed. The CSV
+generator has the identical fault and is the lucky one: its corpus contains a
+coffee cup, which cp1252 cannot encode at all, so it crashes instead. Both now
+choose their encoding rather than inheriting it, and both fixtures then
+reproduce **byte for byte** from a clean checkout.
+
+**A node could fail because a neighbour ran away.** See
+[The bystander](#the-bystander-a-node-failing-for-something-it-did-not-do).
+
+And three claims in prose that the code did not back:
+
+| Claim                                                                        | Was                                                                                                                                       |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| README: OKLCH round-tripping is held to "all 16,777,216 sRGB colours, swept" | The committed test walks a fixed stride of 166,112. The full sweep was run **offline**, to calibrate the stride and choose the precision. |
+| README: "Each fixture is generated by a script in `scripts/`"                | True of three. The CommonMark and GFM suites are upstream files pinned by version, and the RFC and FIPS vectors are written inline.       |
+| architecture.md: `attachments.test.ts`                                       | The file is `attachments.test.tsx`. It does hold the line it is cited for.                                                                |
+
 ## What was looked for and not found
 
 Stated because an absence is only worth anything if somebody says what they
@@ -427,6 +521,17 @@ looked for.
 - **Share links or saved graphs carrying input data.** None; the existing
   assertion was rewritten last round to actually look.
 - **The regex listing disagreeing with `matchAll`.** No disagreement.
+- **A YAML document the suite marks as an error being accepted.** 94 of them,
+  none accepted. The negative control in the same file shows the assertion can
+  tell a refusal from an acceptance, because 94 out of 94 on a first run is the
+  shape of a test that is not running.
+- **A generator that does not reproduce its fixture.** Both existing
+  generators now do, byte for byte, from a clean checkout — but only after the
+  encoding fault below was fixed. See [Found this round](#found-this-round).
+- **Flakiness in the remaining property tests.** Every file containing an
+  `fc.assert` was run 30 times, 610 tests a run, with a fresh seed each time.
+  No failure. The colour test that lost one run in four was the only one, and
+  it was fixed last round.
 - **Over-refusal from this round's fixes.** Nineteen realistic pasted documents
   — pretty-printed JSON, trailing commas, single quotes, unquoted keys, NDJSON,
   a Kubernetes-style stream, block and folded scalars, semicolon CSV, TSV —
@@ -437,70 +542,54 @@ looked for.
 
 In the order I would do them.
 
-1. **YAML.** The parser is held to the YAML test suite upstream; the wrapper is
-   not held to anything external. The
-   [yaml-test-suite](https://github.com/yaml/yaml-test-suite) has ~400 cases
-   with an expected JSON event stream for each. Committing the subset that
-   produces a JSON-representable document, and asserting our `parseSource`
-   output against their `.json` files, would make the whole `YAML → JSON`
-   column say `exact` or say precisely where it does not. This is the biggest
-   single gap.
-2. **YAML serialisation.** Nothing reads our YAML output but us. Round-tripping
-   it through a second YAML implementation — `js-yaml` as a dev-only oracle,
-   which shares no code with `yaml` — would check the writer independently of
-   the reader.
-3. **JWT beyond HS256.** RFC 7515 appendices A.2 (RS256) and A.3 (ES256) carry
+1. **JWT beyond HS256.** RFC 7515 appendices A.2 (RS256) and A.3 (ES256) carry
    complete key material and signatures. Two more fixtures.
-4. **The worker boundary, with hostile text.** Everything in
+2. **The worker boundary, with hostile text.** Everything in
    `wireFidelity.integration.test.ts` runs on the main thread, because jsdom
    has no Worker. A structured clone of a string containing a lone surrogate,
    a NUL and an astral character should be asserted in
    `check:browsers`, in both engines, over a real `postMessage`.
-5. **Markdown → HTML for the 28 CommonMark failures.** Each has a cause
+3. **Markdown → HTML for the 28 CommonMark failures.** Each has a cause
    recorded; none has been re-examined since. Some may now pass.
-6. **Image resampling.** No reference. A fixed 8×8 pattern downscaled by a
+4. **Image resampling.** No reference. A fixed 8×8 pattern downscaled by a
    known factor, compared against the same operation in a reference resampler
    run offline and committed as expected pixels, would turn `not verified` into
    a verdict.
-7. **The video tool's output, played.** Still nothing in this repository has
+5. **The video tool's output, played.** Still nothing in this repository has
    played a file it made.
-8. **Whether a wedged worker really does punish the node beside it on a slow
-   machine.** `check:browsers` was run twice against the same build. Idle, it
-   passes. With the unit suite, the typechecker and ESLint running alongside
-   it, three WebKit checks failed — all one scenario, the worker-wedge check:
-   an unrelated `base64` node reported `error` after 29,370 ms instead of
-   succeeding, and the node downstream of it reported `upstream`.
+6. **The 29 YAML cases the suite describes only as an event stream.** They
+   carry no `in.json`, so the fixture cannot decide them and the count is
+   asserted rather than the cases being dropped. Reading the suite's
+   `test.event` files and comparing a composed event stream would decide them;
+   it needs an event emitter this tool does not have.
 
-   The convenient reading is "the harness is sensitive to load". The reading
-   that would matter is that the check is asserting `bystanderMs < 12_000`
-   against a tool deadline of 15 s, while a wedged worker is being destroyed
-   and replaced — so under contention the bystander's own deadline can expire
-   first, and **a user on a slow machine would see exactly that**: an unrelated
-   node failing because something else ran away. That is a product defect, not
-   a harness artefact, and nothing here has told the two apart.
-
-   Neither reading is established. What is established is that the same build
-   passes idle and fails under load, and that nothing in this round's changes
-   can reach that code — `base64` is untouched, and the structured-data node in
-   that graph returns before the new fallback guard. Next round: run the wedge
-   check N times at a pinned CPU load, measure the bystander's recovery time
-   rather than asserting a threshold on it, and if the recovery really is
-   slower than the deadline, fix the engine rather than the number.
+7. **Our YAML writer against a third implementation.** js-yaml is one
+   independent reader. PyYAML settled the one disagreement by hand this round
+   (see the writing table), but it is not in the suite — a generator that runs
+   our writer's output through CPython and commits the answers would make the
+   writing row rest on two references rather than one and a footnote.
 
 ## A plan for the rounds after this one
 
-**Round two — take the decisions.** The seven above, in one pass, because five
-of them share a mechanism: structured data needs somewhere to say what it did.
-Adding that port and then filling it is one change, not five.
+**Round two — done, and it was not the decisions.** It was asked for the
+evidence instead: YAML against the suite and against js-yaml, the nine skips in
+`check:browsers` examined one at a time, the generators re-run from a clean
+checkout, every randomised test run thirty times, and the worker-wedge question
+settled by measurement. It found a product defect on the canvas, a generator
+that silently corrupted its own fixture, one silent loss in YAML streams and
+three claims in prose the code did not back.
 
-**Round three — YAML, properly.** Items 1 and 2 above. YAML is the largest
-`not verified` cell in this document and the format most likely to be pasted in
-from somewhere strange.
+**Round three — take the decisions.** The seven above, in one pass, because
+five of them share a mechanism: structured data needs somewhere to say what it
+did. Adding that port and then filling it is one change, not five — and the
+YAML stream's dropped empty document now wants the same channel, which makes it
+six.
 
-**Round four — the boundaries jsdom cannot see.** Item 4, plus a pass over
-`check:browsers` asking of every check the question the negative-assertion
-audit asked: can this fail? The cross-browser harness is where the canvas's
-real behaviour lives and it is the least externally-anchored part of the suite.
+**Round four — the boundaries jsdom cannot see.** The worker boundary with
+hostile text, plus a pass over `check:browsers` asking of every check the
+question the negative-assertion audit asked: can this fail? Round two did that
+for the skips and found one worth converting; it did not do it for the
+assertions.
 
 **Round five — the two binary tools.** Image resampling against a reference,
 and the video tool's output played by something. Both need work outside the
@@ -508,11 +597,12 @@ test suite, which is why they are last rather than because they matter least.
 
 Running through all of them: **every `lossy, silent` cell should become
 `lossy, told` or `exact`.** That is the whole of what this document is for, and
-the count of them is the measure. It is eleven today. Round two, if the
-decisions go the way they are recommended, takes six of those: the three inside
-structured data's conversions, its silence about what it detected, the JWT
-claim, and the diff's patch port.
+the count of them is the measure. It is **twelve** today — eleven after round
+one, plus the YAML stream's empty document. Round three, if the decisions go
+the way they are recommended, takes seven of those: the three inside structured
+data's conversions, its silence about what it detected, the JWT claim, the
+diff's patch port, and the empty document.
 
 The remaining five are smaller and each needs its own answer: base64's
-non-canonical trailing bits, colour's percentage rounding, the YAML stream, and
-text convert's two normalisation passes.
+non-canonical trailing bits, colour's percentage rounding, the YAML stream
+becoming a sequence, and text convert's two normalisation passes.

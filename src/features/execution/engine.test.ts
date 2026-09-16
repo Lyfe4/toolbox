@@ -844,26 +844,89 @@ describe('a timeout with other requests in flight', () => {
   });
 
   /*
-   * A replay is bounded at one. Two tools that both wedge would otherwise put
-   * the engine in a loop, rebuilding a worker and re-posting the same doomed
-   * request forever.
+   * THE BUG THIS CATCHES, AND IT WAS MEASURED IN TWO REAL ENGINES BEFORE IT
+   * WAS WRITTEN DOWN HERE.
+   *
+   * The replay budget used to be one per request, so a bystander survived
+   * exactly one worker death. A canvas produces two, without anything unusual
+   * happening: type a runaway pattern into a regex node, pause past the
+   * pipeline's 300 ms debounce, then type into a base64 node beside it. The
+   * second edit cancels the first run and starts another, which re-posts the
+   * runaway - a cancelled run is deliberately not cached - so two copies of it
+   * are now queued. The first copy's deadline destroys worker one and the
+   * base64 request is replayed; the second copy wedges worker two, whose death
+   * finds the base64 request out of budget and fails it.
+   *
+   * Idle, no load, 10 runs out of 10 in both Gecko and JavaScriptCore: the
+   * base64 node reported `error`, the node downstream of it reported
+   * `upstream`, and the worker had never started the base64 request at all.
+   *
+   * So the sequence below is that canvas: two wedging requests in flight, two
+   * worker deaths, one innocent request that never ran.
    */
-  it('fails a bystander that has already been replayed once', async () => {
-    const { engine, clock } = twoToolSetup();
+  it('replays a bystander through a SECOND worker death it also did not cause', async () => {
+    const { engine, workers, clock } = twoToolSetup();
+
+    void engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
+    // The second copy of the runaway, exactly as a cancelled-then-rerun
+    // pipeline posts it.
+    void engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
+    const bystander = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
+
+    // The third execute on the first worker is the innocent one, and its id
+    // never changes - a replay keeps it, which is how a late reply still
+    // correlates.
+    const bystanderId = executeIds(workers[0])[2];
+    expect(bystanderId).toBeDefined();
+
+    // Worker one dies on the first runaway's deadline. Timers are handed out
+    // in order, so the first outstanding handle is that deadline.
+    const [firstRunaway] = clock.handles();
+    if (firstRunaway !== undefined) clock.fire(firstRunaway);
+
+    // Worker two dies on the replayed runaway's deadline. The bystander is a
+    // casualty for the second time, still without having run once.
+    const [secondRunaway] = clock.handles();
+    if (secondRunaway !== undefined) clock.fire(secondRunaway);
+
+    expect(executeIds(workers[2])).toContain(bystanderId);
+    if (bystanderId !== undefined) {
+      workers[2]?.reply(settled(bystanderId, ok({ out: { type: 'text', text: 'bystander' } })));
+    }
+
+    await expect(bystander).resolves.toMatchObject({ ok: true });
+  });
+
+  /*
+   * The other half of the same rule. A request that DID run and was killed
+   * anyway gets one further attempt and then reports, because at that point it
+   * is a plausible cause rather than an obvious bystander.
+   */
+  it('fails a bystander that had already started running and was killed again', async () => {
+    const { engine, workers, clock } = twoToolSetup();
 
     void engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
     const bystander = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
 
-    // First casualty: replayed.
-    const first = clock.handles()[0];
-    if (first !== undefined) clock.fire(first);
+    const [runawayTimer] = clock.handles();
 
-    // A second run-over on the replacement worker. The bystander's replay
-    // budget is spent, so this time it is told what happened rather than
-    // being re-posted.
-    const settledSoFar = new Set(clock.handles());
+    // The worker reached it: this request is no longer merely queued, which is
+    // the whole difference between this test and the one above.
+    const bystanderId = executeIds(workers[0])[1];
+    if (bystanderId !== undefined) {
+      workers[0]?.reply({ kind: 'started', requestId: bystanderId });
+    }
+
+    if (runawayTimer !== undefined) clock.fire(runawayTimer);
+
+    // It ran again on the replacement worker, and a second runaway took that
+    // worker down too.
+    if (bystanderId !== undefined) {
+      workers[1]?.reply({ kind: 'started', requestId: bystanderId });
+    }
+    const before = new Set(clock.handles());
     void engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
-    const second = clock.handles().find((handle) => !settledSoFar.has(handle));
+    const second = clock.handles().find((handle) => !before.has(handle));
     expect(second).toBeDefined();
     if (second !== undefined) clock.fire(second);
 
