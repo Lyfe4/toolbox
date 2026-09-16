@@ -198,11 +198,127 @@ describe('format detection', () => {
     if (!result.ok) expect(result.error.message).toContain('YAML');
   });
 
-  it('leaves prose that merely fell back to YAML alone', () => {
-    // Prose folds to a scalar too. The discriminator is a CONSISTENT field
-    // count, which prose does not have - so nothing is suggested about it.
+  /*
+   * THIS USED TO RETURN `'Hello there. This is prose. No structure.'`.
+   *
+   * Three lines of prose are a valid YAML document - a plain scalar folds
+   * across line breaks - so the fallback produced a string with the line
+   * breaks replaced by spaces and reported success. Nothing was wrong with the
+   * input and nothing was wrong with YAML; what was wrong is that a document
+   * which is not JSON, YAML, CSV or TSV came back as a JSON string that had
+   * quietly lost its line structure.
+   *
+   * The old test asserted that folding, and its reasoning was about the half
+   * of the behaviour that was right: no delimiter is suggested, because prose
+   * has no consistent field count to suggest one from. Saying nothing about
+   * the delimiter and still handing back the folded string was the other half.
+   */
+  it('refuses prose rather than folding it into one line', () => {
     const result = parseAuto('Hello there.\nThis is prose.\nNo structure.', DELIMITERS.comma);
-    expect(result).toEqual({ ok: true, value: 'Hello there. This is prose. No structure.' });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain('not JSON, YAML, CSV or TSV');
+      // Not a delimiter suggestion: there is no table here to suggest one for.
+      expect(result.error.detail).toContain('line breaks turned into spaces');
+    }
+  });
+
+  it('still reads a one-line document that really is a YAML scalar', () => {
+    // `hello` is a scalar too, and it is a YAML document meaning "hello".
+    // Folding is what separates that from prose, not being a scalar.
+    expect(parseAuto('hello', DELIMITERS.comma)).toEqual({ ok: true, value: 'hello' });
+  });
+
+  it('reads a deliberate block scalar, which is not a fold', () => {
+    // `|` is the author writing several lines on purpose. The library tags it
+    // BLOCK_LITERAL, and a block scalar is the one scalar the guard lets
+    // through - every other kind turns its line breaks into spaces.
+    expect(parseAuto('|\n  line one\n  line two\n', DELIMITERS.comma)).toEqual({
+      ok: true,
+      value: 'line one\nline two\n',
+    });
+  });
+
+  /*
+   * THE YAML FALLBACK FOR A DOCUMENT THAT OPENS WITH A BRACKET.
+   *
+   * It is there so that an object literal copied out of source - unquoted
+   * keys, single quotes, a trailing comma - reads as the thing the user meant,
+   * and those three still do. What it must not do is accept a DIFFERENT
+   * document: a plain scalar in YAML runs across line breaks, so two very
+   * ordinary things wrong with pasted JSON produced a plausible object instead
+   * of the JSON parser's error.
+   *
+   * Every expected value below is what `JSON.parse` says about the document
+   * once the thing wrong with it is removed, which is the only definition of
+   * "what the user meant" available here.
+   */
+  describe('near-JSON that opens with a bracket', () => {
+    it.each([
+      ["{'a': 1}", 'single quotes'],
+      ['{a: 1, b: 2}', 'unquoted keys'],
+      ['{\n  "a": 1,\n  "b": 2,\n}', 'a trailing comma'],
+      ['[1, 2, 3,]', 'a trailing comma in an array'],
+    ])('still reads %s (%s)', (source) => {
+      const result = parseAuto(source, DELIMITERS.comma);
+      expect(result.ok).toBe(true);
+    });
+
+    /*
+     * `{\n  // a comment\n  "a": 1\n}` came back as
+     * `{ '// a comment "a"': 1 }` - the comment and the key after it folded
+     * into ONE key, reported as a success. It is what an LLM writes, what a
+     * tsconfig.json looks like, and what anybody would paste after reading
+     * documentation.
+     */
+    it('refuses a // comment rather than folding it into the key after it', () => {
+      const result = parseAuto('{\n  // a comment\n  "a": 1\n}', DELIMITERS.comma);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toBe('That is not valid JSON.');
+    });
+
+    it('refuses a /* */ comment for the same reason', () => {
+      const result = parseAuto('{\n  /* c */\n  "a": 1\n}', DELIMITERS.comma);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toBe('That is not valid JSON.');
+    });
+
+    /*
+     * A literal newline inside a string is invalid JSON and is what
+     * hand-editing produces. YAML folded it: the value came back with the
+     * newline replaced by a SPACE, which is a changed document reported as a
+     * successful conversion.
+     */
+    it('refuses a literal newline inside a string rather than making it a space', () => {
+      const result = parseAuto('{"a":"line one\nline two"}', DELIMITERS.comma);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toBe('That is not valid JSON.');
+    });
+
+    it('refuses a key folded across two lines', () => {
+      const result = parseAuto('{\n  foo\n  bar: 1\n}', DELIMITERS.comma);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toBe('That is not valid JSON.');
+    });
+  });
+
+  /*
+   * A CSV whose rows do not agree on their field count is not detected as a
+   * table - which is right - and then fell through to YAML, which folded it:
+   * `a,b,c\n1,2` came back as the string `"a,b,c 1,2"`. A file with a ragged
+   * row is a real file with a real problem, and a sentence is not a report of
+   * it.
+   */
+  it('refuses a ragged CSV rather than folding it into a sentence', () => {
+    const result = parseAuto('a,b,c\n1,2\n', DELIMITERS.comma);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('not JSON, YAML, CSV or TSV');
   });
 
   it('does not second-guess YAML that found real structure', () => {
@@ -374,6 +490,72 @@ describe('JSON parsing', () => {
     const result = parseSource('{"id": 1234567890123456789}', 'json', ',');
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toEqual({ id: 1234567890123456800 });
+  });
+});
+
+/* ========================================================================== *
+ * Numbers that do not survive
+ * ========================================================================== */
+
+/**
+ * A KNOWN, CURRENTLY SILENT LOSS. See `docs/conversion-matrix.md`.
+ *
+ * JSON's grammar puts no limit on the digits of a number; JavaScript has one
+ * numeric type and it is a double. So an integer past 2^53 is rounded on the
+ * way in by `JSON.parse` - which is the platform's behaviour and not this
+ * tool's - and everything downstream writes the rounded value out. A 64-bit
+ * database key, a Twitter or Discord id, a nanosecond timestamp: all of them
+ * come back as a DIFFERENT NUMBER, with no error and nothing on any port to
+ * say so.
+ *
+ * These tests do not endorse that. They pin it, so that it is a decision
+ * somebody took rather than something nobody had measured, and so that the day
+ * it is fixed the fix is visible here. Every expected value is what the
+ * ECMAScript number grammar says the nearest double is, which is also what
+ * `json.loads` in Python reports when asked for `float(...)` of the same
+ * literal - the reference for the LOSS, not for the answer.
+ */
+describe('numbers larger than a double can hold', () => {
+  it.each([
+    ['12345678901234567890', 12345678901234567000, 'a 20-digit integer'],
+    ['1234567890123456789', 1234567890123456800, 'a Discord-style snowflake id'],
+    ['9007199254740993', 9007199254740992, '2^53 + 1, the first integer that is lost'],
+    ['-9007199254740993', -9007199254740992, 'the same, negative'],
+    ['1699999999123456789', 1699999999123456800, 'a nanosecond timestamp'],
+  ])('rounds %s and says nothing (%s)', (literal, rounded) => {
+    const result = parseAuto(`{"id": ${literal}}`, DELIMITERS.comma);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toEqual({ id: rounded });
+
+    // The loss made explicit: the digits that went in are not the digits that
+    // come out, and the conversion reported success.
+    const written = serialise(result.value, 'json', { indent: 0, delimiter: ',' });
+    expect(written.ok).toBe(true);
+    if (written.ok) expect(written.value).not.toContain(literal);
+  });
+
+  it('keeps an integer that a double can hold exactly', () => {
+    // The boundary, so the tests above are about size rather than about all
+    // large numbers being mangled.
+    const result = parseAuto('{"id": 9007199254740991}', DELIMITERS.comma);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toEqual({ id: 9007199254740991 });
+  });
+
+  it('loses the same digits through YAML, which is the same cause', () => {
+    const result = parseAuto('id: 12345678901234567890\n', DELIMITERS.comma);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toEqual({ id: 12345678901234567000 });
+  });
+
+  it('carries the digits intact when they are a string on either side', () => {
+    // The workaround, asserted so it is known to work: quoted, the id is text
+    // and text is not rounded.
+    const result = parseAuto('{"id": "12345678901234567890"}', DELIMITERS.comma);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toEqual({ id: '12345678901234567890' });
   });
 });
 

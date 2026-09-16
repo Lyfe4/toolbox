@@ -146,8 +146,17 @@ export function measureInputs(inputs: ToolInputs): number {
     if (value === undefined) continue;
     switch (value.type) {
       case 'text':
-        // Two bytes per UTF-16 code unit is an upper bound, and cheaper than
-        // encoding the whole string just to weigh it.
+        /*
+         * Two bytes per UTF-16 code unit, which is an ESTIMATE and not a
+         * bound. UTF-8 spends three bytes on everything from U+0800 to
+         * U+FFFF - every CJK character, and most of the punctuation a word
+         * processor produces - and those are one code unit each, so a document
+         * in Japanese weighs about 1.5x what this says. It errs towards
+         * letting a document through rather than refusing one, which is the
+         * right direction for a guard whose job is to stop a tab dying; the
+         * true bound is `length * 3`, and moving to it would tighten every
+         * tool's ceiling for everybody.
+         */
         total += value.text.length * 2;
         break;
       case 'bytes':

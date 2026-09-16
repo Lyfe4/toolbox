@@ -290,3 +290,102 @@ describe('the tool', () => {
     expect(jwtTool.secretOptionKeys).toContain('key');
   });
 });
+
+/* ========================================================================== *
+ * The specification's own example
+ * ========================================================================== */
+
+/**
+ * RFC 7515 APPENDIX A.1 - THE JWS HMAC-SHA256 EXAMPLE.
+ *
+ * Every other verification test in this file signs with WebCrypto and then
+ * checks with WebCrypto, which proves the two halves of one primitive agree
+ * with each other and nothing else. These bytes were published by the working
+ * group: the header, the payload, the key and the signature are all fixed, so
+ * a token this tool reports as verified is one the specification says is
+ * verified.
+ *
+ * https://www.rfc-editor.org/rfc/rfc7515#appendix-A.1
+ */
+const RFC7515_HEADER = 'eyJ0eXAiOiJKV1QiLA0KICJhbGciOiJIUzI1NiJ9';
+const RFC7515_PAYLOAD =
+  'eyJpc3MiOiJqb2UiLA0KICJleHAiOjEzMDA4MTkzODAsDQogImh0dHA6Ly9leGFtcGxlLmNvbS9pc19yb290Ijp0cnVlfQ';
+const RFC7515_SIGNATURE = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+/** The example key, given in the RFC as the base64url of 64 octets. */
+const RFC7515_KEY =
+  'AyM1SysPpbyDfgZld3umj1qzKObwVMkoqQ-EstJQLr_T-1qS0gZH75aKtMN3Yj0iPS4hcgUuTwjAzZr1Z9CAow';
+
+const RFC7515_TOKEN = `${RFC7515_HEADER}.${RFC7515_PAYLOAD}.${RFC7515_SIGNATURE}`;
+
+describe('RFC 7515 appendix A.1', () => {
+  it('decodes the header and payload the RFC prints', () => {
+    const result = decodeToken(RFC7515_TOKEN);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // The RFC's header is written with a CRLF and a space inside it, which is
+    // why the encoded form is not the one a minifier would produce.
+    expect(result.value.header).toEqual({ typ: 'JWT', alg: 'HS256' });
+    expect(result.value.payload).toEqual({
+      iss: 'joe',
+      exp: 1300819380,
+      'http://example.com/is_root': true,
+    });
+    expect(result.value.signingInput).toBe(`${RFC7515_HEADER}.${RFC7515_PAYLOAD}`);
+  });
+
+  it('reports the published signature as verified, with the published key', async () => {
+    const result = decodeToken(RFC7515_TOKEN);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const verification = await verifySignature({
+      algorithm: 'HS256',
+      signingInput: result.value.signingInput,
+      signature: result.value.signature,
+      key: RFC7515_KEY,
+      keyEncoding: 'base64url',
+    });
+
+    expect(verification.status).toBe('verified');
+  });
+
+  it('reports it as invalid when one character of the signature is changed', async () => {
+    // The instrument has to be able to say no: `verified` above would mean
+    // nothing if a wrong signature reached the same verdict.
+    const tampered = RFC7515_SIGNATURE.replace(/^d/, 'e');
+    const result = decodeToken(`${RFC7515_HEADER}.${RFC7515_PAYLOAD}.${tampered}`);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const verification = await verifySignature({
+      algorithm: 'HS256',
+      signingInput: result.value.signingInput,
+      signature: result.value.signature,
+      key: RFC7515_KEY,
+      keyEncoding: 'base64url',
+    });
+
+    expect(verification.status).toBe('invalid');
+  });
+
+  it('reports it as invalid when one character of the payload is changed', async () => {
+    // Re-encoded rather than edited in place, so the result is still a token
+    // this tool will decode: the point is that the SIGNING INPUT changed.
+    const tampered = b64url('{"iss":"ann","exp":1300819380,"http://example.com/is_root":true}');
+    const result = decodeToken(`${RFC7515_HEADER}.${tampered}.${RFC7515_SIGNATURE}`);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const verification = await verifySignature({
+      algorithm: 'HS256',
+      signingInput: result.value.signingInput,
+      signature: result.value.signature,
+      key: RFC7515_KEY,
+      keyEncoding: 'base64url',
+    });
+
+    expect(verification.status).toBe('invalid');
+  });
+});

@@ -1,0 +1,271 @@
+{
+  "generator": "git version 2.46.0.windows.1",
+  "cases": [
+    {
+      "name": "one line changed",
+      "original": "a\nb\nc\n",
+      "changed": "a\nB\nc\n",
+      "context": 0,
+      "hunks": "@@ -2 +2 @@\n-b\n+B\n"
+    },
+    {
+      "name": "one line changed",
+      "original": "a\nb\nc\n",
+      "changed": "a\nB\nc\n",
+      "context": 3,
+      "hunks": "@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n"
+    },
+    {
+      "name": "one line added",
+      "original": "a\nb\n",
+      "changed": "a\nb\nc\n",
+      "context": 0,
+      "hunks": "@@ -2,0 +3 @@\n+c\n"
+    },
+    {
+      "name": "one line added",
+      "original": "a\nb\n",
+      "changed": "a\nb\nc\n",
+      "context": 3,
+      "hunks": "@@ -1,2 +1,3 @@\n a\n b\n+c\n"
+    },
+    {
+      "name": "one line removed",
+      "original": "a\nb\nc\n",
+      "changed": "a\nc\n",
+      "context": 0,
+      "hunks": "@@ -2 +1,0 @@\n-b\n"
+    },
+    {
+      "name": "one line removed",
+      "original": "a\nb\nc\n",
+      "changed": "a\nc\n",
+      "context": 3,
+      "hunks": "@@ -1,3 +1,2 @@\n a\n-b\n c\n"
+    },
+    {
+      "name": "everything changed",
+      "original": "a\nb\nc\n",
+      "changed": "x\ny\nz\n",
+      "context": 0,
+      "hunks": "@@ -1,3 +1,3 @@\n-a\n-b\n-c\n+x\n+y\n+z\n"
+    },
+    {
+      "name": "everything changed",
+      "original": "a\nb\nc\n",
+      "changed": "x\ny\nz\n",
+      "context": 3,
+      "hunks": "@@ -1,3 +1,3 @@\n-a\n-b\n-c\n+x\n+y\n+z\n"
+    },
+    {
+      "name": "empty to one line",
+      "original": "",
+      "changed": "a\n",
+      "context": 0,
+      "hunks": "@@ -0,0 +1 @@\n+a\n"
+    },
+    {
+      "name": "empty to one line",
+      "original": "",
+      "changed": "a\n",
+      "context": 3,
+      "hunks": "@@ -0,0 +1 @@\n+a\n"
+    },
+    {
+      "name": "one line to empty",
+      "original": "a\n",
+      "changed": "",
+      "context": 0,
+      "hunks": "@@ -1 +0,0 @@\n-a\n"
+    },
+    {
+      "name": "one line to empty",
+      "original": "a\n",
+      "changed": "",
+      "context": 3,
+      "hunks": "@@ -1 +0,0 @@\n-a\n"
+    },
+    {
+      "name": "loses its final newline",
+      "original": "x\na\n",
+      "changed": "y\na",
+      "context": 0,
+      "hunks": "@@ -1,2 +1,2 @@\n-x\n-a\n+y\n+a\n\\ No newline at end of file\n"
+    },
+    {
+      "name": "loses its final newline",
+      "original": "x\na\n",
+      "changed": "y\na",
+      "context": 3,
+      "hunks": "@@ -1,2 +1,2 @@\n-x\n-a\n+y\n+a\n\\ No newline at end of file\n"
+    },
+    {
+      "name": "gains a final newline",
+      "original": "x\na",
+      "changed": "y\na\n",
+      "context": 0,
+      "hunks": "@@ -1,2 +1,2 @@\n-x\n-a\n\\ No newline at end of file\n+y\n+a\n"
+    },
+    {
+      "name": "gains a final newline",
+      "original": "x\na",
+      "changed": "y\na\n",
+      "context": 3,
+      "hunks": "@@ -1,2 +1,2 @@\n-x\n-a\n\\ No newline at end of file\n+y\n+a\n"
+    },
+    {
+      "name": "no final newline either side",
+      "original": "x\na",
+      "changed": "y\na",
+      "context": 0,
+      "hunks": "@@ -1 +1 @@\n-x\n+y\n"
+    },
+    {
+      "name": "no final newline either side",
+      "original": "x\na",
+      "changed": "y\na",
+      "context": 3,
+      "hunks": "@@ -1,2 +1,2 @@\n-x\n+y\n a\n\\ No newline at end of file\n"
+    },
+    {
+      "name": "two hunks far apart",
+      "original": "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nl15\nl16\nl17\nl18\nl19\nl20\n",
+      "changed": "l1\nCHANGED\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nl15\nl16\nl17\nl18\nCHANGED\nl20\n",
+      "context": 0,
+      "hunks": "@@ -2 +2 @@\n-l2\n+CHANGED\n@@ -19 +19 @@\n-l19\n+CHANGED\n"
+    },
+    {
+      "name": "two hunks far apart",
+      "original": "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nl15\nl16\nl17\nl18\nl19\nl20\n",
+      "changed": "l1\nCHANGED\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nl15\nl16\nl17\nl18\nCHANGED\nl20\n",
+      "context": 3,
+      "hunks": "@@ -1,5 +1,5 @@\n l1\n-l2\n+CHANGED\n l3\n l4\n l5\n@@ -16,5 +16,5 @@\n l16\n l17\n l18\n-l19\n+CHANGED\n l20\n"
+    },
+    {
+      "name": "two changes inside one context window",
+      "original": "a\nb\nc\nd\ne\n",
+      "changed": "a\nB\nc\nD\ne\n",
+      "context": 0,
+      "hunks": "@@ -2 +2 @@\n-b\n+B\n@@ -4 +4 @@\n-d\n+D\n"
+    },
+    {
+      "name": "two changes inside one context window",
+      "original": "a\nb\nc\nd\ne\n",
+      "changed": "a\nB\nc\nD\ne\n",
+      "context": 3,
+      "hunks": "@@ -1,5 +1,5 @@\n a\n-b\n+B\n c\n-d\n+D\n e\n"
+    },
+    {
+      "name": "change at the first line",
+      "original": "a\nb\nc\nd\n",
+      "changed": "A\nb\nc\nd\n",
+      "context": 0,
+      "hunks": "@@ -1 +1 @@\n-a\n+A\n"
+    },
+    {
+      "name": "change at the first line",
+      "original": "a\nb\nc\nd\n",
+      "changed": "A\nb\nc\nd\n",
+      "context": 3,
+      "hunks": "@@ -1,4 +1,4 @@\n-a\n+A\n b\n c\n d\n"
+    },
+    {
+      "name": "change at the last line",
+      "original": "a\nb\nc\nd\n",
+      "changed": "a\nb\nc\nD\n",
+      "context": 0,
+      "hunks": "@@ -4 +4 @@\n-d\n+D\n"
+    },
+    {
+      "name": "change at the last line",
+      "original": "a\nb\nc\nd\n",
+      "changed": "a\nb\nc\nD\n",
+      "context": 3,
+      "hunks": "@@ -1,4 +1,4 @@\n a\n b\n c\n-d\n+D\n"
+    },
+    {
+      "name": "crlf against lf",
+      "original": "a\r\nb\r\n",
+      "changed": "a\nb\n",
+      "context": 0,
+      "hunks": "@@ -1,2 +1,2 @@\n-a\r\n-b\r\n+a\n+b\n"
+    },
+    {
+      "name": "crlf against lf",
+      "original": "a\r\nb\r\n",
+      "changed": "a\nb\n",
+      "context": 3,
+      "hunks": "@@ -1,2 +1,2 @@\n-a\r\n-b\r\n+a\n+b\n"
+    },
+    {
+      "name": "a blank line added",
+      "original": "a\nb\n",
+      "changed": "a\n\nb\n",
+      "context": 0,
+      "hunks": "@@ -1,0 +2 @@\n+\n"
+    },
+    {
+      "name": "a blank line added",
+      "original": "a\nb\n",
+      "changed": "a\n\nb\n",
+      "context": 3,
+      "hunks": "@@ -1,2 +1,3 @@\n a\n+\n b\n"
+    },
+    {
+      "name": "trailing whitespace added",
+      "original": "a\nb\n",
+      "changed": "a \nb\n",
+      "context": 0,
+      "hunks": "@@ -1 +1 @@\n-a\n+a \n"
+    },
+    {
+      "name": "trailing whitespace added",
+      "original": "a\nb\n",
+      "changed": "a \nb\n",
+      "context": 3,
+      "hunks": "@@ -1,2 +1,2 @@\n-a\n+a \n b\n"
+    },
+    {
+      "name": "a tab for spaces",
+      "original": "a\tb\n",
+      "changed": "a    b\n",
+      "context": 0,
+      "hunks": "@@ -1 +1 @@\n-a\tb\n+a    b\n"
+    },
+    {
+      "name": "a tab for spaces",
+      "original": "a\tb\n",
+      "changed": "a    b\n",
+      "context": 3,
+      "hunks": "@@ -1 +1 @@\n-a\tb\n+a    b\n"
+    },
+    {
+      "name": "unicode changed",
+      "original": "café\n",
+      "changed": "cafe\n",
+      "context": 0,
+      "hunks": "@@ -1 +1 @@\n-café\n+cafe\n"
+    },
+    {
+      "name": "unicode changed",
+      "original": "café\n",
+      "changed": "cafe\n",
+      "context": 3,
+      "hunks": "@@ -1 +1 @@\n-café\n+cafe\n"
+    },
+    {
+      "name": "identical",
+      "original": "a\nb\n",
+      "changed": "a\nb\n",
+      "context": 0,
+      "hunks": ""
+    },
+    {
+      "name": "identical",
+      "original": "a\nb\n",
+      "changed": "a\nb\n",
+      "context": 3,
+      "hunks": ""
+    }
+  ]
+}

@@ -36,6 +36,33 @@ describe('encoding', () => {
     expect(enc('foobar')).toBe('Zm9vYmFy');
   });
 
+  /*
+   * THE SAME RFC 4648 VECTORS, READ THE OTHER WAY.
+   *
+   * The decoder had no vectors of its own - it was covered by round trips
+   * through this encoder, which cannot tell a matched pair of mistakes from a
+   * correct pair. Section 10 fixes both halves, so running the table backwards
+   * checks the decoder against the RFC rather than against us.
+   */
+  it('decodes the RFC 4648 test vectors', () => {
+    expect(decodeToText('')).toBe('');
+    expect(decodeToText('Zg==')).toBe('f');
+    expect(decodeToText('Zm8=')).toBe('fo');
+    expect(decodeToText('Zm9v')).toBe('foo');
+    expect(decodeToText('Zm9vYg==')).toBe('foob');
+    expect(decodeToText('Zm9vYmE=')).toBe('fooba');
+    expect(decodeToText('Zm9vYmFy')).toBe('foobar');
+  });
+
+  it('decodes the RFC 4648 vectors with their padding removed', () => {
+    // Unpadded base64url is what a JWT segment is, and it is the one spelling
+    // the RFC allows a decoder to be handed without any padding at all.
+    expect(decodeToText('Zg')).toBe('f');
+    expect(decodeToText('Zm8')).toBe('fo');
+    expect(decodeToText('Zm9vYg')).toBe('foob');
+    expect(decodeToText('Zm9vYmE')).toBe('fooba');
+  });
+
   it('handles full Unicode, not just Latin-1', () => {
     // btoa throws on every one of these. Going through TextEncoder does not.
     expect(decodeToText(enc('héllo'))).toBe('héllo');

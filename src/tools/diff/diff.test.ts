@@ -838,18 +838,20 @@ describe('unified output', () => {
     const original = Array.from({ length: 10 }, (_, index) => `l${index.toString()}`).join('\n');
     const patch = toUnified(report(original, original.replace('l5', 'l5\nNEW')), 0);
 
-    expect(patch).toContain('@@ -6,0 +7,1 @@');
+    // `+7` rather than `+7,1`: a count of one is omitted, which is what
+    // `git diff` and GNU `diff` both write. See `range` in compute.ts.
+    expect(patch).toContain('@@ -6,0 +7 @@');
   });
 
   it('numbers a hunk that only removes lines from the line it comes after', () => {
     const original = 'a\nb\nc';
     const patch = toUnified(report(original, 'a\nc'), 0);
 
-    expect(patch).toContain('@@ -2,1 +1,0 @@');
+    expect(patch).toContain('@@ -2 +1,0 @@');
   });
 
   it('numbers an insertion at the very start of the file as zero', () => {
-    expect(toUnified(report('a\nb', 'X\na\nb'), 0)).toContain('@@ -0,0 +1,1 @@');
+    expect(toUnified(report('a\nb', 'X\na\nb'), 0)).toContain('@@ -0,0 +1 @@');
   });
 
   it('writes context lines from the original, so the patch fits the file it patches', () => {

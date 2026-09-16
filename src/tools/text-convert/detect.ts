@@ -32,6 +32,47 @@ export interface Detection {
 const STRUCTURAL_TAG =
   /<(?:html|head|body|div|section|article|main|aside|nav|header|footer|table|thead|tbody|tr|td|th|ul|ol|li|dl|dt|dd|p|h[1-6]|blockquote|pre|figure|form|span|strong|em|b|i|a|img|br|hr)\b[^>]*>/i;
 
+/**
+ * A fenced code block, opening fence to closing fence or to the end.
+ *
+ * The closing fence is matched through the backreference, so a four-backtick
+ * block holding a three-backtick one is a single block rather than two.
+ *
+ * `(?![\s\S])` rather than `$` for "or to the end". Under the `m` flag `$`
+ * matches at the end of every LINE, so the alternation was satisfied one line
+ * into the block and the fence's contents were only removed by accident of
+ * where the match happened to stop - which held for a plain fence and did not
+ * for a nested one.
+ */
+const FENCED_BLOCK = /^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]*\1[^\n]*$|(?![\s\S]))/gm;
+
+/**
+ * An inline code span: a run of backticks, its contents, and a matching run.
+ *
+ * A code span cannot contain a blank line, and saying so is what stops a
+ * stray backtick near the top of a document from swallowing everything down
+ * to the next one several paragraphs later.
+ */
+const CODE_SPAN = /(`+)(?:(?!\n[ \t]*\n)[\s\S])*?\1/g;
+
+/**
+ * The document with everything Markdown reads as code blanked out.
+ *
+ * ONLY THE HTML SEARCH USES THIS, and that asymmetry is the point: a fence is
+ * itself a Markdown signal, so the signals below are still looked for in the
+ * document as written.
+ *
+ * Without it, `Use \`<div>\` here.` - a sentence about HTML, which is most of
+ * what an LLM writes about HTML - was reported as HTML with CONFIDENCE. The
+ * converter then read the code span's contents as markup: the backticks became
+ * literal text and the element they quoted was parsed, so a paragraph came
+ * back with the one thing it was about missing from it. Nothing failed, and
+ * "confident" is exactly what stops the reader checking the source control.
+ */
+function withoutCode(source: string): string {
+  return source.replace(FENCED_BLOCK, '').replace(CODE_SPAN, '');
+}
+
 /** Constructs that are Markdown and are not valid HTML markup. */
 const MARKDOWN_SIGNALS: readonly { readonly pattern: RegExp; readonly what: string }[] = [
   { pattern: /^\s{0,3}#{1,6}\s+\S/m, what: 'an ATX heading' },
@@ -71,7 +112,7 @@ export function detectFormat(source: string): Detection {
     return { format: 'markdown', confidence: 'assumed', reason: 'The input is empty.' };
   }
 
-  const htmlTag = STRUCTURAL_TAG.exec(trimmed);
+  const htmlTag = STRUCTURAL_TAG.exec(withoutCode(trimmed));
   const markdownSignal = MARKDOWN_SIGNALS.find((signal) => signal.pattern.test(trimmed));
 
   /*

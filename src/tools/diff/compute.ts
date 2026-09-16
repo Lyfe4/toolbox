@@ -815,6 +815,24 @@ function endsWithoutNewline(
 }
 
 /**
+ * One side of a hunk header.
+ *
+ * THE COUNT IS OMITTED WHEN IT IS ONE, which is what the format's reference
+ * implementations do - `git diff` and GNU `diff` both write `@@ -2 +2 @@` where
+ * this used to write `@@ -2,1 +2,1 @@`. Both are accepted by `git apply` and
+ * by `patch`, so nothing was broken; what was true is that a patch this tool
+ * produced was never byte-identical to the one `git diff` produces for the
+ * same two files, which makes every comparison against the reference a
+ * judgement call instead of an equality. Measured: 14 of the 38 cases in
+ * [`spec/git-unified.json`](./spec/git-unified.json) matched git exactly
+ * before this, and 32 do now - 18 of them differed on the count and on
+ * nothing else.
+ */
+function range(start: number, count: number): string {
+  return count === 1 ? start.toString() : `${start.toString()},${count.toString()}`;
+}
+
+/**
  * Renders rows as a unified diff.
  *
  * This is the pipeable output: the format `git apply` and every code host
@@ -886,7 +904,7 @@ export function toUnified(report: DiffReport, context: number): string {
     const newStart = newNumbers[0] ?? precedingLine(rows, span.start, (row) => row.newLine);
 
     lines.push(
-      `@@ -${oldStart.toString()},${oldNumbers.length.toString()} +${newStart.toString()},${newNumbers.length.toString()} @@`,
+      `@@ -${range(oldStart, oldNumbers.length)} +${range(newStart, newNumbers.length)} @@`,
     );
 
     for (const [offset, row] of slice.entries()) {

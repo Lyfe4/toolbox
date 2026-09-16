@@ -68,6 +68,27 @@ Order of evidence:
 4. **Neither** falls to Markdown, `assumed`. Markdown is a superset of plain
    prose, so converting a paragraph as Markdown returns the paragraph.
 
+### Code is not markup, and this is most of what gets pasted
+
+The tag search at step 1 ran over the document **as written**, so the contents
+of a code span decided the format of the document around it:
+
+```
+Use `<div>` here.        ->   html (confident) - Found the HTML tag <div>.
+```
+
+That is a sentence about HTML, which is most of what anybody writes about HTML
+and nearly all of what an LLM writes about it. The conversion that followed
+read the code span's contents as markup: the backticks became literal text and
+the element they quoted was parsed away, so a paragraph came back with the one
+thing it was about missing from it. Nothing failed, and `confident` is exactly
+what stops a reader checking the source control.
+
+Fenced blocks and inline code spans are blanked out before the tag search now,
+and **only** before that search — a fence is itself a Markdown signal, so step 2
+still reads the document as written. A document that quotes a tag _and_ is HTML
+(`<p>Use \`<div>\` here.</p>`) is still HTML.
+
 ## Options
 
 `source` and `target` are always shown. Everything else is an **output**
@@ -388,6 +409,17 @@ data starts.
 Whitespace is normalised throughout: no trailing spaces on any line, never more
 than one blank line, and a list item spanning several lines gets a blank line
 after it while a one-line item stays tight against its neighbours.
+
+**A hard break is a line break, not a paragraph break**, and that took a fix.
+Markdown's two spellings — two trailing spaces, and a trailing backslash — both
+become `<br>` followed by a newline, because that is how the HTML serialiser
+lays the element out. The renderer emitted one newline for the element and a
+second for the newline in the text node after it, so a hard break came out with
+a BLANK LINE in it. The same `<br>` written without the newline —
+`<p>a<br>b</p>`, which is what hand-written HTML and a paste from a rich-text
+editor look like — came out correctly as one break. One construct, two
+spellings, two different answers, and the wrong one was the spelling Markdown
+produces.
 
 ## Whitespace inside code
 

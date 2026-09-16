@@ -111,3 +111,62 @@ describe('honest about ambiguity', () => {
     expect(detectFormat('   \n  ').confidence).toBe('assumed');
   });
 });
+
+/*
+ * CODE IS NOT MARKUP, AND THIS IS WHAT AN LLM WRITES ALL DAY.
+ *
+ * `Use ` + '`<div>`' + ` here.` was reported as HTML, CONFIDENTLY: the tag
+ * search ran over the document as written, so the contents of a code span
+ * decided the format of the document around it. The conversion that followed
+ * read the code span's contents as markup - the backticks became literal text
+ * and the element was parsed away - so a sentence came back with the one thing
+ * it was about missing, and "confident" is exactly what stops a reader
+ * checking the source control.
+ *
+ * The asymmetry is deliberate: only the HTML search ignores code. A fence is
+ * itself a Markdown signal, so the Markdown patterns still see the document as
+ * written.
+ */
+describe('code spans and fences are not markup', () => {
+  it.each([
+    ['an inline code span', 'Use `<div>` here.\n'],
+    ['a code span in prose', 'The `<table>` element needs a `<tr>`.\n'],
+    ['a double-backtick span', 'Write ``<p>`` to open a paragraph.\n'],
+  ])('does not call %s HTML', (_name, source) => {
+    const detection = detectFormat(source);
+
+    expect(detection.format).toBe('markdown');
+    // A positive assertion beside the negative one: the reason has to be the
+    // no-syntax fallback rather than some other route to the same answer.
+    expect(detection.reason).toContain('No markup');
+  });
+
+  it.each([
+    ['a fenced block of HTML', '```html\n<div class="x">hi</div>\n```\n'],
+    ['a tilde-fenced block of HTML', '~~~html\n<p>hi</p>\n~~~\n'],
+    ['a fence inside a longer fence', '````\n```html\n<div>hi</div>\n```\n````\n'],
+  ])('is confident %s is Markdown', (_name, source) => {
+    const detection = detectFormat(source);
+
+    expect(detection.format).toBe('markdown');
+    expect(detection.confidence).toBe('confident');
+    expect(detection.reason).toContain('fenced code block');
+  });
+
+  it('still finds real markup outside a code span', () => {
+    // The guard must not blind the search: a document that quotes a tag AND
+    // is HTML is still HTML.
+    const detection = detectFormat('<p>Use `<div>` here.</p>');
+
+    expect(detection.format).toBe('html');
+    expect(detection.confidence).toBe('confident');
+  });
+
+  it('still finds markup after an unterminated fence', () => {
+    // An opening fence with no closing one runs to the end of the document in
+    // CommonMark, so everything after it really is code.
+    expect(detectFormat('```\n<div>hi</div>\n').format).toBe('markdown');
+    // ...but a lone backtick pairs with nothing, so the tag after it stands.
+    expect(detectFormat('a ` b <div>hi</div>').format).toBe('html');
+  });
+});

@@ -1,0 +1,368 @@
+{
+  "generator": "CPython 3.14.7, csv module, dialect=excel",
+  "read": [
+    {
+      "name": "plain",
+      "delimiter": ",",
+      "source": "name,age\nada,36\ngrace,45\n",
+      "rows": [
+        ["name", "age"],
+        ["ada", "36"],
+        ["grace", "45"]
+      ]
+    },
+    {
+      "name": "crlf",
+      "delimiter": ",",
+      "source": "name,age\r\nada,36\r\ngrace,45\r\n",
+      "rows": [
+        ["name", "age"],
+        ["ada", "36"],
+        ["grace", "45"]
+      ]
+    },
+    {
+      "name": "lone cr",
+      "delimiter": ",",
+      "source": "name,age\rada,36\rgrace,45\r",
+      "rows": [
+        ["name", "age"],
+        ["ada", "36"],
+        ["grace", "45"]
+      ]
+    },
+    {
+      "name": "no trailing newline",
+      "delimiter": ",",
+      "source": "name,age\nada,36",
+      "rows": [
+        ["name", "age"],
+        ["ada", "36"]
+      ]
+    },
+    {
+      "name": "quoted delimiter",
+      "delimiter": ",",
+      "source": "name,note\nada,\"one, two\"\n",
+      "rows": [
+        ["name", "note"],
+        ["ada", "one, two"]
+      ]
+    },
+    {
+      "name": "quoted newline",
+      "delimiter": ",",
+      "source": "name,note\nada,\"line one\nline two\"\n",
+      "rows": [
+        ["name", "note"],
+        ["ada", "line one\nline two"]
+      ]
+    },
+    {
+      "name": "quoted crlf newline",
+      "delimiter": ",",
+      "source": "name,note\nada,\"line one\r\nline two\"\r\n",
+      "rows": [
+        ["name", "note"],
+        ["ada", "line one\r\nline two"]
+      ]
+    },
+    {
+      "name": "doubled quotes",
+      "delimiter": ",",
+      "source": "name,note\nada,\"she said \"\"hi\"\"\"\n",
+      "rows": [
+        ["name", "note"],
+        ["ada", "she said \"hi\""]
+      ]
+    },
+    {
+      "name": "quote mid field",
+      "delimiter": ",",
+      "source": "name,note\nada,a\"b\n",
+      "rows": [
+        ["name", "note"],
+        ["ada", "a\"b"]
+      ]
+    },
+    {
+      "name": "empty fields",
+      "delimiter": ",",
+      "source": "a,b,c\n1,,3\n,,\n",
+      "rows": [
+        ["a", "b", "c"],
+        ["1", "", "3"],
+        ["", "", ""]
+      ]
+    },
+    {
+      "name": "quoted empty last",
+      "delimiter": ",",
+      "source": "name\n\"\"\n",
+      "rows": [["name"], [""]]
+    },
+    {
+      "name": "trailing empty field",
+      "delimiter": ",",
+      "source": "a,b,\n1,2,\n",
+      "rows": [
+        ["a", "b", ""],
+        ["1", "2", ""]
+      ]
+    },
+    {
+      "name": "leading spaces",
+      "delimiter": ",",
+      "source": "a, b , c\n1, 2 , 3\n",
+      "rows": [
+        ["a", " b ", " c"],
+        ["1", " 2 ", " 3"]
+      ]
+    },
+    {
+      "name": "unicode",
+      "delimiter": ",",
+      "source": "name,note\nada,café ☕\ngrace,日本語\n",
+      "rows": [
+        ["name", "note"],
+        ["ada", "café ☕"],
+        ["grace", "日本語"]
+      ]
+    },
+    {
+      "name": "emoji",
+      "delimiter": ",",
+      "source": "a,b\n😀,👨‍👩‍👧\n",
+      "rows": [
+        ["a", "b"],
+        ["😀", "👨‍👩‍👧"]
+      ]
+    },
+    {
+      "name": "semicolon",
+      "delimiter": ";",
+      "source": "name;age\nada;36\ngrace;45\n",
+      "rows": [
+        ["name", "age"],
+        ["ada", "36"],
+        ["grace", "45"]
+      ]
+    },
+    {
+      "name": "tab",
+      "delimiter": "\t",
+      "source": "name\tage\nada\t36\ngrace\t45\n",
+      "rows": [
+        ["name", "age"],
+        ["ada", "36"],
+        ["grace", "45"]
+      ]
+    },
+    {
+      "name": "pipe",
+      "delimiter": "|",
+      "source": "name|age\nada|36\n",
+      "rows": [
+        ["name", "age"],
+        ["ada", "36"]
+      ]
+    },
+    {
+      "name": "blank line between records",
+      "delimiter": ",",
+      "source": "a,b\n1,2\n\n3,4\n",
+      "rows": [["a", "b"], ["1", "2"], [], ["3", "4"]]
+    },
+    {
+      "name": "single column",
+      "delimiter": ",",
+      "source": "name\nada\ngrace\n",
+      "rows": [["name"], ["ada"], ["grace"]]
+    },
+    {
+      "name": "field that is only a quote pair",
+      "delimiter": ",",
+      "source": "a,b\n\"\",\"\"\n",
+      "rows": [
+        ["a", "b"],
+        ["", ""]
+      ]
+    },
+    {
+      "name": "quoted field containing only spaces",
+      "delimiter": ",",
+      "source": "a,b\n\"  \",x\n",
+      "rows": [
+        ["a", "b"],
+        ["  ", "x"]
+      ]
+    },
+    {
+      "name": "ragged long row",
+      "delimiter": ",",
+      "source": "a,b\n1,2,3\n",
+      "rows": [
+        ["a", "b"],
+        ["1", "2", "3"]
+      ]
+    },
+    {
+      "name": "backslash is not an escape",
+      "delimiter": ",",
+      "source": "a,b\n1,\"x\\\"\n",
+      "rows": [
+        ["a", "b"],
+        ["1", "x\\"]
+      ]
+    },
+    {
+      "name": "carriage return inside quotes",
+      "delimiter": ",",
+      "source": "a,b\n1,\"x\ry\"\n",
+      "rows": [
+        ["a", "b"],
+        ["1", "x\ry"]
+      ]
+    },
+    {
+      "name": "many quotes",
+      "delimiter": ",",
+      "source": "a\n\"\"\"\"\n",
+      "rows": [["a"], ["\""]]
+    },
+    {
+      "name": "delimiter at line start",
+      "delimiter": ",",
+      "source": "a,b\n,2\n",
+      "rows": [
+        ["a", "b"],
+        ["", "2"]
+      ]
+    },
+    {
+      "name": "nul byte in a field",
+      "delimiter": ",",
+      "source": "a,b\n1,x\u0000y\n",
+      "rows": [
+        ["a", "b"],
+        ["1", "x\u0000y"]
+      ]
+    },
+    {
+      "name": "leading space, quoted as this tool writes it",
+      "delimiter": ",",
+      "source": "a\n\" x\"\n",
+      "rows": [["a"], [" x"]]
+    },
+    {
+      "name": "leading space, unquoted as Python writes it",
+      "delimiter": ",",
+      "source": "a\n x\n",
+      "rows": [["a"], [" x"]]
+    },
+    {
+      "name": "trailing space, quoted as this tool writes it",
+      "delimiter": ",",
+      "source": "a\n\"x \"\n",
+      "rows": [["a"], ["x "]]
+    },
+    {
+      "name": "trailing space, unquoted as Python writes it",
+      "delimiter": ",",
+      "source": "a\nx \n",
+      "rows": [["a"], ["x "]]
+    }
+  ],
+  "write": [
+    {
+      "name": "plain",
+      "delimiter": ",",
+      "rows": [
+        ["name", "age"],
+        ["ada", "36"]
+      ],
+      "csv": "name,age\nada,36\n"
+    },
+    {
+      "name": "needs quoting for delimiter",
+      "delimiter": ",",
+      "rows": [
+        ["a", "b"],
+        ["one, two", "x"]
+      ],
+      "csv": "a,b\n\"one, two\",x\n"
+    },
+    {
+      "name": "needs quoting for quote",
+      "delimiter": ",",
+      "rows": [["a"], ["she said \"hi\""]],
+      "csv": "a\n\"she said \"\"hi\"\"\"\n"
+    },
+    {
+      "name": "needs quoting for newline",
+      "delimiter": ",",
+      "rows": [["a"], ["line one\nline two"]],
+      "csv": "a\n\"line one\nline two\"\n"
+    },
+    {
+      "name": "needs quoting for cr",
+      "delimiter": ",",
+      "rows": [["a"], ["line one\rline two"]],
+      "csv": "a\n\"line one\rline two\"\n"
+    },
+    {
+      "name": "empty field",
+      "delimiter": ",",
+      "rows": [
+        ["a", "b"],
+        ["", "x"]
+      ],
+      "csv": "a,b\n,x\n"
+    },
+    {
+      "name": "all empty",
+      "delimiter": ",",
+      "rows": [
+        ["a", "b"],
+        ["", ""]
+      ],
+      "csv": "a,b\n,\n"
+    },
+    {
+      "name": "unicode",
+      "delimiter": ",",
+      "rows": [["name"], ["café ☕"]],
+      "csv": "name\ncafé ☕\n"
+    },
+    {
+      "name": "semicolon",
+      "delimiter": ";",
+      "rows": [
+        ["a", "b"],
+        ["x;y", "z"]
+      ],
+      "csv": "a;b\n\"x;y\";z\n"
+    },
+    {
+      "name": "tab",
+      "delimiter": "\t",
+      "rows": [
+        ["a", "b"],
+        ["x\ty", "z"]
+      ],
+      "csv": "a\tb\n\"x\ty\"\tz\n"
+    },
+    {
+      "name": "leading space",
+      "delimiter": ",",
+      "rows": [["a"], [" x"]],
+      "csv": "a\n x\n"
+    },
+    {
+      "name": "trailing space",
+      "delimiter": ",",
+      "rows": [["a"], ["x "]],
+      "csv": "a\nx \n"
+    }
+  ]
+}

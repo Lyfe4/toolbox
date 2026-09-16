@@ -1277,6 +1277,42 @@ function renderTable(node: HastElement, options: HtmlToTextOptions): string {
 }
 
 /**
+ * Renders a run of children, with the one rule a single node cannot see.
+ *
+ * A `<br>` IS the line break; a newline the serialiser wrote after the tag is
+ * layout. Markdown's hard break - two trailing spaces, or a backslash -
+ * becomes a `<br>` followed by a newline, so without this the break emitted
+ * one newline and the text node after it emitted a second, and a hard break
+ * came out as a BLANK LINE. The same `<br>` written without the newline -
+ * `<p>a<br>b</p>`, which is what hand-written HTML looks like - came out as one
+ * line break. Two spellings of one construct, two different answers, and the
+ * wrong one is the spelling Markdown actually produces.
+ *
+ * Inside `pre` nothing is touched: there, every newline is a line of the
+ * program.
+ */
+function renderChildren(
+  children: readonly HastNodes[],
+  options: HtmlToTextOptions,
+  depth: number,
+  verbatim: boolean,
+  blocks: string[],
+): string {
+  let out = '';
+  let afterBreak = false;
+
+  for (const child of children) {
+    const piece = renderText(child, options, depth, verbatim, blocks);
+    const afterBreakNewline =
+      afterBreak && !verbatim && child.type === 'text' && piece.startsWith('\n');
+    out += afterBreakNewline ? piece.slice(1) : piece;
+    afterBreak = child.type === 'element' && child.tagName === 'br';
+  }
+
+  return out;
+}
+
+/**
  * Walks the sanitised tree into plain text.
  *
  * Hand-written rather than `hast-util-to-text` alone, because the options here
@@ -1306,9 +1342,7 @@ function renderText(
   if (node.type === 'comment') return '';
 
   if (node.type === 'root') {
-    return node.children
-      .map((child) => renderText(child, options, depth, verbatim, blocks))
-      .join('');
+    return renderChildren(node.children, options, depth, verbatim, blocks);
   }
 
   if (node.type !== 'element') return '';
@@ -1336,9 +1370,7 @@ function renderText(
    * was a grandchild of the root. Only a list item deepens it, which is the
    * only nesting plain text has a way to show.
    */
-  const inner = node.children
-    .map((child) => renderText(child, options, depth, verbatim || tag === 'pre', blocks))
-    .join('');
+  const inner = renderChildren(node.children, options, depth, verbatim || tag === 'pre', blocks);
 
   if (HEADING.has(tag)) {
     return `\n${'#'.repeat(Number(tag.slice(1)))} ${inner.trim()}\n`;
@@ -1393,9 +1425,7 @@ function renderText(
      * is spread, so an ordinary checklist with one nested item arrived with
      * every line double-spaced.
      */
-    const body = node.children
-      .map((child) => renderText(child, options, depth + 1, verbatim, blocks))
-      .join('')
+    const body = renderChildren(node.children, options, depth + 1, verbatim, blocks)
       .replace(/\n{3,}/g, '\n\n')
       .trim()
       .split('\n');

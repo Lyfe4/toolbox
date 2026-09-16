@@ -76,6 +76,51 @@ describe('HTML → plain text', () => {
     expect(out).not.toContain('<');
   });
 
+  /*
+   * A HARD BREAK IS A LINE BREAK, NOT A PARAGRAPH BREAK.
+   *
+   * Markdown's two spellings of a hard break - two trailing spaces, and a
+   * trailing backslash - both become `<br>` followed by a NEWLINE, because
+   * that is how the HTML serialiser lays the element out. The text renderer
+   * emitted one newline for the `<br>` and then a second for the newline in
+   * the text node after it, so `line one  \nline two` came out with a blank
+   * line between the two.
+   *
+   * The same break written without the newline - `<p>a<br>b</p>`, which is
+   * what hand-written HTML and a paste from a rich-text editor look like -
+   * came out correctly as one line break. One construct, two spellings, two
+   * different answers, and the wrong one was the spelling Markdown produces.
+   */
+  it.each([
+    ['a <br> with no newline after it', '<p>line one<br>line two</p>'],
+    ['a <br> the serialiser put a newline after', '<p>line one<br>\nline two</p>'],
+    ['a self-closing <br/>', '<p>line one<br/>\nline two</p>'],
+  ])('renders %s as a single line break', (_name, html) => {
+    expect(htmlToText(html, TO_TEXT)).toBe('line one\nline two');
+  });
+
+  it.each([
+    ['two trailing spaces', 'line one  \nline two\n'],
+    ['a trailing backslash', 'line one\\\nline two\n'],
+  ])("renders Markdown's %s hard break as a single line break", (_name, markdown) => {
+    const html = markdownToHtml(markdown, { headingIds: false, linkify: false });
+
+    // A positive assertion beside the shape one: the break really is a <br>,
+    // so this is not passing because the conversion produced something else.
+    expect(html).toContain('<br>');
+    expect(htmlToText(html, TO_TEXT)).toBe('line one\nline two');
+  });
+
+  it('still puts a blank line between two paragraphs', () => {
+    // The <br> rule must not reach anything else: a real paragraph break is
+    // still a blank line.
+    expect(htmlToText('<p>one</p><p>two</p>', TO_TEXT)).toBe('one\n\ntwo');
+  });
+
+  it('leaves newlines inside a pre alone', () => {
+    expect(htmlToText('<pre><code>a\n\nb\n</code></pre>', TO_TEXT)).toBe('    a\n\n    b');
+  });
+
   it('writes link URLs in brackets, when asked and when they add something', () => {
     const withUrls = htmlToText('<p><a href="https://example.com">Docs</a></p>', TO_TEXT);
     const without = htmlToText('<p><a href="https://example.com">Docs</a></p>', {

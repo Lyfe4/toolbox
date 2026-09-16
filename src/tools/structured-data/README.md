@@ -98,6 +98,31 @@ is the honest answer for a user who never claimed the document was JSON — and
 setting **Source** to JSON is how you say there is no ambiguity to resolve.
 Neither fallback runs when a source format was chosen explicitly.
 
+**And the guard the YAML fallback needed.** A plain or quoted scalar in YAML
+runs across line breaks and turns them into spaces, so the fallback would accept
+a DIFFERENT DOCUMENT rather than the one the user meant:
+
+```
+{                          ->   { "// a comment \"a\"": 1 }
+  // a comment
+  "a": 1
+}
+
+{"a":"line one             ->   { "a": "line one line two" }
+line two"}
+```
+
+The first invents a key out of a comment; the second replaces a newline inside
+a string with a space. Neither failed, both returned success, and both are
+things people paste every day — the first is what an LLM writes and what every
+`tsconfig.json` looks like, the second is what hand-editing produces. When the
+YAML read **folded lines that the document had separate**, the JSON error is
+reported instead, and it points at the character that is actually the problem.
+Only folding is caught: `|` and `>` blocks are the author writing several lines
+on purpose, and the unquoted keys, single quotes and trailing commas the
+fallback exists for are all single-line constructs, so every one of them still
+works.
+
 **Rejected: reporting ambiguity instead of choosing.** There is nowhere to
 report it to. A tool result is a value or an error, so "probably CSV" would have
 to be an error — which refuses a document the tool can read perfectly well. The
@@ -195,6 +220,11 @@ fixes.
 answer and it is not a change to this tool: it means a new field on the result
 type every tool returns, carried across the worker protocol and rendered in two
 UIs. Out of scope for a hardening pass on one tool, and worth doing properly.
+
+A lighter version of the same idea — a `report`-shaped OUTPUT PORT on this tool
+alone, the way `text-convert` has `Detected` — would carry this note and three
+others that are currently silent, and is written up as a decision to take in
+[docs/conversion-matrix.md](../../../docs/conversion-matrix.md#4-structured-data-does-not-say-what-it-detected).
 
 ### Spreadsheet formulas are written out exactly as given
 

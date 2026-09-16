@@ -99,6 +99,49 @@ describe('SHA family via WebCrypto', () => {
     if (result.ok) expect(hex(result.value)).toBe(expected);
   });
 
+  /*
+   * FIPS 180-4's own examples, for the two members of the family that had
+   * only a LENGTH assertion against them.
+   *
+   * `sha-384` and `sha-512` were checked for producing 48 and 64 bytes, which
+   * every wrong answer of the right size satisfies. These are the published
+   * digests for the empty message and for "abc", plus the 448-bit message the
+   * standard uses to exercise the second block.
+   *
+   * https://csrc.nist.gov/projects/cryptographic-standards-and-guidelines/example-values
+   */
+  const LONGER = 'abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq';
+
+  it.each([
+    [
+      'sha-384',
+      '',
+      '38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b',
+    ],
+    [
+      'sha-384',
+      'abc',
+      'cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7',
+    ],
+    [
+      'sha-512',
+      '',
+      'cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e',
+    ],
+    [
+      'sha-512',
+      'abc',
+      'ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f',
+    ],
+    ['sha-256', LONGER, '248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1'],
+    ['sha-1', LONGER, '84983e441c3bd26ebaae4aa1f95129e5e54670f1'],
+  ] as const)('%s of a published example', async (algorithm, input, expected) => {
+    const result = await digestBytes(algorithm, textToBytes(input));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(hex(result.value)).toBe(expected);
+  });
+
   it('produces digests of the documented length', async () => {
     for (const [algorithm, length] of [
       ['sha-1', 20],

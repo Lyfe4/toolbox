@@ -740,6 +740,83 @@ function parseJsonLines(text: string): ToolResult<JsonValue> | null {
 }
 
 /**
+ * True when a YAML parse folded two of the document's lines into one scalar.
+ *
+ * A PLAIN scalar in YAML continues across line breaks and the breaks become
+ * spaces, so any document YAML cannot read as structure it can still read as
+ * one long string. That is correct YAML and a catastrophic answer for the two
+ * places auto-detection reaches for YAML as a fallback, because both are
+ * reached by a document that is probably not YAML at all:
+ *
+ *     {                          ->  { "// a comment \"a\"": 1 }
+ *       // a comment
+ *       "a": 1
+ *     }
+ *
+ *     {"a":"line one             ->  { "a": "line one line two" }
+ *     line two"}
+ *
+ *     a,b,c                      ->  "a,b,c 1,2"
+ *     1,2
+ *
+ * Every one of those is a confident wrong answer with no error anywhere - the
+ * first invents a key out of a comment, the second replaces a newline inside
+ * a string with a space, and the third turns a ragged CSV into a sentence.
+ *
+ * BLOCK SCALARS ARE THE EXCEPTION AND THE ONLY ONE. `|` and `>` are the author
+ * writing several lines on purpose - the library tags them `BLOCK_LITERAL` and
+ * `BLOCK_FOLDED` - so a document that really is a top-level block scalar is
+ * not caught by this. Everything else folds: a PLAIN scalar turns its line
+ * breaks into spaces, and so does a double-quoted one, which is why
+ * `{"a":"line one<LF>line two"}` came back with a space in place of the
+ * newline rather than as the JSON syntax error it is.
+ *
+ * The range is the source span of the scalar's own value, so this asks what
+ * the DOCUMENT looked like rather than what the value ended up being: a plain
+ * scalar written across two lines is the fold, whether or not the text it
+ * produced still contains a newline.
+ */
+export function foldsLines(text: string): boolean {
+  let documents: Document.Parsed[];
+
+  try {
+    // 'silent': this is a question about shape, asked about a document whose
+    // errors the caller has already decided what to do with.
+    documents = parseAllDocuments(text, { logLevel: 'silent' });
+  } catch {
+    return false;
+  }
+
+  for (const document of documents) {
+    /*
+     * The offsets of the folded scalars, rather than a boolean. A `let`
+     * assigned only inside a callback is narrowed to its initialiser by the
+     * compiler, so the test below would read as always-false.
+     */
+    const folded: number[] = [];
+
+    visit(document, {
+      Scalar(_index, node) {
+        if (node.type === 'BLOCK_LITERAL' || node.type === 'BLOCK_FOLDED') return undefined;
+        // The range is optional on the node type even though a PARSED scalar
+        // always has one, so it is narrowed rather than asserted.
+        const range = node.range;
+        if (range === null || range === undefined) return undefined;
+        if (!text.slice(range[0], range[1]).includes('\n')) return undefined;
+        folded.push(range[0]);
+        return visit.BREAK;
+      },
+    });
+
+    if (folded.length > 0) return true;
+  }
+
+  return false;
+}
+
+const NOT_A_FORMAT = 'This is not JSON, YAML, CSV or TSV that this tool can read.';
+
+/**
  * Detects the format and parses, with the fallbacks auto-detection owes.
  *
  * Detection commits to JSON on a leading bracket, and two very common things
@@ -785,6 +862,25 @@ export function parseAuto(source: string, configuredDelimiter: string): ToolResu
         detail: `Set the CSV delimiter option to ${name} to read it as a table.`,
       });
     }
+
+    /*
+     * No delimiter explains it either, and YAML got a scalar out of a document
+     * whose lines it FOLDED TOGETHER - see `foldsLines`. A three-column header
+     * over a two-column row came back as the string `"a,b,c 1,2"`: a ragged
+     * CSV, or a log, or a paragraph of
+     * prose, reported as a one-line string with the line breaks replaced by
+     * spaces and nothing at all to say so.
+     *
+     * The old test stopped at "is it a scalar", which is true of the string
+     * `hello` as well, and `hello` really is a YAML document meaning "hello".
+     * Asking whether lines were folded is what separates the two.
+     */
+    if (first.ok && foldsLines(stripBom(source))) {
+      return fail('invalid-input', NOT_A_FORMAT, {
+        detail:
+          'Read as YAML it is one long string with the line breaks turned into spaces, which is almost certainly not what it is.',
+      });
+    }
   }
 
   if (first.ok || detected.format !== 'json' || first.error.code !== 'parse-error') return first;
@@ -792,8 +888,35 @@ export function parseAuto(source: string, configuredDelimiter: string): ToolResu
   const asLines = parseJsonLines(stripBom(source));
   if (asLines !== null) return asLines;
 
+  /*
+   * THE YAML FALLBACK FOR A DOCUMENT THAT OPENS WITH A BRACKET, AND THE GUARD
+   * IT NEEDED.
+   *
+   * The fallback earns its place: YAML 1.2 is a superset of JSON, so it reads
+   * the unquoted keys, single quotes and trailing commas that describe every
+   * object literal ever copied out of source, and every one of those is the
+   * document the user meant.
+   *
+   * What it must not do is ACCEPT A DIFFERENT DOCUMENT. A plain scalar in YAML
+   * runs across line breaks, so two of the most ordinary things wrong with
+   * pasted JSON turned into confident nonsense rather than into the JSON
+   * parser's own error:
+   *
+   *   - a `//` or block comment, which is what an LLM writes and what JSONC
+   *     and every tsconfig.json look like: the comment and the key after it
+   *     became ONE KEY, `// a comment "a"`;
+   *   - a literal newline inside a string, which is what hand-editing
+   *     produces: a string written across two lines came back as one line,
+   *     with the newline silently replaced by a space.
+   *
+   * Neither failed. Both produced a plausible object, which is the one shape
+   * of wrongness nobody reports. When the YAML read folded lines the JSON
+   * error is the honest answer, and it points at the character that is
+   * actually the problem.
+   */
   const asYaml = parseSource(source, 'yaml', detected.delimiter);
-  return asYaml.ok ? asYaml : first;
+  if (!asYaml.ok || foldsLines(stripBom(source))) return first;
+  return asYaml;
 }
 
 /* ========================================================================== *

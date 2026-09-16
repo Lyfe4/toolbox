@@ -179,6 +179,41 @@ function parseNumber(raw: string | undefined, scale: number): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+/**
+ * An `hsl()` saturation or lightness.
+ *
+ * CSS Color 4 defines both as `<percentage> | <number>`, and says a bare
+ * number means THAT MANY PERCENT - so `hsl(217 91 60)` is exactly
+ * `hsl(217 91% 60%)`. This used to go through `parseNumber(raw, 1)`, which
+ * reads a bare number as already being a 0-1 fraction: 91 and 60 were clamped
+ * to 1, and `hsl(217 91 60)` came back as WHITE. No error, no clue, and a
+ * colour is the one kind of answer nobody checks digit by digit.
+ *
+ * https://www.w3.org/TR/css-color-4/#the-hsl-notation
+ */
+function parseHslComponent(raw: string | undefined): number | null {
+  if (raw === undefined) return null;
+  const text = raw.trim();
+  const value = Number(text.endsWith('%') ? text.slice(0, -1) : text);
+  return Number.isFinite(value) ? value / 100 : null;
+}
+
+/**
+ * A hue, in degrees.
+ *
+ * A percentage is not a hue in any of the notations here - CSS gives hue as
+ * `<number> | <angle>` - and it used to be read as one anyway: `parseNumber`
+ * scaled it by 360, so `hsl(50% 100% 50%)` silently became 180deg rather than
+ * being refused.
+ */
+function parseHue(raw: string | undefined): number | null {
+  if (raw === undefined) return null;
+  const text = raw.trim().replace(/deg$/i, '');
+  if (text.endsWith('%')) return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : null;
+}
+
 function parseAlpha(raw: string | null): number {
   if (raw === null) return 1;
   const value = parseNumber(raw, 1);
@@ -261,9 +296,9 @@ export function parseColor(input: string): ToolResult<ColorPayload> {
   }
 
   if (name === 'hsl' || name === 'hsla') {
-    const h = parseNumber((parts[0] ?? '').replace(/deg$/i, ''), 360);
-    const s = parseNumber(parts[1], 1);
-    const l = parseNumber(parts[2], 1);
+    const h = parseHue(parts[0]);
+    const s = parseHslComponent(parts[1]);
+    const l = parseHslComponent(parts[2]);
     if (h === null || s === null || l === null) {
       return fail('parse-error', 'hsl() needs a hue, a saturation and a lightness.');
     }
@@ -274,7 +309,7 @@ export function parseColor(input: string): ToolResult<ColorPayload> {
   if (name === 'oklch') {
     const l = parseNumber(parts[0], 1);
     const c = parseNumber(parts[1], 0.4);
-    const h = parseNumber((parts[2] ?? '').replace(/deg$/i, ''), 360);
+    const h = parseHue(parts[2]);
     if (l === null || c === null || h === null) {
       return fail('parse-error', 'oklch() needs a lightness, a chroma and a hue.');
     }

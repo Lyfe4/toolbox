@@ -50,6 +50,39 @@ describe('parsing', () => {
     expect([to255(color.r), to255(color.g), to255(color.b)]).toEqual([255, 0, 0]);
   });
 
+  /*
+   * CSS COLOR 4 GIVES hsl()'s SATURATION AND LIGHTNESS AS `<percentage> |
+   * <number>`, AND A BARE NUMBER MEANS THAT MANY PERCENT.
+   *
+   * https://www.w3.org/TR/css-color-4/#the-hsl-notation
+   *
+   * They used to be read as though they were already 0-1 fractions, so 91 and
+   * 60 were clamped to 1 and `hsl(217 91 60)` came back WHITE - a plausible
+   * colour, no error, and nothing anywhere to say the numbers had been
+   * thrown away. It is the spelling every Tailwind theme and every CSS custom
+   * property that stores a colour as three numbers uses.
+   */
+  it.each([
+    ['hsl(217 91% 60%)', 'hsl(217 91 60)'],
+    ['hsl(0 100% 50%)', 'hsl(0 100 50)'],
+    ['hsl(120 50% 25%)', 'hsl(120 50 25)'],
+    ['hsl(0 0% 0%)', 'hsl(0 0 0)'],
+  ])('reads %s and %s as the same colour', (withUnits, without) => {
+    expect(parse(without)).toEqual(parse(withUnits));
+  });
+
+  it.each([
+    ['hsl(50% 100% 50%)', 'a percentage where hsl() wants a hue'],
+    ['oklch(0.6 0.2 50%)', 'a percentage where oklch() wants a hue'],
+  ])('refuses %s (%s)', (input) => {
+    /*
+     * A hue is `<number> | <angle>` in every notation here, and a percentage
+     * used to be scaled by 360 - so this was silently read as 180deg rather
+     * than refused.
+     */
+    expect(parseColor(input).ok).toBe(false);
+  });
+
   it('reads oklch()', () => {
     // Pure white is L=1, C=0 in OKLCH, whatever the hue.
     const color = parse('oklch(1 0 0)');
@@ -155,34 +188,44 @@ describe('round trips', () => {
   });
 
   /*
-   * FOUND BY PAINTING THE TOOL'S OWN oklch() OUTPUT IN FIREFOX AND READING
-   * THE PIXEL BACK.
+   * THIS USED TO BE A LOTTERY, AND IT HAD BEEN LOSING ABOUT ONE RUN IN FOUR.
    *
-   * 23 of 266 real colours - this repository's primitives, the hex literals in
-   * the CSS shipped in node_modules, and the sRGB corners - came back a
-   * different colour at the old default precision of three. `#ff00ff` wrote as
-   * `oklch(0.702 0.322 328.36)`, which paints rgb(255, 3, 255).
+   * The same assertion was made through `fc.assert` over 400 randomly chosen
+   * colours, with a fresh seed on every run. 13,626 of the 16,777,216 sRGB
+   * colours did not survive oklch() at the then-default precision of four -
+   * one in 1,231 - so a 400-case run found one about 28% of the time. An
+   * intermittent failure in a property test reads as flakiness in fast-check;
+   * it was the tool being wrong about roughly fourteen thousand colours.
    *
-   * The test above did not see it and could not have: it formats at precision
-   * SIX, which is not what anybody gets, and allows one 8-bit step of drift.
-   * This one uses the DEFAULT and demands the colour back exactly, because
-   * that is the promise a converter makes.
+   * A FIXED STRIDE THROUGH THE CUBE, not a random sample: it is the same
+   * 166,112 colours every run, so this either passes for everybody or fails
+   * for everybody. 101 is coprime with 2^24, so the stride walks all three
+   * channels rather than holding any of them still.
+   *
+   * The stride is a sample, and the number it is calibrated against is not:
+   * all 16,777,216 were swept offline, precision by precision, and the counts
+   * are in the comment on `precision` in options.ts. At four this stride sees
+   * about 135 of the failures, which is what makes it a test rather than a
+   * hope; at five it sees none, because there are none.
    */
   it('round-trips every notation exactly at the default precision', () => {
     const { precision } = colorDefaultOptions;
+    const wrong: string[] = [];
 
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 0, max: 0xffffff }),
-        fc.constantFrom('hex' as const, 'rgb' as const, 'hsl' as const, 'oklch' as const),
-        (value, format) => {
-          const source = `#${value.toString(16).padStart(6, '0')}`;
-          const back = parse(formatColor(parse(source), format, precision));
-          expect(formatColor(back, 'hex', precision)).toBe(source);
-        },
-      ),
-      { numRuns: 400 },
-    );
+    for (let value = 0; value < 0x1000000; value += 101) {
+      const source = `#${value.toString(16).padStart(6, '0')}`;
+      const color = parse(source);
+
+      for (const format of ['hex', 'rgb', 'hsl', 'oklch'] as const) {
+        const back = parse(formatColor(color, format, precision));
+        const returned = formatColor(back, 'hex', precision);
+        if (returned !== source && wrong.length < 10) {
+          wrong.push(`${source} as ${format} came back ${returned}`);
+        }
+      }
+    }
+
+    expect(wrong).toEqual([]);
   });
 
   it.each([
@@ -190,20 +233,31 @@ describe('round trips', () => {
     ['#00ffff', 'the cyan corner'],
     ['#bf8700', 'a saturated amber with a channel pinned at zero'],
     ['#10301f', 'a dark green from this repo’s own primitives'],
+    /*
+     * The four below are from the exhaustive sweep, and they are the reason
+     * the default is five rather than four. Every one is a saturated cyan or
+     * teal whose red channel is exactly zero, which is the corner of the cube
+     * the old 266-colour corpus had nothing in: `#00bec7` wrote as
+     * `oklch(0.729 0.1239 200.83)` and read back `#01bec7`.
+     */
+    ['#00bec7', 'a cyan that four decimal places got wrong'],
+    ['#00bfa7', 'a teal that four decimal places got wrong'],
+    ['#00c3ea', 'a sky blue that four decimal places got wrong'],
+    ['#00c287', 'a green that four decimal places got wrong'],
   ])('%s survives oklch at the default precision (%s)', (hex) => {
     const written = formatColor(parse(hex), 'oklch', colorDefaultOptions.precision);
     expect(formatColor(parse(written), 'hex', colorDefaultOptions.precision)).toBe(hex);
   });
 
   it('is the lowest precision that round-trips, so the default is not arbitrary', () => {
-    // These three are wrong at three places and right at four. If that ever
-    // stops being true the default could come down, and this is what says so.
-    const sample = ['#ff00ff', '#bf8700', '#10301f'];
+    // Wrong at four places, right at five. If that ever stops being true the
+    // default could come down, and this is what says so.
+    const sample = ['#00bec7', '#00bfa7', '#00c3ea', '#00c287'];
     const survives = (hex: string, precision: number): boolean =>
       formatColor(parse(formatColor(parse(hex), 'oklch', precision)), 'hex', precision) === hex;
 
-    expect(sample.filter((hex) => survives(hex, 3))).toEqual([]);
-    expect(sample.filter((hex) => survives(hex, 4))).toEqual(sample);
+    expect(sample.filter((hex) => survives(hex, 4))).toEqual([]);
+    expect(sample.filter((hex) => survives(hex, 5))).toEqual(sample);
   });
 });
 

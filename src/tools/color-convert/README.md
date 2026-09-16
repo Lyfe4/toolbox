@@ -75,11 +75,19 @@ colour be wired into another node without a lossy round-trip through text.
 
 - Hex: `#fff`, `#ffff`, `#ffffff`, `#ffffffff`, with or without the `#`.
 - `rgb(59 130 246)`, `rgb(59, 130, 246)`, `rgba(...)`, `rgb(... / 50%)`.
-- `hsl(217 91% 60%)` and the legacy comma form.
+- `hsl(217 91% 60%)`, `hsl(217 91 60)` and the legacy comma form.
 - `oklch(0.62 0.19 259)`.
 
 Five- and seven-digit hex are refused rather than guessed at: they are the
 classic typo and both readings are equally plausible.
+
+**A bare number in `hsl()` means that many percent**, which is what CSS Color 4
+says and what `hsl(217 91 60)` means in a stylesheet. It used to be read as a
+0–1 fraction, so 91 and 60 were clamped to 1 and that colour came back WHITE —
+no error, and a colour is the one kind of answer nobody checks digit by digit.
+It is also the spelling every Tailwind theme and every CSS custom property that
+holds a colour as three numbers uses. A percentage where a HUE belongs is now
+refused rather than scaled by 360.
 
 ## Tests
 
@@ -89,3 +97,19 @@ converter: sRGB → HSL → sRGB is exact at 8-bit depth, sRGB → OKLCH → sRG
 within one 8-bit step, and a full parse → format → parse cycle holds in all four
 notations. A converter that quietly shifts people's design tokens by a step
 every time they touch it would be worse than useless.
+
+### The round trip was a lottery, and it had been losing
+
+`round-trips every notation exactly at the default precision` was a `fc.assert`
+over 400 randomly chosen colours with a fresh seed each run. It failed about one
+run in four, which reads as flakiness in fast-check and was not: at the
+then-default precision of four, **13,626 of the 16,777,216 sRGB colours did not
+survive `oklch()`** — one in 1,231, so a 400-case run found one about 28% of the
+time.
+
+All 16.7 million were swept, precision by precision, and the numbers are in the
+comment on `precision` in [`options.ts`](options.ts): 3,532,330 wrong at three
+places, 13,626 at four, none at five. The default is five. The test is a fixed
+stride through the cube rather than a random sample, so it now either passes for
+everybody or fails for everybody, and the four specific cyans the sweep found
+are named cases of their own.
