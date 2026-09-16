@@ -92,8 +92,35 @@ export type LineEnding = 'lf' | 'crlf' | 'cr' | 'mixed' | 'none';
  * does NOT appear as a changed row.
  */
 export interface DiffNotes {
-  readonly lineEndings: { readonly original: LineEnding; readonly changed: LineEnding };
+  /**
+   * What terminators each side uses, and whether they took part.
+   *
+   * `mode` is here rather than only in the settings because this object is what
+   * travels to the view, to the `changes` port and into the patch's own note -
+   * and "the endings differ" means something different depending on whether
+   * they were compared. Ignored and different is the case where the rows do not
+   * say it; compared and different is the case where every row does.
+   */
+  readonly lineEndings: {
+    readonly original: LineEnding;
+    readonly changed: LineEnding;
+    readonly mode: LineEndingMode;
+  };
   readonly finalNewline: { readonly original: boolean; readonly changed: boolean };
+  /**
+   * Whether either side's DOCUMENT began with a byte order mark.
+   *
+   * Two ways it can be true, and they need one answer. A pasted document keeps
+   * its `\uFEFF`, so this function can see it. A dropped file loses it to the
+   * decoder before this function is called at all, so the tool - the only
+   * place that still has the bytes - says so through `arrival`.
+   *
+   * The comparison is untouched either way: a BOM removed by the decoder stays
+   * removed, because a diff that quietly put characters back would be a diff
+   * that cannot be used to measure what a wire does to a value. This is what
+   * the rows cannot say, said beside them.
+   */
+  readonly byteOrderMark: { readonly original: boolean; readonly changed: boolean };
   /**
    * True when either input contains an explicit bidirectional formatting
    * control.
@@ -132,8 +159,27 @@ export interface DiffReport {
 /** How much whitespace the comparison is allowed to ignore. */
 export type WhitespaceMode = 'none' | 'trailing' | 'all';
 
+/**
+ * WHETHER THE TERMINATORS THEMSELVES ARE PART OF THE COMPARISON.
+ *
+ * `ignore` is the default and stays the default. A file saved on Windows
+ * compared against the same file saved on a Mac reports every single line as
+ * removed and re-added, with the two sides of each pair rendering identically -
+ * output that is not merely unhelpful, because it hides the real changes among
+ * thousands of phantom ones.
+ *
+ * But "not an option" was the wrong conclusion from that. Two files differing
+ * ONLY in their terminators compared equal and produced an EMPTY PATCH, where
+ * git rewrites every line - so the one case where the patch is a lie was
+ * unreachable, and a node wired from the patch port received `""` with nothing
+ * attached. `compare` is how you reach it, and git's own `--ignore-cr-at-eol`
+ * exists because the other direction is the one people usually want.
+ */
+export type LineEndingMode = 'ignore' | 'compare';
+
 export interface DiffSettings {
   readonly whitespace: WhitespaceMode;
+  readonly lineEndings: LineEndingMode;
   readonly ignoreCase: boolean;
   readonly refineWords: boolean;
   readonly context: number;
@@ -291,7 +337,18 @@ const SPACE_LOOKALIKES = /[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/gu;
  * lookalikes to merge is a bottomless pit with no correct answer.
  */
 function visualKey(value: string): string {
-  return value.replace(ZERO_WIDTH, '').replace(SPACE_LOOKALIKES, ' ').normalize('NFC');
+  return (
+    value
+      // A trailing CR, which only a row can carry while `lineEndings` is
+      // `compare`: there it is the entire difference between two rows that
+      // draw identically, and that is precisely what `invisible` is for. CR is
+      // `\p{Cc}` rather than `\p{Cf}`, so the substitution below does not
+      // reach it.
+      .replace(/\r$/, '')
+      .replace(ZERO_WIDTH, '')
+      .replace(SPACE_LOOKALIKES, ' ')
+      .normalize('NFC')
+  );
 }
 
 /** True when two different strings would be indistinguishable on screen. */
@@ -316,6 +373,37 @@ export function linesOf(value: string): readonly string[] {
 }
 
 /**
+ * Lines with their own terminators still attached.
+ *
+ * What `compare` needs, and it is not `split(/(\r\n|\r|\n)/)` followed by a
+ * join: a lone-CR file has to split into real lines too, or a classic-Mac
+ * document becomes one enormous line and the diff is useless in a different
+ * way than the one the normalisation exists to prevent. So the terminator is
+ * found, kept on its line, and the line boundary is honoured whichever of the
+ * three it was.
+ *
+ * The rows keep the terminator in their text, which is what makes two lines
+ * that differ only in it genuinely different strings - and `visualKey` strips a
+ * trailing CR, so such a pair is flagged `invisible` rather than being drawn as
+ * `-foo` above `+foo` with nothing to say why.
+ */
+export function linesWithEndings(value: string): readonly string[] {
+  if (value === '') return [];
+  const lines: string[] = [];
+  const pattern = /\r\n|\r|\n/g;
+  let start = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(value)) !== null) {
+    lines.push(value.slice(start, match.index + match[0].length));
+    start = pattern.lastIndex;
+  }
+
+  if (start < value.length) lines.push(value.slice(start));
+  return lines;
+}
+
+/**
  * The form of a line the comparison actually looks at.
  *
  * `trailing` is leading AND trailing, which is what every diff tool means by
@@ -324,14 +412,29 @@ export function linesOf(value: string): readonly string[] {
  * JavaScript definition of whitespace, which includes the non-breaking space -
  * stated because a user who loses a NBSP to it deserves to know why.
  */
-function comparisonForm(line: string, settings: DiffSettings): string {
+function comparisonForm(line: string, settings: DiffSettings, mark: string): string {
   const spaced =
     settings.whitespace === 'all'
       ? line.replace(/\s+/gu, '')
       : settings.whitespace === 'trailing'
         ? line.trim()
         : line;
-  return settings.ignoreCase ? spaced.toLowerCase() : spaced;
+  /*
+   * THE TERMINATOR AS A ONE-CHARACTER PREFIX, NOT A SUFFIX.
+   *
+   * `mark` is '' unless `lineEndings` is `compare`, where it is one of L, C, R
+   * or N. It has to go in FRONT: appended, a line whose own last character
+   * happened to equal the mark would compare equal to the same line with a
+   * different terminator, and this file's whole job is not to have cases like
+   * that. A fixed-width prefix is unambiguous for every possible line.
+   *
+   * It cannot be the terminator itself either. The comparison text is joined
+   * with newlines and handed to a line differ, so a line carrying its own `\n`
+   * would be two lines to the differ and one to the row builder - which is the
+   * misalignment `computeDiff` refuses on, reached in testing before this
+   * became a prefix.
+   */
+  return `${mark}${settings.ignoreCase ? spaced.toLowerCase() : spaced}`;
 }
 
 /**
@@ -351,9 +454,45 @@ function comparisonForm(line: string, settings: DiffSettings): string {
  *    That option is no longer passed, because there is nothing left for it to
  *    fix.
  */
-function comparisonText(lines: readonly string[], settings: DiffSettings): string {
+function comparisonText(
+  lines: readonly string[],
+  settings: DiffSettings,
+  marks: readonly string[],
+): string {
   if (lines.length === 0) return '';
-  return `${lines.map((line) => comparisonForm(line, settings)).join('\n')}\n`;
+  return `${lines.map((line, index) => comparisonForm(line, settings, marks[index] ?? '')).join('\n')}\n`;
+}
+
+/**
+ * A line with its LINE FEED removed and its carriage return kept.
+ *
+ * Only reached in `compare` mode, and the asymmetry is exactly what `git diff`
+ * writes: a CRLF line removed from a file appears in the patch as `-a` followed
+ * by a literal CR, because the CR is a character of the line as far as the
+ * patch's pre-image is concerned and the LF is the patch's own row terminator.
+ *
+ * It is not cosmetic. A patch that wrote `-a` for a line that is really `a\r\n`
+ * does not match the file it claims to patch, and `git apply` refuses it - so
+ * the byte has to be in the row. `visualKey` strips a trailing CR, which is
+ * what makes such a row's pair flag as `invisible` instead of drawing as `-a`
+ * above `+a` with nothing to say why.
+ */
+function withoutEnding(line: string): string {
+  return line.replace(/\n$/, '');
+}
+
+/**
+ * One character standing for the terminator, for `comparisonForm`'s prefix.
+ *
+ * The LAST line of a file with no terminator gets `N`, which is how a diff in
+ * `compare` mode notices that a final newline was added or removed as well -
+ * the same fact `notes.finalNewline` carries, now visible in a row.
+ */
+function endingMark(line: string): string {
+  if (line.endsWith('\r\n')) return 'C';
+  if (line.endsWith('\n')) return 'L';
+  if (line.endsWith('\r')) return 'R';
+  return 'N';
 }
 
 /* ========================================================================== *
@@ -537,19 +676,58 @@ function refinementState(
  * The comparison
  * ========================================================================== */
 
+/** Facts about how each side arrived that its text no longer carries. */
+export interface DiffArrival {
+  readonly original: boolean;
+  readonly changed: boolean;
+}
+
 export function computeDiff(
   original: string,
   changed: string,
   settings: DiffSettings,
+  /** A byte order mark the decoder removed before this was called. */
+  removedByteOrderMark: DiffArrival = { original: false, changed: false },
 ): ToolResult<DiffReport> {
   const notes: DiffNotes = {
-    lineEndings: { original: lineEndingOf(original), changed: lineEndingOf(changed) },
+    lineEndings: {
+      original: lineEndingOf(original),
+      changed: lineEndingOf(changed),
+      mode: settings.lineEndings,
+    },
     finalNewline: { original: /[\r\n]$/.test(original), changed: /[\r\n]$/.test(changed) },
+    byteOrderMark: {
+      original: original.charCodeAt(0) === 0xfeff || removedByteOrderMark.original,
+      changed: changed.charCodeAt(0) === 0xfeff || removedByteOrderMark.changed,
+    },
     bidiControls: BIDI_CONTROLS.test(original) || BIDI_CONTROLS.test(changed),
   };
 
-  const originalLines = linesOf(normaliseNewlines(original));
-  const changedLines = linesOf(normaliseNewlines(changed));
+  /*
+   * The lines as the user sees them, and - only in `compare` mode - what each
+   * one was terminated by.
+   *
+   * The ROW TEXT never carries a terminator, in either mode. A row whose text
+   * ended in a CR would be drawn with an invisible character in it and copied
+   * with one, and the terminator is a property of the line rather than part of
+   * it. It takes part in the comparison through `comparisonForm`'s prefix
+   * instead, so the rows say what changed without the text being changed to
+   * say it.
+   */
+  const comparing = settings.lineEndings === 'compare';
+
+  const originalWhole = comparing ? linesWithEndings(original) : null;
+  const changedWhole = comparing ? linesWithEndings(changed) : null;
+
+  const originalLines =
+    originalWhole === null
+      ? linesOf(normaliseNewlines(original))
+      : originalWhole.map(withoutEnding);
+  const changedLines =
+    changedWhole === null ? linesOf(normaliseNewlines(changed)) : changedWhole.map(withoutEnding);
+
+  const originalMarks = originalWhole === null ? [] : originalWhole.map(endingMark);
+  const changedMarks = changedWhole === null ? [] : changedWhole.map(endingMark);
 
   /*
    * The structure is computed from normalised copies and every row's text is
@@ -564,8 +742,8 @@ export function computeDiff(
    * `notes.finalNewline`.
    */
   const changes = diffLines(
-    comparisonText(originalLines, settings),
-    comparisonText(changedLines, settings),
+    comparisonText(originalLines, settings, originalMarks),
+    comparisonText(changedLines, settings, changedMarks),
     { maxEditLength: MAX_EDIT_DISTANCE },
   );
 
@@ -887,7 +1065,48 @@ export function toUnified(report: DiffReport, context: number): string {
    * unified format can carry without a changed row, so it is the only thing
    * that can override this.
    */
-  if (report.equal && !terminatorOnly) return '';
+  /*
+   * THE FACT THAT TRAVELS WITH THE PATCH.
+   *
+   * With `lineEndings: ignore` and two files that really do differ in their
+   * terminators, the rows do not say so and the patch is EMPTY - and an empty
+   * string on the output port is the one answer that means "these files are the
+   * same". The view printed `notes.lineEndings` and the port carried nothing,
+   * so whether you were told depended on which of the two you were looking at.
+   *
+   * AFTER THE HUNKS, NOT BEFORE THEM, AND THAT WAS MEASURED. Real `git apply`
+   * reads a leading comment as garbage to be skipped, which is how
+   * `git format-patch` output applies - but only when the file headers are
+   * `a/`-prefixed. This tool's headers name no path, and with a comment in
+   * front of them git reports `unable to find filename in patch at line 2`
+   * where the same patch without the comment applies. A note AFTER the last
+   * hunk parses identically to no note at all in both header styles, and a
+   * patch carrying one was applied by real `git apply` and produced the right
+   * bytes. See `unified.oracle.test.ts`.
+   */
+  const endings = report.notes.lineEndings;
+  /*
+   * BOTH SIDES HAVE TO HAVE TERMINATORS FOR THEM TO DISAGREE.
+   *
+   * `lineEndingOf` returns `none` for a text that holds at most one line, which
+   * includes the empty string - so "empty against one line" reported `none`
+   * against `lf` and got a note about line endings on a patch whose real story
+   * is that a file was created. Caught by the git oracle, which had been
+   * matching those two cases byte for byte and stopped.
+   *
+   * What a `none` side really differs by is its final newline, and
+   * `notes.finalNewline` already carries that and the patch already rewrites
+   * the last line for it.
+   */
+  const endingNote =
+    endings.mode === 'ignore' &&
+    endings.original !== 'none' &&
+    endings.changed !== 'none' &&
+    endings.original !== endings.changed
+      ? `# Line endings differ: original ${LINE_ENDING_NAMES[endings.original]}, changed ${LINE_ENDING_NAMES[endings.changed]}. They were ignored, so no row below shows it. Set Line endings to "Compare them" to see every line as changed, which is what git does.`
+      : null;
+
+  if (report.equal && !terminatorOnly) return endingNote === null ? '' : `${endingNote}\n`;
 
   const lines: string[] = ['--- original', '+++ changed'];
 
@@ -925,8 +1144,19 @@ export function toUnified(report: DiffReport, context: number): string {
     }
   }
 
+  if (endingNote !== null) lines.push(endingNote);
+
   return `${lines.join('\n')}\n`;
 }
+
+/** A terminator as a person writes it, for the patch's own note. */
+const LINE_ENDING_NAMES: Readonly<Record<LineEnding, string>> = {
+  lf: 'LF',
+  crlf: 'CRLF',
+  cr: 'CR',
+  mixed: 'a mixture',
+  none: 'none (one line, no terminator)',
+};
 
 /* ========================================================================== *
  * JSON view
@@ -950,6 +1180,7 @@ export function toJson(report: DiffReport): JsonValue {
     notes: {
       lineEndings: { ...report.notes.lineEndings },
       finalNewline: { ...report.notes.finalNewline },
+      byteOrderMark: { ...report.notes.byteOrderMark },
       bidiControls: report.notes.bidiControls,
     },
     rows: report.rows.map((row) => ({

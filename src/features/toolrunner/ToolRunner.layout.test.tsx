@@ -187,7 +187,7 @@ describe('the tool runner layout', () => {
       await user.type(screen.getByRole('textbox', { name: 'Base64 input' }), 'hi');
       await user.click(screen.getByRole('button', { name: 'Run' }));
       await waitFor(() => {
-        expect(screen.getByRole('textbox', { name: 'Base64 Output' })).toBeInTheDocument();
+        expect(screen.getByRole('textbox', { name: 'Base64 Result' })).toBeInTheDocument();
       }, IMPORT_TIMEOUT);
 
       const order = tabOrder(container);
@@ -195,7 +195,7 @@ describe('the tool runner layout', () => {
 
       const mode = at(screen.getByRole('combobox', { name: 'Mode' }));
       const run = at(screen.getByRole('button', { name: 'Run' }));
-      const output = at(screen.getByRole('textbox', { name: 'Base64 Output' }));
+      const output = at(screen.getByRole('textbox', { name: 'Base64 Result' }));
       const copy = at(screen.getByRole('button', { name: 'Copy' }));
 
       expect(mode).toBeGreaterThan(-1);
@@ -583,10 +583,19 @@ describe('the reserved viewport height', () => {
 
 describe('an output port label', () => {
   /*
-   * BASE64 DECLARES ITS SINGLE OUTPUT AS "Output", under a panel whose heading
-   * is "Output" - two labels for one value, and the same duplication on five
-   * of the nine tools. The input editors above already followed the rule this
-   * now follows: name a port only where the name distinguishes something.
+   * NO PORT LABEL MAY REPEAT THE PANEL HEADING ABOVE IT.
+   *
+   * Base64 used to declare its single output as "Output", under a panel whose
+   * heading is "Output" - two labels for one value, and the same duplication on
+   * five of the nine tools. The rule that came out of it is that a port's label
+   * is drawn only where it distinguishes something, which for a one-output tool
+   * is never.
+   *
+   * ROUND THREE GAVE BASE64 A SECOND OUTPUT, so its first port's label is drawn
+   * now - and the word it was drawn with was "Output", under the heading
+   * "Output". This test caught it. The port is called 'Result' for that reason
+   * and the assertion stands as it was: whatever a tool's ports are called, the
+   * word in the panel heading appears once.
    */
   it(
     'is not printed under a panel heading that already says it',
@@ -601,14 +610,14 @@ describe('an output port label', () => {
       await user.type(screen.getByRole('textbox', { name: 'Base64 input' }), 'hi');
       await user.click(screen.getByRole('button', { name: 'Run' }));
       await waitFor(() => {
-        expect(screen.getByRole('textbox', { name: 'Base64 Output' })).toBeInTheDocument();
+        expect(screen.getByRole('textbox', { name: 'Base64 Result' })).toBeInTheDocument();
       }, IMPORT_TIMEOUT);
 
       // The panel heading, and nothing else on the page saying the same word.
       expect(screen.getAllByText('Output')).toHaveLength(1);
       // Still reachable by name, because the accessible name of the box is
       // built from the port label whether or not it is drawn.
-      expect(screen.getByRole('textbox', { name: 'Base64 Output' })).toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: 'Base64 Result' })).toBeInTheDocument();
     },
     SLOW_TEST,
   );

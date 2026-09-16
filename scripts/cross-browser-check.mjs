@@ -2079,9 +2079,22 @@ async function checkRunnerLayout(browser, label) {
     await targetPage.getByRole('combobox', { name: 'Target format' }).waitFor({ timeout: 15_000 });
 
     const seen = [];
-    for (const target of ['HTML', 'Markdown', 'Plain text (strip formatting)']) {
+    /*
+     * FOUR TARGETS, AND `exact` ON THE NAME.
+     *
+     * Round three split HTML into "HTML (normalised)" and "HTML (sanitised)",
+     * and a locator asking for "HTML" then matched both - which Playwright
+     * refuses rather than guessing, correctly. Both are listed here because
+     * they are two layouts to measure, not one.
+     */
+    for (const target of [
+      'HTML (normalised)',
+      'HTML (sanitised)',
+      'Markdown',
+      'Plain text (strip formatting)',
+    ]) {
       await targetPage.getByRole('combobox', { name: 'Target format' }).click();
-      await targetPage.getByRole('option', { name: target }).click();
+      await targetPage.getByRole('option', { name: target, exact: true }).click();
       await targetPage.evaluate(() => {
         window.scrollTo(0, 0);
       });
@@ -2109,7 +2122,7 @@ async function checkRunnerLayout(browser, label) {
     /*
      * NOT "ON SCREEN AT REST", WHICH WOULD BE FALSE AND SHOULD BE.
      *
-     * Two of the three layouts put Run on screen without scrolling; Markdown's
+     * Three of the four layouts put Run on screen without scrolling; Markdown's
      * options are tall enough that it rests at 914 in an 800px window. That is
      * the documented consequence of taking the run card's sticky away, and a
      * check that demanded otherwise would be demanding the defect back - the
@@ -2127,7 +2140,7 @@ async function checkRunnerLayout(browser, label) {
     /*
      * AND IT IS ATTACHED TO THEM. One grid gap plus the card's own border and
      * padding separates the visible end of the options from the button, and it
-     * is the SAME distance in all three layouts - which is the whole difference
+     * is the SAME distance in all four layouts - which is the whole difference
      * between a control that travels with its panel and one adrift in reserved
      * space. Measured at 29px; asserted as a bound and an agreement rather than
      * as that number, because the chrome is a border and a padding rather than
@@ -3762,6 +3775,193 @@ async function checkStructuredData(browser, label) {
       'both output ports describe the same document',
       parsedText.includes('__proto__'),
       parsedText.replace(/\s+/g, ' ').slice(0, 80),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * WHETHER A LOSS REPORT IS ACTUALLY ON THE SCREEN.
+ *
+ * Round three turned six silent losses into reported ones, and every unit test
+ * for them asserts a PAYLOAD: the note is in the value the tool returned. That
+ * is not the claim. The claim is that a person using the tool sees it without
+ * doing anything - which is a question about layout, visibility and the
+ * canvas's own text, and jsdom has none of those.
+ *
+ * So this drives the real thing, in two real engines, and asks four questions
+ * that the unit suite is structurally unable to ask:
+ *
+ *   1. ON `/tools`, is the note DRAWN? Not "in the DOM" - drawn, with a box of
+ *      non-zero size, with no click anywhere. Every output port renders on that
+ *      page, so a report port is visible by construction; "by construction" is
+ *      what this file exists to distrust.
+ *   2. ON A CANVAS NODE, does the node's own face say it? A node summarises its
+ *      first output and the report is the third port, so without
+ *      `lossSummary` the sentence would exist only inside a panel nobody opens.
+ *      The text is read off the rendered node.
+ *   3. THE NEGATIVE CONTROL, in the browser, for both: a conversion that loses
+ *      nothing must show no note and no "Lossy" on its node. A report that
+ *      fires on ordinary input is the one people learn to ignore.
+ *   4. AND THE ONE EXTERNAL ORACLE THIS FILE CAN ASK. `rgb(50% 50% 50%)` is
+ *      quantised to 128 because that is what a browser does; the browser is
+ *      right here, so it is asked rather than assumed.
+ */
+async function checkLossReports(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  /** The visible text of a notes list, and whether it occupies any space. */
+  const notesOn = async (name) => {
+    const list = page.getByRole('list', { name });
+    if ((await list.count()) === 0) return { drawn: false, text: '' };
+    const box = await list.first().boundingBox();
+    return {
+      drawn: box !== null && box.width > 0 && box.height > 0,
+      text: ((await list.first().innerText()) ?? '').replace(/\s+/g, ' ').trim(),
+    };
+  };
+
+  try {
+    /* -- 1 and 3: the tool page ------------------------------------------- */
+    await page.goto(`${ORIGIN}/tools/structured-data`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Structured data' }).waitFor({
+      timeout: 15_000,
+    });
+
+    await page.getByLabel('Structured data input').fill('{"id": 12345678901234567890}');
+    await page.getByRole('button', { name: 'Run' }).click();
+    await page.getByLabel('Structured data Converted').waitFor({ timeout: 30_000 });
+
+    const lossy = await notesOn('Structured data Detected notes');
+    check(
+      label,
+      'a rounded integer is drawn on the tool page without opening anything',
+      lossy.drawn && lossy.text.includes('rounded'),
+      lossy.text.slice(0, 120),
+    );
+
+    check(
+      label,
+      'the note says which number and what it became',
+      lossy.text.includes('12345678901234567890') && lossy.text.includes('12345678901234567000'),
+      lossy.text.slice(0, 160),
+    );
+
+    // The negative control, on the same page, one run later.
+    await page.getByLabel('Structured data input').fill('{"id": 42}');
+    await page.getByRole('button', { name: 'Run' }).click();
+    await page.waitForTimeout(500);
+    const clean = await notesOn('Structured data Detected notes');
+    check(
+      label,
+      'a conversion that loses nothing draws no note at all',
+      !clean.drawn && clean.text === '',
+      clean.text.slice(0, 120),
+    );
+
+    /* -- 2 and 3: a canvas node ------------------------------------------- */
+    const nodeLink = (options) =>
+      `${ORIGIN}/?p=${shareParam({
+        v: 3,
+        n: [['n1', 'structured-data', 0, 0, options]],
+        e: [],
+      })}`;
+
+    /**
+     * The summary a node prints, and whether it takes up any room.
+     *
+     * Both, because `textContent` is satisfied by a node drawn at zero height
+     * behind the inspector, and the whole claim here is that somebody standing
+     * in front of the canvas can read it.
+     */
+    const summaryOf = () =>
+      page.evaluate(() => {
+        const box = document.querySelector('[data-testid="node-n1"] [class*="nodeSummary"]');
+        if (box === null) return null;
+        const rect = box.getBoundingClientRect();
+        return {
+          text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
+          drawn: rect.width > 0 && rect.height > 0,
+        };
+      });
+
+    const typeInto = async (value) => {
+      await page.locator('[data-testid="node-n1"]').focus();
+      await page.keyboard.press('Enter');
+      const field = page.locator('[data-inspector-input]').first();
+      await field.waitFor({ timeout: 15_000 });
+      await field.fill(value);
+    };
+
+    const untilSummary = async (predicate, timeout) => {
+      const deadline = Date.now() + timeout;
+      for (;;) {
+        const summary = await summaryOf();
+        if ((summary !== null && predicate(summary.text)) || Date.now() > deadline) return summary;
+        await page.waitForTimeout(100);
+      }
+    };
+
+    await page.goto(nodeLink({ source: 'auto', target: 'csv', indent: 2, delimiter: 'comma' }), {
+      waitUntil: 'networkidle',
+    });
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+
+    await typeInto('[{"user": {"name": "ada"}, "id": 1}]');
+    const lossyNode = await untilSummary((text) => text.startsWith('Lossy'), 30_000);
+    check(
+      label,
+      'a canvas node prints what the conversion lost on its own face',
+      lossyNode !== null &&
+        lossyNode.drawn &&
+        lossyNode.text.startsWith('Lossy ·') &&
+        lossyNode.text.includes('nested'),
+      JSON.stringify(lossyNode),
+    );
+
+    // The node's accessible name carries it too, because a chain readable by
+    // eye and not by ear is not one a keyboard user can follow.
+    const spoken = await page.evaluate(
+      () => document.querySelector('[data-testid="node-n1"]')?.getAttribute('aria-label') ?? '',
+    );
+    check(
+      label,
+      'and its accessible name carries the loss as well as the result',
+      spoken.includes('lossy:'),
+      spoken.replace(/\s+/g, ' ').slice(0, 160),
+    );
+
+    // The negative control on the canvas: a flat table loses nothing.
+    await page.goto(nodeLink({ source: 'auto', target: 'csv', indent: 2, delimiter: 'comma' }), {
+      waitUntil: 'networkidle',
+    });
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+
+    await typeInto('[{"a": 1, "b": 2}, {"a": 3, "b": 4}]');
+    const cleanNode = await untilSummary((text) => text.includes('a,b'), 30_000);
+    check(
+      label,
+      'a node whose conversion lost nothing says nothing about loss',
+      cleanNode !== null && cleanNode.drawn && !cleanNode.text.includes('Lossy'),
+      JSON.stringify(cleanNode),
+    );
+
+    /* -- 4: the browser as the oracle for rgb() ---------------------------- */
+    const computed = await page.evaluate(() => {
+      const probe = document.createElement('div');
+      probe.style.color = 'rgb(50% 50% 50%)';
+      document.body.append(probe);
+      const value = getComputedStyle(probe).color;
+      probe.remove();
+      return value;
+    });
+    check(
+      label,
+      'this engine agrees that rgb(50% 50% 50%) is 128, which is why the parser rounds',
+      computed.replace(/\s/g, '') === 'rgb(128,128,128)',
+      computed,
     );
   } finally {
     await context.close().catch(() => {});
@@ -6355,7 +6555,9 @@ async function checkRichTextClipboard(browser, label) {
     ].join('\n');
 
     await page.getByRole('combobox', { name: 'Target format' }).click();
-    await page.getByRole('option', { name: 'HTML' }).click();
+    // The normalised target by its full name: since round three there are two
+    // whose label begins "HTML", and a prefix match resolves to both.
+    await page.getByRole('option', { name: 'HTML (normalised)', exact: true }).click();
     await page.locator('textarea').first().fill(source);
     await page.getByRole('button', { name: 'Run' }).click();
 
@@ -7045,7 +7247,16 @@ async function checkOutputViews(browser, label) {
     await axeInBothThemes('an unverified JWT');
 
     /* -- The verdict survives the Raw toggle ---------------------------- */
-    await page.getByRole('button', { name: 'Raw' }).click();
+    /*
+     * SCOPED TO THE DECODED REGION. Round three gave this tool a second output,
+     * so the page has two `Raw` toggles - one per view - and an unscoped
+     * locator matches both. The one this check is about is the decoded token's,
+     * because the claim is that the verdict survives ITS toggle.
+     */
+    await page
+      .getByRole('region', { name: 'JWT Decoded' })
+      .getByRole('button', { name: 'Raw' })
+      .click();
     const stillThere = await page.locator('[data-trust]').count();
     check(
       label,
@@ -8889,6 +9100,7 @@ async function runChecks(engine, label) {
     await checkConsoleSilence(browser, label);
     await checkDeepLinks(browser, label);
     await checkStructuredData(browser, label);
+    await checkLossReports(browser, label);
     await checkDiff(browser, label);
     await checkRegex(browser, label);
     await checkOutputViews(browser, label);

@@ -5,6 +5,7 @@ import {
   type ErasedTool,
   type JsonValue,
 } from '@/features/registry/types';
+import { lossLine, lost, notesToJson, type ToolNote } from '@/lib/notes';
 
 import { jwtDefaultOptions, jwtOptionFields, jwtOptionsSchema } from './options';
 import { decodeToken, describeClaims } from './token';
@@ -48,6 +49,29 @@ export const jwtDecodeTool = defineTool({
        * See JwtView.
        */
       presentation: 'jwt',
+    },
+    {
+      /*
+       * A SECOND PORT, AND NOT THE ONE THAT WAS ARGUED AGAINST.
+       *
+       * The port audit rejected a `payload` output carrying just the claims,
+       * because its entire effect would be to detach the claims from the
+       * signature verdict - which is the one thing this tool's design exists to
+       * prevent. That argument is about a port carrying CLAIMS. This one
+       * carries none.
+       *
+       * What it carries is the loss the matrix has recorded since round one: a
+       * `sub` or a `jti` that is a 64-bit key or a snowflake is rounded by
+       * `JSON.parse`, so the decoder shows a different number from the one the
+       * issuer signed. There is no way to avoid that in a JavaScript program
+       * and no reason to be quiet about it, and a `ToolResult` is a value or an
+       * error, so it needed somewhere to go.
+       */
+      id: 'report',
+      label: 'Report',
+      types: ['json'],
+      description: 'Anything about the token the decoded value cannot carry exactly.',
+      presentation: 'report',
     },
   ],
 
@@ -104,7 +128,36 @@ export const jwtDecodeTool = defineTool({
       claims: describeClaims(decoded.value.payload, Date.now(), options.clockToleranceSec),
     };
 
-    return ok({ output: { type: 'json', data } as const });
+    const rounded = decoded.value.roundedClaims;
+    const notes: ToolNote[] =
+      rounded.length === 0
+        ? []
+        : [
+            lost(
+              rounded.length === 1
+                ? `The claim at ${rounded[0]?.path ?? ''} was rounded`
+                : `${rounded.length.toString()} claims were rounded`,
+              `JavaScript has one numeric type and it is a double, so an integer past 2^53 cannot be held exactly. ${rounded[0]?.source ?? ''} became ${(rounded[0]?.value ?? 0).toString()}. A 64-bit database key, a snowflake or a nanosecond timestamp in a claim is therefore NOT the number the issuer signed, at ${rounded
+                .slice(0, 5)
+                .map((entry) => entry.path)
+                .join(
+                  ', ',
+                )}. The signature is still verified against the original bytes, which this rounding does not touch.`,
+            ),
+          ];
+
+    const losses = lossLine(notes);
+
+    return ok({
+      output: { type: 'json', data } as const,
+      report: {
+        type: 'json',
+        data: {
+          summary: `${decoded.value.algorithm ?? 'no alg'}${losses === null ? '' : ` · ${losses}`}`,
+          notes: notesToJson(notes),
+        },
+      } as const,
+    });
   },
 });
 

@@ -603,7 +603,7 @@ describe('input', () => {
     select('b');
     const panel = await openInspector(user);
 
-    expect(within(panel).getByText(/Wired from Base64 · Output/)).toBeInTheDocument();
+    expect(within(panel).getByText(/Wired from Base64 · Result/)).toBeInTheDocument();
     expect(within(panel).queryByRole('textbox', { name: /Hash input/ })).toBeNull();
   });
 });

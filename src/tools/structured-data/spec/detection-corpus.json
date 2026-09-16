@@ -1,0 +1,380 @@
+[
+  {
+    "name": "pretty-printed JSON",
+    "text": "{\n  \"name\": \"ada\",\n  \"tags\": [\"x\", \"y\"],\n  \"count\": 3\n}\n",
+    "detected": "json",
+    "ok": true,
+    "value": {
+      "name": "ada",
+      "tags": ["x", "y"],
+      "count": 3
+    },
+    "error": null
+  },
+  {
+    "name": "compact JSON",
+    "text": "{\"name\":\"ada\",\"tags\":[\"x\",\"y\"]}",
+    "detected": "json",
+    "ok": true,
+    "value": {
+      "name": "ada",
+      "tags": ["x", "y"]
+    },
+    "error": null
+  },
+  {
+    "name": "a JSON array of objects",
+    "text": "[\n  {\"id\": 1, \"name\": \"ada\"},\n  {\"id\": 2, \"name\": \"grace\"}\n]\n",
+    "detected": "json",
+    "ok": true,
+    "value": [
+      {
+        "id": 1,
+        "name": "ada"
+      },
+      {
+        "id": 2,
+        "name": "grace"
+      }
+    ],
+    "error": null
+  },
+  {
+    "name": "JSON with a trailing comma",
+    "text": "{\n  \"a\": 1,\n  \"b\": 2,\n}\n",
+    "detected": "json",
+    "ok": true,
+    "value": {
+      "a": 1,
+      "b": 2
+    },
+    "error": null
+  },
+  {
+    "name": "JSON with single quotes",
+    "text": "{'a': 1, 'b': 'two'}",
+    "detected": "json",
+    "ok": true,
+    "value": {
+      "a": 1,
+      "b": "two"
+    },
+    "error": null
+  },
+  {
+    "name": "JSON with unquoted keys",
+    "text": "{a: 1, b: 'two'}",
+    "detected": "json",
+    "ok": true,
+    "value": {
+      "a": 1,
+      "b": "two"
+    },
+    "error": null
+  },
+  {
+    "name": "a JavaScript object literal",
+    "text": "{\n  name: 'ada',\n  tags: ['x', 'y'],\n}\n",
+    "detected": "json",
+    "ok": true,
+    "value": {
+      "name": "ada",
+      "tags": ["x", "y"]
+    },
+    "error": null
+  },
+  {
+    "name": "NDJSON",
+    "text": "{\"t\": 1, \"msg\": \"one\"}\n{\"t\": 2, \"msg\": \"two\"}\n{\"t\": 3, \"msg\": \"three\"}\n",
+    "detected": "json",
+    "ok": true,
+    "value": [
+      {
+        "t": 1,
+        "msg": "one"
+      },
+      {
+        "t": 2,
+        "msg": "two"
+      },
+      {
+        "t": 3,
+        "msg": "three"
+      }
+    ],
+    "error": null
+  },
+  {
+    "name": "a Kubernetes-style stream",
+    "text": "apiVersion: v1\nkind: Service\nmetadata:\n  name: web\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n",
+    "detected": "yaml",
+    "ok": true,
+    "value": [
+      {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "web"
+        }
+      },
+      {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "web"
+        }
+      }
+    ],
+    "error": null
+  },
+  {
+    "name": "a stream ending in a separator",
+    "text": "apiVersion: v1\nkind: Service\n---\n",
+    "detected": "yaml",
+    "ok": true,
+    "value": [
+      {
+        "apiVersion": "v1",
+        "kind": "Service"
+      },
+      null
+    ],
+    "error": null
+  },
+  {
+    "name": "a YAML block scalar",
+    "text": "description: |\n  line one\n  line two\nname: ada\n",
+    "detected": "yaml",
+    "ok": true,
+    "value": {
+      "description": "line one\nline two\n",
+      "name": "ada"
+    },
+    "error": null
+  },
+  {
+    "name": "a YAML folded scalar",
+    "text": "description: >\n  line one\n  line two\nname: ada\n",
+    "detected": "yaml",
+    "ok": true,
+    "value": {
+      "description": "line one line two\n",
+      "name": "ada"
+    },
+    "error": null
+  },
+  {
+    "name": "a YAML mapping with comments",
+    "text": "# the service\nname: web   # its name\nport: 8080\n",
+    "detected": "yaml",
+    "ok": true,
+    "value": {
+      "name": "web",
+      "port": 8080
+    },
+    "error": null
+  },
+  {
+    "name": "a YAML sequence of mappings",
+    "text": "- name: ada\n  age: 36\n- name: grace\n  age: 45\n",
+    "detected": "yaml",
+    "ok": true,
+    "value": [
+      {
+        "name": "ada",
+        "age": 36
+      },
+      {
+        "name": "grace",
+        "age": 45
+      }
+    ],
+    "error": null
+  },
+  {
+    "name": "a comma-separated export",
+    "text": "name,age,city\nada,36,London\ngrace,45,New York\n",
+    "detected": "csv",
+    "ok": true,
+    "value": [
+      {
+        "name": "ada",
+        "age": "36",
+        "city": "London"
+      },
+      {
+        "name": "grace",
+        "age": "45",
+        "city": "New York"
+      }
+    ],
+    "error": null
+  },
+  {
+    "name": "a semicolon-separated export",
+    "text": "name;age;city\nada;36;London\ngrace;45;New York\n",
+    "detected": "csv",
+    "ok": true,
+    "value": [
+      {
+        "name": "ada",
+        "age": "36",
+        "city": "London"
+      },
+      {
+        "name": "grace",
+        "age": "45",
+        "city": "New York"
+      }
+    ],
+    "error": null
+  },
+  {
+    "name": "a tab-separated export",
+    "text": "name\tage\tcity\nada\t36\tLondon\ngrace\t45\tNew York\n",
+    "detected": "tsv",
+    "ok": true,
+    "value": [
+      {
+        "name": "ada",
+        "age": "36",
+        "city": "London"
+      },
+      {
+        "name": "grace",
+        "age": "45",
+        "city": "New York"
+      }
+    ],
+    "error": null
+  },
+  {
+    "name": "an Excel sep= export",
+    "text": "sep=;\nname;age\nada;36\ngrace;45\n",
+    "detected": "csv",
+    "ok": true,
+    "value": [
+      {
+        "name": "ada",
+        "age": "36"
+      },
+      {
+        "name": "grace",
+        "age": "45"
+      }
+    ],
+    "error": null
+  },
+  {
+    "name": "a CSV with a quoted multi-line cell",
+    "text": "name,note\nada,\"first line\nsecond line\"\ngrace,\"plain\"\n",
+    "detected": "csv",
+    "ok": true,
+    "value": [
+      {
+        "name": "ada",
+        "note": "first line\nsecond line"
+      },
+      {
+        "name": "grace",
+        "note": "plain"
+      }
+    ],
+    "error": null
+  },
+  {
+    "name": "a tsconfig-shaped JSONC document",
+    "text": "{\n  // See https://aka.ms/tsconfig\n  \"compilerOptions\": {\n    \"target\": \"ES2022\", // modern\n    \"strict\": true,\n  },\n  \"include\": [\"src\"],\n}\n",
+    "detected": "json",
+    "ok": true,
+    "value": {
+      "compilerOptions": {
+        "target": "ES2022",
+        "strict": true
+      },
+      "include": ["src"]
+    },
+    "error": null
+  },
+  {
+    "name": "two lines of YAML with one comma each",
+    "text": "tags: a, b\nnames: c, d\n",
+    "detected": "yaml",
+    "ok": true,
+    "value": {
+      "tags": "a, b",
+      "names": "c, d"
+    },
+    "error": null
+  },
+  {
+    "name": "a pipe-separated export",
+    "text": "name|age\nada|36\ngrace|45\n",
+    "detected": "yaml",
+    "ok": false,
+    "value": null,
+    "error": "This looks like pipe-separated text, not YAML."
+  },
+  {
+    "name": "a paragraph of prose",
+    "text": "Hello there.\nThis is prose.\nNo structure at all.\n",
+    "detected": "yaml",
+    "ok": false,
+    "value": null,
+    "error": "This is not JSON, YAML, CSV or TSV that this tool can read."
+  },
+  {
+    "name": "a ragged CSV",
+    "text": "a,b,c\n1,2\n",
+    "detected": "yaml",
+    "ok": false,
+    "value": null,
+    "error": "This is not JSON, YAML, CSV or TSV that this tool can read."
+  },
+  {
+    "name": "a single scalar",
+    "text": "hello",
+    "detected": "yaml",
+    "ok": true,
+    "value": "hello",
+    "error": null
+  },
+  {
+    "name": "an empty document",
+    "text": "",
+    "detected": "json",
+    "ok": false,
+    "value": null,
+    "error": "Nothing to parse: the input is empty."
+  },
+  {
+    "name": "a JSON document with a big integer",
+    "text": "{\"id\": 12345678901234567890, \"name\": \"ada\"}",
+    "detected": "json",
+    "ok": true,
+    "value": {
+      "id": 12345678901234567000,
+      "name": "ada"
+    },
+    "error": null
+  },
+  {
+    "name": "a YAML document with a big integer",
+    "text": "id: 12345678901234567890\nname: ada\n",
+    "detected": "yaml",
+    "ok": true,
+    "value": {
+      "id": 12345678901234567000,
+      "name": "ada"
+    },
+    "error": null
+  },
+  {
+    "name": "a JSON document with a newline in a string",
+    "text": "{\"a\":\"line one\nline two\"}",
+    "detected": "json",
+    "ok": false,
+    "value": null,
+    "error": "That is not valid JSON."
+  }
+]

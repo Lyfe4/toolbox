@@ -174,17 +174,23 @@ describe('port connections', () => {
 
   it('wires base64 text output into the structured-data document input', () => {
     const connections = findConnections(base64, structured);
-    expect(connections).toHaveLength(1);
+    // Two, since round three: `output` is text and `report` is json, and the
+    // document port takes text, json and bytes.
+    expect(connections).toHaveLength(2);
     expect(connections[0]?.fromPort.id).toBe('output');
     expect(connections[0]?.toPort.id).toBe('input');
+    expect(connections[1]?.fromPort.id).toBe('report');
   });
 
-  it('wires both structured-data outputs into base64 and structured-data inputs', () => {
-    // 'output' is text (accepted by base64's text|bytes input); 'data' is json
-    // (not accepted by base64), so exactly one wire is legal.
+  it('wires structured-data outputs into base64 and structured-data inputs', () => {
+    // 'output' is text (accepted by base64's text|bytes input); 'data' and
+    // 'report' are json (not accepted by base64), so exactly one wire is legal.
     expect(findConnections(structured, base64)).toHaveLength(1);
-    // Into itself: text -> text|json and json -> text|json, so two.
-    expect(findConnections(structured, structured)).toHaveLength(2);
+    // Into itself: text -> text|json, and both json outputs, so three. The
+    // third is `report`, the Detected port added in round three - a json
+    // output like `data`, and legal into the same document input for the same
+    // reason.
+    expect(findConnections(structured, structured)).toHaveLength(3);
   });
 
   it('reports connectability without loading any tool code', () => {

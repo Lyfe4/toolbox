@@ -28,6 +28,28 @@ import { fail, ok, type ToolResult } from '@/features/registry/types';
  * document ports has to say WHICH one. "Those bytes" is right for a tool with
  * one input; "Original" is the only useful answer for `diff`.
  */
+/**
+ * THE ONE BYTE THAT WENT IN AND DID NOT COME OUT.
+ *
+ * `TextDecoder` removes a leading U+FEFF unless `ignoreBOM` is set, for both
+ * UTF-8 and UTF-16, and that is the right default: a byte order mark is a
+ * declaration about the encoding, not a character of the document, and leaving
+ * it in front of `{` breaks every parser downstream. It is also, unavoidably, a
+ * byte the user had and no longer has - and typing the same document into the
+ * box on `/tools` keeps it, because nothing decoded anything there. One file,
+ * two routes, two different documents.
+ *
+ * It is not going to stop being stripped. It is going to be SAID, which is what
+ * this is for: the tools with a report channel put a note on it, so "the wire
+ * and the clipboard differ by exactly one thing" stops being a sentence that
+ * only exists in docs/conversion-matrix.md.
+ */
+export function hasByteOrderMark(bytes: Uint8Array): boolean {
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return true;
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return !(bytes[2] === 0x00 && bytes[3] === 0x00);
+  return bytes[0] === 0xfe && bytes[1] === 0xff;
+}
+
 export function decodeDocument(bytes: Uint8Array, subject = 'Those bytes'): ToolResult<string> {
   const encoding = utf16EncodingOf(bytes);
 

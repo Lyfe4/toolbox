@@ -7,6 +7,7 @@ import {
   type ToolResult,
 } from '@/features/registry/types';
 import { decodeBase64 } from '@/lib/base64';
+import { roundedNumbersInJson, type RoundedNumber } from '@/lib/jsonNumbers';
 
 /**
  * JWT structure, with no opinions about trust.
@@ -42,6 +43,17 @@ export function isVerifiableAlgorithm(value: string): value is VerifiableAlgorit
 export interface DecodedToken {
   readonly header: JsonValue;
   readonly payload: JsonValue;
+  /**
+   * Claims whose integer value a double cannot hold, by path.
+   *
+   * A `sub` or a `jti` that is a 64-bit database key or a snowflake is rounded
+   * by `JSON.parse`, exactly as it is in the structured-data tool - and here it
+   * matters more, because a token's whole job is to identify somebody. The
+   * decoder was showing a different number from the one the issuer signed, with
+   * nothing to say so. The rounding is unavoidable in a JavaScript program;
+   * the silence was not.
+   */
+  readonly roundedClaims: readonly RoundedNumber[];
   /** Raw signature bytes. Empty for an unsigned token. */
   readonly signature: Bytes;
   /** `header.payload` exactly as it appeared, which is what gets signed. */
@@ -50,7 +62,13 @@ export interface DecodedToken {
   readonly algorithm: string | null;
 }
 
-function decodeSegment(segment: string, name: string): ToolResult<JsonValue> {
+interface DecodedSegment {
+  readonly value: JsonValue;
+  /** Integer literals in this segment that a double rounded. */
+  readonly rounded: readonly RoundedNumber[];
+}
+
+function decodeSegment(segment: string, name: string): ToolResult<DecodedSegment> {
   const bytes = decodeBase64(segment);
   if (!bytes.ok) {
     return fail('parse-error', `The ${name} is not valid base64url.`);
@@ -67,7 +85,10 @@ function decodeSegment(segment: string, name: string): ToolResult<JsonValue> {
     // JSON.parse returns `any`, so it is immediately narrowed to JsonValue -
     // the shape is guaranteed by JSON itself, and `any` must not escape.
     const parsed: unknown = JSON.parse(text);
-    return ok(parsed as JsonValue);
+    // The same scanner the structured-data tool uses, over the same kind of
+    // document, for the same reason. It gates itself on a run of sixteen
+    // digits, so an ordinary token pays one regular expression.
+    return ok({ value: parsed as JsonValue, rounded: roundedNumbersInJson(text) });
   } catch {
     return fail('parse-error', `The ${name} is not valid JSON.`, { detail: text.slice(0, 120) });
   }
@@ -128,11 +149,27 @@ export function decodeToken(raw: string): ToolResult<DecodedToken> {
   }
 
   return ok({
-    header: header.value,
-    payload: payload.value,
+    header: header.value.value,
+    payload: payload.value.value,
+    /*
+     * The header's rounded numbers as well as the payload's. Nothing standard
+     * in a header is a big integer, and "nothing standard" is not "nothing" -
+     * a token this tool cannot explain is exactly the token somebody is looking
+     * at when they open a decoder.
+     */
+    roundedClaims: [
+      ...payload.value.rounded.map((entry) => ({
+        ...entry,
+        path: entry.path.replace(/^\$/, 'payload'),
+      })),
+      ...header.value.rounded.map((entry) => ({
+        ...entry,
+        path: entry.path.replace(/^\$/, 'header'),
+      })),
+    ],
     signature: signature.value,
     signingInput: `${headerSegment}.${payloadSegment}`,
-    algorithm: stringField(header.value, 'alg'),
+    algorithm: stringField(header.value.value, 'alg'),
   });
 }
 

@@ -66,8 +66,13 @@ interface Report {
   readonly context: number;
   readonly refinement: string;
   readonly notes: {
-    readonly lineEndings: { readonly original: LineEnding; readonly changed: LineEnding };
+    readonly lineEndings: {
+      readonly original: LineEnding;
+      readonly changed: LineEnding;
+      readonly compared: boolean;
+    };
     readonly finalNewline: { readonly original: boolean; readonly changed: boolean };
+    readonly byteOrderMark: { readonly original: boolean; readonly changed: boolean };
     readonly bidiControls: boolean;
   };
 }
@@ -161,6 +166,7 @@ function parseReport(value: JsonValue): Report | null {
   const rawNotes = objectAt(value, 'notes');
   const rawEndings = objectAt(rawNotes, 'lineEndings');
   const rawFinal = objectAt(rawNotes, 'finalNewline');
+  const rawBom = objectAt(rawNotes, 'byteOrderMark');
 
   return {
     rows,
@@ -180,10 +186,19 @@ function parseReport(value: JsonValue): Report | null {
       lineEndings: {
         original: isLineEnding(rawEndings?.original) ? rawEndings.original : 'none',
         changed: isLineEnding(rawEndings?.changed) ? rawEndings.changed : 'none',
+        // Absent on a payload written before the option existed, where
+        // ignoring them was the only behaviour there was.
+        compared: rawEndings?.mode === 'compare',
       },
       finalNewline: {
         original: rawFinal?.original !== false,
         changed: rawFinal?.changed !== false,
+      },
+      byteOrderMark: {
+        // Absent on a payload written before this note existed, where the
+        // right answer is that nothing was noticed.
+        original: rawBom?.original === true,
+        changed: rawBom?.changed === true,
       },
       bidiControls: rawNotes?.bidiControls === true,
     },
@@ -202,8 +217,18 @@ function notesOf(report: Report): readonly string[] {
   const { lineEndings, finalNewline, bidiControls } = report.notes;
 
   if (lineEndings.original !== lineEndings.changed) {
+    /*
+     * The sentence has to say which of the two things happened, because the
+     * rows say opposite things in the two cases: ignored, and no row shows
+     * it; compared, and every row does. It read as the first unconditionally
+     * while the second was unreachable.
+     */
     notes.push(
-      `Line endings differ: the original uses ${ENDING_NAMES[lineEndings.original]}, the changed text uses ${ENDING_NAMES[lineEndings.changed]}. Lines are compared with that difference removed.`,
+      `Line endings differ: the original uses ${ENDING_NAMES[lineEndings.original]}, the changed text uses ${ENDING_NAMES[lineEndings.changed]}. ${
+        lineEndings.compared
+          ? 'They are part of this comparison, so every line whose terminator changed is shown as changed.'
+          : 'Lines are compared with that difference removed. Set Line endings to compare them to see it.'
+      }`,
     );
   } else if (lineEndings.original === 'mixed') {
     notes.push('Both texts mix line endings.');
@@ -215,6 +240,23 @@ function notesOf(report: Report): readonly string[] {
         ? 'The original has no final newline; the changed text has one.'
         : 'The original has a final newline; the changed text has none.',
     );
+  }
+
+  if (report.notes.byteOrderMark.original !== report.notes.byteOrderMark.changed) {
+    /*
+     * A byte order mark on one side and not the other is a real difference in
+     * the first character, and it is invisible in every sense: the row would
+     * show two identical-looking lines, and only one of them is flagged
+     * because U+FEFF is zero-width. Naming it is what turns "why are these
+     * two the same" into an answer.
+     */
+    notes.push(
+      report.notes.byteOrderMark.original
+        ? 'The original begins with a byte order mark and the changed text does not. It is invisible, and it is a character.'
+        : 'The changed text begins with a byte order mark and the original does not. It is invisible, and it is a character.',
+    );
+  } else if (report.notes.byteOrderMark.original) {
+    notes.push('Both texts begin with a byte order mark, which is invisible and is a character.');
   }
 
   if (report.stats.ignored > 0) {

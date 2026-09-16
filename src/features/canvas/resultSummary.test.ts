@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { getManifestEntry, TOOL_MANIFEST } from '@/features/registry';
+import type { ToolManifestEntry } from '@/features/registry';
 import type { ToolValue } from '@/features/registry/types';
 import { bytesValue } from '@/features/registry/types';
 
-import { summariseOutputs, summariseValue, SUMMARY_LIMIT } from './resultSummary';
+import { lossSummary, summariseOutputs, summariseValue, SUMMARY_LIMIT } from './resultSummary';
 
 /**
  * WHAT A NODE SAYS ABOUT ITS RESULT.
@@ -73,6 +74,45 @@ describe('diff', () => {
     expect(summariseValue(json({ identical: true, stats: { added: 0, removed: 0 } }), 'diff')).toBe(
       'Identical',
     );
+  });
+
+  /*
+   * THE ONE SUMMARY IN THE SET THAT ASSERTS SAMENESS.
+   *
+   * A byte order mark is removed when bytes are decoded at a document port, so
+   * a file that had one and a file that did not compare equal - and the node
+   * then says `Identical` about two files that are not. The panel says why; the
+   * node is where a chain gets read.
+   */
+  it('stops claiming Identical when only a byte order mark differed', () => {
+    expect(
+      summariseValue(
+        json({
+          identical: true,
+          stats: { added: 0, removed: 0 },
+          notes: { byteOrderMark: { original: true, changed: false } },
+        }),
+        'diff',
+      ),
+    ).toBe('Identical · BOM differs');
+  });
+
+  it('still says Identical when both sides have one, or neither does', () => {
+    // The negative control, both ways round: a mark on both sides is not a
+    // difference, and a summary that said so would fire on every pair of files
+    // an editor has touched.
+    for (const both of [true, false]) {
+      expect(
+        summariseValue(
+          json({
+            identical: true,
+            stats: { added: 0, removed: 0 },
+            notes: { byteOrderMark: { original: both, changed: both } },
+          }),
+          'diff',
+        ),
+      ).toBe('Identical');
+    }
   });
 });
 
@@ -215,5 +255,131 @@ describe('which output a node summarises', () => {
       expect(summary, entry.id).not.toBeNull();
       expect(summary?.length, entry.id).toBeLessThanOrEqual(SUMMARY_LIMIT);
     }
+  });
+});
+
+/* ========================================================================== *
+ * What a node says it LOST
+ * ========================================================================== */
+
+describe('the loss a node prints on its own face', () => {
+  /*
+   * WHY THIS EXISTS AT ALL.
+   *
+   * A node summarises its first output and nothing else, which is the right
+   * rule for an answer and the wrong one for a caveat: every tool's losses are
+   * on a `report`-presented port, and every one of those is the second or third
+   * port. So round three's four new reports would have been sentences the
+   * product really produced, on ports nobody has to wire, and invisible to
+   * anybody standing in front of the canvas.
+   *
+   * The argument is the one the JWT verdict already won. A node in the middle
+   * of a chain is exactly where nobody opens the panel.
+   */
+  const structured = getManifestEntry('structured-data');
+
+  const report = (notes: readonly { level: string; title: string }[]): ToolValue =>
+    json({ summary: 'JSON → CSV', notes });
+
+  it('prints a warn note from a report port', () => {
+    expect(
+      lossSummary(structured, {
+        output: text('a,b\n1,2'),
+        report: report([
+          { level: 'warn', title: 'The nested value at $[0].user was kept as JSON' },
+        ]),
+      }),
+    ).toBe('The nested value at $[0].user was kept as JSON');
+  });
+
+  it('leads with the first and counts the rest', () => {
+    // Two half-sentences at 224px are two unreadable sentences. One whole one
+    // and a count says there is more without making the first one useless.
+    expect(
+      lossSummary(structured, {
+        report: report([
+          { level: 'warn', title: 'Two numbers were rounded' },
+          { level: 'warn', title: 'A stream became an array' },
+          { level: 'warn', title: 'A column was absent from some rows' },
+        ]),
+      }),
+    ).toBe('Two numbers were rounded · +2 more');
+  });
+
+  /*
+   * THE NEGATIVE CONTROLS, and there are three because there are three ways
+   * this could cry wolf.
+   */
+  it('says nothing when the report has no notes', () => {
+    expect(lossSummary(structured, { output: text('a'), report: report([]) })).toBeNull();
+  });
+
+  it('says nothing about an info note', () => {
+    // `info` is "here is what happened" - the format that was detected, a
+    // stream that survived. Putting it on a node would mean a warning on almost
+    // every conversion this tool performs.
+    expect(
+      lossSummary(structured, {
+        report: report([{ level: 'info', title: 'Read as a stream of 2 documents' }]),
+      }),
+    ).toBeNull();
+  });
+
+  it('ignores warn notes that are not on a report port', () => {
+    /*
+     * `regex-tester` carries `warn` notes about the PATTERN on a `regex`-
+     * presented port - "your pattern has slashes around it" is advice, not a
+     * loss. Reading notes from any json port would have put that on a node's
+     * face, which is the note that trains people to ignore the channel.
+     */
+    const regex: ToolManifestEntry = getManifestEntry('regex-tester');
+    expect(regex.outputs.some((port) => port.presentation === 'report')).toBe(false);
+    expect(
+      lossSummary(regex, {
+        output: text('result'),
+        matches: json({ count: 1, notes: [{ level: 'warn', title: 'Pattern has slashes' }] }),
+      }),
+    ).toBeNull();
+  });
+
+  it('is null for a node that has not produced anything', () => {
+    expect(lossSummary(structured, null)).toBeNull();
+  });
+
+  it('stays inside the limit', () => {
+    const summary = lossSummary(structured, {
+      report: report([{ level: 'warn', title: 'x'.repeat(5_000) }]),
+    });
+    expect(summary?.length).toBeLessThanOrEqual(SUMMARY_LIMIT);
+  });
+
+  /*
+   * AND THE ONE THAT SAYS THE CHANNEL IS REACHABLE AT ALL.
+   *
+   * Every assertion above builds its own payload, so all of them would pass
+   * against a tool that never produces a `report` port. This asks the manifest.
+   */
+  it('is a channel six tools actually have', () => {
+    /*
+     * Two of these had a `report` port before round three - the two binary
+     * tools, which is where the shape was invented. Four gained one, and they
+     * are exactly the four whose losses the matrix recorded as silent.
+     */
+    // Read through the DECLARED type rather than off the const literal: the
+    // literal's inferred type has no `presentation` on the ports that do not
+    // carry one, so the predicate would not compile against it.
+    const entries: readonly ToolManifestEntry[] = TOOL_MANIFEST;
+    const withReports = entries
+      .filter((entry) => entry.outputs.some((port) => port.presentation === 'report'))
+      .map((entry) => entry.id);
+
+    expect(withReports).toEqual([
+      'base64',
+      'structured-data',
+      'jwt-decode',
+      'image-convert',
+      'video-remux',
+      'text-convert',
+    ]);
   });
 });

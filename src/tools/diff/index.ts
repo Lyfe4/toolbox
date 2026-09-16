@@ -6,7 +6,7 @@ import {
   type ToolResult,
   type ValueOfType,
 } from '@/features/registry/types';
-import { decodeDocument } from '@/lib/text';
+import { decodeDocument, hasByteOrderMark } from '@/lib/text';
 
 import { computeDiff, toJson, toUnified } from './compute';
 import { diffDefaultOptions, diffOptionFields, diffOptionsSchema } from './options';
@@ -115,14 +115,39 @@ export const diffTool = defineTool({
     const changed = asText(inputs.changed, 'Changed');
     if (!changed.ok) return changed;
 
-    const report = computeDiff(original.value, changed.value, {
-      // The option key still says "ignore"; its value now says how much. See
-      // the note in options.ts for why the key was not renamed.
-      whitespace: options.ignoreWhitespace,
-      ignoreCase: options.ignoreCase,
-      refineWords: options.refineWords,
-      context: options.context,
-    });
+    const report = computeDiff(
+      original.value,
+      changed.value,
+      {
+        // The option key still says "ignore"; its value now says how much. See
+        // the note in options.ts for why the key was not renamed.
+        whitespace: options.ignoreWhitespace,
+        lineEndings: options.lineEndings,
+        ignoreCase: options.ignoreCase,
+        refineWords: options.refineWords,
+        context: options.context,
+      },
+      /*
+       * A BYTE ORDER MARK THAT THE DECODER ALREADY REMOVED.
+       *
+       * `TextDecoder` drops a leading U+FEFF, so by the time `computeDiff` is
+       * handed a string there is nothing left of it to notice - a file that had
+       * one and a file that did not compare EQUAL and the patch is empty, while
+       * the same two documents pasted into the boxes compare as different.
+       *
+       * THE COMPARISON IS NOT CHANGED, and that is deliberate. Putting the
+       * character back would make this tool compensate for the decode, and this
+       * tool is the instrument `wireFidelity.integration.test.ts` uses to
+       * measure what a wire does to a value - an instrument that silently
+       * corrects one of the things it is measuring is not one. So the fact is
+       * REPORTED beside the rows instead, which is where every other difference
+       * the comparison does not show already goes.
+       */
+      {
+        original: inputs.original.type === 'bytes' && hasByteOrderMark(inputs.original.bytes),
+        changed: inputs.changed.type === 'bytes' && hasByteOrderMark(inputs.changed.bytes),
+      },
+    );
     if (!report.ok) return report;
 
     return ok({

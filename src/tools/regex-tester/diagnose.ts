@@ -338,6 +338,27 @@ function noMatchNotes(input: DiagnoseInput, parsed: ParsedPattern | null, notes:
     });
   }
 
+  /*
+   * A BYTE ORDER MARK AT THE HEAD OF THE SUBJECT.
+   *
+   * It is invisible, it is one character, and it sits in front of position 0 -
+   * so `^\w` does not match, `^` with `m` matches a different place on the
+   * first line than on every other one, and a pattern that works everywhere
+   * else finds nothing here with no explanation at all.
+   *
+   * It survives to be seen because a DROPPED FILE arrives as bytes and this
+   * tool's subject port decodes them, which removes a BOM - and a subject typed
+   * into the box keeps one. The two routes differ; whichever one the character
+   * came in by, this is where it gets named.
+   */
+  if (input.subject.charCodeAt(0) === 0xfeff) {
+    notes.push({
+      level: 'warn',
+      title: 'The subject begins with a byte order mark',
+      body: 'U+FEFF is invisible and is a character, so it sits in front of position 0: `^` followed by anything but `\uFEFF` will not match at the start of the subject. It is usually left there by an editor rather than meant.',
+    });
+  }
+
   // Probing means running the pattern again, several times. A pattern that
   // was already slow is exactly the one not to do that to.
   if (input.elapsedMs > PROBE_BUDGET_MS) {

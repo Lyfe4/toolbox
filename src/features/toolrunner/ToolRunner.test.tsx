@@ -90,7 +90,7 @@ describe('ToolRunner', () => {
       await user.click(screen.getByRole('button', { name: 'Run' }));
 
       await waitFor(() => {
-        expect(screen.getByRole('textbox', { name: 'Base64 Output' })).toHaveValue('Zm9vYmFy');
+        expect(screen.getByRole('textbox', { name: 'Base64 Result' })).toHaveValue('Zm9vYmFy');
       }, IMPORT_TIMEOUT);
     },
     SLOW_TEST,
@@ -169,7 +169,7 @@ describe('ToolRunner', () => {
     await user.type(screen.getByRole('textbox', { name: 'Base64 input' }), 'hi');
     await user.click(screen.getByRole('button', { name: 'Run' }));
     await waitFor(() => {
-      expect(screen.getByRole('textbox', { name: 'Base64 Output' })).toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: 'Base64 Result' })).toBeInTheDocument();
     }, IMPORT_TIMEOUT);
 
     await expectNoAxeViolations(container);
@@ -209,7 +209,7 @@ describe('the tool runner, once its layout moved', () => {
       await user.click(screen.getByRole('button', { name: 'Run' }));
 
       await waitFor(() => {
-        expect(screen.getByRole('textbox', { name: 'Base64 Output' })).toHaveValue('aGVsbG8=');
+        expect(screen.getByRole('textbox', { name: 'Base64 Result' })).toHaveValue('aGVsbG8=');
       }, IMPORT_TIMEOUT);
     },
     SLOW_TEST,
@@ -224,7 +224,7 @@ describe('the tool runner, once its layout moved', () => {
       await user.type(screen.getByRole('textbox', { name: 'Base64 input' }), 'hi');
       await user.click(screen.getByRole('button', { name: 'Run' }));
       await waitFor(() => {
-        expect(screen.getByRole('textbox', { name: 'Base64 Output' })).toBeInTheDocument();
+        expect(screen.getByRole('textbox', { name: 'Base64 Result' })).toBeInTheDocument();
       }, IMPORT_TIMEOUT);
 
       await user.click(screen.getByRole('button', { name: 'Copy' }));
@@ -266,7 +266,7 @@ describe('the tool runner, once its layout moved', () => {
         await user.type(screen.getByRole('textbox', { name: 'Base64 input' }), 'hi');
         await user.click(screen.getByRole('button', { name: 'Run' }));
         await waitFor(() => {
-          expect(screen.getByRole('textbox', { name: 'Base64 Output' })).toBeInTheDocument();
+          expect(screen.getByRole('textbox', { name: 'Base64 Result' })).toBeInTheDocument();
         }, IMPORT_TIMEOUT);
 
         await user.click(screen.getByRole('button', { name: 'Download' }));

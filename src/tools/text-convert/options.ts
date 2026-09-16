@@ -70,9 +70,18 @@ export const textConvertDefaultOptions: TextConvertOptions = textConvertOptionsS
  * only appears when it applies does not need to explain that it applies.
  */
 const whenTarget =
-  (target: TextConvertOptions['target']) =>
+  (...targets: readonly TextConvertOptions['target'][]) =>
   (options: TextConvertOptions): boolean =>
-    options.target === target;
+    targets.includes(options.target);
+
+/**
+ * Both HTML targets, since every HTML-writing option applies to each.
+ *
+ * The panel still changes shape only when the TARGET changes, which is the
+ * property this file exists to keep: two targets that write HTML share one
+ * layout, so switching between them reflows nothing.
+ */
+const whenHtml = whenTarget('html', 'html-sanitised');
 
 export const textConvertOptionFields: readonly OptionField<TextConvertOptions>[] = [
   {
@@ -98,10 +107,18 @@ export const textConvertOptionFields: readonly OptionField<TextConvertOptions>[]
      * it is an action on the HTML output, so the list has to say where it
      * lives rather than leaving people to find it.
      */
-    description: 'Rich text is not a target: it is what the rendered HTML output copies as.',
+    description:
+      'Rich text is not a target: it is what the rendered HTML output copies as. Normalised tidies HTML by taking it through Markdown, which drops what Markdown cannot express; sanitised does not.',
     control: 'select',
     choices: [
-      { value: 'html', label: 'HTML' },
+      /*
+       * NORMALISED FIRST, because it is what `html` has always meant and what a
+       * stale share link still selects. Naming it rather than leaving it as
+       * "HTML" is the whole point: the control offered one word for two
+       * operations, and the one it performed was the one that invents.
+       */
+      { value: 'html', label: 'HTML (normalised)' },
+      { value: 'html-sanitised', label: 'HTML (sanitised)' },
       { value: 'markdown', label: 'Markdown' },
       // Named for what it DOES. "Plain text" alone reads like a peer of the
       // other two rather than like the destructive one.
@@ -116,14 +133,14 @@ export const textConvertOptionFields: readonly OptionField<TextConvertOptions>[]
     control: 'toggle',
     description:
       'Adds an id to every heading so it can be linked to. Namespaced user-content- so author ids cannot shadow globals.',
-    when: whenTarget('html'),
+    when: whenHtml,
   },
   {
     key: 'linkify',
     label: 'Link bare URLs',
     control: 'toggle',
     description: 'GitHub turns a bare https:// or www. into a link. Off leaves it as text.',
-    when: whenTarget('html'),
+    when: whenHtml,
   },
 
   /* --- Markdown --------------------------------------------------------- */

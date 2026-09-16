@@ -20,6 +20,7 @@ function diffOf(
 ): JsonValue {
   const result = computeDiff(original, changed, {
     whitespace: 'none',
+    lineEndings: 'ignore',
     ignoreCase: false,
     refineWords: true,
     context: 3,

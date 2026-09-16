@@ -58,9 +58,16 @@ export const TOOL_MANIFEST = [
     outputs: [
       {
         id: 'output',
-        label: 'Output',
+        label: 'Result',
         types: ['text', 'bytes'],
         description: 'Base64 text when encoding, the decoded bytes when decoding.',
+      },
+      {
+        id: 'report',
+        label: 'Report',
+        types: ['json'],
+        description: 'Anything about the input worth knowing that the output cannot carry.',
+        presentation: 'report',
       },
     ],
     execution: {
@@ -98,6 +105,13 @@ export const TOOL_MANIFEST = [
         label: 'Parsed data',
         types: ['json'],
         description: 'The parsed structure, for wiring into another tool.',
+      },
+      {
+        id: 'report',
+        label: 'Detected',
+        types: ['json'],
+        description: 'The format and delimiter it decided on, and anything the conversion lost.',
+        presentation: 'report',
       },
     ],
     execution: {
@@ -161,6 +175,13 @@ export const TOOL_MANIFEST = [
         types: ['json'],
         description: 'Signature verdict first, then the header and payload.',
         presentation: 'jwt',
+      },
+      {
+        id: 'report',
+        label: 'Report',
+        types: ['json'],
+        description: 'Anything about the token the decoded value cannot carry exactly.',
+        presentation: 'report',
       },
     ],
     secretOptionKeys: ['key'],
@@ -449,6 +470,13 @@ export const TOOL_MANIFEST = [
         label: 'Detected',
         types: ['text'],
         description: 'What auto-detection concluded, and whether it was sure.',
+      },
+      {
+        id: 'report',
+        label: 'Report',
+        types: ['json'],
+        description: 'What the conversion changed or invented, and what it could not carry.',
+        presentation: 'report',
       },
     ],
     execution: {

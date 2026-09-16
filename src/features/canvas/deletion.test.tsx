@@ -610,9 +610,9 @@ describe('removing a wire from the inspector', () => {
     await user.click(screen.getByRole('button', { name: 'Inspector' }));
 
     const panel = await screen.findByTestId('node-inspector');
-    expect(panel).toHaveTextContent('Wired from Base64 · Output.');
+    expect(panel).toHaveTextContent('Wired from Base64 · Result.');
     expect(
-      within(panel).getByRole('button', { name: 'Disconnect Input from Base64 · Output' }),
+      within(panel).getByRole('button', { name: 'Disconnect Input from Base64 · Result' }),
     ).toBeInTheDocument();
   });
 
@@ -626,13 +626,13 @@ describe('removing a wire from the inspector', () => {
     const panel = await screen.findByTestId('node-inspector');
 
     await user.click(
-      within(panel).getByRole('button', { name: 'Disconnect Input from Base64 · Output' }),
+      within(panel).getByRole('button', { name: 'Disconnect Input from Base64 · Result' }),
     );
 
     await waitFor(() => {
       expect(graph().edgeOrder).toEqual([]);
     });
-    expect(await screen.findByText('Disconnected Input from Base64 · Output')).toBeInTheDocument();
+    expect(await screen.findByText('Disconnected Input from Base64 · Result')).toBeInTheDocument();
 
     await user.click(toastUndo());
     await waitFor(() => {
@@ -656,7 +656,7 @@ describe('removing a wire from the inspector', () => {
     const panel = await screen.findByTestId('node-inspector');
 
     await user.click(
-      within(panel).getByRole('button', { name: 'Disconnect Input from Base64 · Output' }),
+      within(panel).getByRole('button', { name: 'Disconnect Input from Base64 · Result' }),
     );
 
     await waitFor(() => {

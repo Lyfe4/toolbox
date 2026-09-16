@@ -1,0 +1,238 @@
+{
+  "generator": "jsonc-parser 3.3.1",
+  "counts": {
+    "total": 25,
+    "readable": 25
+  },
+  "cases": [
+    {
+      "name": "plain json",
+      "text": "{\"a\": 1}",
+      "ok": true,
+      "value": {
+        "a": 1
+      },
+      "errors": []
+    },
+    {
+      "name": "line comment before a key",
+      "text": "{\n  // a comment\n  \"a\": 1\n}",
+      "ok": true,
+      "value": {
+        "a": 1
+      },
+      "errors": []
+    },
+    {
+      "name": "line comment after a value",
+      "text": "{\n  \"a\": 1 // trailing\n}",
+      "ok": true,
+      "value": {
+        "a": 1
+      },
+      "errors": []
+    },
+    {
+      "name": "block comment",
+      "text": "{\n  /* a comment */\n  \"a\": 1\n}",
+      "ok": true,
+      "value": {
+        "a": 1
+      },
+      "errors": []
+    },
+    {
+      "name": "block comment across lines",
+      "text": "{\n  /* one\n     two */\n  \"a\": 1\n}",
+      "ok": true,
+      "value": {
+        "a": 1
+      },
+      "errors": []
+    },
+    {
+      "name": "trailing comma in an object",
+      "text": "{\"a\": 1,}",
+      "ok": true,
+      "value": {
+        "a": 1
+      },
+      "errors": []
+    },
+    {
+      "name": "trailing comma in an array",
+      "text": "[1, 2, 3,]",
+      "ok": true,
+      "value": [1, 2, 3],
+      "errors": []
+    },
+    {
+      "name": "trailing comma with a comment between",
+      "text": "[1, 2, /* end */ ]",
+      "ok": true,
+      "value": [1, 2],
+      "errors": []
+    },
+    {
+      "name": "trailing comma and a line comment",
+      "text": "{\n  \"a\": 1,\n  // done\n}",
+      "ok": true,
+      "value": {
+        "a": 1
+      },
+      "errors": []
+    },
+    {
+      "name": "nested trailing commas",
+      "text": "{\"a\": [1,], \"b\": {\"c\": 2,},}",
+      "ok": true,
+      "value": {
+        "a": [1],
+        "b": {
+          "c": 2
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "a slash-slash inside a string",
+      "text": "{\"url\": \"https://example.com/a\"}",
+      "ok": true,
+      "value": {
+        "url": "https://example.com/a"
+      },
+      "errors": []
+    },
+    {
+      "name": "a slash-star inside a string",
+      "text": "{\"glob\": \"/*.ts\"}",
+      "ok": true,
+      "value": {
+        "glob": "/*.ts"
+      },
+      "errors": []
+    },
+    {
+      "name": "a star-slash inside a string",
+      "text": "{\"glob\": \"a*/b\"}",
+      "ok": true,
+      "value": {
+        "glob": "a*/b"
+      },
+      "errors": []
+    },
+    {
+      "name": "an escaped quote before a comment marker",
+      "text": "{\"a\": \"he said \\\"//\\\"\", \"b\": 1}",
+      "ok": true,
+      "value": {
+        "a": "he said \"//\"",
+        "b": 1
+      },
+      "errors": []
+    },
+    {
+      "name": "an escaped backslash then a quote",
+      "text": "{\"a\": \"ends with a backslash \\\\\", \"b\": 2}",
+      "ok": true,
+      "value": {
+        "a": "ends with a backslash \\",
+        "b": 2
+      },
+      "errors": []
+    },
+    {
+      "name": "a comment marker inside a block comment",
+      "text": "{\n  /* // not a line comment */\n  \"a\": 1\n}",
+      "ok": true,
+      "value": {
+        "a": 1
+      },
+      "errors": []
+    },
+    {
+      "name": "a comma inside a string before a brace",
+      "text": "{\"a\": \"x,\", \"b\": 2}",
+      "ok": true,
+      "value": {
+        "a": "x,",
+        "b": 2
+      },
+      "errors": []
+    },
+    {
+      "name": "a tsconfig-shaped document",
+      "text": "{\n  // See https://aka.ms/tsconfig\n  \"compilerOptions\": {\n    \"target\": \"ES2022\", // modern\n    \"strict\": true,\n  },\n  \"include\": [\"src\"],\n}",
+      "ok": true,
+      "value": {
+        "compilerOptions": {
+          "target": "ES2022",
+          "strict": true
+        },
+        "include": ["src"]
+      },
+      "errors": []
+    },
+    {
+      "name": "an array of objects with comments",
+      "text": "[\n  // first\n  {\"a\": 1},\n  // second\n  {\"b\": 2},\n]",
+      "ok": true,
+      "value": [
+        {
+          "a": 1
+        },
+        {
+          "b": 2
+        }
+      ],
+      "errors": []
+    },
+    {
+      "name": "comments only around a scalar",
+      "text": "/* lead */ 42 // tail",
+      "ok": true,
+      "value": 42,
+      "errors": []
+    },
+    {
+      "name": "a string that is only a comment marker",
+      "text": "\"//\"",
+      "ok": true,
+      "value": "//",
+      "errors": []
+    },
+    {
+      "name": "an empty object with a comment",
+      "text": "{\n  // nothing here\n}",
+      "ok": true,
+      "value": {},
+      "errors": []
+    },
+    {
+      "name": "an empty array with a comment",
+      "text": "[\n  // nothing here\n]",
+      "ok": true,
+      "value": [],
+      "errors": []
+    },
+    {
+      "name": "unicode escapes beside a comment",
+      "text": "{\"a\": \"\\u00e9\", // accent\n \"b\": 1}",
+      "ok": true,
+      "value": {
+        "a": "é",
+        "b": 1
+      },
+      "errors": []
+    },
+    {
+      "name": "a document with CRLF line endings",
+      "text": "{\r\n  // a comment\r\n  \"a\": 1\r\n}",
+      "ok": true,
+      "value": {
+        "a": 1
+      },
+      "errors": []
+    }
+  ]
+}

@@ -21,7 +21,7 @@ import {
 } from './geometry';
 import { PortButton } from './PortButton';
 import { PORT_GLYPH_SIZE } from './PortGlyph';
-import { summariseOutputs } from './resultSummary';
+import { lossSummary, summariseOutputs } from './resultSummary';
 
 import type { CanvasNode, NodeId, PortRef } from './types';
 
@@ -254,10 +254,30 @@ export const CanvasNodeView = memo(function CanvasNodeView({
    */
   const resultSummary = run.status === 'ok' ? summariseOutputs(entry, run.outputs) : null;
 
+  /*
+   * WHAT THE RUN COULD NOT CARRY, WHICH OUTRANKS WHAT IT PRODUCED.
+   *
+   * The result summary answers "did the thing I expected come out". A loss note
+   * answers "is what came out the same document", and when those two differ the
+   * second is the one worth two lines of a 224px box - the argument the JWT
+   * verdict already won, in the place it applies hardest.
+   *
+   * The result summary does not disappear: it is listed separately in the
+   * accessible name below, so a screen reader still gets both, and the
+   * inspector still shows every port. What it loses is the box, to a sentence
+   * that would otherwise only exist on a port somebody had to wire up.
+   */
+  const lossText = run.status === 'ok' ? lossSummary(entry, run.outputs) : null;
+
   const summaryText =
     run.status === 'error' && run.error
       ? run.error.message
-      : (blockedHint ?? resultSummary ?? run.blockedReason ?? fileSummary ?? entry.summary);
+      : (blockedHint ??
+        (lossText === null ? null : `Lossy · ${lossText}`) ??
+        resultSummary ??
+        run.blockedReason ??
+        fileSummary ??
+        entry.summary);
 
   /*
    * The accessible name carries everything a sighted user reads off the node
@@ -291,6 +311,10 @@ export const CanvasNodeView = memo(function CanvasNodeView({
     fileSummary !== null && fileName !== null && !summaryText.includes(fileName)
       ? `from ${fileSummary}`
       : null,
+    // Before the result, in the same order the box puts them: "what this node
+    // could not carry" is the part a listener most needs first, and the box has
+    // already given it the space.
+    lossText === null ? null : `lossy: ${lossText}`,
     resultSummary,
     run.status === 'error' ? run.error?.message : null,
     selected ? 'selected' : null,

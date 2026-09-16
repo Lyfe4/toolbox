@@ -1,7 +1,9 @@
 import { defineTool, eraseTool, fail, ok, type ErasedTool } from '@/features/registry/types';
-import { decodeDocument } from '@/lib/text';
+import { lossLine, noted, notesToJson, type ToolNote } from '@/lib/notes';
+import { decodeDocument, hasByteOrderMark } from '@/lib/text';
 
-import { detectFormat, type SourceFormat } from './detect';
+import { detectFormat, type SourceFormat, type TargetFormat } from './detect';
+import { normalisationNotes } from './normalisation';
 import {
   textConvertDefaultOptions,
   textConvertOptionFields,
@@ -102,6 +104,30 @@ export const textConvertTool = defineTool({
       types: ['text'],
       description: 'What auto-detection concluded, and whether it was sure.',
     },
+    {
+      /*
+       * WHAT THE CONVERSION CHANGED THAT NOBODY ASKED IT TO.
+       *
+       * `detected` says what format was read, in one sentence written for a
+       * person, and it is a `text` port that things are wired to. This is a
+       * different question with more than one answer: `HTML → HTML` and
+       * `Markdown → Markdown` are normalising passes that go out through
+       * another format and back, and both of them drop and INVENT things -
+       * a headerless table gains an empty header row, a footnote becomes raw
+       * `<sup>` markup - with nothing anywhere to say so.
+       *
+       * A fourth port rather than reshaping `detected` into this one. Changing
+       * that port's data type from `text` to `json` would make every existing
+       * edge out of it illegal, and `firstRefusedEdge` refuses the WHOLE
+       * document - so a share link with `detected → hash` would stop opening
+       * rather than degrade. A new port breaks nothing.
+       */
+      id: 'report',
+      label: 'Report',
+      types: ['json'],
+      description: 'What the conversion changed or invented, and what it could not carry.',
+      presentation: 'report',
+    },
   ],
 
   optionsSchema: textConvertOptionsSchema,
@@ -134,6 +160,22 @@ export const textConvertTool = defineTool({
     // `arrived`, not `source`: `source` below is the FORMAT this document is
     // in, which is a different question from where the characters came from.
     const arrived = inputs.input;
+    /*
+     * A byte order mark is removed by the decoder and kept when the same
+     * document is typed into the box, which is the one difference the
+     * wire-versus-clipboard audit found anywhere in the app. It stays removed;
+     * it is now said. See `hasByteOrderMark`.
+     */
+    const inputNotes: ToolNote[] =
+      arrived.type === 'bytes' && hasByteOrderMark(arrived.bytes)
+        ? [
+            noted(
+              'A byte order mark was removed',
+              'The file began with a BOM, which declares the encoding rather than being part of the document. It is dropped when bytes are decoded at a document port, here and everywhere else. Pasting the same file into the box keeps it, because nothing decodes anything there.',
+            ),
+          ]
+        : [];
+
     const decoded = arrived.type === 'text' ? ok(arrived.text) : decodeDocument(arrived.bytes);
     if (!decoded.ok) return decoded;
     const text = decoded.value;
@@ -150,8 +192,13 @@ export const textConvertTool = defineTool({
         ? `${detection.format} (${detection.confidence}) - ${detection.reason}`
         : `${source} (chosen, not detected)`;
 
-    const { htmlToMarkdown, htmlToText, markdownToHtml, sanitiseHtml } =
-      await import('@/lib/markup/pipelines');
+    const {
+      htmlToMarkdown,
+      htmlToText,
+      markdownToHtml,
+      markdownMarkupBeforeSanitising,
+      sanitiseHtml,
+    } = await import('@/lib/markup/pipelines');
 
     const toHtmlOptions = { headingIds: options.headingIds, linkify: options.linkify };
     const toMarkdownOptions = {
@@ -183,7 +230,7 @@ export const textConvertTool = defineTool({
              * SANITISED HERE, not left as the input string.
              *
              * This value is the hub, and it is also what `rendered` carries
-             * for two of the three targets - so passing the input through
+             * for every target but Markdown - so passing the input through
              * unchanged put raw markup on a port that declares it is
              * sanitised, and from there onto the clipboard and into whatever
              * node was wired to it. The three pipelines below all sanitise
@@ -192,16 +239,57 @@ export const textConvertTool = defineTool({
              */
             sanitiseHtml(text, { headingIds: options.headingIds });
 
+      /*
+       * TWO HTML TARGETS, AND THE DIFFERENCE IS THE MARKDOWN TRIP.
+       *
+       * `html-sanitised` is `html` (the hub) as it stands: parsed, sanitised,
+       * written back. Nothing is invented because nothing else ran.
+       *
+       * `html` is that plus the normalising round trip through Markdown, which
+       * is what tidies real-world markup and what bounds the result by what
+       * Markdown can express. From a MARKDOWN source the two are the same
+       * string, and must be: HTML produced from Markdown has already been
+       * through Markdown, so there is no round trip left to make.
+       */
+      const normalised =
+        options.target === 'html' && source === 'html'
+          ? markdownToHtml(htmlToMarkdown(html, toMarkdownOptions), toHtmlOptions)
+          : null;
+
       const output =
         options.target === 'html'
-          ? // Coming from HTML to HTML still runs the pipeline: that is the
-            // sanitise-and-normalise pass, not a copy.
-            source === 'html'
-            ? markdownToHtml(htmlToMarkdown(html, toMarkdownOptions), toHtmlOptions)
-            : html
-          : options.target === 'markdown'
-            ? htmlToMarkdown(html, toMarkdownOptions)
-            : htmlToText(html, toTextOptions);
+          ? (normalised ?? html)
+          : options.target === 'html-sanitised'
+            ? html
+            : options.target === 'markdown'
+              ? htmlToMarkdown(html, toMarkdownOptions)
+              : htmlToText(html, toTextOptions);
+
+      const notes: ToolNote[] = [
+        ...inputNotes,
+        ...normalisationNotes({
+          source,
+          target: options.target,
+          input: text,
+          output,
+          sanitised: html,
+          normalised,
+          /*
+           * Only for a Markdown source, and only when the document contains a
+           * `<` at all - which is what keeps an ordinary README from being
+           * converted twice. It is a CENSUS rather than a document: a set of
+           * tag and attribute names, with nothing in it to render. See
+           * `markdownMarkupBeforeSanitising`.
+           */
+          unsanitised:
+            source === 'markdown' && text.includes('<')
+              ? markdownMarkupBeforeSanitising(text, toHtmlOptions)
+              : null,
+          linkify: options.linkify,
+        }),
+      ];
+
+      const losses = lossLine(notes);
 
       return ok({
         output: { type: 'text', text: output } as const,
@@ -213,6 +301,15 @@ export const textConvertTool = defineTool({
           text: options.target === 'markdown' ? markdownToHtml(output, toHtmlOptions) : html,
         } as const,
         detected: { type: 'text', text: note } as const,
+        report: {
+          type: 'json',
+          data: {
+            summary: `${TARGET_NAMES[options.target]} from ${source}${losses === null ? '' : ` · ${losses}`}`,
+            from: { format: source === 'html' ? 'HTML' : 'Markdown' },
+            to: { format: TARGET_NAMES[options.target] },
+            notes: notesToJson(notes),
+          },
+        } as const,
       });
     } catch (error) {
       /*
@@ -227,6 +324,14 @@ export const textConvertTool = defineTool({
     }
   },
 });
+
+/** The target as the panel names it, for the report's own summary line. */
+const TARGET_NAMES: Readonly<Record<TargetFormat, string>> = {
+  html: 'HTML (normalised)',
+  'html-sanitised': 'HTML (sanitised)',
+  markdown: 'Markdown',
+  text: 'Plain text',
+};
 
 const erased: ErasedTool = eraseTool(textConvertTool);
 export default erased;

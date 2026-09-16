@@ -103,7 +103,28 @@ function regexSummary(value: JsonValue): string | null {
  */
 function diffSummary(value: JsonValue): string | null {
   if (!isJsonObject(value)) return null;
-  if (value.identical === true) return 'Identical';
+
+  /*
+   * `Identical` IS A CLAIM, AND THERE IS ONE WAY IT CAN BE FALSE.
+   *
+   * A byte order mark is removed when bytes are decoded at a document port, so
+   * a file that had one and a file that did not compare equal and the node says
+   * `Identical` - about two files that are not. The diff tool reports it beside
+   * the rows, which is the panel; the node is where a chain gets read, and this
+   * is the one summary in the set that asserts sameness rather than measuring
+   * something.
+   *
+   * Not `lossSummary`, which reads `report`-presented ports: diff has no report
+   * port, and giving it one to carry a single flag would be a third output on a
+   * 224px node for a fact that belongs in the word it is contradicting.
+   */
+  const notes: JsonValue | undefined = value.notes;
+  const endings: JsonValue | undefined =
+    notes !== undefined && isJsonObject(notes) ? notes.byteOrderMark : undefined;
+  const bomDiffers =
+    endings !== undefined && isJsonObject(endings) && endings.original !== endings.changed;
+
+  if (value.identical === true) return bomDiffers ? 'Identical · BOM differs' : 'Identical';
 
   const stats: JsonValue | undefined = value.stats;
   if (stats === undefined) return null;
@@ -210,6 +231,60 @@ export function summariseValue(
       return a >= 1 ? hex : `${hex} at ${Math.round(a * 100).toString()}%`;
     }
   }
+}
+
+/**
+ * WHAT THE RUN COULD NOT CARRY, IF ANYTHING.
+ *
+ * A node summarises its FIRST output and nothing else, which is the right rule
+ * for an answer and the wrong one for a caveat: a tool's losses are reported on
+ * a `report`-presented port, and every one of those is the second or third
+ * port. So "the nested values were written into the cells as JSON" was a
+ * sentence the product really did produce, on a port nobody had to wire, and
+ * nowhere a person standing in front of the canvas would ever see it.
+ *
+ * This is the same argument the JWT summary already won. A node in the middle
+ * of a chain is exactly where nobody opens the panel, and a conversion whose
+ * result reads as ordinary is one whose losses are invisible.
+ *
+ * ONLY `warn`, AND ONLY FROM A `report` PORT. Both halves are the point. The
+ * level is a promise about what a note means (see lib/notes.ts) - `info` is
+ * "here is what happened", `warn` is "this went in and did not come out" - and
+ * the presentation is what separates a loss from a diagnostic. `regex-tester`
+ * carries `warn` notes about the PATTERN on a `regex`-presented port, and
+ * "your pattern has slashes around it" is advice, not a loss; putting it on a
+ * node's face would be the note that cries wolf.
+ */
+export function lossSummary(entry: ToolManifestEntry, outputs: ToolOutputs | null): string | null {
+  if (!outputs) return null;
+
+  const titles: string[] = [];
+
+  for (const port of entry.outputs) {
+    if (port.presentation !== 'report') continue;
+    const value = outputs[port.id];
+    if (value?.type !== 'json') continue;
+    const notes = isJsonObject(value.data) ? value.data.notes : undefined;
+    if (notes === undefined || !isJsonArray(notes)) continue;
+
+    for (const note of notes) {
+      if (!isJsonObject(note)) continue;
+      if (note.level !== 'warn') continue;
+      const title = note.title;
+      if (typeof title === 'string' && title !== '') titles.push(title);
+    }
+  }
+
+  if (titles.length === 0) return null;
+
+  /*
+   * The first title in full, and a count for the rest. Two losses joined by a
+   * separator are two half-sentences at 224px; one whole sentence and "+1
+   * more" says that there is more without making the first one unreadable.
+   */
+  const [first, ...rest] = titles;
+  if (first === undefined) return null;
+  return clip(rest.length === 0 ? first : `${first} · +${rest.length.toString()} more`);
 }
 
 /**

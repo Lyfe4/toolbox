@@ -47,6 +47,7 @@ const context: ToolRunContext = {
 
 const settings = (overrides: Partial<DiffSettings> = {}): DiffSettings => ({
   whitespace: 'none',
+  lineEndings: 'ignore',
   ignoreCase: false,
   refineWords: true,
   context: 3,
@@ -120,7 +121,7 @@ describe('line endings', () => {
     const result = report('alpha\r\nbeta\r\n', 'alpha\nbeta\n');
 
     expect(result.identical).toBe(false);
-    expect(result.notes.lineEndings).toEqual({ original: 'crlf', changed: 'lf' });
+    expect(result.notes.lineEndings).toEqual({ original: 'crlf', changed: 'lf', mode: 'ignore' });
   });
 
   it('finds the real change in a file that also changed line endings', () => {
@@ -807,7 +808,25 @@ describe('unified output', () => {
     expect(text).toContain('+++ changed');
     expect(text).toContain('-b');
     expect(text).toContain('+B');
-    expect(text).toMatch(/^@@ -\d+,\d+ \+\d+,\d+ @@$/m);
+    /*
+     * THE GENERAL GRAMMAR, NOT THE ONE THIS INPUT HAPPENS TO PRODUCE.
+     *
+     * This used to require a comma and a count on both sides, and it passed
+     * only because a three-line file against a three-line file has counts of
+     * three. A count of ONE is omitted - `@@ -2 +2 @@` - which is what
+     * `git diff` and GNU `diff` write and what `range` in compute.ts was fixed
+     * to write last round, so the old pattern would have rejected the very
+     * spelling the fix introduced. The test is named for signs rather than for
+     * hunk headers; the header assertion is here to be a header assertion, so
+     * it now describes every header this tool can write.
+     */
+    expect(text).toMatch(/^@@ -\d+(,\d+)? \+\d+(,\d+)? @@$/m);
+  });
+
+  it('omits a count of one in the hunk header, which is what every reference writes', () => {
+    // The case the pattern above could not see: one changed line, no context,
+    // so both counts are one and both are left out.
+    expect(toUnified(report('a\nb\nc', 'a\nB\nc'), 0)).toContain('@@ -2 +2 @@');
   });
 
   it('merges nearby changes into one hunk', () => {
@@ -949,8 +968,62 @@ describe('real inputs', () => {
     const result = report(source, source.replaceAll('\r\n', '\n'));
 
     expect(result.equal).toBe(true);
-    expect(result.notes.lineEndings).toEqual({ original: 'crlf', changed: 'lf' });
-    expect(toUnified(result, 3)).toBe('');
+    expect(result.notes.lineEndings).toEqual({ original: 'crlf', changed: 'lf', mode: 'ignore' });
+
+    /*
+     * THE PATCH IS NOT EMPTY ANY MORE, and that is the fix rather than a
+     * regression. It used to be `''` - the one answer that means "these two
+     * files are the same" - for two files that are not. It has no hunks,
+     * because at this setting nothing changed line by line, and it carries the
+     * fact that the rows cannot.
+     */
+    const patch = toUnified(result, 3);
+    expect(patch).not.toContain('@@');
+    expect(patch).toContain('# Line endings differ: original CRLF, changed LF.');
+  });
+
+  it('says nothing about line endings when the two files use the same ones', () => {
+    // The negative control. A note that fires on an ordinary comparison is one
+    // nobody reads on the day it means something.
+    const result = report('a\nb\n', 'a\nB\n');
+    expect(toUnified(result, 3)).not.toContain('# Line endings');
+  });
+
+  it('shows every line as changed when asked to compare the endings, and flags the pairs', () => {
+    /*
+     * THE OTHER HALF OF THE OPTION, and the reason it is safe to offer.
+     *
+     * Two lines that differ only in a carriage return draw identically, which
+     * is the single most confusing thing a diff can show - so each such pair is
+     * flagged `invisible`, the same flag a zero-width space or a combining
+     * sequence earns. The patch keeps the CR, because a patch that wrote `-a`
+     * for a line that is really `a\r\n` does not fit the file it claims to
+     * patch.
+     */
+    const result = report('a\r\nb\r\n', 'a\nb\n', { lineEndings: 'compare' });
+
+    expect(result.equal).toBe(false);
+    expect(result.stats.added).toBe(2);
+    expect(result.stats.removed).toBe(2);
+    expect(result.notes.lineEndings.mode).toBe('compare');
+    expect(result.rows.every((row) => row.invisible)).toBe(true);
+
+    const patch = toUnified(result, 3);
+    expect(patch).toContain('-a\r');
+    expect(patch).toContain('+a');
+    // The note is for the setting that HIDES the difference. Here every row
+    // shows it, so repeating it would be noise.
+    expect(patch).not.toContain('# Line endings');
+  });
+
+  it('still finds the real change when the endings are compared as well', () => {
+    // The negative control for the option: turning it on must not make the
+    // tool blind to what actually changed.
+    const result = report('a\r\nb\r\n', 'a\r\nB\r\n', { lineEndings: 'compare' });
+
+    expect(result.stats.added).toBe(1);
+    expect(result.stats.removed).toBe(1);
+    expect(result.rows.some((row) => row.invisible)).toBe(false);
   });
 });
 
@@ -1042,5 +1115,58 @@ describe('the tool', () => {
     expect(json.equal).toBe(true);
     expect(json.identical).toBe(false);
     expect(json.notes).toMatchObject({ lineEndings: { original: 'crlf', changed: 'lf' } });
+  });
+});
+
+/* ========================================================================== *
+ * A byte order mark
+ * ========================================================================== */
+
+describe('a byte order mark', () => {
+  /*
+   * IT IS A CHARACTER, IT IS INVISIBLE, AND IT ARRIVES BY TWO ROUTES.
+   *
+   * Pasted, it survives and the comparison sees it. Dropped as a FILE, the
+   * decoder removes it before this tool is called at all - so two documents
+   * that differ only in one compared EQUAL and the patch was empty, while the
+   * same two pasted compared as different. The comparison is not changed
+   * (see `asText`); the fact is reported.
+   */
+  it('flags a pasted one as an invisible difference', () => {
+    const result = report('\uFEFFname,age\n', 'name,age\n');
+
+    expect(result.equal).toBe(false);
+    expect(result.rows.some((row) => row.invisible)).toBe(true);
+    expect(result.notes.byteOrderMark).toEqual({ original: true, changed: false });
+  });
+
+  it('says so when both sides have one', () => {
+    const result = report('\uFEFFa\n', '\uFEFFa\n');
+    expect(result.equal).toBe(true);
+    expect(result.notes.byteOrderMark).toEqual({ original: true, changed: true });
+  });
+
+  it('reports one the decoder removed, which the text can no longer show', () => {
+    // What the tool passes in when a dropped file had a BOM. The text here has
+    // none - that is the point - and the note still says it did.
+    const result = computeDiff('name,age\n', 'name,age\n', settings(), {
+      original: true,
+      changed: false,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.notes.byteOrderMark).toEqual({ original: true, changed: false });
+    // And the comparison itself is untouched: no character was put back.
+    expect(result.value.equal).toBe(true);
+  });
+
+  it('says nothing for two documents that never had one', () => {
+    // The negative control. This fires on nothing ordinary, which is what makes
+    // it worth reading when it does fire.
+    expect(report('a\nb\n', 'a\nB\n').notes.byteOrderMark).toEqual({
+      original: false,
+      changed: false,
+    });
   });
 });

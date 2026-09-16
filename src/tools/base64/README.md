@@ -14,14 +14,39 @@ It stresses two parts of the type system that nothing else would:
   run function has to narrow on the value's tag before it can touch a payload.
   If the narrowing is removed, the tool stops compiling.
 
-## Why the output port is called Output
+## Why the output port is called Result
 
 Every other converter in the set names its first output for the value it
 carries — Converted, Digest, Decoded — and this one cannot. What it carries
 depends on the mode: base64 text when encoding, decoded bytes when decoding.
 Any specific name would be wrong half the time, and "Encoded or decoded" is
 both longer than the 84px label box and less clear than the port's
-description, which the Ports panel on the tool page shows.
+description, which the Ports panel on the tool page shows. `Result` is what
+`regex-tester` calls a value whose kind depends on a setting, for the same
+reason.
+
+**It was `Output` until round three**, and the rename was forced by the port
+beside it rather than chosen. The runner prints a port's label only when a tool
+has more than one output; adding a second made the word "Output" appear under a
+panel heading that says "Output", which is the exact duplication
+`ToolRunner.layout.test.tsx` exists to prevent - and which that test caught. A
+label is a word for a person and free to improve; the id is still `output`, so
+no share link, saved canvas or preset moved.
+
+## The second output, and what it is for
+
+`QQ==` and `QR==` both decode to the byte `A`: the final character of a partial
+group carries bits that no byte of the result uses, and this decoder ignores
+them rather than requiring them to be zero. RFC 4648 §3.5 permits either and
+most decoders do the same, so the BYTES are right - and `base64 → bytes →
+base64` is therefore not the identity on the TEXT.
+
+That matters because the input is usually a signature or a digest somebody is
+comparing. The `Report` port names the character as written and the canonical
+spelling of the same bytes, so a string that does not survive a round trip here
+is one whose own spelling was not canonical - a fact about the data rather than
+about this tool. Encoding reports nothing: every byte has exactly one canonical
+spelling, which is the whole asymmetry between the two directions.
 
 That union is also why base64 is the tool that can still deliver a value a
 downstream port refuses. Since the

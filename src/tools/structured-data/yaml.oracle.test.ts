@@ -52,53 +52,70 @@ function expectedValue(documents: readonly unknown[]): unknown {
 /**
  * Every case where this tool's answer is not the suite's, with the reason.
  *
- * They fall into three groups and no others, which is the useful part:
+ * TWENTY-ONE OF THESE BECAME NINE. Twelve of them were one rule, and the rule
+ * was wrong: an empty document was dropped whether or not a `---` had declared
+ * it. `---` starts a document and an empty one is `null`, which the suite says,
+ * js-yaml 5.4.2 says, and CPython's PyYAML 6.0.3 says about the very same
+ * bytes - so a five-document stream came back as a four-element array with no
+ * error. See `isEmptyDocument`. The list below is what is LEFT, and the three
+ * groups it falls into are each a decision rather than a defect:
  *
- *  1. AN EMPTY DOCUMENT IS DROPPED. A document holding only a directive, a
- *     comment or a bare `---` is `null` to the suite and nothing at all to
- *     this tool - `isEmptyDocument` exists so that an empty box says "nothing
- *     to parse" rather than producing `null`, which is the right answer for
- *     the single-document case that every user is in. In a STREAM it is a
- *     silent loss: the array comes back shorter than the file. That is named
- *     in docs/conversion-matrix.md rather than fixed here, because this round
- *     pins YAML behaviour and a later one changes it.
- *
- *  2. A VALUE JSON CANNOT HOLD IS REFUSED BY PATH. `!!set` is a Set, `!!omap`
+ *  1. A VALUE JSON CANNOT HOLD IS REFUSED BY PATH. `!!set` is a Set, `!!omap`
  *     a Map, `!!binary` a byte array. The suite prints a JSON rendering of
  *     each; this tool refuses and says where, which is the documented
- *     behaviour of the JSON boundary and the opposite of mangling.
+ *     behaviour of the JSON boundary and the opposite of mangling. Justified:
+ *     the alternative is inventing a JSON spelling for a YAML type and handing
+ *     it back as though nothing happened.
+ *
+ *  2. A STREAM OF NO DOCUMENTS AT ALL. Nothing, comments only, or a lone `...`:
+ *     the suite's expectation is an empty list of documents, and this tool says
+ *     "nothing to parse: the input is empty". Those agree about the FACT and
+ *     differ about how to present it, and an empty input box is the one place
+ *     where a sentence beats a value. Justified, and note that PyYAML refuses
+ *     two of these five outright, so the suite's `[]` is not the only answer a
+ *     conforming implementation gives.
  *
  *  3. ONE ORDERING. RR7F is `a` then an explicit `? d`, and the suite's
  *     `in.json` prints `d` first. JSON objects are unordered so neither is
  *     wrong; this tool preserves the document's order, which is what it
- *     promises everywhere else.
+ *     promises everywhere else. Justified.
  */
 const EXPECTED_DIFFERENCES: Readonly<Record<string, string>> = {
   '2XXW': 'a !!set becomes a Set, refused at the JSON boundary',
   '565N': 'a !!binary becomes a byte array, refused at the JSON boundary',
   J7PZ: 'an !!omap becomes a Map, refused at the JSON boundary',
 
-  '6XDY': 'two document-start markers and nothing else: every document is empty',
-  '8G76': 'comment lines only',
-  '98YD': 'comment lines only',
+  '8G76': 'comment lines only, so the stream holds no documents',
+  '98YD': 'comment lines only, so the stream holds no documents',
   AVM7: 'an empty stream',
-  'DK95/07': 'a directive and a tab, and no content',
   HWV9: 'a document-end marker and nothing else',
-  'MUS6/02': 'a directive and no content',
-  'MUS6/03': 'a directive and no content',
-  'MUS6/04': 'a directive and no content',
-  'MUS6/05': 'a directive and no content',
-  'MUS6/06': 'a directive and no content',
   QT73: 'a comment and a document-end marker',
-
-  '6ZKB': 'a stream whose second document is empty, so the array is one short',
-  '9DXL': 'a stream whose second document is empty, so the array is one short',
-  PUW8: 'a trailing `---` with nothing after it is dropped from the stream',
-  UT92: 'a stream ending in an empty document',
-  W4TN: 'a stream ending in an empty document',
 
   RR7F: 'the suite prints the mapping in a different order; JSON objects are unordered',
 };
+
+/**
+ * The twelve that used to be here, asserted as AGREEING now.
+ *
+ * A list that shrinks is a list somebody could have shrunk by deleting from it.
+ * These are the ids the empty-document fix was for, and each one is checked to
+ * produce the suite's own value - so the fix cannot be quietly reverted, and
+ * the divergence list above cannot be quietly edited, without this failing.
+ */
+const FIXED_THIS_ROUND: readonly string[] = [
+  '6XDY',
+  'DK95/07',
+  'MUS6/02',
+  'MUS6/03',
+  'MUS6/04',
+  'MUS6/05',
+  'MUS6/06',
+  '6ZKB',
+  '9DXL',
+  'PUW8',
+  'UT92',
+  'W4TN',
+];
 
 /** True when this tool agrees with the suite about a value case. */
 function agrees(entry: SuiteCase): boolean {
@@ -163,6 +180,30 @@ describe('reading, against the yaml-test-suite', () => {
       expect(agrees(entry)).toBe(false);
     },
   );
+
+  it.each(FIXED_THIS_ROUND)(
+    'now agrees with the suite on %s, which the empty-document rule used to get wrong',
+    (id) => {
+      const entry = cases.find((candidate) => candidate.id === id);
+      expect(entry).toBeDefined();
+      if (entry === undefined) return;
+      expect(agrees(entry)).toBe(true);
+    },
+  );
+
+  /*
+   * THE NEGATIVE CONTROL FOR THE FIX ITSELF.
+   *
+   * Every case above passes if `isEmptyDocument` simply stopped dropping
+   * anything - and that would be a different bug, because an empty input box
+   * would come back as `null` instead of saying there is nothing to parse.
+   * These two are the other side of the rule, and they are what says the fix
+   * was a distinction rather than a removal.
+   */
+  it('still drops a document with nothing in it and no marker to declare it', () => {
+    expect(parseSource('', 'yaml', ',').ok).toBe(false);
+    expect(parseSource('# just a comment\n', 'yaml', ',').ok).toBe(false);
+  });
 
   it('agrees with the suite on the overwhelming majority of value cases', () => {
     const agreed = valueCases.filter((entry) => agrees(entry));

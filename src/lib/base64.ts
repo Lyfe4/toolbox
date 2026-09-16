@@ -84,12 +84,50 @@ function wrap(text: string, width: number): string {
 }
 
 /**
+ * What a decode noticed about its input beyond the bytes it produced.
+ *
+ * One field so far, and it is the one thing `base64 -> bytes -> base64` can
+ * change about the text.
+ */
+export interface DecodeReport {
+  /**
+   * True when the last character carried bits that the output cannot hold.
+   *
+   * `QQ==` and `QR==` both decode to the single byte `A`: the final character
+   * of a two- or three-character group contributes 4 or 2 bits that no byte of
+   * the result uses, and this decoder ignores them rather than requiring them
+   * to be zero. RFC 4648 section 3.5 explicitly permits either, and most
+   * decoders do what this one does - so the bytes are right and re-encoding
+   * them gives `QQ==`, which is not the text that went in.
+   *
+   * That is the whole of the loss, and it is worth saying because the input is
+   * usually a signature or a digest somebody is comparing: a base64 string that
+   * does not survive a round trip through this tool is a base64 string one of
+   * whose characters was not canonical, and that is a fact about THEIR data
+   * rather than about this decoder.
+   */
+  readonly nonCanonicalTail: boolean;
+  /** The canonical spelling of the last character, when it was not canonical. */
+  readonly canonicalTail: string | null;
+  /** The character as written. */
+  readonly writtenTail: string | null;
+}
+
+/**
  * Decodes base64, tolerating whitespace, either alphabet, and missing padding.
  *
  * Returns a ToolResult rather than throwing, and points at the exact offending
  * character when the input is malformed.
  */
 export function decodeBase64(input: string): ToolResult<Bytes> {
+  const read = readBase64(input);
+  return read.ok ? ok(read.value.bytes) : read;
+}
+
+/** The same decode, with what it noticed. See `DecodeReport`. */
+export function readBase64(
+  input: string,
+): ToolResult<{ readonly bytes: Bytes; readonly report: DecodeReport }> {
   // Collect the significant characters, remembering where each came from so an
   // error can be reported against the original text the user actually sees.
   const values: number[] = [];
@@ -145,6 +183,25 @@ export function decodeBase64(input: string): ToolResult<Bytes> {
   const byteLength = Math.floor((values.length * 3) / 4);
   const bytes = new Uint8Array(byteLength);
 
+  /*
+   * THE UNUSED BITS OF THE LAST CHARACTER.
+   *
+   * A group of 2 characters carries 12 bits and yields 1 byte, so the low 4
+   * bits of the second character are unused; a group of 3 carries 18 and yields
+   * 2, so the low 2 bits of the third are. Masking them off and re-encoding
+   * gives the canonical character, and comparing it with the one written says
+   * whether anything was thrown away.
+   */
+  const tail = values.length % 4;
+  const lastValue = values[values.length - 1];
+  const canonical =
+    tail === 0 || lastValue === undefined
+      ? null
+      : (STANDARD_ALPHABET[lastValue & (tail === 2 ? 0b110000 : 0b111100)] ?? null);
+  const written =
+    tail === 0 || lastValue === undefined ? null : (STANDARD_ALPHABET[lastValue] ?? null);
+  const nonCanonicalTail = canonical !== null && written !== null && canonical !== written;
+
   let write = 0;
   for (let read = 0; read < values.length; read += 4) {
     const a = values[read] ?? 0;
@@ -158,7 +215,17 @@ export function decodeBase64(input: string): ToolResult<Bytes> {
     if (write < byteLength) bytes[write++] = chunk & 255;
   }
 
-  return ok(bytes);
+  return ok({
+    bytes,
+    report: {
+      nonCanonicalTail,
+      // The canonical and written characters are reported in the STANDARD
+      // alphabet whichever one the input used, because the note is about the
+      // six bits rather than about which sixty-four letters spell them.
+      canonicalTail: nonCanonicalTail ? canonical : null,
+      writtenTail: nonCanonicalTail ? written : null,
+    },
+  });
 }
 
 /** UTF-8 encode. Handles every code point, including astral-plane characters. */

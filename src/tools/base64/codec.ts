@@ -10,6 +10,8 @@ export {
   bytesToTextStrict,
   decodeBase64,
   encodeBase64,
+  readBase64,
   textToBytes,
+  type DecodeReport,
   type EncodeOptions,
 } from '@/lib/base64';

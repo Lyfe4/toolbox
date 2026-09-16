@@ -2,7 +2,37 @@
 export const SOURCE_FORMATS = ['markdown', 'html'] as const;
 export type SourceFormat = (typeof SOURCE_FORMATS)[number];
 
-export const TARGET_FORMATS = ['markdown', 'html', 'text'] as const;
+/**
+ * TWO HTML TARGETS, BECAUSE THEY ARE TWO OPERATIONS.
+ *
+ * `html` is the normalising pass: an HTML source goes out to Markdown and back,
+ * which is what makes it come back tidy - and which bounds it by what Markdown
+ * can express. Measured: `<img width>` goes, a `<div>` is unwrapped, a
+ * `colspan` becomes an empty cell, and a headerless `<table>` GAINS AN EMPTY
+ * HEADER ROW that was never in the input. It was called "HTML" and it was the
+ * only choice, so the two halves - sanitising, which everybody wants, and
+ * normalising, which invents - could not be had separately.
+ *
+ * `html-sanitised` is the other half on its own: the sanitiser and nothing
+ * else. Nothing is invented, and nothing that only Markdown cannot express is
+ * lost, because Markdown is not involved.
+ *
+ * IT IS NOT "LOSE NOTHING", and measuring is what said so: `class` and `data-*`
+ * are removed by the ALLOW-LIST, in both targets. The matrix had them under the
+ * round trip, which would have told somebody that switching target keeps them.
+ * Each half reports its own removals for that reason.
+ *
+ * `html` KEEPS ITS VALUE rather than becoming `html-normalised`. Target names
+ * travel in saved canvases and in share links, and a renamed value silently
+ * drops back to the default - so every existing link would quietly start doing
+ * something else. The new capability is the new name.
+ *
+ * FROM A MARKDOWN SOURCE THE TWO COINCIDE, and they have to: HTML produced from
+ * Markdown has already been through Markdown, so there is no round trip left to
+ * make. The option's own description says so, which is the same bargain the
+ * `output`/`rendered` coincidence strikes.
+ */
+export const TARGET_FORMATS = ['markdown', 'html', 'html-sanitised', 'text'] as const;
 export type TargetFormat = (typeof TARGET_FORMATS)[number];
 
 /**

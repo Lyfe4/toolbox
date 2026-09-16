@@ -368,3 +368,29 @@ describe('reading a replacement string', () => {
     expect(notesFor('(\\w+)@(\\w+)', 'g', 'ada@example', 'replace', '$2/$1')).toEqual([]);
   });
 });
+
+describe('a byte order mark at the head of the subject', () => {
+  /*
+   * It is invisible, it is one character, and it sits in front of position 0 -
+   * so `^\\w` finds nothing and there is nothing on screen to say why. The
+   * subject keeps one when it is typed and loses one when it arrives as a
+   * dropped file, so this catches the route that still has it.
+   */
+  it('is named, because it is why an anchored pattern finds nothing', () => {
+    const note = expectNote(notesFor('^name', 'g', '\uFEFFname,age'), 'byte order mark');
+    expect(note.level).toBe('warn');
+  });
+
+  it('says nothing about the same subject without one', () => {
+    // The negative control: this must not fire on an ordinary subject.
+    expect(titles(notesFor('^name', 'g', 'name,age')).join(' ')).not.toContain('byte order mark');
+  });
+
+  it('says nothing about one in the MIDDLE of the subject', () => {
+    // A zero-width character further in is not in front of position 0 and does
+    // not explain an anchored pattern failing, so claiming it would be noise.
+    expect(titles(notesFor('^name', 'g', 'name\uFEFF,age')).join(' ')).not.toContain(
+      'byte order mark',
+    );
+  });
+});

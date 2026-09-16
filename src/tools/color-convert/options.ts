@@ -3,6 +3,17 @@ import { z } from '@/lib/zod';
 
 import { COLOR_FORMATS } from './color';
 
+/**
+ * The most decimal places the panel will offer.
+ *
+ * A named constant because the TEST for the option's range needs the same
+ * number, and reading it back off a Zod schema is not something Zod promises.
+ * A test that hard-codes a bound is a test that stops guarding it the day the
+ * bound moves - which is exactly what the property test this replaced did with
+ * the number six.
+ */
+export const MAX_PRECISION = 6;
+
 export const colorOptionsSchema = z.object({
   target: z.enum(COLOR_FORMATS).default('hex'),
   /**
@@ -45,7 +56,7 @@ export const colorOptionsSchema = z.object({
    * a problem the higher default solves outright - but its default has to
    * serve the notation that needs most.
    */
-  precision: z.number().int().min(0).max(6).default(5),
+  precision: z.number().int().min(0).max(MAX_PRECISION).default(5),
 });
 
 export type ColorOptions = z.output<typeof colorOptionsSchema>;

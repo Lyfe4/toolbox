@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { JsonValue, ToolRunContext } from '@/features/registry/types';
 import { bytesValue } from '@/features/registry/types';
+import type { ToolNote } from '@/lib/notes';
 
 import {
   DELIMITERS,
@@ -10,6 +11,7 @@ import {
   MAX_DEPTH,
   parseAuto,
   parseSource,
+  readAuto,
   serialise,
   sortKeysDeep,
   toJsonValue,
@@ -32,6 +34,11 @@ function rendered(data: JsonValue, format: Parameters<typeof serialise>[1], inde
   const result = serialise(data, format, { indent, delimiter: ',' });
   if (!result.ok) throw new Error(`expected success, got ${result.error.message}`);
   return result.value;
+}
+
+/** Note titles, which is what a person sees and what a node prints. */
+function titles(notes: readonly ToolNote[]): string[] {
+  return notes.map((note) => note.title);
 }
 
 /** The detected format alone, for the many cases where the delimiter is moot. */
@@ -268,22 +275,44 @@ describe('format detection', () => {
     /*
      * `{\n  // a comment\n  "a": 1\n}` came back as
      * `{ '// a comment "a"': 1 }` - the comment and the key after it folded
-     * into ONE key, reported as a success. It is what an LLM writes, what a
-     * tsconfig.json looks like, and what anybody would paste after reading
-     * documentation.
+     * into ONE key, reported as a success. Round two made it the JSON
+     * parser's own error; round three reads the document the author meant,
+     * as JSONC, and says what it removed.
+     *
+     * THE ASSERTION THAT MATTERS IS THE ONE IT ALWAYS WAS: nothing is folded
+     * into a key. `stripJsonc` is string-aware and removes a comment AS a
+     * comment or not at all, so by the time the YAML fallback is asked
+     * anything there is no comment left for it to fold.
      */
-    it('refuses a // comment rather than folding it into the key after it', () => {
-      const result = parseAuto('{\n  // a comment\n  "a": 1\n}', DELIMITERS.comma);
+    it('reads a // comment as JSONC rather than folding it into the key after it', () => {
+      const result = readAuto('{\n  // a comment\n  "a": 1\n}', DELIMITERS.comma);
 
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.message).toBe('That is not valid JSON.');
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.data).toEqual({ a: 1 });
+      expect(titles(result.value.notes)).toContain('Read as JSONC');
     });
 
-    it('refuses a /* */ comment for the same reason', () => {
-      const result = parseAuto('{\n  /* c */\n  "a": 1\n}', DELIMITERS.comma);
+    it('reads a /* */ comment as JSONC for the same reason', () => {
+      const result = readAuto('{\n  /* c */\n  "a": 1\n}', DELIMITERS.comma);
 
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.message).toBe('That is not valid JSON.');
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.data).toEqual({ a: 1 });
+      expect(titles(result.value.notes)).toContain('Read as JSONC');
+    });
+
+    /*
+     * THE NEGATIVE CONTROL. A document with no comment and no trailing comma
+     * must not be described as JSONC: a note that fires on ordinary JSON is a
+     * note nobody reads on the day it means something.
+     */
+    it('says nothing about JSONC for JSON that has neither', () => {
+      const result = readAuto('{"a": 1}', DELIMITERS.comma);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.notes).toEqual([]);
     });
 
     /*
@@ -619,11 +648,25 @@ describe('YAML parsing', () => {
     expect(parsed('---\nkind: A\n---\nkind: B\n', 'yaml')).toEqual([{ kind: 'A' }, { kind: 'B' }]);
   });
 
-  it('does not invent a document for a trailing separator', () => {
-    // `a: 1\n---\n` is one document and a stray marker, not a document plus a
-    // null one, and a single-document stream stays an object rather than
-    // becoming a one-element array.
-    expect(parsed('a: 1\n---\n', 'yaml')).toEqual({ a: 1 });
+  it('keeps the empty document a trailing separator declares', () => {
+    /*
+     * THIS ASSERTION USED TO SAY THE OPPOSITE, and it was wrong.
+     *
+     * `a: 1\n---\n` was read as one document and a stray marker, on the
+     * reasoning that a trailing `---` is punctuation rather than data. `---`
+     * STARTS A DOCUMENT. The yaml-test-suite's PUW8 says so about these exact
+     * bytes, and so do js-yaml 5.4.2 and CPython's PyYAML 6.0.3, asked
+     * directly. Dropping it made a five-document stream come back as a
+     * four-element array with no error anywhere.
+     */
+    expect(parsed('a: 1\n---\n', 'yaml')).toEqual([{ a: 1 }, null]);
+  });
+
+  it('still says there is nothing to parse when no marker declared anything', () => {
+    // The other half of the same rule, and the reason it is a distinction
+    // rather than a removal: an empty box is not a document.
+    expect(parseSource('', 'yaml', ',').ok).toBe(false);
+    expect(parseSource('   \n\n', 'yaml', ',').ok).toBe(false);
   });
 
   it('says there is nothing to parse for a document of only comments', () => {

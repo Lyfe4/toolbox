@@ -1,6 +1,24 @@
 import { fail, isJsonArray, ok, type JsonValue, type ToolResult } from '@/features/registry/types';
+import { lost, noted, type ToolNote } from '@/lib/notes';
 import { setOwnProperty } from '@/lib/safeObject';
 import { positionFromOffset } from '@/lib/textPosition';
+
+/** What a CSV write produced, and what the table could not hold. */
+export interface Written {
+  readonly text: string;
+  readonly notes: readonly ToolNote[];
+  /**
+   * True when the target really did write several documents into one file.
+   *
+   * Only YAML can, and only when the value it was handed is still the array the
+   * stream was read into. The report asks the WRITER rather than guessing from
+   * the source, because `sortKeys` and a value wired in on the `json` port can
+   * both put a different array in front of it - and a note that says a stream
+   * survived when it did not is the class of confident wrongness this round is
+   * about.
+   */
+  readonly stream: boolean;
+}
 
 /**
  * RFC 4180 CSV, with the tolerances real files actually need.
@@ -305,13 +323,40 @@ function writeLine(line: string): string {
  * far more useful than refusing the whole document over one nested field.
  */
 export function recordsToCsv(data: JsonValue, delimiter: string): ToolResult<string> {
+  const written = writeCsv(data, delimiter);
+  return written.ok ? ok(written.value.text) : written;
+}
+
+/**
+ * The same write, with what the table could not hold.
+ *
+ * TWO LOSSES, BOTH REAL, BOTH PREVIOUSLY SILENT.
+ *
+ * A NESTED VALUE BECOMES COMPACT JSON IN THE CELL. `{"user":{"name":"ada"}}`
+ * writes `{"name":"ada"}` into the cell, and reading the file back gives the
+ * STRING, not the object. Keeping it is the right trade - flattening to
+ * `user.name` is ambiguous for arrays and collides with a key containing a dot,
+ * and refusing the whole document over one nested field refuses a conversion
+ * people do every day - so what was wrong was only that nothing said so.
+ *
+ * A KEY ABSENT FROM A ROW BECOMES AN EMPTY CELL. CSV has no other spelling for
+ * it, so an absent value and a present empty string are the same two bytes on
+ * the way out. That is not fixable in the format; it is reportable, and the
+ * report names the columns so the reader knows which of them to distrust.
+ *
+ * BY PATH, AND CAPPED. `$[3].user` is where to look. A thousand-row export with
+ * one nested column would otherwise produce a thousand paths, so the first few
+ * are named and the rest counted - the same bargain the rounded-number note
+ * strikes, for the same reason.
+ */
+export function writeCsv(data: JsonValue, delimiter: string): ToolResult<Written> {
   if (!isJsonArray(data)) {
     return fail('unsupported-type', 'CSV needs an array of rows at the top level.', {
       detail: `Found ${describe(data)}. Wrap it in an array, or pick a different target format.`,
     });
   }
 
-  if (data.length === 0) return ok('');
+  if (data.length === 0) return ok({ text: '', notes: [], stream: false });
 
   const columns: string[] = [];
   const seen = new Set<string>();
@@ -344,27 +389,80 @@ export function recordsToCsv(data: JsonValue, delimiter: string): ToolResult<str
     writeLine(columns.map((column) => quoteField(column, delimiter)).join(delimiter)),
   ];
 
-  for (const row of data) {
+  /** Paths whose value went into a cell as JSON text rather than as a value. */
+  const nested: string[] = [];
+  /** Columns that some row did not have, so the cell is empty for that row. */
+  const missing = new Set<string>();
+
+  data.forEach((row, index) => {
     const record = row as Readonly<Record<string, JsonValue>>;
     lines.push(
       writeLine(
         columns
-          .map((column) =>
+          .map((column) => {
             // Object.hasOwn, not a bare read: a column literally named
             // "toString" or "constructor" would otherwise pick up the
             // inherited Object.prototype member rather than this row's own
             // (absent) value. Found by the round-trip property test.
-            quoteField(
-              cellToString(Object.hasOwn(record, column) ? record[column] : undefined),
-              delimiter,
-            ),
-          )
+            const present = Object.hasOwn(record, column);
+            if (!present) missing.add(column);
+            const value = present ? record[column] : undefined;
+            if (value !== undefined && value !== null && typeof value === 'object') {
+              nested.push(`$[${index.toString()}].${column}`);
+            }
+            return quoteField(cellToString(value), delimiter);
+          })
           .join(delimiter),
+      ),
+    );
+  });
+
+  /*
+   * HOW THIS WRITER SPELLS A TABLE, WHICH IS NOT HOW RFC 4180 DOES.
+   *
+   * LF rather than CRLF, and no terminator after the last record - both legal,
+   * both what every reader accepts, and both a difference from the bytes that
+   * went in when the source was a CSV that used CRLF. It matters exactly when
+   * the next step is a byte comparison or a digest, which on this canvas is one
+   * wire away.
+   *
+   * `info`, not `warn`: nothing is lost, the table reads back identically, and
+   * a warning on every single CSV export is a warning nobody reads. It is here
+   * so that the answer exists somewhere other than docs/conversion-matrix.md.
+   */
+  const notes: ToolNote[] = [
+    noted(
+      'Written with LF, and no terminator after the last record',
+      'RFC 4180 specifies CRLF and permits a file to end either way; this writer uses LF and stops after the last record, whatever the input used. Every reader accepts it. It is worth knowing when the next step is a byte comparison or a digest.',
+    ),
+  ];
+
+  if (nested.length > 0) {
+    const shown = nested.slice(0, 5);
+    const rest = nested.length - shown.length;
+    notes.push(
+      lost(
+        nested.length === 1
+          ? `The nested value at ${shown[0] ?? ''} was written into the cell as JSON`
+          : `${nested.length.toString()} nested values were written into their cells as JSON`,
+        `A table cell holds text, so an object or an array becomes compact JSON inside it. Reading the file back gives that TEXT, not the structure. At ${shown.join(', ')}${rest > 0 ? `, and ${rest.toString()} more` : ''}.`,
       ),
     );
   }
 
-  return ok(lines.join('\n'));
+  if (missing.size > 0) {
+    const names = [...missing];
+    const shown = names.slice(0, 5);
+    const rest = names.length - shown.length;
+    notes.push(
+      lost(
+        `${names.length.toString()} column${names.length === 1 ? ' was' : 's were'} absent from some rows`,
+        `CSV has one spelling for "this row has no such key" and for "this row's value is the empty string", and it is an empty cell. Reading the file back cannot tell them apart. The ${names.length === 1 ? 'column is' : 'columns are'} ${shown.join(', ')}${rest > 0 ? `, and ${rest.toString()} more` : ''}.`,
+      ),
+    );
+  }
+
+  return ok({ text: lines.join('\n'), notes, stream: false });
 }
 
 function cellToString(value: JsonValue | undefined): string {

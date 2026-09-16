@@ -30,16 +30,33 @@ with it — notice the lines that look like a list, linkify the URLs — and
 anything it did would be guesswork applied to a document that never asked for
 it.
 
-The six pairs that remain are all meaningful:
+The pairs that remain are all meaningful:
 
-|              | → HTML                 | → Markdown | → Plain text       |
-| ------------ | ---------------------- | ---------- | ------------------ |
-| **Markdown** | render                 | reformat   | render, then strip |
-| **HTML**     | sanitise and normalise | convert    | strip              |
+|              | → HTML (sanitised) | → HTML (normalised)    | → Markdown | → Plain text       |
+| ------------ | ------------------ | ---------------------- | ---------- | ------------------ |
+| **Markdown** | render             | render                 | reformat   | render, then strip |
+| **HTML**     | sanitise           | sanitise and normalise | convert    | strip              |
 
 `markdown → markdown` and `html → html` are not no-ops: they run the full
 pipeline, so they reformat to your chosen conventions and sanitise
 respectively.
+
+**TWO HTML TARGETS, BECAUSE THEY ARE TWO OPERATIONS.** Normalising takes an
+HTML source out to Markdown and back, which is what tidies real-world markup -
+and which bounds the result by what Markdown can express. A `<div>` is
+unwrapped, an `<img width>` is dropped, and a `<table>` written without a header
+row **gains an empty one**, because a Markdown table always has one. Sanitising
+alone invents nothing.
+
+The control offered one word for both and performed the one that invents. Both
+report what they removed, measured by comparing the documents rather than by
+listing the schema - which is how three claims in
+[docs/conversion-matrix.md](../../../docs/conversion-matrix.md#found-this-round)
+turned out to be wrong.
+
+From a MARKDOWN source the two are the same string, and have to be: HTML
+produced from Markdown has already been through Markdown, so there is no round
+trip left to make.
 
 ## Auto-detection
 
@@ -52,6 +69,12 @@ control.
 It reports what it concluded on the `detected` output, with a confidence and a
 reason — `markdown (confident) - Found an ATX heading.` — so a wrong guess is
 visible rather than silent.
+
+A fourth output, `report`, carries a different question: not what format was
+read, but what the conversion changed or invented on the way out. It is a
+`report`-presented port, so `ReportView` draws it on `/tools` and a canvas node
+prints its `warn`-level notes on its own face — which is what makes a loss told
+rather than merely available.
 
 Order of evidence:
 
@@ -614,16 +637,28 @@ the rich-text copy off a fact rather than a guess. `rendered` is **always**
 HTML: for a Markdown target it re-renders what was produced, which makes the
 semantic-stability invariant visible — if the Markdown is faithful, it looks
 like the HTML that went in. For an HTML source it is the sanitised source, and
-[for a while it was not](#the-three-outputs-and-the-input-that-was-too-narrow).
+[for a while it was not](#the-four-outputs-and-the-input-that-was-too-narrow).
 
-## The three outputs, and the input that was too narrow
+## The four outputs, and the input that was too narrow
 
-| Port       | Label         | Type        | For                                                    |
-| ---------- | ------------- | ----------- | ------------------------------------------------------ |
-| `input`    | Document      | text, bytes | Markdown or HTML, detected unless you say otherwise.   |
-| `output`   | Converted     | text        | The conversion, in whichever format `target` names.    |
-| `rendered` | Rendered HTML | text        | Always sanitised HTML: the preview and rich-text copy. |
-| `detected` | Detected      | text        | What auto-detection concluded, and how sure it was.    |
+| Port       | Label         | Type        | For                                                     |
+| ---------- | ------------- | ----------- | ------------------------------------------------------- |
+| `input`    | Document      | text, bytes | Markdown or HTML, detected unless you say otherwise.    |
+| `output`   | Converted     | text        | The conversion, in whichever format `target` names.     |
+| `rendered` | Rendered HTML | text        | Always sanitised HTML: the preview and rich-text copy.  |
+| `detected` | Detected      | text        | What auto-detection concluded, and how sure it was.     |
+| `report`   | Report        | json        | What the conversion changed or invented on the way out. |
+
+`report` was added in round three and is a different question from `detected`:
+not what format was READ, but what the conversion did to it. It is a
+`report`-presented port, so `ReportView` draws it on the tool page and a canvas
+node prints its `warn`-level notes on its own face.
+
+**A fourth port rather than reshaping `detected` into it.** Changing that port's
+data type from `text` to `json` would make every existing edge out of it
+illegal, and `firstRefusedEdge` refuses the WHOLE document - so a share link
+with `detected → hash` would stop opening rather than degrade. A new port breaks
+nothing.
 
 The [port audit](../../../docs/architecture.md#the-port-set) asked how
 `Converted` differed from `Rendered HTML` when the target is HTML. The answer
@@ -634,7 +669,7 @@ was two separate things.
 Nothing in `pipelines.ts` produced sanitised HTML from HTML. `markdownToHtml`
 sanitises the HTML _it_ generates; `htmlToMarkdown` and `htmlToText` sanitise
 on the way to something that is not HTML. So the hub value — which is what
-`rendered` carries for two of the three targets — was the input string
+`rendered` carries for every target but Markdown — was the input string
 untouched whenever the source was HTML. Measured:
 
 ```

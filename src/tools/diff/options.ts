@@ -25,6 +25,17 @@ const whitespace = z.preprocess(
 export const diffOptionsSchema = z.object({
   ignoreWhitespace: whitespace.default('none'),
   ignoreCase: z.boolean().default(false),
+  /**
+   * Whether CRLF, CR and LF take part in the comparison.
+   *
+   * `ignore` is what this tool has always done, and it stays the default: a
+   * file that has been through a Windows editor becomes an entirely red diff
+   * otherwise, which is the failure the normalisation exists to prevent. The
+   * option exists because the other case was UNREACHABLE - two files differing
+   * only in their terminators compared equal and produced an empty patch, where
+   * git rewrites every line. A default is not the same thing as a rule.
+   */
+  lineEndings: z.enum(['ignore', 'compare']).default('ignore'),
   /** Word-level highlighting within lines that were edited rather than replaced. */
   refineWords: z.boolean().default(true),
   /**
@@ -49,6 +60,17 @@ export const diffOptionFields: readonly OptionField<DiffOptions>[] = [
       { value: 'none', label: 'Compare it' },
       { value: 'trailing', label: 'Ignore leading and trailing' },
       { value: 'all', label: 'Ignore all whitespace' },
+    ],
+  },
+  {
+    key: 'lineEndings',
+    label: 'Line endings',
+    description:
+      'Ignoring them is why a file edited on Windows does not come back entirely red. Comparing them shows every line as changed, which is what git does.',
+    control: 'select',
+    choices: [
+      { value: 'ignore', label: 'Ignore them' },
+      { value: 'compare', label: 'Compare them' },
     ],
   },
   {

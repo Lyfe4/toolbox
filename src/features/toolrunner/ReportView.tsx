@@ -60,6 +60,16 @@ interface Facts {
   readonly hasAlpha: boolean | null;
   readonly frames: number | null;
   readonly metadata: readonly string[] | null;
+  /**
+   * The two rows structured data needs, and nothing else measures.
+   *
+   * They are here rather than in a second view for the reason the `duration`
+   * row is: a row is dropped when neither side has anything to say, so one
+   * table serves tools that measure completely different things, and the
+   * alternative is a third renderer for the same payload shape.
+   */
+  readonly delimiter: string | null;
+  readonly documents: number | null;
 }
 
 interface Report {
@@ -92,6 +102,8 @@ function parseFacts(value: JsonValue | undefined): Facts | null {
       metadata !== undefined && isJsonArray(metadata)
         ? metadata.filter((entry): entry is string => typeof entry === 'string')
         : null,
+    delimiter: typeof value.delimiter === 'string' ? value.delimiter : null,
+    documents: typeof value.documents === 'number' ? value.documents : null,
   };
 }
 
@@ -175,6 +187,12 @@ function factRows(
     // side has anything to say, which is what lets this view serve two tools
     // that measure completely different things.
     { label: 'Duration', from: from?.duration ?? '', to: to?.duration ?? '' },
+    { label: 'Delimiter', from: from?.delimiter ?? '', to: to?.delimiter ?? '' },
+    {
+      label: 'Documents',
+      from: from?.documents === null || from === null ? '' : from.documents.toString(),
+      to: to?.documents === null || to === null ? '' : to.documents.toString(),
+    },
     { label: 'Size', from: from?.size ?? '', to: to?.size ?? '' },
     { label: 'Transparency', from: alpha(from), to: alpha(to) },
     { label: 'Frames', from: frames(from), to: frames(to) },

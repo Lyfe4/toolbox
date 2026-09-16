@@ -114,18 +114,33 @@ tool.
 
 ### The whole set, as it stands
 
-| Tool              | In                                                         | Out                                                                                      |
-| ----------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `base64`          | `input` Input · text, bytes                                | `output` Output · text, bytes                                                            |
-| `structured-data` | `input` Document · text, json, bytes                       | `output` Converted · text — `data` Parsed data · json                                    |
-| `hash`            | `input` Input · text, bytes                                | `output` Digest · text                                                                   |
-| `jwt-decode`      | `input` Token · text                                       | `output` Decoded · json                                                                  |
-| `diff`            | `original` Original, `changed` Changed · text, json, bytes | `output` Unified patch · text — `changes` Changes · json                                 |
-| `regex-tester`    | `input` Subject · text, bytes                              | `output` Result · text — `matches` Matches · json                                        |
-| `color-convert`   | `input` Colour · text, color                               | `output` Converted · text — `swatch` Swatch · color — `all` Notations · json             |
-| `image-convert`   | `input` Image · bytes                                      | `output` Converted · bytes — `report` Report · json                                      |
-| `text-convert`    | `input` Document · text, bytes                             | `output` Converted · text — `rendered` Rendered HTML · text — `detected` Detected · text |
-| `video-remux`     | `input` Video · bytes                                      | `output` Repackaged · bytes — `report` Report · json                                     |
+| Tool              | In                                                         | Out                                                                                                               |
+| ----------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `base64`          | `input` Input · text, bytes                                | `output` Result · text, bytes — `report` Report · json                                                            |
+| `structured-data` | `input` Document · text, json, bytes                       | `output` Converted · text — `data` Parsed data · json — `report` Detected · json                                  |
+| `hash`            | `input` Input · text, bytes                                | `output` Digest · text                                                                                            |
+| `jwt-decode`      | `input` Token · text                                       | `output` Decoded · json — `report` Report · json                                                                  |
+| `diff`            | `original` Original, `changed` Changed · text, json, bytes | `output` Unified patch · text — `changes` Changes · json                                                          |
+| `regex-tester`    | `input` Subject · text, bytes                              | `output` Result · text — `matches` Matches · json                                                                 |
+| `color-convert`   | `input` Colour · text, color                               | `output` Converted · text — `swatch` Swatch · color — `all` Notations · json                                      |
+| `image-convert`   | `input` Image · bytes                                      | `output` Converted · bytes — `report` Report · json                                                               |
+| `text-convert`    | `input` Document · text, bytes                             | `output` Converted · text — `rendered` Rendered HTML · text — `detected` Detected · text — `report` Report · json |
+| `video-remux`     | `input` Video · bytes                                      | `output` Repackaged · bytes — `report` Report · json                                                              |
+
+Four `report` ports were added in round three, and they are one idea rather
+than four: a tool that loses something needs somewhere to say so, and a
+`ToolResult` is a value or an error. `image-convert` and `video-remux`
+invented the shape; `ReportView` already drew it. See
+[docs/conversion-matrix.md](conversion-matrix.md#where-a-loss-is-said) for why
+a port on its own is not enough, and
+[A node keeps a summary, not a preview](#a-node-keeps-a-summary-not-a-preview)
+for what the canvas does with them.
+
+`base64`'s first output was relabelled `Output` → `Result` at the same time,
+and not for taste: the runner prints a port’s label only when a tool has more
+than one output, so adding a second made "Output" appear under a panel heading
+that says "Output". A label is a word for a person and free to improve; the id
+is unchanged, so no share link and no saved canvas moved.
 
 ### The conventions, and what each one is worth
 
@@ -231,7 +246,8 @@ the claims is the thing people would want downstream, and its entire effect
 would be to detach the claims from the signature verdict — which is the one
 thing this tool's whole design exists to prevent.
 
-**`text-convert` keeps all three outputs.** See below.
+**`text-convert` keeps all three of those outputs**, and gained a fourth in
+round three. See below, and [the port set](#the-whole-set-as-it-stands).
 
 **Every input stays required.** No tool in the set does anything useful with a
 missing input, and an optional port makes its value `| undefined` in `run`,
@@ -2051,6 +2067,29 @@ are the same thing by construction rather than by nine separate decisions.
 Every one is truncated to 60 characters, because the summary is also in the
 node's accessible name — a chain scannable by eye and not by ear is not a chain
 a keyboard user can follow — and that string is read from end to end.
+
+**And one thing that outranks all of them: what the run could not carry.**
+
+The rule above is right for an ANSWER and wrong for a caveat. Round three gave
+four more tools a `report` output carrying what a conversion lost, and every one
+of those is a second or third port — so "the nested values went into the cells as
+JSON" was a sentence the product really produced, on a port nobody has to wire,
+and nowhere a person standing in front of the canvas would ever see it.
+
+So `lossSummary` reads the `warn`-level notes off any `report`-presented output
+and the box prints the first, prefixed `Lossy ·`, with `+N more` when there are
+others. The result summary is not lost: it is listed separately in the accessible
+name, which already carried it.
+
+This is the same argument the JWT verdict won, applied where it bites hardest. A
+node in the middle of a chain is exactly where nobody opens the panel.
+
+**`warn`, and only from a `report` port.** Both halves matter. The level is a
+promise about what a note means — `info` is "here is what happened", `warn` is
+"this went in and did not come out" — and the presentation separates a loss from
+a diagnostic: `regex-tester` carries `warn` notes about the PATTERN on a
+`regex`-presented port, and "your pattern has slashes around it" is advice. On a
+node's face it would be the note that cries wolf.
 
 ### An input port that cannot take text gets no text box, here too
 

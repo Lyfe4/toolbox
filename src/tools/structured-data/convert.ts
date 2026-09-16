@@ -1,5 +1,6 @@
 import {
   isMap,
+  isPair,
   isScalar,
   isSeq,
   parseAllDocuments,
@@ -11,10 +12,75 @@ import {
 } from 'yaml';
 
 import { fail, isJsonArray, ok, type JsonValue, type ToolResult } from '@/features/registry/types';
+import { isRounded, roundedNumbersInJson, type RoundedNumber } from '@/lib/jsonNumbers';
+import { lost, noted, type ToolNote } from '@/lib/notes';
 import { setOwnProperty } from '@/lib/safeObject';
 import { positionFromLineColumn, positionFromOffset, stripBom } from '@/lib/textPosition';
 
-import { parseCsvRows, readSepDirective, recordsToCsv, rowsToRecords } from './csv';
+import { parseCsvRows, readSepDirective, rowsToRecords, writeCsv, type Written } from './csv';
+import { describeJsonc, stripJsonc } from './jsonc';
+
+/**
+ * WHAT A READ PRODUCED, AND WHAT IT COST.
+ *
+ * `parseSource` returned a value, which is everything a caller needs to convert
+ * and nothing it needs to be honest. Three of this tool's losses happen during
+ * the read - a rounded integer, a stream flattened to an array, a byte order
+ * mark removed - and a `ToolResult` is a value or an error, so there was
+ * nowhere for any of them to go.
+ *
+ * `readSource`/`readAuto` return this; `parseSource`/`parseAuto` stay as
+ * value-only wrappers over them, because the oracle suites compare VALUES
+ * against external references and should not have to learn a new shape to keep
+ * doing it.
+ */
+export interface Reading {
+  readonly data: JsonValue;
+  /** The format actually read, whether chosen or detected. */
+  readonly format: Format;
+  /** The delimiter used. Null for JSON and YAML, which have none. */
+  readonly delimiter: string | null;
+  /** Documents in the source: more than one for a YAML stream or JSON Lines. */
+  readonly documents: number;
+  readonly notes: readonly ToolNote[];
+}
+
+/**
+ * The gate in front of every rounded-integer scan.
+ *
+ * 2^53 is 9007199254740992 - sixteen digits - so a document with no run of
+ * sixteen digits cannot contain an integer literal that a double rounds. One
+ * regular expression over the source keeps a 16 MB document that has no such
+ * number from being walked a second time for nothing.
+ */
+const LONG_DIGIT_RUN = /\d{16,}/;
+
+/**
+ * Rounded integers as notes: ONE note, with a count and every path.
+ *
+ * Not one note per number. A log export with four hundred snowflake ids in it
+ * would otherwise produce four hundred notes, and a list nobody can read is a
+ * list nobody reads. The count is the fact; the paths are how you find them.
+ */
+function roundedNumberNotes(rounded: readonly RoundedNumber[]): ToolNote[] {
+  if (rounded.length === 0) return [];
+
+  const shown = rounded.slice(0, 5);
+  const paths = shown.map((entry) => entry.path).join(', ');
+  const rest = rounded.length - shown.length;
+  const first = rounded[0];
+
+  return [
+    lost(
+      rounded.length === 1
+        ? `The number at ${rounded[0]?.path ?? '$'} was rounded`
+        : `${rounded.length.toString()} numbers were rounded`,
+      `JavaScript has one numeric type and it is a double, so an integer past 2^53 cannot be held exactly.${
+        first === undefined ? '' : ` ${first.source} became ${first.value.toString()}.`
+      } At ${paths}${rest > 0 ? `, and ${rest.toString()} more` : ''}. Convert to CSV or TSV to keep the digits, where every cell stays a string.`,
+    ),
+  ];
+}
 
 export const FORMATS = ['json', 'yaml', 'csv', 'tsv'] as const;
 export type Format = (typeof FORMATS)[number];
@@ -323,11 +389,60 @@ export function detectSource(source: string, configuredDelimiter: string): Detec
 
   for (const delimiter of new Set(candidates)) {
     if (looksDelimited(body, delimiter)) {
+      /*
+       * VERIFY, RATHER THAN GUESS, BEFORE CALLING TWO LINES A TABLE.
+       *
+       * `tags: a, b` over `names: c, d` is two lines of ordinary YAML with one
+       * comma each, and the test above is satisfied by exactly that: two
+       * records, consistent field count. It came back as a one-row table whose
+       * columns were `tags: a` and `b` - nonsense that looks like data, with no
+       * error anywhere. A two-line log with one comma per line went the same
+       * way.
+       *
+       * The fix is not a higher bar - "three records or it is not a table"
+       * refuses a header and one row, which is a real file. It is a different
+       * question, and one that has an answer: does this document ALSO parse as
+       * a YAML mapping? A genuine CSV does not. `name,age` over `ada,36` folds
+       * to a plain scalar, and every delimited export in the round-one corpus
+       * does the same, so nothing that is really a table is affected. A CSV
+       * every one of whose cells is `key: value` would flip; that is the
+       * contrived end of the trade, and it is stated in the matrix.
+       *
+       * Asked of the SAME 64 kB `looksDelimited` reads, so detection remains a
+       * bounded read of the head of the document rather than a full parse of a
+       * 16 MB one. A mapping that only starts looking like a mapping past 64 kB
+       * is not a document this can help.
+       */
+      if (parsesAsYamlMapping(body.slice(0, DETECTION_BUDGET))) {
+        return { format: 'yaml', delimiter: configuredDelimiter, fellBack: false };
+      }
       return { format: delimiter === DELIMITERS.tab ? 'tsv' : 'csv', delimiter, fellBack: false };
     }
   }
 
   return { format: 'yaml', delimiter: configuredDelimiter, fellBack: true };
+}
+
+/**
+ * True when a document reads as a YAML MAPPING, with no errors.
+ *
+ * A mapping specifically, not "valid YAML": every CSV in the world is valid
+ * YAML, because a plain scalar swallows anything. What separates
+ * `tags: a, b` from `name,age` is that only one of them has keys.
+ */
+function parsesAsYamlMapping(text: string): boolean {
+  let documents: Document.Parsed[];
+
+  try {
+    documents = parseAllDocuments(text, { logLevel: 'silent' });
+  } catch {
+    return false;
+  }
+
+  if (documents.length !== 1) return false;
+  const only = documents[0];
+  if (only === undefined || only.errors.length > 0) return false;
+  return isMap(only.contents);
 }
 
 /**
@@ -531,7 +646,7 @@ function firstCollectionKey(document: Document.Parsed): ParsedNode | null {
   return found;
 }
 
-function yamlParseFailure(error: YAMLError): ToolResult<JsonValue> {
+function yamlParseFailure<T = never>(error: YAMLError): ToolResult<T> {
   /*
    * A document too deep for the composer arrives as an ordinary parse error
    * whose message is V8's `Maximum call stack size exceeded`, pointed at an
@@ -553,7 +668,7 @@ function yamlParseFailure(error: YAMLError): ToolResult<JsonValue> {
   });
 }
 
-function yamlThrownFailure(error: unknown): ToolResult<JsonValue> {
+function yamlThrownFailure<T = never>(error: unknown): ToolResult<T> {
   if (error instanceof RangeError) return tooDeep();
   // The alias-expansion limit is reported as a ReferenceError by the library.
   if (error instanceof ReferenceError) {
@@ -567,19 +682,36 @@ function yamlThrownFailure(error: unknown): ToolResult<JsonValue> {
 }
 
 /**
- * True for a document with nothing in it.
+ * True for a document with nothing in it AND no `---` to say it is a document.
  *
- * A stream ending in `---` - which is how plenty of Kubernetes manifests are
- * written - has a final document the author did not intend, and reporting it
- * as a trailing `null` in the output would be an artefact of the punctuation
- * rather than the data.
+ * THE SECOND HALF WAS MISSING, AND IT CHANGED THE LENGTH OF PEOPLE'S FILES.
  *
- * The library gives an implicit empty document a null scalar with a ZERO-WIDTH
- * range, where an explicit `--- null` or `--- ~` has a range covering the token
- * it was written with. That difference is the only thing separating "the author
- * wrote nothing" from "the author wrote null", so it is what this tests.
+ * The rule used to be "empty contents means no document", justified as: a
+ * stream ending in `---` is how plenty of Kubernetes manifests are written, and
+ * a trailing `null` would be an artefact of the punctuation. That reasoning is
+ * appealing and it is wrong, and three independent references say so about the
+ * very same bytes:
+ *
+ *   `---\na: b\n---\n`   yaml-test-suite PUW8  [{a: b}, null]
+ *                        js-yaml 5.4.2         [{a: b}, null]
+ *                        PyYAML 6.0.3          [{a: b}, null]
+ *
+ * `---` STARTS A DOCUMENT. An empty one is `null`, and dropping it made a
+ * five-document stream come back as a four-element array with no error - which
+ * is the silent loss the matrix recorded and this fixes. Twelve of the
+ * twenty-one yaml-test-suite divergences were this one rule.
+ *
+ * What survives is the case the old rule was really for: an EMPTY BOX. A
+ * document with no marker and nothing in it is not a document, so an empty
+ * input still says "nothing to parse" rather than producing `null`, and a
+ * stream of nothing but comments still says the same.
+ *
+ * `directives.docStart` is the library's own record of whether a `---` was
+ * seen. The previous test - a null scalar with a zero-width range - could not
+ * tell `---` from nothing at all, because both produce exactly that.
  */
 function isEmptyDocument(document: Document.Parsed): boolean {
+  if (document.directives.docStart === true) return false;
   const contents: unknown = document.contents;
   if (contents === null) return true;
   if (!isScalar(contents) || contents.value !== null) return false;
@@ -587,7 +719,120 @@ function isEmptyDocument(document: Document.Parsed): boolean {
   return range !== null && range !== undefined && range[0] === range[1];
 }
 
-function parseYamlSource(text: string): ToolResult<JsonValue> {
+/**
+ * Every rounded integer in a YAML document, by path.
+ *
+ * The JSON side of this question is answered by a scanner over the source (see
+ * `lib/jsonNumbers.ts`); YAML needs no scanner because the library already
+ * hands over every scalar with the text the author wrote and the path it sits
+ * at. `node.source` is that text - not `node.value`, which is the double and
+ * therefore the thing being measured rather than the measurement.
+ *
+ * Only reached when the document has a run of sixteen digits in it, which is
+ * what `roundedNumbersInJson`'s gate tests and what every caller checks first.
+ */
+function roundedNumbersInYaml(documents: readonly Document.Parsed[]): readonly RoundedNumber[] {
+  const found: RoundedNumber[] = [];
+  const stream = documents.length > 1;
+
+  documents.forEach((document, position) => {
+    visit(document, {
+      Scalar(_key, node, ancestors) {
+        const source: unknown = node.source;
+        if (typeof source !== 'string' || !isRounded(source)) return undefined;
+        found.push({
+          path: `${stream ? `$[${position.toString()}]` : '$'}${yamlPath(ancestors)}`,
+          source,
+          value: Number(source),
+        });
+        return undefined;
+      },
+    });
+  });
+
+  return found;
+}
+
+/**
+ * The path of the node `visit` is currently at, from the ancestors it passes.
+ *
+ * `ancestors` alternates collection, pair, collection, pair as it descends, and
+ * each pair carries its own key - so the path is read off it rather than
+ * tracked in a variable that a `visit.BREAK` could leave stale.
+ */
+function yamlPath(ancestors: readonly unknown[]): string {
+  const parts: string[] = [];
+
+  for (let index = 0; index < ancestors.length; index += 1) {
+    const node = ancestors[index];
+    const child = ancestors[index + 1];
+
+    if (isMap(node)) {
+      const key: unknown = isPair(child) ? child.key : null;
+      const name = isScalar(key) && typeof key.value === 'string' ? key.value : null;
+      if (name !== null) {
+        parts.push(/^[A-Za-z_$][\w$]*$/.test(name) ? `.${name}` : `[${JSON.stringify(name)}]`);
+      }
+      continue;
+    }
+
+    if (isSeq(node) && child !== undefined) {
+      const at = node.items.indexOf(child);
+      if (at >= 0) parts.push(`[${at.toString()}]`);
+    }
+  }
+
+  return parts.join('');
+}
+
+/**
+ * A second `%YAML` directive on one document, which the spec forbids.
+ *
+ * FOUND BY FIXING SOMETHING ELSE. The suite's SF5V is `%YAML 1.2` twice over a
+ * bare `---`, marked as an error, and it was refused - by the rule that a
+ * document with nothing in it is not a document. The message said "nothing to
+ * parse: the input is empty", which is not what is wrong with it. So the
+ * hundred-percent refusal rate on the suite's error cases included one case
+ * refused for a reason that had nothing to do with its fault, and the moment
+ * the empty-document rule was corrected the parser accepted a document the spec
+ * says is invalid.
+ *
+ * The library does not flag it at any log level - `errors` and `warnings` are
+ * both empty - so it is checked here. Everything else the suite calls an error
+ * comes from the library itself; this is the only rule this file enforces on
+ * its own, and it is here rather than in the library's issue tracker because a
+ * silent acceptance is a wrong answer today.
+ *
+ * Returns the offset of the offending directive, or null.
+ */
+function duplicateYamlDirective(text: string): number | null {
+  let offset = 0;
+  let seen = false;
+
+  for (const line of text.split('\n')) {
+    // A document boundary ends the directive block: the directives that follow
+    // one belong to the next document, and `%YAML` may appear once per
+    // document rather than once per stream.
+    if (line.startsWith('---') || line.startsWith('...')) seen = false;
+    else if (line.startsWith('%YAML')) {
+      if (seen) return offset;
+      seen = true;
+    }
+    offset += line.length + 1;
+  }
+
+  return null;
+}
+
+function readYamlSource(text: string): ToolResult<Reading> {
+  const duplicate = duplicateYamlDirective(text);
+  if (duplicate !== null) {
+    return fail('parse-error', 'That document has two %YAML directives.', {
+      position: positionFromOffset(text, duplicate),
+      detail: 'A document may declare its YAML version once. Remove one of them.',
+    });
+  }
+
   let documents: Document.Parsed[];
 
   try {
@@ -647,12 +892,32 @@ function parseYamlSource(text: string): ToolResult<JsonValue> {
     values.push(converted.value);
   }
 
-  if (values.length === 1) {
-    const only = values[0];
-    if (only !== undefined) return ok(only);
+  const notes: ToolNote[] = [];
+
+  /*
+   * THE STREAM NOTE IS NOT WRITTEN HERE, and that is deliberate.
+   *
+   * Whether "a stream of five documents" is a LOSS depends on the target: YAML
+   * can hold a stream and writes one back, JSON, CSV and TSV cannot and flatten
+   * it to an array. A note written at read time would have to guess, and the
+   * first version of it guessed wrong - it told a YAML-to-YAML conversion that
+   * its stream "became an array" while the output sitting beside it was a
+   * stream. `Reading.documents` carries the count instead and the report says
+   * what actually happened. See `buildReport`.
+   */
+
+  if (LONG_DIGIT_RUN.test(text)) {
+    notes.push(...roundedNumberNotes(roundedNumbersInYaml(filled)));
   }
 
-  return ok(values);
+  const single = values.length === 1 ? values[0] : undefined;
+  return ok({
+    data: single === undefined ? values : single,
+    format: 'yaml',
+    delimiter: null,
+    documents: filled.length,
+    notes,
+  });
 }
 
 export function parseSource(
@@ -660,6 +925,11 @@ export function parseSource(
   format: Format,
   delimiter: string,
 ): ToolResult<JsonValue> {
+  const read = readSource(source, format, delimiter);
+  return read.ok ? ok(read.value.data) : read;
+}
+
+export function readSource(source: string, format: Format, delimiter: string): ToolResult<Reading> {
   const text = stripBom(source);
 
   switch (format) {
@@ -685,11 +955,20 @@ export function parseSource(
         });
       }
 
-      return toJsonValue(raw);
+      const converted = toJsonValue(raw);
+      if (!converted.ok) return converted;
+
+      return ok({
+        data: converted.value,
+        format: 'json',
+        delimiter: null,
+        documents: 1,
+        notes: roundedNumberNotes(roundedNumbersInJson(text)),
+      });
     }
 
     case 'yaml':
-      return parseYamlSource(text);
+      return readYamlSource(text);
 
     case 'csv':
     case 'tsv': {
@@ -700,7 +979,23 @@ export function parseSource(
 
       const rows = parseCsvRows(directive.body, active, directive.firstLine);
       if (!rows.ok) return rows;
-      return rowsToRecords(rows.value);
+      const records = rowsToRecords(rows.value);
+      if (!records.ok) return records;
+
+      return ok({
+        data: records.value,
+        format,
+        delimiter: active,
+        documents: 1,
+        /*
+         * No rounded-number note here, and that is not an omission: every cell
+         * comes out of the CSV reader as a STRING - `01234` is a part number,
+         * not the number 1234 - so a nineteen-digit key in a spreadsheet export
+         * keeps every digit. It is the one reading path in this tool with no
+         * numeric ceiling at all.
+         */
+        notes: [],
+      });
     }
   }
 }
@@ -717,7 +1012,7 @@ export function parseSource(
  * makes for `---`-separated documents, for the same reason: it is what the file
  * says, and it is the only JSON-representable form of it.
  */
-function parseJsonLines(text: string): ToolResult<JsonValue> | null {
+function parseJsonLines(text: string): ToolResult<Reading> | null {
   const lines = text.split(/\r\n|\r|\n/).filter((line) => line.trim() !== '');
   if (lines.length < 2) return null;
 
@@ -736,7 +1031,26 @@ function parseJsonLines(text: string): ToolResult<JsonValue> | null {
     values.push(converted.value);
   }
 
-  return ok(values);
+  return ok({
+    data: values,
+    format: 'json',
+    delimiter: null,
+    documents: lines.length,
+    notes: [
+      // The stream note belongs to the report, which knows the target. See the
+      // note in `readYamlSource` for why.
+      ...(LONG_DIGIT_RUN.test(text)
+        ? roundedNumberNotes(
+            lines.flatMap((line, position) =>
+              roundedNumbersInJson(line).map((entry) => ({
+                ...entry,
+                path: entry.path.replace(/^\$/, `$[${position.toString()}]`),
+              })),
+            ),
+          )
+        : []),
+    ],
+  });
 }
 
 /**
@@ -835,8 +1149,13 @@ const NOT_A_FORMAT = 'This is not JSON, YAML, CSV or TSV that this tool can read
  * it is the more specific of the two and names the real problem.
  */
 export function parseAuto(source: string, configuredDelimiter: string): ToolResult<JsonValue> {
+  const read = readAuto(source, configuredDelimiter);
+  return read.ok ? ok(read.value.data) : read;
+}
+
+export function readAuto(source: string, configuredDelimiter: string): ToolResult<Reading> {
   const detected = detectSource(source, configuredDelimiter);
-  const first = parseSource(source, detected.format, detected.delimiter);
+  const first = readSource(source, detected.format, detected.delimiter);
 
   /*
    * YAML was the fallback rather than a finding, AND IT FOUND NOTHING - either
@@ -854,7 +1173,8 @@ export function parseAuto(source: string, configuredDelimiter: string): ToolResu
    * nothing to second-guess. When YAML returns a mapping or a sequence it has
    * found real structure and this never fires.
    */
-  const foundNothing = !first.ok || first.value === null || typeof first.value !== 'object';
+  const foundNothing =
+    !first.ok || first.value.data === null || typeof first.value.data !== 'object';
   if (detected.fellBack && foundNothing) {
     const name = untriedDelimiter(stripBom(source), configuredDelimiter);
     if (name !== null) {
@@ -889,6 +1209,57 @@ export function parseAuto(source: string, configuredDelimiter: string): ToolResu
   if (asLines !== null) return asLines;
 
   /*
+   * JSONC, AS A STEP OF ITS OWN, IN FRONT OF THE YAML FALLBACK.
+   *
+   * `//` comments, block comments and a comma before the closing brace are what
+   * `tsconfig.json`, every VS Code settings file and most JSON an LLM writes
+   * actually contain. Round two made all three report the JSON parser's own
+   * error, which was right as far as it went; this reads the document the
+   * author meant and says what it removed.
+   *
+   * IN FRONT OF YAML, NOT BEHIND IT, and that ordering is the whole safety
+   * argument. The YAML fallback folds a comment and the key after it into one
+   * key - `// a comment "a"` - and calls it success. `stripJsonc` is
+   * string-aware and removes a comment AS A COMMENT or not at all, so by the
+   * time YAML sees anything there is no comment left to fold. Nothing can be
+   * folded into a key again.
+   */
+  const stripped = stripJsonc(stripBom(source));
+  /*
+   * The error from the STRIPPED document, when there is one.
+   *
+   * A document with a comment on line 2 and a real fault on line 4 reported the
+   * comment, because the comment is the first thing `JSON.parse` trips over -
+   * and the comment is not the problem, it is the thing this step exists to
+   * allow. `stripJsonc` preserves every offset precisely so that this error can
+   * be handed back with a position that still points into the document the user
+   * is looking at.
+   */
+  let jsoncError: ToolResult<Reading> | null = null;
+
+  if (stripped.changed) {
+    const asJsonc = readSource(stripped.text, 'json', detected.delimiter);
+    if (!asJsonc.ok) jsoncError = asJsonc;
+    if (asJsonc.ok) {
+      const removed = describeJsonc(stripped);
+      return ok({
+        ...asJsonc.value,
+        notes: [
+          ...(removed === null
+            ? []
+            : [
+                noted(
+                  'Read as JSONC',
+                  `This is not JSON: ${removed} were removed before parsing. JSONC is what tsconfig.json and VS Code settings are; the output is plain JSON, so the comments are not in it.`,
+                ),
+              ]),
+          ...asJsonc.value.notes,
+        ],
+      });
+    }
+  }
+
+  /*
    * THE YAML FALLBACK FOR A DOCUMENT THAT OPENS WITH A BRACKET, AND THE GUARD
    * IT NEEDED.
    *
@@ -914,9 +1285,23 @@ export function parseAuto(source: string, configuredDelimiter: string): ToolResu
    * error is the honest answer, and it points at the character that is
    * actually the problem.
    */
-  const asYaml = parseSource(source, 'yaml', detected.delimiter);
-  if (!asYaml.ok || foldsLines(stripBom(source))) return first;
-  return asYaml;
+  const asYaml = readSource(source, 'yaml', detected.delimiter);
+  if (!asYaml.ok || foldsLines(stripBom(source))) return jsoncError ?? first;
+  return ok({
+    ...asYaml.value,
+    // The FORMAT is what was read, and what was read is not JSON. Saying `yaml`
+    // here is what makes the Detected report able to tell "this parsed as JSON"
+    // from "this is near-JSON that YAML rescued", which is a distinction
+    // somebody looking at a wrong answer needs.
+    format: 'yaml',
+    notes: [
+      noted(
+        'Read as YAML, not JSON',
+        'It opens with a bracket but is not valid JSON - unquoted keys, single quotes or a trailing comma, say. YAML 1.2 is a superset of JSON and reads all of those, so that is what read it.',
+      ),
+      ...asYaml.value.notes,
+    ],
+  });
 }
 
 /* ========================================================================== *
@@ -926,17 +1311,50 @@ export function parseAuto(source: string, configuredDelimiter: string): ToolResu
 export interface SerialiseOptions {
   readonly indent: number;
   readonly delimiter: string;
+  /**
+   * Documents the SOURCE held, so a stream can be written back as a stream.
+   *
+   * Defaults to one, which is what every caller that does not know means. See
+   * `writeTarget`.
+   */
+  readonly documents?: number;
 }
 
+/** The value-only wrapper, for callers with nothing to report to. */
 export function serialise(
   data: JsonValue,
   format: Format,
   options: SerialiseOptions,
 ): ToolResult<string> {
+  const written = writeTarget(data, format, options);
+  return written.ok ? ok(written.value.text) : written;
+}
+
+/**
+ * Writes the value in the target format, and says what the target could not
+ * hold.
+ *
+ * A YAML STREAM IS WRITTEN BACK AS A STREAM. A `---`-separated file has no JSON
+ * spelling but an exact YAML one, and writing it as a sequence turned every
+ * Kubernetes manifest that went through this tool into a file `kubectl` will
+ * not read - with nothing on screen to say so. The source's document count is
+ * carried through `Reading` for exactly this; when it is more than one and the
+ * value is still the array that came out of it, the separators go back in.
+ *
+ * The guard is `data.length === documents`, not `documents > 1` alone, because
+ * `sortKeys` and a value wired in on the `json` port can both put a different
+ * array here. Writing `---` between the elements of an array that is not the
+ * stream would be inventing a file.
+ */
+export function writeTarget(
+  data: JsonValue,
+  format: Format,
+  options: SerialiseOptions,
+): ToolResult<Written> {
   switch (format) {
     case 'json':
       try {
-        return ok(JSON.stringify(data, null, options.indent));
+        return ok({ text: JSON.stringify(data, null, options.indent), notes: [], stream: false });
       } catch (error) {
         // JSON.stringify recurses, so it is the other end of the same depth
         // problem the parser has - and the `json` input port can deliver a
@@ -947,41 +1365,58 @@ export function serialise(
         });
       }
 
-    case 'yaml':
+    case 'yaml': {
+      const yamlOptions = {
+        // Indent 0 is meaningful for JSON (compact) and impossible for
+        // YAML, where nesting IS indentation, so it is clamped to the
+        // shallowest legal value.
+        indent: Math.max(1, options.indent),
+        // 0 disables wrapping. A wrapped string is the same string, but a
+        // diff of two exports should not depend on where a line broke.
+        lineWidth: 0,
+        /*
+         * No anchors in output.
+         *
+         * The library's default emits `&a1`/`*a1` when the same OBJECT is
+         * reachable twice. Nothing that came through a parser here can be,
+         * but a value wired in on the `json` port from another tool can -
+         * and then the YAML output would carry aliases where the JSON
+         * output of the same value expands them. One value, two shapes,
+         * depending on how it happened to be built upstream.
+         */
+        aliasDuplicateObjects: false,
+      } as const;
+
       try {
-        return ok(
-          stringifyYaml(data, {
-            // Indent 0 is meaningful for JSON (compact) and impossible for
-            // YAML, where nesting IS indentation, so it is clamped to the
-            // shallowest legal value.
-            indent: Math.max(1, options.indent),
-            // 0 disables wrapping. A wrapped string is the same string, but a
-            // diff of two exports should not depend on where a line broke.
-            lineWidth: 0,
-            /*
-             * No anchors in output.
-             *
-             * The library's default emits `&a1`/`*a1` when the same OBJECT is
-             * reachable twice. Nothing that came through a parser here can be,
-             * but a value wired in on the `json` port from another tool can -
-             * and then the YAML output would carry aliases where the JSON
-             * output of the same value expands them. One value, two shapes,
-             * depending on how it happened to be built upstream.
-             */
-            aliasDuplicateObjects: false,
-          }),
-        );
+        const documents = options.documents ?? 1;
+        if (documents > 1 && isJsonArray(data) && data.length === documents) {
+          /*
+           * `---` before EVERY document, including the first. That is what
+           * `kubectl` writes, what `yq` writes, and what the yaml-test-suite's
+           * own multi-document examples look like; leaving it off the first one
+           * produces a file whose second document is explicit and whose first
+           * is implicit, which is legal and asymmetric for no reason.
+           */
+          return ok({
+            text: data.map((entry) => `---\n${stringifyYaml(entry, yamlOptions)}`).join(''),
+            notes: [],
+            stream: true,
+          });
+        }
+
+        return ok({ text: stringifyYaml(data, yamlOptions), notes: [], stream: false });
       } catch (error) {
         if (error instanceof RangeError) return tooDeep();
         return fail('internal', 'Could not write that value as YAML.', {
           detail: error instanceof Error ? error.message : undefined,
         });
       }
+    }
 
     case 'csv':
     case 'tsv':
       try {
-        return recordsToCsv(data, format === 'tsv' ? DELIMITERS.tab : options.delimiter);
+        return writeCsv(data, format === 'tsv' ? DELIMITERS.tab : options.delimiter);
       } catch (error) {
         // Unreachable while every route in is depth-bounded, and caught anyway:
         // "never throws across the execution boundary" is a contract, not a

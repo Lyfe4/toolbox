@@ -353,8 +353,14 @@ separately:
   tool's versions were given to real `git apply`, which produced the right bytes
   for each.
 
-The one place the two genuinely disagree is line endings, and it is
-[written up in the conversion matrix](../../../docs/conversion-matrix.md#5-line-endings-in-the-diff).
+The one place the two genuinely disagreed was line endings, and it is now an
+option: `ignore` (the default, and what this tool has always done) or `compare`.
+With the terminators in the comparison, **all 38 match git byte for byte**,
+including the four whose spelling never had - because what made them differ was
+that a last line with a newline and the same line without one were the same line
+to the comparison. At the default setting the fact travels with the patch, as a
+note after the last hunk. See
+[the conversion matrix](../../../docs/conversion-matrix.md#the-seven-decisions-taken).
 
 Two things it used to get wrong:
 

@@ -5,7 +5,14 @@ import type { ToolRunContext } from '@/features/registry/types';
 import { bytesValue } from '@/features/registry/types';
 import { residentBytes } from '@/lib/binary';
 
-import { bytesToText, decodeBase64, encodeBase64, textToBytes, type EncodeOptions } from './codec';
+import {
+  bytesToText,
+  decodeBase64,
+  encodeBase64,
+  readBase64,
+  textToBytes,
+  type EncodeOptions,
+} from './codec';
 import base64Tool from './index';
 
 const context: ToolRunContext = {
@@ -299,5 +306,120 @@ describe('tool definition', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe('unsupported-type');
+  });
+});
+
+/* ========================================================================== *
+ * The unused bits of the last character
+ * ========================================================================== */
+
+describe('a non-canonical tail', () => {
+  /*
+   * `QQ==` AND `QR==` BOTH DECODE TO `A`, AND THAT IS ALLOWED.
+   *
+   * The final character of a two- or three-character group carries 4 or 2 bits
+   * that no byte of the result uses. RFC 4648 section 3.5 explicitly permits a
+   * decoder to ignore them, and most do - so the BYTES are right either way,
+   * and `base64 -> bytes -> base64` is not the identity on the TEXT. That is the
+   * whole of the loss the matrix recorded, and it was silent: somebody
+   * comparing two signatures would see them agree after a round trip that had
+   * changed one of them.
+   */
+  it('decodes the same bytes from either spelling', () => {
+    expect(decodeToText('QQ==')).toBe('A');
+    expect(decodeToText('QR==')).toBe('A');
+  });
+
+  it('reports the one that was not canonical, and names both characters', () => {
+    const result = readBase64('QR==');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.value.report.nonCanonicalTail).toBe(true);
+    expect(result.value.report.writtenTail).toBe('R');
+    expect(result.value.report.canonicalTail).toBe('Q');
+  });
+
+  it('reports one in a three-character group too', () => {
+    // 18 bits, 16 used: the low TWO bits of the third character are spare, so
+    // the mask is a different one from the two-character case.
+    const result = readBase64('QUI=');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.report.nonCanonicalTail).toBe(false);
+
+    const noisy = readBase64('QUJ=');
+    expect(noisy.ok).toBe(true);
+    if (!noisy.ok) return;
+    expect(noisy.value.report.nonCanonicalTail).toBe(true);
+    expect(noisy.value.report.canonicalTail).toBe('I');
+  });
+
+  /*
+   * THE NEGATIVE CONTROLS. A report that fires on canonical base64 would fire
+   * on essentially every input this tool ever sees, which is the note nobody
+   * reads on the day it matters.
+   */
+  it('says nothing about the canonical spelling of the same bytes', () => {
+    const result = readBase64('QQ==');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.report.nonCanonicalTail).toBe(false);
+    expect(result.value.report.canonicalTail).toBeNull();
+  });
+
+  it('says nothing when there is no partial group at all', () => {
+    // A length that is a multiple of four has no spare bits anywhere.
+    const result = readBase64('QUJD');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.report.nonCanonicalTail).toBe(false);
+  });
+
+  it('never reports one for anything this encoder produced', () => {
+    /*
+     * The property that says the two halves agree: this encoder only ever
+     * writes canonical tails, so a report on its own output would mean the
+     * check is wrong rather than that the data is.
+     */
+    fc.assert(
+      fc.property(fc.uint8Array({ maxLength: 64 }), (bytes) => {
+        const result = readBase64(encodeBase64(bytes, DEFAULTS));
+        expect(result.ok).toBe(true);
+        if (result.ok) expect(result.value.report.nonCanonicalTail).toBe(false);
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  it('puts it on the report port, where a node and the panel can both see it', async () => {
+    const result = await base64Tool.run({
+      inputs: { input: { type: 'text', text: 'QR==' } },
+      options: { mode: 'decode' },
+      context,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const report = result.value.report;
+    expect(report?.type).toBe('json');
+    if (report?.type !== 'json') return;
+    expect(JSON.stringify(report.data)).toContain('The last character was not canonical');
+    expect(JSON.stringify(report.data)).toContain('"level":"warn"');
+  });
+
+  it('puts no note there for canonical input', async () => {
+    const result = await base64Tool.run({
+      inputs: { input: { type: 'text', text: 'QQ==' } },
+      options: { mode: 'decode' },
+      context,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const report = result.value.report;
+    if (report?.type !== 'json') throw new Error('no report');
+    expect(JSON.stringify(report.data)).toContain('"notes":[]');
   });
 });

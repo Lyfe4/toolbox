@@ -24,28 +24,49 @@ passes" is not an entry in it.
 - [Video](#video)
 - [The canvas: one node's failure reaching another](#the-canvas-one-nodes-failure-reaching-another)
 - [The canvas: what a wire does to a value](#the-canvas-what-a-wire-does-to-a-value)
-- [Decisions this round did not take](#decisions-this-round-did-not-take)
+- [The seven decisions, taken](#the-seven-decisions-taken)
+- [Where a loss is said](#where-a-loss-is-said)
+- [What the count was, and is](#what-the-count-was-and-is)
+- [Markdown to HTML, relabelled](#markdown-to-html-relabelled)
+- [What changed for a person pasting a document](#what-changed-for-a-person-pasting-a-document)
 - [Found this round](#found-this-round)
 - [What was looked for and not found](#what-was-looked-for-and-not-found)
 - [Still unverified, and how to verify it](#still-unverified-and-how-to-verify-it)
 
 ## What the verdicts mean
 
-| Verdict           | Means                                                                                                                               |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **exact**         | The output is the one an external reference gives for the same input. Nothing is lost.                                              |
-| **lossy, told**   | Something cannot survive the conversion, the loss is intentional and consistent, **and the user is told** — on screen or on a port. |
-| **lossy, silent** | The same, except nobody is told. This is a defect, whatever the reason for the loss.                                                |
-| **broken**        | The output is wrong, for input a person would realistically produce.                                                                |
-| **not verified**  | It may be right. Nothing outside this repository has said so.                                                                       |
+| Verdict           | Means                                                                                                                                                                                                                                                                                            |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **exact**         | The output is the one an external reference gives for the same input. Nothing is lost.                                                                                                                                                                                                           |
+| **lossy, told**   | Something cannot survive the conversion, the loss is intentional and consistent, **and the user is told without doing anything** — on the panel on `/tools` AND on the canvas node. A port that has to be wired up to be read does not count; see [Where a loss is said](#where-a-loss-is-said). |
+| **lossy, silent** | The same, except nobody is told. This is a defect, whatever the reason for the loss.                                                                                                                                                                                                             |
+| **broken**        | The output is wrong, for input a person would realistically produce.                                                                                                                                                                                                                             |
+| **not verified**  | It may be right. Nothing outside this repository has said so.                                                                                                                                                                                                                                    |
 
-`lossy, silent` is deliberately not a comfortable category. **Twelve cells are
-in it** — eleven, plus one the yaml-test-suite found in round two —, counted from the tables below, and every one either has an entry in
-[the decisions](#decisions-this-round-did-not-take) or is named in a table with
-what is lost. Seven cells that were **broken** at the start of round one are
-marked `fixed this round`; none of them was failing a test. Round two added two
-more, both on the canvas rather than inside a conversion: a node reporting a
-failure a neighbour caused, and the node downstream of it.
+`lossy, silent` is deliberately not a comfortable category. **It is empty.**
+
+It held twelve cells at the end of round two, and round three's job was to take
+the seven decisions that would close most of them. The count, cell by cell, is
+in [What the count was, and is](#what-the-count-was-and-is); the short version
+is that four of the twelve turned out to be **fixable** rather than merely
+reportable, seven are now `lossy, told` through a channel that did not exist
+before, and the twelfth — the diff's line endings — became an option as well as
+a note, so the case where the patch was a lie is now reachable rather than only
+described.
+
+**A told loss is one a person SEES.** Not one that is available on a port they
+could wire up: this round added a `report` output to four tools, and a report
+port is drawn on `/tools` and invisible on a canvas node, where a node
+summarises its first output and nothing else. So the node reads the report too
+and prints what was lost on its own face, and both halves are asserted in two
+real engines rather than in jsdom. See
+[Where a loss is said](#where-a-loss-is-said).
+
+Seven cells that were **broken** at the start of round one are marked
+`fixed this round` there; none of them was failing a test. Round two added two
+more, both on the canvas rather than inside a conversion. Round three's own
+`fixed` cells are marked `fixed in round three`, so the three rounds stay
+distinguishable in one table.
 
 ## What counts as evidence
 
@@ -85,12 +106,13 @@ auto-detected unless you say otherwise; the target is always explicit.
 
 ### Reading
 
-| From | Verdict                             | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ---- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CSV  | **exact**                           | 32 documents read by CPython's `csv.reader` and by this parser, field for field, including a lone CR terminator, a NUL byte, a quote opening mid-field, a field of four quotes, CRLF inside a quoted cell and every delimiter offered. [`csv.oracle.test.ts`](../src/tools/structured-data/csv.oracle.test.ts)                                                                                                                                                                                                                        |
-| TSV  | **exact**                           | Same corpus, tab delimiter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| JSON | **lossy, silent**                   | Structure and strings are exact — it is `JSON.parse`. **Integers past 2^53 are silently rounded**, and that is the one loss. See [Numbers](#numbers-past-253-the-one-silent-loss-left).                                                                                                                                                                                                                                                                                                                                               |
-| YAML | **exact**, with 21 named exceptions | 402 cases from the [yaml-test-suite](https://github.com/yaml/yaml-test-suite)'s own `data-2022-01-17` release, committed as [`spec/yaml-test-suite.json`](../src/tools/structured-data/spec/yaml-test-suite.json). 94 documents the suite marks as errors are all refused; 279 carry the value a conforming parser must produce and 258 of them match exactly. The 21 that do not are listed by id with a reason, and each is asserted to **still** differ. [`yaml.oracle.test.ts`](../src/tools/structured-data/yaml.oracle.test.ts) |
+| From  | Verdict                                 | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ----- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CSV   | **exact**                               | 32 documents read by CPython's `csv.reader` and by this parser, field for field, including a lone CR terminator, a NUL byte, a quote opening mid-field, a field of four quotes, CRLF inside a quoted cell and every delimiter offered. [`csv.oracle.test.ts`](../src/tools/structured-data/csv.oracle.test.ts)                                                                                                                                                                                                                                                                                                         |
+| TSV   | **exact**                               | Same corpus, tab delimiter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| JSON  | **lossy, told**                         | Structure and strings are exact — it is `JSON.parse`. **Integers past 2^53 are rounded**, which is unavoidable, and each one is now reported by path. See [Numbers](#numbers-past-253-unavoidable-and-no-longer-silent).                                                                                                                                                                                                                                                                                                                                                                                               |
+| JSONC | **exact**, against VS Code's own parser | `//` and `/* */` comments and trailing commas are removed before parsing, and the document is read as the author meant it. 25 documents are compared against `jsonc-parser` — the parser Visual Studio Code uses for its own settings files — value for value, including every case that decides whether a stripper tracks string state: a `//` inside a URL, a `/*` inside a glob, an escaped quote in front of a comment marker. [`jsonc.oracle.test.ts`](../src/tools/structured-data/jsonc.oracle.test.ts)                                                                                                         |
+| YAML  | **exact**, with 9 named exceptions      | 402 cases from the [yaml-test-suite](https://github.com/yaml/yaml-test-suite)'s own `data-2022-01-17` release, committed as [`spec/yaml-test-suite.json`](../src/tools/structured-data/spec/yaml-test-suite.json). 94 documents the suite marks as errors are all refused; 279 carry the value a conforming parser must produce and **270 of them match exactly — 258 before this round**. The 9 that do not are listed by id with a reason, each is asserted to **still** differ, and the 12 that were fixed are asserted to **now agree**. [`yaml.oracle.test.ts`](../src/tools/structured-data/yaml.oracle.test.ts) |
 
 ### Writing
 
@@ -106,60 +128,83 @@ auto-detected unless you say otherwise; the target is always explicit.
 Every conversion goes through the same JSON-shaped value, so the cell is the
 combination of the two halves above plus what the target format cannot hold.
 
-| From → To                     | Verdict           | What is lost, and whether you are told                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ----------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| JSON → YAML                   | **exact**         | Nothing. Key order is preserved unless `sortKeys` is on.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| YAML → JSON                   | **lossy, told**   | Comments, anchors, tags and the choice of block style are not JSON and are dropped. Anything JSON genuinely cannot hold — a `!!binary`, a `!!set`, a collection used as a key, a 1.1 timestamp — is **refused by path**, not mangled.                                                                                                                                                                                                                                                                                                                                                                                            |
-| JSON/YAML → CSV/TSV           | **lossy, silent** | Three losses, all real and none reported: a nested value becomes compact JSON inside the cell; a key absent from one row becomes an empty cell indistinguishable from a present-and-empty one; and every value becomes text. A non-array, or an array of non-objects, is refused clearly. See [the decisions](#2-how-nested-json-should-flatten-to-csv).                                                                                                                                                                                                                                                                         |
-| CSV/TSV → JSON/YAML           | **lossy, told**   | Every cell becomes a **string**, deliberately — `01234` is a part number, not the number 1234 — and the tool's README states it. Line endings inside quoted cells survive verbatim.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| YAML stream → any             | **lossy, silent** | A `---`-separated stream becomes a JSON array, and converting back to YAML produces a **sequence**, not a stream. A Kubernetes manifest does not survive the round trip as a manifest. Nothing says so.                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| An empty document in a stream | **lossy, silent** | Found by the yaml-test-suite this round. A document holding only a directive, a comment or a bare `---` is `null` to every conforming parser and **nothing at all** to this tool, so a five-document stream can come back as a four-element array with no error. `isEmptyDocument` exists for the single-document case, where "nothing to parse" is the right answer for an empty box; in a stream it changes the length of the file. Five suite cases shorten a stream; twelve more are documents that are empty throughout, where "nothing to parse" is the answer this tool gives and `null` is the answer the suite expects. |
-| Anything → CSV                | **lossy, silent** | The output has no terminator after the last record and uses LF, whatever the input used. RFC 4180 specifies CRLF; every reader accepts LF. Worth knowing when the next step is a byte comparison.                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| From → To                     | Verdict                  | What is lost, and whether you are told                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| JSON → YAML                   | **exact**                | Nothing. Key order is preserved unless `sortKeys` is on.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| YAML → JSON                   | **lossy, told**          | Comments, anchors, tags and the choice of block style are not JSON and are dropped. Anything JSON genuinely cannot hold — a `!!binary`, a `!!set`, a collection used as a key, a 1.1 timestamp — is **refused by path**, not mangled.                                                                                                                                                                                                                                                                                                                                          |
+| JSON/YAML → CSV/TSV           | **lossy, told**          | Three losses, all real and all now reported **by path**: a nested value becomes compact JSON inside the cell (`$[0].user`); a key absent from one row becomes an empty cell indistinguishable from a present-and-empty one, and the columns are named; and every value becomes text. A non-array, or an array of non-objects, is refused clearly. [`reports.test.ts`](../src/tools/structured-data/reports.test.ts)                                                                                                                                                            |
+| CSV/TSV → JSON/YAML           | **lossy, told**          | Every cell becomes a **string**, deliberately — `01234` is a part number, not the number 1234 — and the tool's README states it. Line endings inside quoted cells survive verbatim.                                                                                                                                                                                                                                                                                                                                                                                            |
+| YAML stream → YAML            | **exact**                | **Fixed in round three.** A `---`-separated stream is written back as a stream, with a `---` in front of each document. It used to come back as a **sequence**, so a Kubernetes manifest that went through this tool was a file `kubectl` will not read, silently. The report says which of the two happened, and says it from the WRITER rather than from the source — `sortKeys` and a value arriving on the `json` port can both put a different array in front of it.                                                                                                      |
+| YAML stream → JSON/CSV/TSV    | **lossy, told**          | None of the three has a document separator, so the documents become the elements of an array — which is the only JSON-representable form of a stream, and is still a file that does not convert back. Reported, with the count and with "choose YAML as the target to keep the stream". JSON Lines in is the same fact and gets the same note.                                                                                                                                                                                                                                 |
+| An empty document in a stream | **fixed in round three** | Found by the yaml-test-suite in round two. `---` STARTS a document and an empty one is `null`; dropping it made a five-document stream come back as a four-element array with no error. Three references agree about the same bytes — the suite's PUW8, js-yaml 5.4.2, and CPython's PyYAML 6.0.3, each asked directly. The rule is now "an empty document with no `---` to declare it", which keeps the case it was really for: an empty input box still says "nothing to parse" rather than producing `null`. Twelve of the twenty-one suite divergences were this one rule. |
+| Anything → CSV                | **lossy, told**          | The output has no terminator after the last record and uses LF, whatever the input used. RFC 4180 specifies CRLF; every reader accepts LF. Reported at `info` on every CSV write — nothing is lost, the table reads back identically, and the fact matters exactly when the next step is a byte comparison or a digest, which on this canvas is one wire away.                                                                                                                                                                                                                 |
 
 ### Detection
 
-| Input                                                                                               | Verdict              | Note                                                                                                                                                                                                    |
-| --------------------------------------------------------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| JSON, YAML, CSV, TSV, semicolon, `sep=`                                                             | **exact**            | Named regression tests, each from a document that was previously read as the wrong format.                                                                                                              |
-| Near-JSON: single quotes, unquoted keys, trailing commas                                            | **exact**            | Read as the document the author meant, through the YAML fallback.                                                                                                                                       |
-| Near-JSON: `//` comments, block comments, a literal newline in a string, a key split over two lines | **fixed this round** | Were **broken**: the YAML fallback folded lines and produced a plausible object. Now reported as the JSON syntax error they are.                                                                        |
-| Prose, a ragged CSV, a log                                                                          | **fixed this round** | Were **broken**: folded into one string with the line breaks replaced by spaces, reported as success. Now refused.                                                                                      |
-| Two lines of text with one comma each                                                               | **broken**           | `tags: a, b\nnames: c, d` is read as a one-row CSV table with the column names `tags: a` and `b`. See [the decisions](#1-how-eager-delimited-detection-should-be).                                      |
-| Whatever was detected                                                                               | **lossy, silent**    | The tool never says which format it decided on. Text convert has a `Detected` output for exactly this; structured data has none. See [the decisions](#4-structured-data-does-not-say-what-it-detected). |
+| Input                                                                                               | Verdict                  | Note                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JSON, YAML, CSV, TSV, semicolon, `sep=`                                                             | **exact**                | Named regression tests, each from a document that was previously read as the wrong format.                                                                                                                                                                                                                                                                                                                                 |
+| Near-JSON: single quotes, unquoted keys, trailing commas                                            | **exact**                | Read as the document the author meant, through the YAML fallback.                                                                                                                                                                                                                                                                                                                                                          |
+| Near-JSON: `//` comments, block comments, a literal newline in a string, a key split over two lines | **fixed this round**     | Were **broken**: the YAML fallback folded lines and produced a plausible object. Now reported as the JSON syntax error they are.                                                                                                                                                                                                                                                                                           |
+| Prose, a ragged CSV, a log                                                                          | **fixed this round**     | Were **broken**: folded into one string with the line breaks replaced by spaces, reported as success. Now refused.                                                                                                                                                                                                                                                                                                         |
+| Two lines of text with one comma each                                                               | **fixed in round three** | Was **broken**: `tags: a, b` over `names: c, d` was read as a one-row table with the columns `tags: a` and `b`. The fix is not a higher bar — "three records or it is not a table" refuses a header and one row, which is a real file — but a different question with an answer: does this also parse as a YAML **mapping**? A genuine CSV folds to a plain scalar. Five realistic tables are asserted to still be tables. |
+| Whatever was detected                                                                               | **fixed in round three** | The tool now says which format it decided on, which delimiter it used, and whether it guessed at all, on a `Detected` report port drawn on `/tools` and summarised on the canvas node.                                                                                                                                                                                                                                     |
+| Twenty-nine realistic documents                                                                     | **exact**                | Committed as [`spec/detection-corpus.json`](../src/tools/structured-data/spec/detection-corpus.json): the document, the format it is detected as, and the value it reads to. Round one ran a corpus of this shape and did not write it down; this one is a fixture so the next round can re-run it. See [What changed for a person pasting a document](#what-changed-for-a-person-pasting-a-document).                     |
 
-### Numbers past 2^53, the one silent loss left
+### Numbers past 2^53, unavoidable and no longer silent
 
 `{"id": 12345678901234567890}` converts to `{"id": 12345678901234567000}`.
 
 JSON's grammar puts no limit on a number's digits; JavaScript has one numeric
 type and it is a double. So `JSON.parse` rounds, and every port downstream
 carries the rounded value. A 64-bit database key, a Discord or Twitter
-snowflake, a nanosecond timestamp: all of them come back as a different number,
-with no error and nothing on any port to say so. YAML loses the same digits for
-the same reason, and the JWT tool loses them in a claim.
+snowflake, a nanosecond timestamp: all of them come back as a different number.
+The rounding cannot be avoided in a JavaScript program. Being quiet about it
+could be, and is not any more:
 
-It is pinned by
-[named tests](../src/tools/structured-data/structured-data.test.ts) so it is a
-decision rather than a surprise, and the options are in
-[the decisions](#3-what-to-do-about-integers-a-double-cannot-hold).
+> **2 numbers were rounded.** JavaScript has one numeric type and it is a
+> double, so an integer past 2^53 cannot be held exactly. 12345678901234567890
+> became 12345678901234567000. At `$.id`, `$.ok`. Convert to CSV or TSV to keep
+> the digits, where every cell stays a string.
+
+**THE QUESTION IS ASKED OF THE LITERAL, NOT OF THE VALUE**, and that is the
+whole of why the report can be believed. The obvious implementation walks the
+parsed document and reports every integer for which `Number.isSafeInteger` is
+false — and it is wrong: `9007199254740994` is 2^53 + 2, which no
+`isSafeInteger` accepts and which a double holds exactly. A report that names a
+number that was never rounded is the same class of confident wrongness this
+whole document exists to remove. So each integer literal in the SOURCE is
+tested with `BigInt(literal) !== BigInt(Number(literal))`, which is exact and
+decides every one of them.
+
+It is gated on a run of sixteen digits, because 2^53 has sixteen and every
+shorter integer survives — so a 16 MB document with no such number is walked
+once, by one regular expression.
+
+Three readers, one answer: JSON through a scanner over the source
+([`lib/jsonNumbers.ts`](../src/lib/jsonNumbers.ts)), YAML through the library's
+own scalars, and the JWT tool through the same scanner over the claims. CSV and
+TSV have no ceiling at all, because every cell comes out as a string — which is
+what the note suggests as the way out.
 
 ## Text convert
 
 [`src/tools/text-convert`](../src/tools/text-convert). Markdown and HTML are
-sources; Markdown, HTML and plain text are targets. Everything routes through
-HTML.
+sources; Markdown, plain text and TWO HTML targets — sanitised and normalised —
+are the destinations. Everything routes through HTML.
 
-| From → To             | Verdict              | Evidence, and what is lost                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| --------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Markdown → HTML       | **exact**, 95.7%     | CommonMark 0.31.2, 624 of 652, and GFM, 21 of 24, compared by parsed DOM. The expected-failure list is exact rather than a threshold, and every remaining failure is about raw HTML or a URL.                                                                                                                                                                                                                                                               |
-| HTML → Markdown       | **lossy, told**      | Anything Markdown cannot express is governed by the `unsupported` option — `keep` writes the element back as inline HTML, `text` keeps its text, `drop` removes it. The option is on the panel, which is where the user is told.                                                                                                                                                                                                                            |
-| HTML → plain text     | **lossy, told**      | All markup, by definition. The options say what happens to links, list markers and tables.                                                                                                                                                                                                                                                                                                                                                                  |
-| Markdown → plain text | **lossy, told**      | Same.                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Markdown → Markdown   | **lossy, silent**    | Normalisation through HTML. Footnotes become raw `<sup>` markup and a `## Footnotes` heading; `$$…$$` display maths becomes an inline code span; a bare URL becomes an explicit link when `linkify` is on. Nothing says any of it happened.                                                                                                                                                                                                                 |
-| HTML → HTML           | **lossy, silent**    | This is a **sanitise and normalise** pass and it runs through Markdown, so it is bounded by what Markdown can express. Measured: `class` and `data-*` attributes are dropped, `id` is namespaced, `<img width>` is dropped, a `colspan` becomes an empty cell, and a `<table>` with no header **gains an empty header row that was not in the input**. The sanitising half is correct and necessary; the inventing half is not, and nothing reports either. |
-| Detection             | **fixed this round** | Was **broken** for the single most common thing an LLM writes about HTML: `Use \`<div>\` here.` was detected as HTML, **confidently**, because the tag search ran over the document as written. The conversion then read the code span's contents as markup. Fenced blocks and inline code spans are now blanked out before the search, and only before that search — a fence is still a Markdown signal.                                                   |
-| Hard break → text     | **fixed this round** | Was **broken**: Markdown's hard break (two trailing spaces, or a trailing backslash) became `<br>` plus a newline, and the text renderer emitted both, so a line break came out as a blank line. The same `<br>` written without the newline came out correctly, so one construct had two answers.                                                                                                                                                          |
-| `rendered` port       | **exact**            | Always sanitised HTML, for every source and target. Asserted.                                                                                                                                                                                                                                                                                                                                                                                               |
+| From → To                | Verdict              | Evidence, and what is lost                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------ | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Markdown → HTML          | **lossy, told**      | CommonMark 0.31.2, 624 of 652, and GFM, 21 of 24, compared by parsed DOM — and **624 of 652 is not what `exact` means**, which is what this cell used to claim. Every one of the 28 differs because this tool will not copy raw HTML through, and that refusal is the product. It is now reported: the same chain is run with the allow-list off and the two documents compared, so the note names what was really removed rather than what a schema suggests. See [Markdown to HTML, relabelled](#markdown-to-html-relabelled). |
+| HTML → Markdown          | **lossy, told**      | Anything Markdown cannot express is governed by the `unsupported` option — `keep` writes the element back as inline HTML, `text` keeps its text, `drop` removes it. The option is on the panel, which is where the user is told.                                                                                                                                                                                                                                                                                                 |
+| HTML → plain text        | **lossy, told**      | All markup, by definition. The options say what happens to links, list markers and tables.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Markdown → plain text    | **lossy, told**      | Same.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Markdown → Markdown      | **lossy, told**      | Normalisation through HTML. Three constructs do not survive and each is named: footnotes stop being footnotes (a reference becomes a link to an anchor, the definitions a `## Footnotes` section), `$$…$$` display maths becomes a fence tagged `math`, and a bare URL becomes an explicit link when `linkify` is on. Reformatting — a different bullet, a different heading style — is reported at `info`, because the document means the same thing and a warning on every run is one nobody reads.                            |
+| HTML → HTML (sanitised)  | **lossy, told**      | **New in round three.** The sanitiser and nothing else: no Markdown round trip, so nothing is invented. What the allow-list removes is reported, measured by comparing the two documents rather than by listing the schema.                                                                                                                                                                                                                                                                                                      |
+| HTML → HTML (normalised) | **lossy, told**      | The pass that used to be called "HTML". It runs through Markdown, so it is bounded by what Markdown can express, and the two halves now answer separately: input against sanitised is the allow-list’s doing, sanitised against normalised is the round trip’s. Measured: `<img width>` is dropped, a `<div>` is unwrapped, a `colspan` becomes an empty cell, and a `<table>` with no header **gains an empty header row that was not in the input**, reported as an invention.                                                 |
+| Detection                | **fixed this round** | Was **broken** for the single most common thing an LLM writes about HTML: `Use \`<div>\` here.` was detected as HTML, **confidently**, because the tag search ran over the document as written. The conversion then read the code span's contents as markup. Fenced blocks and inline code spans are now blanked out before the search, and only before that search — a fence is still a Markdown signal.                                                                                                                        |
+| Hard break → text        | **fixed this round** | Was **broken**: Markdown's hard break (two trailing spaces, or a trailing backslash) became `<br>` plus a newline, and the text renderer emitted both, so a line break came out as a blank line. The same `<br>` written without the newline came out correctly, so one construct had two answers.                                                                                                                                                                                                                               |
+| `rendered` port          | **exact**            | Always sanitised HTML, for every source and target. Asserted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 Two properties hold the round trip honest where a byte comparison cannot:
 `md → html → md → html` is asserted **stable**, and `html → text` is asserted
@@ -169,13 +214,13 @@ Two properties hold the round trip honest where a byte comparison cannot:
 
 [`src/lib/base64.ts`](../src/lib/base64.ts).
 
-| Direction                   | Verdict           | Evidence                                                                                                                                                                                                                                                                             |
-| --------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| bytes → base64              | **exact**         | RFC 4648 §10 vectors.                                                                                                                                                                                                                                                                |
-| base64 → bytes              | **exact**         | The same vectors read backwards, added this round — the decoder had only round trips through this encoder, which cannot tell a matched pair of mistakes from a correct pair.                                                                                                         |
-| base64url → bytes           | **exact**         | Same, with and without padding. Both alphabets decode without the caller saying which.                                                                                                                                                                                               |
-| text → bytes → base64       | **exact**         | UTF-8 via `TextEncoder`, so every code point survives — including astral characters, which `btoa` cannot encode at all.                                                                                                                                                              |
-| Non-canonical trailing bits | **lossy, silent** | `QQ==` and `QR==` both decode to `A`: the unused bits of the last character are ignored rather than required to be zero. RFC 4648 §3.5 permits either, and most decoders do what this one does. The effect is that `base64 → bytes → base64` is not always the identity on the text. |
+| Direction                   | Verdict         | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| bytes → base64              | **exact**       | RFC 4648 §10 vectors.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| base64 → bytes              | **exact**       | The same vectors read backwards, added this round — the decoder had only round trips through this encoder, which cannot tell a matched pair of mistakes from a correct pair.                                                                                                                                                                                                                                                                                                         |
+| base64url → bytes           | **exact**       | Same, with and without padding. Both alphabets decode without the caller saying which.                                                                                                                                                                                                                                                                                                                                                                                               |
+| text → bytes → base64       | **exact**       | UTF-8 via `TextEncoder`, so every code point survives — including astral characters, which `btoa` cannot encode at all.                                                                                                                                                                                                                                                                                                                                                              |
+| Non-canonical trailing bits | **lossy, told** | `QQ==` and `QR==` both decode to `A`: the unused bits of the last character are ignored rather than required to be zero. RFC 4648 §3.5 permits either, and most decoders do what this one does — so the bytes are right and `base64 → bytes → base64` is not the identity on the TEXT. The decode now names the character as written and the canonical spelling of the same bytes, on a `Report` port, which matters because the input is usually a signature somebody is comparing. |
 
 ## Hash
 
@@ -195,28 +240,28 @@ Two properties hold the round trip honest where a byte comparison cannot:
 
 [`src/tools/jwt-decode`](../src/tools/jwt-decode).
 
-| Operation                   | Verdict           | Evidence                                                                                                                                                                            |
-| --------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Decode header and payload   | **exact**         | RFC 7515 appendix A.1, added this round: the published header and payload, decoded to the values the RFC prints.                                                                    |
-| HS256 verification          | **exact**         | The same appendix's key and signature. Verified, and reported invalid when one character of the signature or of the payload changes.                                                |
-| HS384/512, RS\*, PS\*, ES\* | **not verified**  | WebCrypto does the work and the surrounding code is exercised, but no published vector is checked for these. RFC 7515 has appendices for RS256 and ES256 and they are not used yet. |
-| `alg: none`                 | **exact**         | Refused outright, as its own status.                                                                                                                                                |
-| Large numeric claims        | **lossy, silent** | A `sub` or `jti` that is a 64-bit integer is rounded by `JSON.parse`, the same loss as [structured data's](#numbers-past-253-the-one-silent-loss-left).                             |
+| Operation                   | Verdict          | Evidence                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Decode header and payload   | **exact**        | RFC 7515 appendix A.1, added this round: the published header and payload, decoded to the values the RFC prints.                                                                                                                                                                                                                                                             |
+| HS256 verification          | **exact**        | The same appendix's key and signature. Verified, and reported invalid when one character of the signature or of the payload changes.                                                                                                                                                                                                                                         |
+| HS384/512, RS\*, PS\*, ES\* | **not verified** | WebCrypto does the work and the surrounding code is exercised, but no published vector is checked for these. RFC 7515 has appendices for RS256 and ES256 and they are not used yet.                                                                                                                                                                                          |
+| `alg: none`                 | **exact**        | Refused outright, as its own status.                                                                                                                                                                                                                                                                                                                                         |
+| Large numeric claims        | **lossy, told**  | A `sub` or `jti` that is a 64-bit integer is rounded by `JSON.parse`, the same loss as [structured data’s](#numbers-past-253-unavoidable-and-no-longer-silent) and asked the same exact way. Reported by path on a `Report` port; the decoded claims and the signature verdict are unchanged, because the signature is checked against the bytes the rounding never touched. |
 
 ## Colour
 
 [`src/tools/color-convert`](../src/tools/color-convert).
 
-| Direction                                  | Verdict              | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ------------------------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| hex ↔ rgb                                  | **exact**            | Integer quantised both ways. Every colour in a fixed stride through the whole cube.                                                                                                                                                                                                                                                                                                                                                                                 |
-| sRGB ↔ HSL                                 | **exact**            | Exact to the 8-bit step from one decimal place.                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| sRGB ↔ OKLCH                               | **fixed this round** | Was **broken** for 13,626 colours. All 16,777,216 were written as `oklch()` and read back at each precision: 3 places lost 3,532,330 colours, **4 places lost 13,626**, 5 places lost none. The default was four. The 13,626 are saturated cyans and teals with the red channel pinned at zero — `#00bec7` wrote as `oklch(0.729 0.1239 200.83)` and read back `#01bec7` — which is the corner a 266-colour corpus is least likely to contain. The default is five. |
-| `hsl(h s l)` with bare numbers             | **fixed this round** | Was **broken**: CSS Color 4 says a bare number in `hsl()` means that many percent, so `hsl(217 91 60)` is `hsl(217 91% 60%)`. It was read as a 0–1 fraction, clamped, and came back **white**. It is the spelling every Tailwind theme and every CSS custom property holding three numbers uses.                                                                                                                                                                    |
-| A percentage where a hue belongs           | **fixed this round** | Was **broken**: scaled by 360, so `hsl(50% 100% 50%)` silently became 180deg. A hue is `<number> \| <angle>` in every notation here; a percentage is now refused.                                                                                                                                                                                                                                                                                                   |
-| Named colours, `color()`, `lab()`, `hwb()` | **lossy, told**      | Refused by name, with the supported notations listed. Deliberate — resolving names means shipping the 148-entry CSS table.                                                                                                                                                                                                                                                                                                                                          |
-| Out-of-gamut OKLCH                         | **lossy, told**      | Clipped per channel and **reported** as out of gamut rather than silently corrected.                                                                                                                                                                                                                                                                                                                                                                                |
-| `rgb(50% 50% 50%)`                         | **lossy, silent**    | 50% is exactly 127.5, which the payload keeps. So hex prints `#808080` (rounded) while oklch prints the value for 127.5, and the report's own rows disagree by one 8-bit step. Cosmetic, and undisclosed.                                                                                                                                                                                                                                                           |
+| Direction                                  | Verdict                  | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------ | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| hex ↔ rgb                                  | **exact**                | Integer quantised both ways. Every colour in a fixed stride through the whole cube.                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| sRGB ↔ HSL                                 | **exact**                | Exact to the 8-bit step from one decimal place.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| sRGB ↔ OKLCH                               | **fixed this round**     | Was **broken** for 13,626 colours. All 16,777,216 were written as `oklch()` and read back at each precision: 3 places lost 3,532,330 colours, **4 places lost 13,626**, 5 places lost none. The default was four. The 13,626 are saturated cyans and teals with the red channel pinned at zero — `#00bec7` wrote as `oklch(0.729 0.1239 200.83)` and read back `#01bec7` — which is the corner a 266-colour corpus is least likely to contain. The default is five.                                       |
+| `hsl(h s l)` with bare numbers             | **fixed this round**     | Was **broken**: CSS Color 4 says a bare number in `hsl()` means that many percent, so `hsl(217 91 60)` is `hsl(217 91% 60%)`. It was read as a 0–1 fraction, clamped, and came back **white**. It is the spelling every Tailwind theme and every CSS custom property holding three numbers uses.                                                                                                                                                                                                          |
+| A percentage where a hue belongs           | **fixed this round**     | Was **broken**: scaled by 360, so `hsl(50% 100% 50%)` silently became 180deg. A hue is `<number> \| <angle>` in every notation here; a percentage is now refused.                                                                                                                                                                                                                                                                                                                                         |
+| Named colours, `color()`, `lab()`, `hwb()` | **lossy, told**          | Refused by name, with the supported notations listed. Deliberate — resolving names means shipping the 148-entry CSS table.                                                                                                                                                                                                                                                                                                                                                                                |
+| Out-of-gamut OKLCH                         | **lossy, told**          | Clipped per channel and **reported** as out of gamut rather than silently corrected.                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `rgb(50% 50% 50%)`                         | **fixed in round three** | 50% is exactly 127.5, which the payload used to keep — so hex printed `#808080` while oklch printed the value for 127.5, and the report’s own rows described colours one 8-bit step apart. `rgb()` is quantised once, at the parse, because that is what a browser does: `getComputedStyle` on `color: rgb(50% 50% 50%)` returns `rgb(128, 128, 128)`, which is asserted in both engines in `check:browsers` rather than taken on trust. `hsl()` and `oklch()` are continuous in CSS and are not touched. |
 
 The OKLCH matrices themselves were checked against the published sRGB corners:
 red is `oklch(0.628 0.258 29.23)`, green `oklch(0.866 0.295 142.5)`, blue
@@ -226,26 +271,30 @@ red is `oklch(0.628 0.258 29.23)`, green `oklch(0.866 0.295 142.5)`, blue
 
 [`src/tools/diff`](../src/tools/diff).
 
-| Output                 | Verdict                                                    | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ---------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Unified patch          | **exact**                                                  | 38 patches from real `git diff --no-index` at two context widths, committed as [`spec/git-unified.json`](../src/tools/diff/spec/git-unified.json). **32 are byte-identical; that number was 14 before this round**, because the hunk header was written `@@ -2,1 +2,1 @@` where every reference implementation writes `@@ -2 +2 @@`. Of the remaining six, four differ only in the order of the lines inside one hunk and two are the line-ending disagreement below. |
-| Unified patch, meaning | **exact**                                                  | All 38 reproduce the changed file exactly when applied, by a patch applier written for the test and validated against git's own patches first. The four that are spelled differently are the terminator cases, where git groups removals then additions and this groups each line with its replacement; both were given to real `git apply`, which produced the right bytes for each.                                                                                 |
-| Line endings           | **lossy, told** on the page, **lossy, silent** on the port | CRLF, CR and LF are normalised before comparing, always, so two files differing only in their terminators compare **equal** and the patch is **empty** where git rewrites every line. The report's `notes.lineEndings` names both sides and the view prints it; the `output` port carries an empty string with nothing attached. See [the decisions](#5-line-endings-in-the-diff).                                                                                    |
-| Final newline          | **exact**                                                  | Reported, and carried into the patch by rewriting the last line as itself — which is what `git diff` does.                                                                                                                                                                                                                                                                                                                                                            |
-| Invisible differences  | **lossy, told**                                            | A row whose two sides differ only in a BOM, a zero-width space, a combining sequence or a non-breaking space is flagged `invisible`, because two identical-looking lines are the most confusing thing a diff can show.                                                                                                                                                                                                                                                |
-| Bidi controls          | **lossy, told**                                            | Reported, and each row is isolated so the reordering cannot escape its cell.                                                                                                                                                                                                                                                                                                                                                                                          |
-| Word-level refinement  | **lossy, told**                                            | Skipped above a size, and the skip is reported rather than being indistinguishable from "nothing to refine".                                                                                                                                                                                                                                                                                                                                                          |
+| Output                                    | Verdict         | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unified patch, at the default setting     | **exact**       | 38 patches from real `git diff --no-index` at two context widths, committed as [`spec/git-unified.json`](../src/tools/diff/spec/git-unified.json). **32 are byte-identical**, re-measured in round three against the regenerated fixture — round one reported the same 32 while the unicode case was corrupted, so the number was not safe until it had been measured again. Of the remaining six, four differ in the order of the lines inside one hunk and two are the line-ending disagreement below.                                           |
+| Unified patch, with line endings compared | **exact**       | **38 of 38, byte for byte, including all six.** Every one of the six differs for one reason: with terminators normalised away, a last line with a newline and the same line without one are the SAME line, so git pairs the rows one way and this pairs them another. Set `Line endings: compare` and this tool writes the patch git writes for the whole corpus. That is the strongest single number in this document, and it only became measurable when the option existed.                                                                     |
+| Unified patch, meaning                    | **exact**       | All 38 reproduce the changed file exactly when applied, by a patch applier written for the test and validated against git's own patches first. The four that are spelled differently are the terminator cases, where git groups removals then additions and this groups each line with its replacement; both were given to real `git apply`, which produced the right bytes for each.                                                                                                                                                              |
+| Line endings                              | **lossy, told** | An option, `ignore` or `compare`, defaulting to `ignore` — which is what this tool has always done, because a file that has been through a Windows editor otherwise comes back entirely red. What was wrong was that the other case was unreachable and unsaid: two files differing only in their terminators compared **equal** and the patch was the **empty string**, which is the one answer that means the files are the same. The fact now travels WITH the patch, as a note after the last hunk.                                            |
+| The note on the patch                     | **exact**       | Placed after the hunks rather than before them, and that was measured: real `git apply` skips a leading comment only when the file headers are `a/`-prefixed, and this tool’s name no path — with a comment in front of them git reports `unable to find filename in patch at line 2` where the same patch without it applies. A note after the last hunk parses identically to no note at all in both header styles, and a patch carrying one was applied by real `git apply` and produced the right bytes.                                       |
+| Final newline                             | **exact**       | Reported, and carried into the patch by rewriting the last line as itself — which is what `git diff` does.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Invisible differences                     | **lossy, told** | A row whose two sides differ only in a BOM, a zero-width space, a combining sequence or a non-breaking space is flagged `invisible`, because two identical-looking lines are the most confusing thing a diff can show. A trailing carriage return joins them when line endings are compared, which is what keeps that option from producing `-foo` above `+foo` with nothing to say why.                                                                                                                                                           |
+| A byte order mark                         | **lossy, told** | A pasted document keeps its `\uFEFF` and the comparison sees it. A dropped FILE loses it to the decoder before this tool is called, so two files differing only in one compared equal — one pair of documents, two answers, depending on how they arrived. The comparison is deliberately NOT changed: this tool is the instrument `wireFidelity.integration.test.ts` uses to measure what a wire does to a value, and an instrument that silently corrects one of the things it measures is not one. The tool reports it instead, from the bytes. |
+| Bidi controls                             | **lossy, told** | Reported, and each row is isolated so the reordering cannot escape its cell.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Word-level refinement                     | **lossy, told** | Skipped above a size, and the skip is reported rather than being indistinguishable from "nothing to refine".                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 ## Regex
 
 [`src/tools/regex-tester`](../src/tools/regex-tester).
 
-| Operation                 | Verdict         | Evidence                                                                                                                                                                             |
-| ------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Match listing             | **exact**       | Asserted equal to `String.prototype.matchAll` — the specification's own answer to the same question — across a matrix of patterns, flags and subjects, and again under `fast-check`. |
-| Replacement               | **exact**       | `String.prototype.replace` does the substitution, so `$1`, `` $` ``, `$'`, `$$` and `$<name>` are the engine's rules rather than a reimplementation of them.                         |
-| Truncation                | **lossy, told** | The listing stops at a limit and says so, and the **count outlives the listing** so a truncated list does not misreport how many there were.                                         |
-| Catastrophic backtracking | **lossy, told** | The worker is terminated and replaced, and the tool says what happened.                                                                                                              |
+| Operation                        | Verdict         | Evidence                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Match listing                    | **exact**       | Asserted equal to `String.prototype.matchAll` — the specification's own answer to the same question — across a matrix of patterns, flags and subjects, and again under `fast-check`.                                                                                                                                                |
+| Replacement                      | **exact**       | `String.prototype.replace` does the substitution, so `$1`, `` $` ``, `$'`, `$$` and `$<name>` are the engine's rules rather than a reimplementation of them.                                                                                                                                                                        |
+| Truncation                       | **lossy, told** | The listing stops at a limit and says so, and the **count outlives the listing** so a truncated list does not misreport how many there were.                                                                                                                                                                                        |
+| Catastrophic backtracking        | **lossy, told** | The worker is terminated and replaced, and the tool says what happened.                                                                                                                                                                                                                                                             |
+| A byte order mark in the subject | **lossy, told** | U+FEFF is invisible, is a character, and sits in front of position 0 — so `^` followed by anything else does not match at the start and there was nothing to say why. Named as a `warn`. A BOM further into the subject is deliberately not named: it does not explain an anchored pattern failing, and claiming it would be noise. |
 
 ## Image
 
@@ -351,192 +400,356 @@ That is what the code says. What follows is what an instrument says.
 The other half of the question: does wiring `A → B` give what copying A's
 output and pasting it into B on `/tools` gives?
 
-| Case                                  | Verdict                          | Note                                                                                                                                                                                                                                                                       |
-| ------------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A `text` output into a `text` input   | **identical**                    | Asserted both ways for four documents, with the digest of the result compared. The wire carries the same string the Copy button puts on the clipboard.                                                                                                                     |
-| A `bytes` output into a document port | **one difference, now asserted** | A UTF-8 byte order mark is **removed** when bytes are decoded at a document port. Typing the same document into the box keeps it, because nothing decoded anything. It is conventional and almost always wanted, and it is still a byte that went in and did not come out. |
-| A `json` output into a `text` input   | **different by construction**    | There is no wire: `json` and `text` do not overlap, so the canvas refuses the connection rather than silently serialising. On `/tools` you would paste the 2-space JSON the Copy button produces.                                                                          |
-| A `bytes` output into a `bytes` input | **different by construction**    | There is no text on the clipboard that is the bytes. The canvas is the only route.                                                                                                                                                                                         |
+| Case                                  | Verdict                       | Note                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A `text` output into a `text` input   | **identical**                 | Asserted both ways for four documents, with the digest of the result compared. The wire carries the same string the Copy button puts on the clipboard.                                                                                                                                                                                                                                             |
+| A `bytes` output into a document port | **one difference, now told**  | A UTF-8 byte order mark is **removed** when bytes are decoded at a document port. Typing the same document into the box keeps it, because nothing decoded anything. It is conventional and almost always wanted, and it is still a byte that went in and did not come out — so all four document ports now say so. It stays removed; see [What the count was, and is](#what-the-count-was-and-is). |
+| A `json` output into a `text` input   | **different by construction** | There is no wire: `json` and `text` do not overlap, so the canvas refuses the connection rather than silently serialising. On `/tools` you would paste the 2-space JSON the Copy button produces.                                                                                                                                                                                                  |
+| A `bytes` output into a `bytes` input | **different by construction** | There is no text on the clipboard that is the bytes. The canvas is the only route.                                                                                                                                                                                                                                                                                                                 |
 
-## Decisions this round did not take
+## The seven decisions, taken
 
-Each of these is a real defect or a real loss, and each turns on a judgement
-that is not mine to make. They are listed with the options and a
-recommendation, not fixed.
+Round two listed seven decisions, each a real defect or a real loss turning on a
+judgement that was not its author's to make. They were decided, and round three
+implemented them. What follows is what each one turned into, and what it cost.
 
-**Still not taken after round two, on purpose.** Round two was asked to close
-the evidence gaps round one left rather than to take these, and nothing it did
-forced one of them. The nearest thing to a collision is the new
-`An empty document in a stream` row, which wants the same report channel
-decision 4 describes; it is recorded rather than fixed for exactly that reason.
+Five of the seven share a mechanism, which is why they were taken together:
+structured data had nowhere to say what it did. Adding that channel and then
+filling it is one change rather than five.
 
-### 1. How eager delimited detection should be
+### 1. Delimited detection prefers a YAML mapping
 
-**The problem.** `tags: a, b` / `names: c, d` — two lines of ordinary YAML — is
-detected as CSV, because both lines have two fields. It comes back as a
-one-row table whose columns are `tags: a` and `b`. A two-line log with one
-comma per line goes the same way. The detector asks for two records and a
-consistent field count, and two lines is a very low bar.
+**Decided:** verify instead of guessing — if a document that looks delimited
+also parses as a YAML **mapping**, prefer YAML.
 
-| Option                                                                                        | Cost                                                                                                                                                                                                                     |
-| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Leave it. Auto-detection is a guess and the source control is right there.                    | The guess is invisible — see decision 4 — so nobody looks at the control.                                                                                                                                                |
-| Require three or more records before calling something a table.                               | A genuine two-line CSV (a header and one row) stops being detected. That is a real file.                                                                                                                                 |
-| **Verify instead of guessing: if the document also parses as a YAML _mapping_, prefer YAML.** | One extra parse on an ambiguous document. A real CSV folds to a plain scalar rather than a mapping, so `name,age / ada,36` is unaffected; a CSV every one of whose cells is `key: value` would flip, which is contrived. |
+`tags: a, b` over `names: c, d` is two lines of ordinary YAML with one comma
+each, which satisfies "two records, consistent field count" exactly. It came
+back as a one-row table whose columns were `tags: a` and `b`.
 
-**Recommended:** the third, together with decision 4. It replaces a heuristic
-with a question that has an answer.
+The alternative on the table was a higher bar — three records before anything is
+a table — and it refuses a header and one row, which is the commonest real CSV
+file there is. The question asked instead has an answer: a genuine CSV folds to
+a plain scalar, not a mapping.
 
-### 2. How nested JSON should flatten to CSV
+**Cost, measured.** One extra YAML parse, of the same 64 kB prefix
+`looksDelimited` already reads, on a document that has already been decided to
+look delimited. Five realistic tables are asserted to still be tables — a header
+and one row, a header and two rows, quoted cells containing commas, a cell
+containing `time: 10`, and a table of numbers — plus a two-column TSV. The
+contrived loser is a CSV every one of whose cells is `key: value`.
 
-**The problem.** `{"user": {"name": "ada"}}` becomes a cell containing
-`{"name":"ada"}`. Reading it back gives the string, not the object. Nothing
-says so.
+### 2. A nested value stays in the cell, and is reported by path
 
-| Option                                       | Cost                                                                                                  |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Leave the JSON-in-a-cell, and **report it**. | Needs somewhere to put the report — see decision 4.                                                   |
-| Flatten to dotted columns: `user.name`.      | Ambiguous for arrays, and a key containing a dot collides. Common in the wild and lossy in a new way. |
-| Refuse a nested document for a CSV target.   | Refuses a very common and useful conversion outright.                                                 |
+**Decided:** keep the compact JSON in the cell and report it. Also report keys
+missing from some rows, since they become empty cells.
 
-**Recommended:** the first. The current behaviour is the right trade; it is the
-silence that is wrong.
+Flattening to `user.name` was the alternative, and it is ambiguous for arrays
+and collides with a key containing a dot — lossy in a new way. Refusing a nested
+document outright refuses a conversion people do every day. The current
+behaviour was the right trade; the silence was the defect.
 
-The same decision covers the second CSV loss: a key present in one row and
-absent in another becomes an empty cell, indistinguishable from a present-but-empty
-one. CSV has no other spelling for it.
+Both losses are now named **by path** — `$[0].user` — and capped at five with a
+count, because a thousand-row export with one nested column would otherwise
+produce a thousand paths and a list nobody reads is a list nobody reads.
 
-### 3. What to do about integers a double cannot hold
+### 3. Integers past 2^53 are reported, not changed
 
-**The problem.** `{"id": 12345678901234567890}` → `12345678901234567000`.
+**Decided:** keep the double, report each rounded number by path with a count,
+wherever JSON or YAML reads a number, including JWT claims.
 
-| Option                                                                         | Cost                                                                                                                                                                     |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Leave it, and **report** it: "3 numbers were rounded; the first is at `$.id`." | Needs the report channel from decision 4. Requires scanning the source for numeric literals that do not survive a round trip through `Number`, which is cheap and exact. |
-| Parse large integers as **strings**, so the digits survive.                    | Changes the type of a value silently, which is the same class of problem in the other direction. Breaks arithmetic downstream.                                           |
-| Parse them as `BigInt` and refuse to serialise.                                | `BigInt` is already refused at the JSON boundary, for good reasons; this would make a valid JSON document unconvertible.                                                 |
-| Refuse the document outright.                                                  | Refuses valid JSON that most people do not care about the precision of.                                                                                                  |
+Parsing them as strings changes the type of a value silently, which is the same
+class of problem in the other direction. `BigInt` is already refused at the JSON
+boundary. Refusing the document refuses valid JSON.
 
-**Recommended:** the first. The loss is genuinely unavoidable in a JavaScript
-program; being told about it is not.
+See [Numbers past 2^53](#numbers-past-253-unavoidable-and-no-longer-silent) for
+why the question is asked of the literal rather than of the value, which is the
+part that makes the report trustworthy rather than merely present.
 
-### 4. Structured data does not say what it detected
+### 4. Structured data says what it detected
 
-Text convert has a `Detected` output port carrying the format, the confidence
-and the reason, precisely so that a wrong guess is visible. Structured data —
-which has strictly more ways to guess wrong — has none.
+**Decided:** a `Detected` report carrying the format, the delimiter and levelled
+loss notes, visible on the panel and available as an additive output port.
 
-Adding one is additive: a new output port breaks no share link and no saved
-canvas. It is also where decisions 1, 2 and 3 would put what they need to say.
+It is `presentation: 'report'`, so `ReportView` draws it — the renderer
+`image-convert` already uses. Two rows were added to that view for the two
+things structured data measures and nothing else does: the delimiter, and the
+document count.
 
-**Recommended:** add it, as a `report`-presentation output carrying the
-detected format, the delimiter, and a levelled note per loss. It turns three
-silent losses into told ones with one change.
+Additive, which is why it could be done at all: a new output port breaks no
+share link and no saved canvas.
 
-### 5. Line endings in the diff
+**And a port is not enough on its own.** See
+[Where a loss is said](#where-a-loss-is-said).
 
-Two files differing only in their terminators compare **equal**, and the
-unified patch is empty. Git shows every line as changed; git's
-`--ignore-cr-at-eol` exists because that is often noise.
+### 5. The diff has a line-endings option
 
-| Option                                                                       | Cost                                                                                                                                  |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Leave it. The report says so and the view prints it.                         | A node wired from the patch port receives `""` with nothing attached.                                                                 |
-| Make it an option — `Line endings: ignore / compare` — defaulting to ignore. | One more control on a panel that already has four.                                                                                    |
-| Compare them always, like git.                                               | A file that has been through a Windows editor becomes an entirely red diff, which is the failure the normalisation exists to prevent. |
+**Decided:** `ignore` or `compare`, defaulting to `ignore`; when endings were
+ignored and did differ, that fact travels with the patch output.
 
-**Recommended:** the second. The default stays what it is, and the one case
-where the patch is a lie becomes reachable.
+The default stays what it was, for the reason it was chosen: a file that has
+been through a Windows editor otherwise comes back entirely red, which hides the
+real changes among thousands of phantom ones. What the option adds is that the
+one case where the patch is a lie is now reachable.
 
-### 6. Whether HTML → HTML should go through Markdown
+The note travels **after** the hunks. That was measured rather than assumed, and
+the obvious placement is the one that breaks: see the Diff table above.
 
-The "sanitise and normalise" pass converts to Markdown and back, so it is
-bounded by what Markdown can express: attributes go, a `colspan` becomes an
-empty cell, and a headerless table gains an empty header row.
+The unexpected dividend is in that table too. With the terminators in the
+comparison this tool writes the same patch git writes for all 38 oracle cases,
+including the four whose spelling had never matched.
 
-| Option                                                                 | Cost                                                                |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Leave it, and report what the pass changed.                            | Needs a diff of the two trees to report anything useful.            |
-| Sanitise only, without the Markdown trip.                              | Loses the normalisation, which is half of what people want from it. |
-| Keep both, as two targets: `HTML (sanitised)` and `HTML (normalised)`. | A fourth target on a control that has three.                        |
+### 6. Two HTML targets
 
-**Recommended:** the third. The two operations are genuinely different and the
-current control offers one name for both.
+**Decided:** `HTML (sanitised)` with no Markdown round trip, inventing nothing;
+`HTML (normalised)` as before, reporting anything the Markdown trip changes or
+invents.
 
-### 7. JSON with comments
+The control offered one word for two operations and performed the one that
+invents. `html` keeps its value in a share link — a renamed value silently drops
+back to the default, so every existing link would quietly start doing something
+else — and the new capability gets the new name.
 
-`//` and `/* */` in JSON are now **refused with the JSON parser's own error**,
-which is honest and points at the character. Supporting JSONC — stripping
-comments outside strings and re-parsing — would read the document the author
-meant, and is what `tsconfig.json`, VS Code settings and most LLM output
-actually are.
+**Writing the instrument first moved three claims in this document**, which is
+the argument for measuring rather than listing. See
+[Found this round](#found-this-round).
 
-**Recommended:** support it, as a distinct step between JSON and the YAML
-fallback, so the comment is removed rather than folded into a key. Not done
-this round because it is a new capability rather than a correction.
+### 7. JSONC is a real step
+
+**Decided:** strip comments and trailing commas outside strings, before the YAML
+fallback. Reported as JSONC with what was removed. Nothing may ever be folded
+into a key again.
+
+`stripJsonc` is string-aware, so a `//` inside a URL is four characters of a URL
+and a `/*` inside a glob is not the start of anything. It replaces what it
+removes with spaces of the same length and keeps line breaks inside block
+comments, so `JSON.parse`'s line and column still point at the character the
+user is looking at — and when the stripped document still does not parse, it is
+THAT error that is reported, rather than "there is a comment on line 2".
+
+**In front of YAML, not behind it**, which is the whole safety argument: the
+YAML fallback folds a comment and the key after it into one key, and by the time
+it is asked anything there is no comment left to fold.
+
+It is held to `jsonc-parser`, the parser Visual Studio Code uses for its own
+settings files, over 25 documents including every case that decides whether a
+stripper tracks string state.
+
+## Where a loss is said
+
+A report is worth nothing if nobody sees it, and the two routes into this app
+see different things.
+
+**On `/tools`, every output port is drawn** whether or not anything is wired to
+it, so a `report` port is visible there by construction. This document does not
+trust constructions: it is asserted in two real engines that the note has a box
+with a non-zero size, with no click anywhere.
+
+**On the canvas, a node summarises its FIRST output and nothing else** — a rule
+that is right for an answer and wrong for a caveat, because every tool's losses
+are on its second or third port. So four of round three's six reports would have
+been sentences the product really produced, on ports nobody has to wire, and
+invisible to anybody standing in front of the canvas.
+
+The node reads them. `lossSummary` collects `warn`-level notes from any output
+port presented as a `report` and prints the first on the node's face, prefixed
+`Lossy ·`, with `+N more` when there are others. The result summary moves into
+the accessible name, where it is listed separately anyway.
+
+**The level is a promise, and the presentation is a filter.** `warn` means
+something went in and did not come out; `info` means something worth knowing
+that cost nothing, and a node never prints one. `regex-tester` carries `warn`
+notes about the PATTERN on a `regex`-presented port — "your pattern has slashes
+around it" is advice, not a loss — so reading notes from every json port would
+have put that on a node's face. Both halves are asserted, including that one.
+
+The same mechanism gives `image-convert` and `video-remux` node-visible
+warnings, which they did not have: "GPS location was removed" was told on
+`/tools` and silent on a canvas node. That was a gap in the `lossy, told`
+verdicts those two tools already carried, and it closed for free.
+
+## What the count was, and is
+
+Twelve cells were `lossy, silent` at the end of round two. Every one of them:
+
+| Cell                                | Now                         | How                                                                          |
+| ----------------------------------- | --------------------------- | ---------------------------------------------------------------------------- |
+| JSON reading: integers past 2^53    | **lossy, told**             | Reported by path, asked of the literal so the report is exact                |
+| JSON/YAML → CSV/TSV                 | **lossy, told**             | Nested values and absent keys, both by path                                  |
+| YAML stream → any                   | **exact** / **lossy, told** | YAML writes a stream back; the other three say the documents became an array |
+| An empty document in a stream       | **fixed in round three**    | `---` starts a document; three references agree                              |
+| Anything → CSV: LF, no terminator   | **lossy, told**             | An `info` note on every CSV write                                            |
+| Detection never says what it chose  | **fixed in round three**    | The `Detected` report                                                        |
+| Markdown → Markdown                 | **lossy, told**             | Three named constructs, plus reformatting at `info`                          |
+| HTML → HTML                         | **lossy, told**             | Split in two, and both halves measured rather than listed                    |
+| Base64: non-canonical trailing bits | **lossy, told**             | The character as written and the canonical spelling of the same bytes        |
+| JWT: large numeric claims           | **lossy, told**             | The same scanner, on a `Report` port                                         |
+| Colour: `rgb(50% 50% 50%)`          | **fixed in round three**    | Quantised once, against what a real browser reports                          |
+| Diff: line endings on the port      | **lossy, told**             | An option, and a note that travels with the patch                            |
+
+And two cells this round made honest rather than found:
+
+| Cell                             | Was                 | Now             |
+| -------------------------------- | ------------------- | --------------- |
+| Markdown → HTML                  | `exact`, 95.7%      | **lossy, told** |
+| A byte order mark, at four ports | asserted in a table | **lossy, told** |
+
+**Where a note lives, and where it does not.** `structured-data`,
+`text-convert`, `base64` and `jwt-decode` carry theirs on a `report` port, which
+is what the canvas node reads. `diff` and `regex-tester` have no report port and
+are not getting one for a single flag: a third output on a 224px node is a
+permanent cost for a fact that belongs in the thing it contradicts. So diff's
+goes into its node summary, and regex's stays on the panel - where the node's
+own answer, the match count, is the thing the note explains rather than
+contradicts.
+
+**The byte order mark** was recorded in
+[the wire against the clipboard](#the-wire-against-the-clipboard) as "one
+difference, now asserted" — which is true and is not the same as being told. A
+BOM is removed when bytes are decoded at a document port and kept when the same
+document is typed into the box, so one file has two answers depending on how it
+arrived. It stays removed; all four document ports now say so:
+
+- `structured-data` and `text-convert` report it on their report ports.
+- `diff` reports it beside the rows, and deliberately does **not** put the
+  character back — that tool is the instrument the wire-fidelity suite uses, and
+  an instrument that corrects one of the things it measures is not one.
+- `diff`'s node stops saying `Identical`, which is the one summary in the set
+  that asserts sameness rather than measuring something - a file that had a mark
+  and a file that did not compared equal, and the node said so about two files
+  that are not the same.
+- `regex-tester` names it as a `warn`, because a BOM sits in front of position 0
+  and is exactly why an anchored pattern finds nothing with no explanation.
+
+## Markdown to HTML, relabelled
+
+The cell said `exact`, 95.7%. Those two things cannot both be true: `exact` in
+this document means the output is the one an external reference gives, and 624
+of 652 is not that.
+
+The 28 CommonMark examples and 3 GFM examples that differ were re-run, and each
+was asked the question that decides whether it matters: **would an LLM or a
+README realistically produce this?**
+
+| Group                         | Count | Realistic?                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Raw HTML the allow-list drops | 22    | **Yes, constantly.** A `<div class>` wrapper, a `<span style>`, an element nobody recognises. This is the group the new report is for.                                                                                                                                                                                                                                    |
+| URL schemes not allowed       | 4     | **Rarely.** `irc:`, `a+b+c:`, `made-up-scheme:`, `localhost:5001/foo`. A README with an `irc:` link exists; it is not a thing an LLM writes. The link's text is kept and the link is unwrapped.                                                                                                                                                                           |
+| A scheme's case               | 1     | **No.** `<MAILTO:FOO@BAR.BAZ>`. Schemes are case-insensitive (RFC 3986), so lowercasing produces the same URL — and before it, the example lost its href entirely.                                                                                                                                                                                                        |
+| A relative URL with a colon   | 1     | **No.** `[link](foo\):)`. Upstream, obscure, and not fixable from outside without re-implementing the protocol check.                                                                                                                                                                                                                                                     |
+| GFM: task lists and `ftp:`    | 3     | **No, and two of them are this converter being closer to reality than the spec text.** Two are task lists, where remark-gfm emits `class="contains-task-list"` and github.com does too, while the spec’s expected output does not. The third is `ftp://` not being linkified, which the upstream extension does not do and which Chrome and Firefox both removed in 2021. |
+
+So one group of the five is a document a person actually has, and it is the one
+that is now reported. **Measuring it moved the claim as well**: the allow-list
+is considerably more generous than "strip the markup" — `<details>`,
+`<summary>`, `<kbd>` and `<img align>` all survive — and what goes is an element
+the list does not name or an attribute it does not permit.
+
+**One class of removal is deliberately not reported.** GFM's tagfilter escapes
+`<script>` and `<iframe>` into visible text before anything else sees them, so
+they arrive in the output as `&lt;script&gt;`. Nothing is missing and the reader
+can see exactly what happened; a note would claim a removal that did not occur.
+
+## What changed for a person pasting a document
+
+Round one ran "nineteen realistic pasted documents" before and after its
+detection fixes and reported that the only changes were the ones it listed. That
+was true and it was not re-runnable: the corpus was never written down.
+
+Round three reconstructed one, ran it against the round-two tree (commit
+`2853062`, in a git worktree) and against this one, and compared field by field.
+**Twenty-nine documents, three changes, and all three are decisions:**
+
+| Document                         | Before                            | After                         |
+| -------------------------------- | --------------------------------- | ----------------------------- |
+| A stream ending in a separator   | `{apiVersion: v1, kind: Service}` | `[{apiVersion: v1, …}, null]` |
+| A tsconfig-shaped JSONC document | refused: "not valid JSON"         | read, reported as JSONC       |
+| Two lines of YAML with one comma | a one-row table                   | a mapping                     |
+
+The other 26 are byte-identical: pretty-printed JSON, compact JSON, an array of
+objects, a trailing comma, single quotes, unquoted keys, a JavaScript object
+literal, NDJSON, a Kubernetes stream, block and folded scalars, a YAML mapping
+with comments, a sequence of mappings, comma, semicolon and tab exports, an
+Excel `sep=` export, a quoted multi-line cell, a pipe export, prose, a ragged
+CSV, a scalar, an empty document, big integers in JSON and YAML, and a literal
+newline inside a JSON string.
+
+It is committed this time, as
+[`spec/detection-corpus.json`](../src/tools/structured-data/spec/detection-corpus.json),
+with an assertion per document per question.
 
 ## Found this round
 
-Two defects outside any conversion, both of which made evidence elsewhere less
-true than it looked.
+Round three's job was to take decisions rather than to find things, and it found
+five anyway. Four of the five are the same shape: **a claim in this document
+that the instrument, once written, disagreed with.**
 
-**`scripts/generate-diff-oracle.py` silently corrupted its own fixture on
-Windows.** Python writes `sys.stdout` in the platform's encoding, which is
-cp1252 on a Windows console, and the generator writes `ensure_ascii=False`. Run
-there, it exited 0 and wrote `café` as a cp1252 byte that is not valid UTF-8 —
-so the one case in the git fixture that is about non-ASCII text stopped
-containing any, and the corrupted fixture would have been committed. The CSV
-generator has the identical fault and is the lucky one: its corpus contains a
-coffee cup, which cp1252 cannot encode at all, so it crashes instead. Both now
-choose their encoding rather than inheriting it, and both fixtures then
-reproduce **byte for byte** from a clean checkout.
+**`class` and `data-*` are dropped by the SANITISER, not by the Markdown round
+trip.** The `HTML → HTML` row said the round trip did it, which implies that
+switching to a sanitise-only pass would keep them. It would not. Found by
+comparing the three documents — input, sanitised, normalised — instead of
+listing the transformations. The report now attributes each half correctly, and
+`HTML (sanitised)` reports the allow-list's own removals rather than claiming to
+lose nothing.
 
-**A node could fail because a neighbour ran away.** See
-[The bystander](#the-bystander-a-node-failing-for-something-it-did-not-do).
+**A footnote does not become `<sup>` markup.** It becomes an ordinary link to an
+anchor, plus a `## Footnotes` section with a list under it. The note says what
+actually happens.
 
-And three claims in prose that the code did not back:
+**`$$…$$` display maths does not become an inline code span.** It becomes a
+fenced block tagged `math`, which is what GitHub renders.
 
-| Claim                                                                        | Was                                                                                                                                       |
-| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| README: OKLCH round-tripping is held to "all 16,777,216 sRGB colours, swept" | The committed test walks a fixed stride of 166,112. The full sweep was run **offline**, to calibrate the stride and choose the precision. |
-| README: "Each fixture is generated by a script in `scripts/`"                | True of three. The CommonMark and GFM suites are upstream files pinned by version, and the RFC and FIPS vectors are written inline.       |
-| architecture.md: `attachments.test.ts`                                       | The file is `attachments.test.tsx`. It does hold the line it is cited for.                                                                |
+**The allow-list is more generous than this document implied.** `<details>`,
+`<summary>`, `<kbd>` and `<img align>` all survive `Markdown → HTML`. Every
+sentence anybody writes about "the sanitiser strips your markup" should name
+what it actually strips.
+
+And one that is not about prose:
+
+**One of the 94 yaml-test-suite error cases was refused for the wrong reason.**
+SF5V is `%YAML 1.2` twice over a bare `---`, which the spec forbids. It was
+refused — by the rule that a document with nothing in it is not a document, with
+the message "nothing to parse: the input is empty", which is not what is wrong
+with it. So "94 of 94 refused" included one coincidence, and correcting the
+empty-document rule made the parser accept a document the spec says is invalid.
+The `yaml` library does not flag it at any log level, so it is now checked here:
+one document, one `%YAML` directive.
+
+That is the second time in three rounds that fixing one thing has exposed an
+assertion that was passing for a reason nobody had checked. The pattern is worth
+naming: **a test that passes for the wrong reason is invisible until the right
+reason changes.**
 
 ## What was looked for and not found
 
 Stated because an absence is only worth anything if somebody says what they
-looked for.
+looked for. Round one and two's list still holds; these are round three's.
 
-- **CSV parsing disagreeing with Python.** 32 documents, including every
-  awkward case that came to mind. Not one disagreement. The CSV parser is the
-  most trustworthy thing in this repository.
-- **Base64 and hash vectors failing.** Every RFC and FIPS vector passes,
-  including the six added this round.
-- **The OKLCH matrices being wrong.** They match the published values at the
-  sRGB corners. The bug was in how many digits were printed, not in the maths.
-- **Text corruption crossing a wire.** Sixteen hostile payloads, exact. The
-  only difference found anywhere is the BOM, which is the decoder's and is
-  documented.
-- **A tool throwing across the execution boundary.** None found.
-- **Share links or saved graphs carrying input data.** None; the existing
-  assertion was rewritten last round to actually look.
-- **The regex listing disagreeing with `matchAll`.** No disagreement.
-- **A YAML document the suite marks as an error being accepted.** 94 of them,
-  none accepted. The negative control in the same file shows the assertion can
-  tell a refusal from an acceptance, because 94 out of 94 on a first run is the
-  shape of a test that is not running.
-- **A generator that does not reproduce its fixture.** Both existing
-  generators now do, byte for byte, from a clean checkout — but only after the
-  encoding fault below was fixed. See [Found this round](#found-this-round).
-- **Flakiness in the remaining property tests.** Every file containing an
-  `fc.assert` was run 30 times, 610 tests a run, with a fresh seed each time.
-  No failure. The colour test that lost one run in four was the only one, and
-  it was fixed last round.
-- **Over-refusal from this round's fixes.** Nineteen realistic pasted documents
-  — pretty-printed JSON, trailing commas, single quotes, unquoted keys, NDJSON,
-  a Kubernetes-style stream, block and folded scalars, semicolon CSV, TSV —
-  were run before and after. The only behaviour changes are the ones listed as
-  fixed.
+- **A report that fires on input that lost nothing.** Every note added this
+  round has a negative control beside it — the same shape of document with the
+  loss removed — and several are the whole reason a design choice was made: an
+  integer past 2^53 that a double holds EXACTLY produces no note, a key whose
+  value is the empty string produces no note, JSON with no comment in it is not
+  described as JSONC, a `//` inside a URL is not a comment, a plain paragraph
+  through `HTML → HTML` reports nothing, and Markdown that comes back byte for
+  byte says nothing at all.
+- **A behaviour change nobody asked for.** Twenty-nine realistic documents run
+  against the round-two tree and against this one. Three changed and all three
+  are decisions. See
+  [What changed for a person pasting a document](#what-changed-for-a-person-pasting-a-document).
+- **The 32-of-38 diff number being an artefact of the corrupted fixture.** Round
+  one measured it while `scripts/generate-diff-oracle.py` was writing cp1252 into
+  a file it declared as UTF-8. Re-measured against the regenerated fixture: still
+  32, and the six that differ are the six that were named. It was worth
+  re-asking; the answer did not move.
+- **A note that says a stream survived when it did not.** The first version of
+  the stream note was written at read time and told a YAML-to-YAML conversion
+  that its stream "became an array" while a stream sat in the output beside it.
+  It is written from the WRITER now, which is the only place that knows.
+- **A canvas node that reports a loss it did not have.** Asserted in two engines,
+  with the negative control in the same run.
+- **The `report` ports changing what any tool produces.** `output` and `data`
+  are byte-identical either way; the reports are additive. The JWT tool's decoded
+  value and signature verdict are asserted unchanged beside the new note.
 
 ## Still unverified, and how to verify it
 
@@ -545,64 +758,61 @@ In the order I would do them.
 1. **JWT beyond HS256.** RFC 7515 appendices A.2 (RS256) and A.3 (ES256) carry
    complete key material and signatures. Two more fixtures.
 2. **The worker boundary, with hostile text.** Everything in
-   `wireFidelity.integration.test.ts` runs on the main thread, because jsdom
-   has no Worker. A structured clone of a string containing a lone surrogate,
-   a NUL and an astral character should be asserted in
-   `check:browsers`, in both engines, over a real `postMessage`.
-3. **Markdown → HTML for the 28 CommonMark failures.** Each has a cause
-   recorded; none has been re-examined since. Some may now pass.
-4. **Image resampling.** No reference. A fixed 8×8 pattern downscaled by a
-   known factor, compared against the same operation in a reference resampler
-   run offline and committed as expected pixels, would turn `not verified` into
-   a verdict.
-5. **The video tool's output, played.** Still nothing in this repository has
+   `wireFidelity.integration.test.ts` runs on the main thread, because jsdom has
+   no Worker. A structured clone of a string containing a lone surrogate, a NUL
+   and an astral character should be asserted in `check:browsers`, in both
+   engines, over a real `postMessage`.
+3. **Image resampling.** No reference. A fixed 8×8 pattern downscaled by a known
+   factor, compared against the same operation in a reference resampler run
+   offline and committed as expected pixels, would turn `not verified` into a
+   verdict.
+4. **The video tool's output, played.** Still nothing in this repository has
    played a file it made.
-6. **The 29 YAML cases the suite describes only as an event stream.** They
-   carry no `in.json`, so the fixture cannot decide them and the count is
-   asserted rather than the cases being dropped. Reading the suite's
-   `test.event` files and comparing a composed event stream would decide them;
-   it needs an event emitter this tool does not have.
-
-7. **Our YAML writer against a third implementation.** js-yaml is one
-   independent reader. PyYAML settled the one disagreement by hand this round
-   (see the writing table), but it is not in the suite — a generator that runs
-   our writer's output through CPython and commits the answers would make the
-   writing row rest on two references rather than one and a footnote.
+5. **The 29 YAML cases the suite describes only as an event stream.** They carry
+   no `in.json`, so the fixture cannot decide them and the count is asserted
+   rather than the cases being dropped. Reading the suite's `test.event` files
+   and comparing a composed event stream would decide them; it needs an event
+   emitter this tool does not have.
+6. **Our YAML writer against a third implementation.** js-yaml is one independent
+   reader. PyYAML settled two disagreements by hand — the `\n` block scalar in
+   round two and the empty-document rule in round three — but it is not in the
+   suite. A generator that runs our writer's output through CPython and commits
+   the answers would make the writing row rest on two references rather than one
+   and a footnote.
+7. **`compareMarkup` against an element that MOVED.** It counts what each
+   document contains, so an element that gained a parent is not reported and an
+   attribute whose value changed is not either. Both are stated in the code; the
+   second one has a real instance — the sanitiser namespaces `id` to
+   `user-content-*` — which is documented elsewhere and is not reported by this
+   instrument.
 
 ## A plan for the rounds after this one
 
-**Round two — done, and it was not the decisions.** It was asked for the
-evidence instead: YAML against the suite and against js-yaml, the nine skips in
-`check:browsers` examined one at a time, the generators re-run from a clean
-checkout, every randomised test run thirty times, and the worker-wedge question
-settled by measurement. It found a product defect on the canvas, a generator
-that silently corrupted its own fixture, one silent loss in YAML streams and
-three claims in prose the code did not back.
+**Round two — done.** The evidence: YAML against the suite and against js-yaml,
+the nine skips in `check:browsers` examined one at a time, the generators re-run
+from a clean checkout, every randomised test run thirty times, and the
+worker-wedge question settled by measurement.
 
-**Round three — take the decisions.** The seven above, in one pass, because
-five of them share a mechanism: structured data needs somewhere to say what it
-did. Adding that port and then filling it is one change, not five — and the
-YAML stream's dropped empty document now wants the same channel, which makes it
-six.
+**Round three — done, and it was the decisions.** All seven, plus the five
+smaller silent losses and the byte order mark. The `lossy, silent` column is
+empty. Four cells turned out to be **fixable** rather than merely reportable,
+which was not the expectation going in: the empty document in a stream, the
+delimited-detection guess, the colour quantisation, and the YAML stream itself.
 
-**Round four — the boundaries jsdom cannot see.** The worker boundary with
-hostile text, plus a pass over `check:browsers` asking of every check the
-question the negative-assertion audit asked: can this fail? Round two did that
-for the skips and found one worth converting; it did not do it for the
-assertions.
+**Round four — the boundaries jsdom cannot see.** Unchanged from round two's
+plan, and now with one more item: the worker boundary with hostile text, plus a
+pass over `check:browsers` asking of every check the question the
+negative-assertion audit asked — can this fail? Round two did that for the skips
+and found one worth converting; it did not do it for the assertions. Round
+three's SF5V finding is the same question asked of a different suite, and it
+found something, which is an argument for asking it everywhere.
 
-**Round five — the two binary tools.** Image resampling against a reference,
-and the video tool's output played by something. Both need work outside the
-test suite, which is why they are last rather than because they matter least.
+**Round five — the two binary tools.** Image resampling against a reference, and
+the video tool's output played by something. Both need work outside the test
+suite, which is why they are last rather than because they matter least.
 
 Running through all of them: **every `lossy, silent` cell should become
-`lossy, told` or `exact`.** That is the whole of what this document is for, and
-the count of them is the measure. It is **twelve** today — eleven after round
-one, plus the YAML stream's empty document. Round three, if the decisions go
-the way they are recommended, takes seven of those: the three inside structured
-data's conversions, its silence about what it detected, the JWT claim, the
-diff's patch port, and the empty document.
-
-The remaining five are smaller and each needs its own answer: base64's
-non-canonical trailing bits, colour's percentage rounding, the YAML stream
-becoming a sequence, and text convert's two normalisation passes.
+`lossy, told` or `exact`.** That was the whole of what this document was for,
+and the count was the measure. It is **zero**. What replaces it as the measure
+is harder and is round four's: of everything this document asserts, how much
+could fail?

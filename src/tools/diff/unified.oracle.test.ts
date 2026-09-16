@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeDiff, toUnified } from './compute';
+import { computeDiff, toUnified, type LineEndingMode } from './compute';
 import oracle from './spec/git-unified.json';
 
 /**
@@ -121,9 +121,10 @@ function applyUnified(original: string, hunks: string): string | null {
   return out.join('');
 }
 
-function ourHunks(entry: Case): string {
+function ourHunks(entry: Case, lineEndings: LineEndingMode = 'ignore'): string {
   const report = computeDiff(entry.original, entry.changed, {
     whitespace: 'none',
+    lineEndings,
     ignoreCase: false,
     refineWords: false,
     context: entry.context,
@@ -132,27 +133,47 @@ function ourHunks(entry: Case): string {
   return toUnified(report.value, entry.context).replace(/^--- original\n\+\+\+ changed\n/, '');
 }
 
+/** The patch without the note `toUnified` appends, for a spelling comparison. */
+function withoutNote(patch: string): string {
+  return patch.replace(/^# Line endings differ:.*\n/m, '');
+}
+
 /**
- * The four cases whose spelling differs from git's, named rather than
- * detected. A fifth appearing is a failure, not a quietly widened exception.
+ * The four cases whose spelling differs from git's AT THE DEFAULT SETTING,
+ * named rather than detected. A fifth appearing is a failure, not a quietly
+ * widened exception.
+ *
+ * They all differ for one reason, and it is the same reason the `crlf against
+ * lf` case does: with terminators normalised away, a last line with a newline
+ * and the same line without one are the same line, so git pairs the rows one
+ * way and this pairs them another. Both are legal and both apply. With
+ * `lineEndings: compare` all four match git exactly, which is asserted below -
+ * so this list is a consequence of the default rather than a limitation of the
+ * writer.
  */
 const SPELLED_DIFFERENTLY = ['loses its final newline', 'gains a final newline'];
 
 /**
- * The case where this tool and git DISAGREE rather than differ in spelling.
+ * The case where this tool and git DISAGREE rather than differ in spelling -
+ * at the DEFAULT setting, and nowhere else any more.
  *
- * This tool normalises CRLF, CR and LF to one terminator before comparing, so
- * two files that differ only in their line endings come out equal and the
- * unified patch is EMPTY. Git shows every line as changed. Neither is a bug in
- * the other: git's own `--ignore-cr-at-eol` exists because the noise is often
- * not what a reader wants, and this tool takes that as its default.
+ * With `lineEndings: ignore`, which is the default, CRLF, CR and LF are
+ * normalised to one terminator before comparing, so two files that differ only
+ * in their line endings come out equal and the unified patch has no hunks. Git
+ * shows every line as changed. Neither is a bug in the other: git's own
+ * `--ignore-cr-at-eol` exists because the noise is usually not what a reader
+ * wants, and this tool takes that as its default.
  *
- * What is worth knowing is where the difference goes. It is on the report -
- * `notes.lineEndings` names both sides, and the view prints it - and it is NOT
- * on the patch, which has no way to say it. So a person reading the tool page
- * is told; a node wired from the `output` port receives an empty string. That
- * is written up in `docs/conversion-matrix.md` as a decision to take rather
- * than as a thing this test is happy about.
+ * TWO THINGS CHANGED IN ROUND THREE, and they are separate.
+ *
+ *  - The setting is REACHABLE. `lineEndings: compare` makes the terminators
+ *    part of the comparison, and at that setting this tool writes the same
+ *    patch git writes for all 38 cases, byte for byte. See below - that
+ *    assertion is the strongest evidence in this file, because it covers the
+ *    four final-newline cases that had never matched git's spelling either.
+ *  - The fact TRAVELS WITH THE PATCH at the default setting, instead of only
+ *    being on the report the view prints. A node wired from the `output` port
+ *    used to receive `""` for two files that really are different.
  */
 const NORMALISES_LINE_ENDINGS = ['crlf against lf'];
 
@@ -197,18 +218,30 @@ describe('this tool against git diff', () => {
     cases
       .filter((entry) => NORMALISES_LINE_ENDINGS.includes(entry.name))
       .map((entry) => [`${entry.name} at -U${entry.context.toString()}`, entry] as const),
-  )('writes no patch where git rewrites every line: %s', (_name, entry) => {
+  )('writes no hunks where git rewrites every line, and says so: %s', (_name, entry) => {
     // The disagreement, asserted as itself. git has something to say here...
     expect(entry.hunks).toContain('@@');
 
-    // ...and this tool has nothing to put in a patch, because it compared the
-    // two files with their terminators normalised.
-    expect(ourHunks(entry)).toBe('');
+    // ...and this tool has no HUNK to write, because at the default setting it
+    // compared the two files with their terminators normalised.
+    const patch = ourHunks(entry);
+    expect(patch).not.toContain('@@');
 
-    // The difference is not lost, it is on the other port. A negative
-    // assertion above needs this positive one beside it.
+    /*
+     * THE PROVING TEST FOR THE PATCH'S OWN NOTE.
+     *
+     * This used to assert the empty string, and the empty string is the one
+     * answer that means "these two files are the same". The patch now carries
+     * the fact the rows cannot: both terminators by name, and what to set to
+     * see them.
+     */
+    expect(patch).toContain('# Line endings differ: original CRLF, changed LF.');
+    expect(patch).toContain('They were ignored');
+
+    // The difference is on the report as well, which is where it always was.
     const report = computeDiff(entry.original, entry.changed, {
       whitespace: 'none',
+      lineEndings: 'ignore',
       ignoreCase: false,
       refineWords: false,
       context: entry.context,
@@ -216,8 +249,52 @@ describe('this tool against git diff', () => {
     expect(report.ok).toBe(true);
     if (!report.ok) return;
     expect(report.value.identical).toBe(false);
-    expect(report.value.notes.lineEndings).toEqual({ original: 'crlf', changed: 'lf' });
+    expect(report.value.notes.lineEndings).toEqual({
+      original: 'crlf',
+      changed: 'lf',
+      mode: 'ignore',
+    });
   });
+
+  /*
+   * THE NEGATIVE CONTROL FOR THAT NOTE.
+   *
+   * Every other case in the corpus has the same terminators on both sides, and
+   * not one of their patches may mention line endings. A note that appears on
+   * an ordinary diff is a note nobody reads on the day it matters - and this is
+   * also what caught the first version of it, which fired for "empty against
+   * one line" because an empty file's terminator is `none`.
+   */
+  it.each(
+    comparable.map((entry) => [`${entry.name} at -U${entry.context.toString()}`, entry] as const),
+  )('says nothing about line endings where they agree: %s', (_name, entry) => {
+    expect(ourHunks(entry)).not.toContain('# Line endings differ');
+  });
+
+  /*
+   * AND THE WHOLE CORPUS AT THE OTHER SETTING, which is the strongest thing
+   * this file says.
+   *
+   * With the terminators in the comparison, this tool writes the patch git
+   * writes for ALL 38 cases, character for character - including the four
+   * final-newline cases whose spelling had never matched, because what made
+   * them differ was that a last line with no terminator and the same line with
+   * one were the same line to the comparison. Rows are paired the way git pairs
+   * them once that stops being true.
+   */
+  it.each(cases.map((entry) => [`${entry.name} at -U${entry.context.toString()}`, entry] as const))(
+    'writes the same hunks git writes when line endings are compared: %s',
+    (_name, entry) => {
+      expect(withoutNote(ourHunks(entry, 'compare'))).toBe(entry.hunks);
+    },
+  );
+
+  it.each(cases.map((entry) => [`${entry.name} at -U${entry.context.toString()}`, entry] as const))(
+    'writes a patch that reproduces the changed file when line endings are compared: %s',
+    (_name, entry) => {
+      expect(applyUnified(entry.original, ourHunks(entry, 'compare'))).toBe(entry.changed);
+    },
+  );
 
   it.each(
     cases

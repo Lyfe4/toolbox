@@ -460,7 +460,7 @@ describe('connecting without a pointer', () => {
      * keystrokes this flow always took.
      */
     const ports = await screen.findByRole('dialog', { name: /Connect from which port/ });
-    expect(within(ports).getAllByRole('option')[0]).toHaveTextContent('Output');
+    expect(within(ports).getAllByRole('option')[0]).toHaveTextContent('Result');
     await user.keyboard('{Enter}');
 
     const dialog = await screen.findByRole('dialog', { name: /Connect to which input/ });
@@ -486,8 +486,9 @@ describe('connecting without a pointer', () => {
     await user.keyboard('c');
 
     const dialog = await screen.findByRole('dialog', { name: /Connect from which port/ });
-    // structured-data: two outputs and one input, each reachable.
-    expect(within(dialog).getAllByRole('option')).toHaveLength(3);
+    // structured-data: three outputs and one input, each reachable. The third
+    // output is `report`, the Detected port added in round three.
+    expect(within(dialog).getAllByRole('option')).toHaveLength(4);
     expect(within(dialog).getByRole('group', { name: 'Outputs' })).toBeInTheDocument();
     expect(within(dialog).getByRole('group', { name: 'Inputs' })).toBeInTheDocument();
   });

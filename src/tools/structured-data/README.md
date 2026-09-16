@@ -185,12 +185,12 @@ unchanged — see the schema notes below.
 | A YAML key that is itself a collection              | Refused                                                    |
 | Anything nested deeper than 512                     | Refused as too deep                                        |
 | Multi-document YAML                                 | An array of documents                                      |
-| An integer beyond 2^53                              | **Silently rounded.** See below                            |
+| An integer beyond 2^53                              | **Rounded, and reported by path.** See below               |
 
 The one entry in that table that breaks the rule at the top of this file is the
-last one, and it is not fixable inside this tool.
+last one, and the loss itself is not fixable inside this tool. The silence was.
 
-### Integers beyond 2^53 lose precision, silently
+### Integers beyond 2^53 lose precision, and say so
 
 ```
 {"id": 1234567890123456789}   ->   {"id": 1234567890123456800}
@@ -204,6 +204,16 @@ JavaScript program.
 
 Categorised honestly: **upstream, no viable workaround.** The reproduction above
 is a named regression test, so the exact behaviour is pinned rather than assumed.
+
+**IT IS REPORTED.** Every integer literal in the source is tested with
+`BigInt(literal) !== BigInt(Number(literal))`, which is exact, and each one that
+fails is named by path on the `Detected` report - visible on `/tools` and printed
+on the canvas node. The question is asked of the LITERAL rather than of the
+parsed value on purpose: `9007199254740994` is 2^53 + 2, which
+`Number.isSafeInteger` rejects and which a double holds perfectly, so the obvious
+implementation reports a number that was never rounded. The note also says where
+to go: CSV and TSV read every cell as a string and have no numeric ceiling at
+all.
 
 **Rejected: refusing the document.** API responses with snowflake ids are among
 the most common things anybody would paste here, and most of the time the id is
@@ -222,10 +232,17 @@ answer and it is not a change to this tool: it means a new field on the result
 type every tool returns, carried across the worker protocol and rendered in two
 UIs. Out of scope for a hardening pass on one tool, and worth doing properly.
 
-A lighter version of the same idea — a `report`-shaped OUTPUT PORT on this tool
-alone, the way `text-convert` has `Detected` — would carry this note and three
-others that are currently silent, and is written up as a decision to take in
-[docs/conversion-matrix.md](../../../docs/conversion-matrix.md#4-structured-data-does-not-say-what-it-detected).
+**Taken instead: a `report`-shaped OUTPUT PORT on this tool alone**, the way
+`text-convert` has `Detected`. It carries this note and four others that used to
+be silent - the format and delimiter that were detected, a nested value written
+into a cell, a key absent from some rows, a stream that became an array - and it
+is additive, so no share link and no saved canvas changed.
+
+A port is drawn on `/tools` and is invisible on a canvas node, where a node
+summarises its first output and nothing else. So the node reads the report's
+`warn`-level notes and prints the first on its own face. Both halves are
+asserted in two real engines; see
+[Where a loss is said](../../../docs/conversion-matrix.md#where-a-loss-is-said).
 
 ### Spreadsheet formulas are written out exactly as given
 
@@ -441,14 +458,19 @@ other three were measured against.
 Things that are true, that we have decided not to change, and that will not be
 fixed by a patch to this tool:
 
-1. **Integers beyond 2^53 round.** Described above. Upstream, no workaround.
+1. **Integers beyond 2^53 round.** Described above. Upstream, no workaround -
+   and reported by path, which is the part that was in this list's gift.
 2. **CSV formula injection is not escaped.** Described above. Deliberate.
 3. **`null` and `""` are the same cell.** CSV has no null. Round-tripping JSON
    through CSV turns every null into an empty string.
 4. **Nested values in CSV cells do not come back.** They are written as compact
    JSON and read back as the string containing that JSON. Keeping them beats
-   refusing a whole document over one nested field, and it is one-way.
-5. **A YAML stream becomes an array, and an array does not become a stream.**
+   refusing a whole document over one nested field, and it is one-way. Reported
+   by path, along with any column some row did not have.
+5. **A YAML stream becomes an array for every target but YAML.** A YAML target
+   writes the stream back as a stream, with a `---` in front of each document;
+   JSON, CSV and TSV have no document separator, and the report says which of
+   the two happened.
 6. **A JSON `1.0` comes back as `1`.** A double has no memory of its notation.
 7. **`sep=` in a first line is always the Excel directive**, so a genuine CSV
    whose first cell is literally `sep=;` cannot be read as data. That convention

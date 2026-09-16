@@ -389,3 +389,101 @@ describe('RFC 7515 appendix A.1', () => {
     expect(verification.status).toBe('invalid');
   });
 });
+
+/* ========================================================================== *
+ * Claims a double cannot hold
+ * ========================================================================== */
+
+describe('a numeric claim past 2^53', () => {
+  /*
+   * A `sub` or a `jti` that is a 64-bit database key, a Discord or Twitter
+   * snowflake, or a nanosecond timestamp is rounded by `JSON.parse` - so the
+   * decoder shows a DIFFERENT NUMBER from the one the issuer signed, with
+   * nothing to say so. It is unavoidable in a JavaScript program and there is
+   * no reason for it to be quiet.
+   *
+   * The token itself is built by hand rather than with `tokenOf`, because
+   * `JSON.stringify` of a rounded number would produce the rounded digits and
+   * there would be nothing left to find.
+   */
+  const bigToken = (claims: string): string =>
+    `${b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))}.${b64url(claims)}.c2ln`;
+
+  async function reportOf(token: string): Promise<string> {
+    const result = await jwtTool.run({
+      inputs: { input: { type: 'text', text: token } },
+      options: {},
+      context,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return '';
+    const report = result.value.report;
+    return report?.type === 'json' ? JSON.stringify(report.data) : '';
+  }
+
+  it('reports the claim by path, with what it became', async () => {
+    const report = await reportOf(bigToken('{"sub":12345678901234567890}'));
+
+    expect(report).toContain('The claim at payload.sub was rounded');
+    expect(report).toContain('12345678901234567890 became 12345678901234567000');
+    expect(report).toContain('"level":"warn"');
+  });
+
+  it('counts several', async () => {
+    const report = await reportOf(
+      bigToken('{"sub":12345678901234567890,"jti":98765432109876543210}'),
+    );
+    expect(report).toContain('2 claims were rounded');
+  });
+
+  /*
+   * THE NEGATIVE CONTROLS.
+   *
+   * An ordinary token must say nothing, and - the one that matters - neither
+   * must a claim that is past 2^53 and EXACTLY REPRESENTABLE. 9007199254740994
+   * is 2^53 + 2: `Number.isSafeInteger` says false and a double holds it
+   * perfectly, so the obvious implementation reports a number that was never
+   * rounded.
+   */
+  it('says nothing about an ordinary token', async () => {
+    const report = await reportOf(tokenOf({ alg: 'HS256' }, { sub: 'ada', exp: 1_700_000_000 }));
+    expect(report).toContain('"notes":[]');
+  });
+
+  it('says nothing about an integer past 2^53 that a double holds exactly', async () => {
+    const report = await reportOf(bigToken('{"sub":9007199254740994}'));
+    expect(report).toContain('"notes":[]');
+  });
+
+  it('says nothing about a long numeric STRING, which is how issuers avoid this', async () => {
+    const report = await reportOf(bigToken('{"sub":"12345678901234567890"}'));
+    expect(report).toContain('"notes":[]');
+  });
+
+  it('leaves the decoded value and the verdict exactly as they were', async () => {
+    // The report is additive. The claims still say what `JSON.parse` made of
+    // them, and the signature verdict is untouched - the rounding happens after
+    // the bytes that were signed have already been read.
+    const result = await jwtTool.run({
+      inputs: { input: { type: 'text', text: bigToken('{"sub":12345678901234567890}') } },
+      options: {},
+      context,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const output = result.value.output;
+    expect(output?.type).toBe('json');
+    if (output?.type !== 'json' || !isJsonObject(output.data)) return;
+    const payload = output.data.payload;
+    /*
+     * The ROUNDED value, written the way a double actually holds it. Writing
+     * the issuer's twenty digits here would be a literal the compiler rounds
+     * on its way in - the very thing being reported - and lint refuses it, for
+     * the same reason.
+     */
+    expect(payload !== undefined && isJsonObject(payload) ? payload.sub : null).toBe(
+      12345678901234567000,
+    );
+  });
+});

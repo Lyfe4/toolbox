@@ -156,7 +156,7 @@ describe('the tap route and the C route are one flow', () => {
     const ports = await screen.findByRole('dialog', { name: /Connect from which port/ });
     // Outputs lead, exactly as they do from `C`, so the first Enter still
     // means "from my output" whichever entrance was used.
-    expect(within(ports).getAllByRole('option')[0]).toHaveTextContent('Output');
+    expect(within(ports).getAllByRole('option')[0]).toHaveTextContent('Result');
   });
 
   /**

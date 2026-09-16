@@ -15,6 +15,7 @@ import remarkRehype from 'remark-rehype';
 import remarkStringify from 'remark-stringify';
 import { unified } from 'unified';
 
+import { censusOf, type Census } from './changes';
 import { SANITISE_SCHEMA } from './sanitise';
 
 import type { Element as HastElement, ElementContent, Nodes as HastNodes, RootContent } from 'hast';
@@ -361,56 +362,111 @@ export interface HtmlToTextOptions {
  * line into an XSS hole, which is why they are written together.
  */
 export function markdownToHtml(markdown: string, options: MarkdownToHtmlOptions): string {
-  /*
-   * One chain, with the optional plugins passed as an empty list when they are
-   * off, rather than reassigning a `let`. Every `.use()` refines the
-   * processor's type parameters - mdast in, hast out - so putting it through a
-   * variable of a fixed type erases exactly the information that makes the
-   * final `processSync` type-check.
-   */
-  const html = unified()
-    .use(remarkParse)
-    .use(remarkGfm)
-    /*
-     * MATH IS PRESERVED, NOT RENDERED, and `$...$` is deliberately off.
-     *
-     * Without this, `$$ ... $$` is ordinary paragraph text, and Markdown's
-     * backslash escapes eat the LaTeX: `\\,` becomes a comma and `\\\\` - the
-     * line break in every matrix - becomes a single backslash. Parsing it as
-     * math keeps the source exactly, and it comes back as a ```math fence,
-     * which is what GitHub renders.
-     *
-     * `singleDollarTextMath: false` because single dollars are ambiguous with
-     * money, and money is far commoner in a document than inline maths.
-     * Measured: with it on, "It costs $5 and $10 today." became
-     * `It costs <code class="language-math">5 and </code>10 today.` Block
-     * math has no such ambiguity - a line of `$$` is not something prose
-     * contains by accident.
-     */
-    .use(remarkMath, { singleDollarTextMath: false })
-    .use(tagfilter)
-    .use(options.linkify ? [] : [stripAutolinkLiterals])
-    .use(remarkRehype, { allowDangerousHtml: true, clobberPrefix: '' })
-    .use(rehypeRaw)
-    // Schemes are case-insensitive; the allow-list below is not. Normalising
-    // first is what stops `<MAILTO:...>` losing its destination.
-    .use(normaliseSchemes)
-    // Slugs BEFORE sanitising, so the ids it generates face the same
-    // allow-list as any other attribute rather than being trusted for being
-    // ours.
-    .use(options.headingIds ? [rehypeSlug] : [])
-    .use(rehypeSanitize, SANITISE_SCHEMA)
-    // After sanitising: an href the allow-list rejected is gone by now, and a
-    // link with nowhere to go is worse than the words on their own.
-    .use(unwrapDeadLinks)
-    .use(replaceDeadImages)
-    .use(dropMachineComments)
-    .use(namespaceIds)
-    .use(tidyWhitespace)
-    .use(rehypeStringify)
-    .processSync(markdown);
+  return markdownToHtmlChain(markdown, options, true);
+}
 
-  return String(html);
+/**
+ * WHAT THE DOCUMENT CONTAINED BEFORE THE ALLOW-LIST SAW IT.
+ *
+ * `Markdown → HTML` drops raw HTML the allow-list does not name, because the
+ * sanitiser is what makes this tool's output safe to paste into a page. That is
+ * the product rather than a defect, and 22 of the 28 CommonMark examples this
+ * converter does not match are exactly it. What was missing is that NOBODY WAS
+ * TOLD: an element went in and did not come out, and the result looked like a
+ * clean conversion.
+ *
+ * Saying so needs the other side of a comparison, and there is no other way to
+ * get it - the sanitiser runs inside the chain, so the pre-sanitised tree does
+ * not exist anywhere a caller can reach.
+ *
+ * IT RETURNS A CENSUS, NOT A DOCUMENT, and that is the whole point of the
+ * shape. An unsanitised HTML STRING is a thing that can be returned from a
+ * tool, put on a port, copied as rich text or rendered by whatever is handed
+ * it, and this file has a section about the day one was. A set of tag and
+ * attribute names is none of those: there is nothing in it to render. The
+ * function stops at `censusOf` and the tree is never stringified.
+ */
+export function markdownMarkupBeforeSanitising(
+  markdown: string,
+  options: MarkdownToHtmlOptions,
+): Census {
+  const processor = markdownProcessor(options, false);
+  return censusOf(processor.runSync(processor.parse(markdown)));
+}
+
+/**
+ * The chain, up to but not including the stringifier.
+ *
+ * ONE LIST OF PLUGINS, and that is the point of it being a function: two
+ * callers need the same chain and a second copy of fifteen `.use()` lines is a
+ * copy that can drift. A drift here would not be cosmetic - it would make the
+ * MEASUREMENT of what the allow-list removes disagree with what the allow-list
+ * actually removed, which is the one thing that measurement exists to get
+ * right.
+ *
+ * The return type is inferred rather than annotated. Every `.use()` refines the
+ * processor's type parameters - mdast in, hast out - so naming a fixed type
+ * here would erase exactly the information that makes `processSync` and
+ * `runSync` type-check at the two call sites.
+ */
+function markdownProcessor(options: MarkdownToHtmlOptions, sanitise: boolean) {
+  /*
+   * The optional plugins are passed as an empty list when they are off, rather
+   * than by reassigning a `let`, for the same typing reason.
+   */
+  return (
+    unified()
+      .use(remarkParse)
+      .use(remarkGfm)
+      /*
+       * MATH IS PRESERVED, NOT RENDERED, and `$...$` is deliberately off.
+       *
+       * Without this, `$$ ... $$` is ordinary paragraph text, and Markdown's
+       * backslash escapes eat the LaTeX: `\\,` becomes a comma and `\\\\` - the
+       * line break in every matrix - becomes a single backslash. Parsing it as
+       * math keeps the source exactly, and it comes back as a ```math fence,
+       * which is what GitHub renders.
+       *
+       * `singleDollarTextMath: false` because single dollars are ambiguous with
+       * money, and money is far commoner in a document than inline maths.
+       * Measured: with it on, "It costs $5 and $10 today." became
+       * `It costs <code class="language-math">5 and </code>10 today.` Block
+       * math has no such ambiguity - a line of `$$` is not something prose
+       * contains by accident.
+       */
+      .use(remarkMath, { singleDollarTextMath: false })
+      .use(tagfilter)
+      .use(options.linkify ? [] : [stripAutolinkLiterals])
+      .use(remarkRehype, { allowDangerousHtml: true, clobberPrefix: '' })
+      .use(rehypeRaw)
+      // Schemes are case-insensitive; the allow-list below is not. Normalising
+      // first is what stops `<MAILTO:...>` losing its destination.
+      .use(normaliseSchemes)
+      // Slugs BEFORE sanitising, so the ids it generates face the same
+      // allow-list as any other attribute rather than being trusted for being
+      // ours.
+      .use(options.headingIds ? [rehypeSlug] : [])
+      // The tuple form rather than two arguments, so the plugin and its schema
+      // can be left out together. See `markdownMarkupBeforeSanitising` for the
+      // one caller that leaves them out, and for what it does instead of
+      // producing a document.
+      .use(sanitise ? [[rehypeSanitize, SANITISE_SCHEMA] as const] : [])
+      // After sanitising: an href the allow-list rejected is gone by now, and a
+      // link with nowhere to go is worse than the words on their own.
+      .use(unwrapDeadLinks)
+      .use(replaceDeadImages)
+      .use(dropMachineComments)
+      .use(namespaceIds)
+      .use(tidyWhitespace)
+  );
+}
+
+function markdownToHtmlChain(
+  markdown: string,
+  options: MarkdownToHtmlOptions,
+  sanitise: boolean,
+): string {
+  return String(markdownProcessor(options, sanitise).use(rehypeStringify).processSync(markdown));
 }
 
 /**

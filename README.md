@@ -527,8 +527,20 @@ meaning.
 
 The expected-failure list is **exact**, not a threshold: an example that starts
 passing fails the suite too, so the list cannot quietly drift away from the
-truth. Every remaining failure is about raw HTML or a URL — none is about
-emphasis, lists, tables, code or headings — and that shape is itself asserted.
+truth. Every remaining CommonMark failure is about raw HTML or a URL — none is
+about emphasis, lists, tables, code or headings — and that shape is itself
+asserted. The three GFM ones are not in that shape and are worth stating on
+their own: two are task lists, where this converter emits the `class`
+attributes github.com actually serves and the spec’s expected output does not,
+and the third is `ftp://` not being linkified.
+
+**624 of 652 is not "exact", and the conversion matrix used to say it was.**
+Twenty-two of the twenty-eight are raw HTML the allow-list removes, which is the
+product working and is the only group of the five that a README or an LLM
+realistically produces. It is reported now: the same chain is run with the
+allow-list off and the two documents compared, so the note names what was really
+removed rather than what a schema suggests. The other six are URL schemes,
+a scheme's case, and one relative URL containing a colon.
 [The full breakdown, with a cause against each example](src/tools/text-convert/README.md#measured-conformance),
 is in the tool's README, along with its known limitations.
 

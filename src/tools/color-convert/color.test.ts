@@ -4,9 +4,17 @@ import { describe, expect, it } from 'vitest';
 import type { ColorPayload, ToolRunContext } from '@/features/registry/types';
 import { bestLevel, contrastRatio, relativeLuminance } from '@/lib/wcag';
 
-import { formatColor, hslToRgb, oklchToRgb, parseColor, rgbToHsl, rgbToOklch } from './color';
+import {
+  formatAll,
+  formatColor,
+  hslToRgb,
+  oklchToRgb,
+  parseColor,
+  rgbToHsl,
+  rgbToOklch,
+} from './color';
 import colorTool from './index';
-import { colorDefaultOptions } from './options';
+import { colorDefaultOptions, MAX_PRECISION } from './options';
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
@@ -162,23 +170,77 @@ describe('round trips', () => {
     );
   });
 
-  it('survives a full parse -> format -> parse cycle in every notation', () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 0, max: 0xffffff }),
-        fc.constantFrom('hex' as const, 'rgb' as const, 'hsl' as const, 'oklch' as const),
-        (value, format) => {
-          const source = `#${value.toString(16).padStart(6, '0')}`;
-          const color = parse(source);
-          const back = parse(formatColor(color, format, 6));
+  /*
+   * THIS REPLACES A PROPERTY TEST THAT GUARDED NOTHING ANYBODY USES.
+   *
+   * It drew 300 random colours, wrote each in one notation AT PRECISION 6, read
+   * it back, and allowed a tolerance of one 8-bit step. Three things were wrong
+   * with that as evidence:
+   *
+   *   - Six is not the default. The default is five, and the stride test below
+   *     already covers five EXACTLY, with no tolerance, over 166,112 colours in
+   *     all four notations - so the random test was strictly weaker everywhere
+   *     it overlapped.
+   *   - The tolerance made it weaker still. "Within one 8-bit step" is the
+   *     assertion that was passing while 13,626 colours came back a different
+   *     colour at the then-default precision of four.
+   *   - Random meant it could pass for one person and fail for another, which
+   *     is the thing CONTRIBUTING.md has a paragraph about.
+   *
+   * What it was the only cover for is the TOP of the option's range: six is the
+   * schema's maximum, and a user can select it. So the question it was asking
+   * badly is asked properly here - the same fixed stride, at every precision
+   * from the default to the maximum, exact rather than within a step.
+   */
+  it('round-trips exactly at every precision from the default to the maximum', () => {
+    const { precision: lowest } = colorDefaultOptions;
+    const highest = MAX_PRECISION;
+    expect(highest).toBeGreaterThan(lowest);
 
-          expect(Math.abs(to255(back.r) - to255(color.r))).toBeLessThanOrEqual(1);
-          expect(Math.abs(to255(back.g) - to255(color.g))).toBeLessThanOrEqual(1);
-          expect(Math.abs(to255(back.b) - to255(color.b))).toBeLessThanOrEqual(1);
-        },
-      ),
-      { numRuns: 300 },
-    );
+    const wrong: string[] = [];
+
+    for (let precision = lowest; precision <= highest; precision += 1) {
+      // A coarser stride than the default-precision test below, because this
+      // walks the cube once per precision. 1009 is prime, so it still visits
+      // all three channels rather than holding any of them still.
+      for (let value = 0; value < 0x1000000; value += 1009) {
+        const source = `#${value.toString(16).padStart(6, '0')}`;
+        const color = parse(source);
+
+        for (const format of ['hex', 'rgb', 'hsl', 'oklch'] as const) {
+          const back = parse(formatColor(color, format, precision));
+          const returned = formatColor(back, 'hex', precision);
+          if (returned !== source && wrong.length < 10) {
+            wrong.push(
+              `${source} as ${format} at precision ${precision.toString()} came back ${returned}`,
+            );
+          }
+        }
+      }
+    }
+
+    expect(wrong).toEqual([]);
+  });
+
+  /*
+   * THE NEGATIVE CONTROL FOR BOTH SWEEPS.
+   *
+   * Every assertion above is satisfied by a comparison that cannot fail. Four
+   * is BELOW the default and is known to lose 13,626 colours, so a stride that
+   * can see a failure must see one here - and if it ever stops, the default
+   * could come down and this is what says so.
+   */
+  it('can still see the failures that set the default, one precision lower', () => {
+    const wrong: string[] = [];
+
+    for (let value = 0; value < 0x1000000; value += 1009) {
+      const source = `#${value.toString(16).padStart(6, '0')}`;
+      if (formatColor(parse(formatColor(parse(source), 'oklch', 4)), 'hex', 4) !== source) {
+        wrong.push(source);
+      }
+    }
+
+    expect(wrong.length).toBeGreaterThan(0);
   });
 
   it('reports an OKLCH colour outside sRGB as out of gamut', () => {
@@ -340,5 +402,73 @@ describe('the tool', () => {
     });
 
     expect(result.ok).toBe(false);
+  });
+});
+
+/* ========================================================================== *
+ * rgb() with percentages
+ * ========================================================================== */
+
+describe('a percentage channel in rgb()', () => {
+  /*
+   * `rgb(50% 50% 50%)` IS EXACTLY 127.5, AND THAT MADE ONE REPORT DISAGREE
+   * WITH ITSELF.
+   *
+   * The payload kept the half. Hex rounds, so it printed `#808080`; oklch is
+   * computed from the payload, so it printed the value for 127.5. Every row of
+   * one report is supposed to describe the same colour, and two of them
+   * described colours one 8-bit step apart - cosmetic, undisclosed, and exactly
+   * the kind of thing nobody checks digit by digit.
+   *
+   * The fix is to quantise ONCE, at the parse, because that is what a browser
+   * does: `rgb()` serialises to 8-bit integers, so `getComputedStyle` on
+   * `rgb(50% 50% 50%)` returns `rgb(128, 128, 128)`. That claim is checked
+   * against two real engines in `scripts/cross-browser-check.mjs`; what is
+   * checked here is that every row now agrees.
+   */
+  it('agrees with itself across every notation', () => {
+    const color = parse('rgb(50% 50% 50%)');
+    const all = formatAll(color, colorDefaultOptions.precision);
+
+    expect(all.hex).toBe('#808080');
+    expect(all.rgb).toBe('rgb(128 128 128)');
+    // The oklch row read back as hex must be the same colour as the hex row.
+    expect(formatColor(parse(all.oklch), 'hex', colorDefaultOptions.precision)).toBe(all.hex);
+    expect(formatColor(parse(all.hsl), 'hex', colorDefaultOptions.precision)).toBe(all.hex);
+  });
+
+  it('rounds the half up, which is what a browser reports', () => {
+    expect(formatColor(parse('rgb(50% 50% 50%)'), 'rgb', 3)).toBe('rgb(128 128 128)');
+  });
+
+  it.each([
+    ['rgb(0% 0% 0%)', '#000000'],
+    ['rgb(100% 100% 100%)', '#ffffff'],
+    ['rgb(20% 40% 60%)', '#336699'],
+  ])('%s is exactly %s', (source, hex) => {
+    expect(formatColor(parse(source), 'hex', colorDefaultOptions.precision)).toBe(hex);
+  });
+
+  /*
+   * THE NEGATIVE CONTROLS. Quantising is scoped to `rgb()` on purpose: hsl()
+   * and oklch() are continuous in CSS, and rounding them to 8 bits would break
+   * the round trips the stride test asserts. These say the scope held.
+   */
+  it('leaves an hsl() colour unquantised', () => {
+    const color = parse('hsl(217 91% 60%)');
+    // 8-bit quantising would make every channel a multiple of 1/255 exactly.
+    const eighths = [color.r, color.g, color.b].map((value) => value * 255);
+    expect(eighths.some((value) => Math.abs(value - Math.round(value)) > 1e-9)).toBe(true);
+  });
+
+  it('leaves an oklch() colour unquantised', () => {
+    const color = parse('oklch(0.62 0.19 259)');
+    const eighths = [color.r, color.g, color.b].map((value) => value * 255);
+    expect(eighths.some((value) => Math.abs(value - Math.round(value)) > 1e-9)).toBe(true);
+  });
+
+  it('still reads bare numbers in rgb() as 0-255', () => {
+    // The other spelling, unaffected: `rgb(59 130 246)` is already integral.
+    expect(formatColor(parse('rgb(59 130 246)'), 'hex', 3)).toBe('#3b82f6');
   });
 });

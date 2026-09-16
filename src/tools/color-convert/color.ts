@@ -292,7 +292,32 @@ export function parseColor(input: string): ToolResult<ColorPayload> {
       return fail('parse-error', 'rgb() needs three numeric channels.');
     }
     const [r, g, b] = channels as [number, number, number];
-    return ok({ r: clamp01(r / 255), g: clamp01(g / 255), b: clamp01(b / 255), a });
+    /*
+     * QUANTISED TO THE 8-BIT STEP, ONCE, HERE.
+     *
+     * `rgb(50% 50% 50%)` is exactly 127.5, and keeping that in the payload made
+     * the report's own rows disagree with each other: hex printed `#808080`,
+     * because hex rounds, while oklch printed the value for 127.5. Every row of
+     * one report is supposed to describe the same colour, and two of them
+     * described colours one 8-bit step apart.
+     *
+     * ROUNDING BEATS STATING IT, on two grounds. The first is that a report
+     * whose rows disagree is a report nobody can use, and a footnote saying
+     * which row is rounded does not fix that - it explains it. The second is
+     * that rounding is what a BROWSER does: `getComputedStyle` on
+     * `color: rgb(50% 50% 50%)` returns `rgb(128, 128, 128)`, in every engine,
+     * because `rgb()` serialises to 8-bit integers. Asserted against two real
+     * engines in `scripts/cross-browser-check.mjs` rather than taken on trust,
+     * since this is precisely the kind of claim this repository has been wrong
+     * about before.
+     *
+     * IT IS THE `rgb()` NOTATION ONLY. `hsl()` and `oklch()` are continuous in
+     * CSS and in the payload, and quantising them would break the round trips
+     * the stride test asserts at the default precision. This is not "8-bit
+     * everywhere"; it is "rgb() means what a browser says it means".
+     */
+    const step = (value: number): number => clamp01(Math.round(value) / 255);
+    return ok({ r: step(r), g: step(g), b: step(b), a });
   }
 
   if (name === 'hsl' || name === 'hsla') {
