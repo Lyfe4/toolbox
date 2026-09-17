@@ -31,6 +31,7 @@ passes" is not an entry in it.
 - [What changed for a person pasting a document](#what-changed-for-a-person-pasting-a-document)
 - [Found this round](#found-this-round)
 - [What was looked for and not found](#what-was-looked-for-and-not-found)
+- [Found in round four, by breaking things on purpose](#found-in-round-four-by-breaking-things-on-purpose)
 - [Still unverified, and how to verify it](#still-unverified-and-how-to-verify-it)
 
 ## What the verdicts mean
@@ -43,7 +44,11 @@ passes" is not an entry in it.
 | **broken**        | The output is wrong, for input a person would realistically produce.                                                                                                                                                                                                                             |
 | **not verified**  | It may be right. Nothing outside this repository has said so.                                                                                                                                                                                                                                    |
 
-`lossy, silent` is deliberately not a comfortable category. **It is empty.**
+`lossy, silent` is deliberately not a comfortable category. **It is empty, and
+round four is the reason that sentence is worth less than it looks.** The column
+held nothing at the end of round three because every loss anybody had named was
+told; asking a different question found two more to name. See
+[What the count was, and is](#what-the-count-was-and-is).
 
 It held twelve cells at the end of round two, and round three's job was to take
 the seven decisions that would close most of them. The count, cell by cell, is
@@ -106,13 +111,13 @@ auto-detected unless you say otherwise; the target is always explicit.
 
 ### Reading
 
-| From  | Verdict                                 | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ----- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CSV   | **exact**                               | 32 documents read by CPython's `csv.reader` and by this parser, field for field, including a lone CR terminator, a NUL byte, a quote opening mid-field, a field of four quotes, CRLF inside a quoted cell and every delimiter offered. [`csv.oracle.test.ts`](../src/tools/structured-data/csv.oracle.test.ts)                                                                                                                                                                                                                                                                                                         |
-| TSV   | **exact**                               | Same corpus, tab delimiter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| JSON  | **lossy, told**                         | Structure and strings are exact — it is `JSON.parse`. **Integers past 2^53 are rounded**, which is unavoidable, and each one is now reported by path. See [Numbers](#numbers-past-253-unavoidable-and-no-longer-silent).                                                                                                                                                                                                                                                                                                                                                                                               |
-| JSONC | **exact**, against VS Code's own parser | `//` and `/* */` comments and trailing commas are removed before parsing, and the document is read as the author meant it. 25 documents are compared against `jsonc-parser` — the parser Visual Studio Code uses for its own settings files — value for value, including every case that decides whether a stripper tracks string state: a `//` inside a URL, a `/*` inside a glob, an escaped quote in front of a comment marker. [`jsonc.oracle.test.ts`](../src/tools/structured-data/jsonc.oracle.test.ts)                                                                                                         |
-| YAML  | **exact**, with 9 named exceptions      | 402 cases from the [yaml-test-suite](https://github.com/yaml/yaml-test-suite)'s own `data-2022-01-17` release, committed as [`spec/yaml-test-suite.json`](../src/tools/structured-data/spec/yaml-test-suite.json). 94 documents the suite marks as errors are all refused; 279 carry the value a conforming parser must produce and **270 of them match exactly — 258 before this round**. The 9 that do not are listed by id with a reason, each is asserted to **still** differ, and the 12 that were fixed are asserted to **now agree**. [`yaml.oracle.test.ts`](../src/tools/structured-data/yaml.oracle.test.ts) |
+| From  | Verdict                                 | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CSV   | **exact**                               | 32 documents read by CPython's `csv.reader` and by this parser, field for field, including a lone CR terminator, a NUL byte, a quote opening mid-field, a field of four quotes, CRLF inside a quoted cell and every delimiter offered. [`csv.oracle.test.ts`](../src/tools/structured-data/csv.oracle.test.ts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| TSV   | **exact**                               | Same corpus, tab delimiter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| JSON  | **lossy, told**                         | Structure and strings are exact — it is `JSON.parse`. **Integers past 2^53 are rounded**, which is unavoidable, and each one is now reported by path. See [Numbers](#numbers-past-253-unavoidable-and-no-longer-silent).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| JSONC | **exact**, against VS Code's own parser | `//` and `/* */` comments and trailing commas are removed before parsing, and the document is read as the author meant it. 25 documents are compared against `jsonc-parser` — the parser Visual Studio Code uses for its own settings files — value for value, including every case that decides whether a stripper tracks string state: a `//` inside a URL, a `/*` inside a glob, an escaped quote in front of a comment marker. [`jsonc.oracle.test.ts`](../src/tools/structured-data/jsonc.oracle.test.ts)                                                                                                                                                                                                                                                                                 |
+| YAML  | **exact**, with 9 named exceptions      | 402 cases from the [yaml-test-suite](https://github.com/yaml/yaml-test-suite)'s own `data-2022-01-17` release, committed as [`spec/yaml-test-suite.json`](../src/tools/structured-data/spec/yaml-test-suite.json). 94 documents the suite marks as errors are all refused, **and round four asks what each one was refused FOR**: 92 by the parser, 2 by this file's own directive rules, 0 by the empty-input rule, and the counts are asserted. 279 carry the value a conforming parser must produce and **270 of them match exactly — 258 before round three**. The 9 that do not are listed by id with a reason, each is asserted to **still** differ, and the 12 that were fixed are asserted to **now agree**. [`yaml.oracle.test.ts`](../src/tools/structured-data/yaml.oracle.test.ts) |
 
 ### Writing
 
@@ -187,24 +192,44 @@ own scalars, and the JWT tool through the same scanner over the claims. CSV and
 TSV have no ceiling at all, because every cell comes out as a string — which is
 what the note suggests as the way out.
 
+**And "three readers, one answer" was two readers and two answers**, which round
+four found by asking the two of them the same question. `yamlPath` walks the
+ancestors `visit` hands it and pairs each one with the NEXT, so the last
+ancestor — the node's own parent — had nothing to pair with and its step was
+dropped. For a map that is invisible, because a Pair always stands between a
+scalar and the map above it. For a **sequence** the item _is_ the child, and the
+index went missing:
+
+| The same two numbers, in        | Reported at  |
+| ------------------------------- | ------------ |
+| `[12345678901234567890, 9…9]`   | `$[0], $[1]` |
+| `- 12345678901234567890\n- 9…9` | **`$, $`**   |
+
+One path, twice, for two different numbers, from the report whose whole claim is
+that it says **which**. Fixed, and the two readers are now asserted to give the
+same paths for the same document — which is the assertion that would have caught
+it, and is stronger than either reader's own expected values.
+
 ## Text convert
 
 [`src/tools/text-convert`](../src/tools/text-convert). Markdown and HTML are
 sources; Markdown, plain text and TWO HTML targets — sanitised and normalised —
 are the destinations. Everything routes through HTML.
 
-| From → To                | Verdict              | Evidence, and what is lost                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------------ | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Markdown → HTML          | **lossy, told**      | CommonMark 0.31.2, 624 of 652, and GFM, 21 of 24, compared by parsed DOM — and **624 of 652 is not what `exact` means**, which is what this cell used to claim. Every one of the 28 differs because this tool will not copy raw HTML through, and that refusal is the product. It is now reported: the same chain is run with the allow-list off and the two documents compared, so the note names what was really removed rather than what a schema suggests. See [Markdown to HTML, relabelled](#markdown-to-html-relabelled). |
-| HTML → Markdown          | **lossy, told**      | Anything Markdown cannot express is governed by the `unsupported` option — `keep` writes the element back as inline HTML, `text` keeps its text, `drop` removes it. The option is on the panel, which is where the user is told.                                                                                                                                                                                                                                                                                                 |
-| HTML → plain text        | **lossy, told**      | All markup, by definition. The options say what happens to links, list markers and tables.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Markdown → plain text    | **lossy, told**      | Same.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| Markdown → Markdown      | **lossy, told**      | Normalisation through HTML. Three constructs do not survive and each is named: footnotes stop being footnotes (a reference becomes a link to an anchor, the definitions a `## Footnotes` section), `$$…$$` display maths becomes a fence tagged `math`, and a bare URL becomes an explicit link when `linkify` is on. Reformatting — a different bullet, a different heading style — is reported at `info`, because the document means the same thing and a warning on every run is one nobody reads.                            |
-| HTML → HTML (sanitised)  | **lossy, told**      | **New in round three.** The sanitiser and nothing else: no Markdown round trip, so nothing is invented. What the allow-list removes is reported, measured by comparing the two documents rather than by listing the schema.                                                                                                                                                                                                                                                                                                      |
-| HTML → HTML (normalised) | **lossy, told**      | The pass that used to be called "HTML". It runs through Markdown, so it is bounded by what Markdown can express, and the two halves now answer separately: input against sanitised is the allow-list’s doing, sanitised against normalised is the round trip’s. Measured: `<img width>` is dropped, a `<div>` is unwrapped, a `colspan` becomes an empty cell, and a `<table>` with no header **gains an empty header row that was not in the input**, reported as an invention.                                                 |
-| Detection                | **fixed this round** | Was **broken** for the single most common thing an LLM writes about HTML: `Use \`<div>\` here.` was detected as HTML, **confidently**, because the tag search ran over the document as written. The conversion then read the code span's contents as markup. Fenced blocks and inline code spans are now blanked out before the search, and only before that search — a fence is still a Markdown signal.                                                                                                                        |
-| Hard break → text        | **fixed this round** | Was **broken**: Markdown's hard break (two trailing spaces, or a trailing backslash) became `<br>` plus a newline, and the text renderer emitted both, so a line break came out as a blank line. The same `<br>` written without the newline came out correctly, so one construct had two answers.                                                                                                                                                                                                                               |
-| `rendered` port          | **exact**            | Always sanitised HTML, for every source and target. Asserted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| From → To                | Verdict                 | Evidence, and what is lost                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------ | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Markdown → HTML          | **lossy, told**         | CommonMark 0.31.2, 624 of 652, and GFM, 21 of 24, compared by parsed DOM — and **624 of 652 is not what `exact` means**, which is what this cell used to claim. Every one of the 28 differs because this tool will not copy raw HTML through, and that refusal is the product. It is now reported: the same chain is run with the allow-list off and the two documents compared, so the note names what was really removed rather than what a schema suggests. See [Markdown to HTML, relabelled](#markdown-to-html-relabelled). |
+| HTML → Markdown          | **lossy, told**         | Anything Markdown cannot express is governed by the `unsupported` option — `keep` writes the element back as inline HTML, `text` keeps its text, `drop` removes it. The option is on the panel, which is where the user is told.                                                                                                                                                                                                                                                                                                 |
+| HTML → plain text        | **lossy, told**         | All markup, by definition. The options say what happens to links, list markers and tables.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Markdown → plain text    | **lossy, told**         | Same.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Markdown → Markdown      | **lossy, told**         | Normalisation through HTML. Three constructs do not survive and each is named: footnotes stop being footnotes (a reference becomes a link to an anchor, the definitions a `## Footnotes` section), `$$…$$` display maths becomes a fence tagged `math`, and a bare URL becomes an explicit link when `linkify` is on. Reformatting — a different bullet, a different heading style — is reported at `info`, because the document means the same thing and a warning on every run is one nobody reads.                            |
+| HTML → HTML (sanitised)  | **lossy, told**         | **New in round three.** The sanitiser and nothing else: no Markdown round trip, so nothing is invented. What the allow-list removes is reported, measured by comparing the two documents rather than by listing the schema.                                                                                                                                                                                                                                                                                                      |
+| HTML → HTML (normalised) | **lossy, told**         | The pass that used to be called "HTML". It runs through Markdown, so it is bounded by what Markdown can express, and the two halves now answer separately: input against sanitised is the allow-list’s doing, sanitised against normalised is the round trip’s. Measured: `<img width>` is dropped, a `<div>` is unwrapped, a `colspan` becomes an empty cell, and a `<table>` with no header **gains an empty header row that was not in the input**, reported as an invention.                                                 |
+| An `id` the author wrote | **lossy, told**         | **New in round four.** Every `id` and `name` this tool writes is prefixed `user-content-`, so markup pasted into a page cannot shadow a global. That is deliberate and worth keeping; it was also invisible, because `compareMarkup` counts names and `id` is present on both sides. It is a `warn` note now, naming each one, and a slug the tool INVENTED is not reported. See [An identifier, and a link to nothing](#an-identifier-and-a-link-to-nothing).                                                                   |
+| A link to a heading      | **fixed in round four** | Was **broken**, in the normalised target only. Markdown has no spelling for a heading's id, so the round trip drops it and `rehypeSlug` invents a new one from the heading's TEXT — while the link that pointed at the old name is carried through untouched. Measured: `<h2 id="location">Where</h2>` with a link to `#location` comes back as `<h2 id="user-content-where">` and `href="#user-content-location"`, which is in no document anywhere. One `id` in, one `id` out; one `href` in, one `href` out. Reported now.    |
+| Detection                | **fixed this round**    | Was **broken** for the single most common thing an LLM writes about HTML: `Use \`<div>\` here.` was detected as HTML, **confidently**, because the tag search ran over the document as written. The conversion then read the code span's contents as markup. Fenced blocks and inline code spans are now blanked out before the search, and only before that search — a fence is still a Markdown signal.                                                                                                                        |
+| Hard break → text        | **fixed this round**    | Was **broken**: Markdown's hard break (two trailing spaces, or a trailing backslash) became `<br>` plus a newline, and the text renderer emitted both, so a line break came out as a blank line. The same `<br>` written without the newline came out correctly, so one construct had two answers.                                                                                                                                                                                                                               |
+| `rendered` port          | **exact**               | Always sanitised HTML, for every source and target. Asserted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 Two properties hold the round trip honest where a byte comparison cannot:
 `md → html → md → html` is asserted **stable**, and `html → text` is asserted
@@ -593,6 +618,16 @@ And two cells this round made honest rather than found:
 | Markdown → HTML                  | `exact`, 95.7%      | **lossy, told** |
 | A byte order mark, at four ports | asserted in a table | **lossy, told** |
 
+**Round four found two more, and the count was not zero after all.** The column
+being empty meant every loss anybody had NAMED was told; it could not mean there
+were none left to name, and saying otherwise was the thing this document exists
+to stop doing:
+
+| Cell                            | Was                    | Now                     |
+| ------------------------------- | ---------------------- | ----------------------- |
+| An `id` the author wrote        | **lossy, silent**      | **lossy, told**         |
+| A link to a heading, normalised | **broken**, and silent | **fixed in round four** |
+
 **Where a note lives, and where it does not.** `structured-data`,
 `text-convert`, `base64` and `jwt-decode` carry theirs on a `report` port, which
 is what the canvas node reads. `diff` and `regex-tester` have no report port and
@@ -751,40 +786,120 @@ looked for. Round one and two's list still holds; these are round three's.
   are byte-identical either way; the reports are additive. The JWT tool's decoded
   value and signature verdict are asserted unchanged beside the new note.
 
+## Found in round four, by breaking things on purpose
+
+Round four asked one question of everything in this document: **could the
+assertion behind it fail?** The method was mutation — one small, valid change to
+the conversion code at a time, with the tests that claim to cover it run against
+each. A change nothing notices is a claim nothing is holding.
+
+150 mutants over `structured-data`, on a deterministic sample of the whole file
+set. 32 survived. Reading each one is the work: **about half were equivalent** —
+`cellToString`'s `typeof value === 'number' || typeof value === 'boolean'`
+becomes `&&`, and a number falls through to `JSON.stringify(42)`, which is the
+same string — and every one of those is a reason to read survivors rather than
+count them. What was left:
+
+| Broken on purpose                                        | What nothing noticed                                                                                             |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `yamlPath`'s sequence index                              | Two rounded integers in a YAML sequence both reported at `$`. **A real defect**, fixed; see above                |
+| The YAML block-sequence detection guard                  | `- a, b` over `- c, d` read as a two-column table again — round one's fix, with no test since                    |
+| The detector's "a quote only opens a field at its start" | A CSV whose first heading contains a comma falls through to YAML and comes back as one string                    |
+| A CRLF inside a quoted cell counting as one line         | Every line number reported after a multi-line cell is one too high — the hazard the code comment beside it names |
+| `slice(0, 5)` on the by-path lists                       | The cap this document calls "five with a count" was six, or none                                                 |
+| `detected: !chosen` on the report port                   | The report says it guessed when it was told, and told when it guessed, to every reader but the panel             |
+
+Each of those is now a test, and each test was **run against the break that
+exposed it** and seen to fail — eighteen breaks, eighteen red. That last step is
+not a formality: the first version of the CRLF test asserted a position computed
+from a byte offset, which is recomputed from the text and is therefore right
+whatever the line counter does. It passed against the break. The test asks a
+ROW's own line now.
+
+### Two guards, each covering for the other
+
+Detection bounds its prefix twice — fifty records and 64 kB — and removing
+either constant moved no verdict anywhere in the suite, because whichever was
+left still stopped the walk. Two numbers, no test between them, each looking
+covered because of the other. There is a document per guard now, built so that
+its own guard alone decides it, and each comes back as a mapping rather than a
+table when that guard is taken away.
+
+### The stopwatch that was measuring the machine
+
+`decides from the start of a large document rather than reading all of it`
+asserted 250 ms against a defect measured at 119, and this suite runs a hundred
+and twenty files at once — so it failed whenever the machine was busy. Two
+repairs were measured rather than assumed. A **ratio** against a smaller
+document wandered between 2 and 34 for correct behaviour, because the whole
+string is still trimmed and scanned for a `sep=` directive. A **tighter
+absolute bound** on the fastest of three samples separated 3.8–7.8 ms correct
+from 17.8–27.5 ms broken, and 2.3× is not enough margin for a wall clock with a
+hundred and nineteen competitors.
+
+So the cost is **no longer asserted**, and the verdict-from-a-bounded-prefix
+half — which is deterministic, and is the half that protects the user — is. A
+line that says "not measured" beats a green one that means "the machine was
+quiet". The same shape was found and fixed in three `video-remux` properties,
+where a 500 ms stopwatch ran inside each of three hundred cases; the budget is
+on the property now, at fifteen times its measured cost.
+
+### An identifier, and a link to nothing
+
+The matrix listed the sanitiser's `id` namespacing under
+[still unverified](#still-unverified-and-how-to-verify-it) with the note that it
+is "documented elsewhere". Elsewhere was a comment in this repository. Round
+four's question — is the user told **on screen**? — has one answer, which is no:
+`id="location"` went in, `id="user-content-location"` came out, and the report
+said `notes: []`.
+
+It is a `warn` note now, which is the closer call. The byte order mark next door
+is `info`: removed, deliberate, and nothing outside the document was pointing at
+it. An identifier is different in that last respect — links inside the document
+are moved to match, so those still work, but a stylesheet, a script or a link
+from another page that named `#location` now finds nothing, and finding nothing
+is the failure nobody reports.
+
+**And writing the instrument found something worse than the thing it was written
+for**, which is the third time in four rounds. Asking the question of the OUTPUT
+rather than of the sanitised hub is what showed it: `HTML → HTML (normalised)`
+takes the document out to Markdown, Markdown has no spelling for a heading's id,
+and the id comes back as a slug of the heading's TEXT — while the link to the old
+name rides through untouched. A table of contents can arrive dead with every
+count equal, which is exactly what `compareMarkup` is documented as being unable
+to see. Both halves are reported now, and the negative control is a document that
+arrived with a dead anchor already in it, which is not this tool's to claim.
+
 ## Still unverified, and how to verify it
 
 In the order I would do them.
 
 1. **JWT beyond HS256.** RFC 7515 appendices A.2 (RS256) and A.3 (ES256) carry
    complete key material and signatures. Two more fixtures.
-2. **The worker boundary, with hostile text.** Everything in
-   `wireFidelity.integration.test.ts` runs on the main thread, because jsdom has
-   no Worker. A structured clone of a string containing a lone surrogate, a NUL
-   and an astral character should be asserted in `check:browsers`, in both
-   engines, over a real `postMessage`.
-3. **Image resampling.** No reference. A fixed 8×8 pattern downscaled by a known
+2. **Image resampling.** No reference. A fixed 8×8 pattern downscaled by a known
    factor, compared against the same operation in a reference resampler run
    offline and committed as expected pixels, would turn `not verified` into a
    verdict.
-4. **The video tool's output, played.** Still nothing in this repository has
+3. **The video tool's output, played.** Still nothing in this repository has
    played a file it made.
-5. **The 29 YAML cases the suite describes only as an event stream.** They carry
+4. **The 29 YAML cases the suite describes only as an event stream.** They carry
    no `in.json`, so the fixture cannot decide them and the count is asserted
    rather than the cases being dropped. Reading the suite's `test.event` files
    and comparing a composed event stream would decide them; it needs an event
    emitter this tool does not have.
-6. **Our YAML writer against a third implementation.** js-yaml is one independent
+5. **Our YAML writer against a third implementation.** js-yaml is one independent
    reader. PyYAML settled two disagreements by hand — the `\n` block scalar in
    round two and the empty-document rule in round three — but it is not in the
    suite. A generator that runs our writer's output through CPython and commits
    the answers would make the writing row rest on two references rather than one
    and a footnote.
-7. **`compareMarkup` against an element that MOVED.** It counts what each
-   document contains, so an element that gained a parent is not reported and an
-   attribute whose value changed is not either. Both are stated in the code; the
-   second one has a real instance — the sanitiser namespaces `id` to
-   `user-content-*` — which is documented elsewhere and is not reported by this
-   instrument.
+6. **`compareMarkup` against an element that MOVED.** It counts what each
+   document contains, so an element that gained a parent is not reported. Stated
+   in the code, and still true. The other half of that note — an attribute whose
+   VALUE changed — was **resolved in round four**: the `id` namespacing it named
+   is measured and reported, and the instrument that does it found a broken link
+   the census could not see. See
+   [An identifier, and a link to nothing](#an-identifier-and-a-link-to-nothing).
 
 ## A plan for the rounds after this one
 
@@ -799,13 +914,27 @@ empty. Four cells turned out to be **fixable** rather than merely reportable,
 which was not the expectation going in: the empty document in a stream, the
 delimited-detection guess, the colour quantisation, and the YAML stream itself.
 
-**Round four — the boundaries jsdom cannot see.** Unchanged from round two's
-plan, and now with one more item: the worker boundary with hostile text, plus a
-pass over `check:browsers` asking of every check the question the
-negative-assertion audit asked — can this fail? Round two did that for the skips
-and found one worth converting; it did not do it for the assertions. Round
-three's SF5V finding is the same question asked of a different suite, and it
-found something, which is an argument for asking it everywhere.
+**Round four — done, and it was one question.** _Of everything this document
+asserts, how much could fail?_ Asked by mutation over the conversion code, by
+breaking the harness on purpose, and by classifying the 94 YAML refusals instead
+of counting them. It found a real defect in the by-path reports, a broken
+in-document link `compareMarkup` is documented as unable to see, a second suite
+case refused for the wrong reason, and six claims in this file that nothing was
+holding. The original plan for this round read:
+
+> The boundaries jsdom cannot see. Unchanged from round two's
+> plan, and now with one more item: the worker boundary with hostile text, plus a
+> pass over `check:browsers` asking of every check the question the
+> negative-assertion audit asked — can this fail? Round two did that for the skips
+> and found one worth converting; it did not do it for the assertions. Round
+> three's SF5V finding is the same question asked of a different suite, and it
+> found something, which is an argument for asking it everywhere.
+
+Both halves were done. The worker boundary is asserted over a real
+`postMessage` in both engines, with payloads a UTF-8 round trip cannot carry;
+`check:browsers` gained a check that its own build is not stale; and the
+`can this fail?` pass went through the conversion code rather than only the
+harness.
 
 **Round five — the two binary tools.** Image resampling against a reference, and
 the video tool's output played by something. Both need work outside the test
@@ -813,6 +942,8 @@ suite, which is why they are last rather than because they matter least.
 
 Running through all of them: **every `lossy, silent` cell should become
 `lossy, told` or `exact`.** That was the whole of what this document was for,
-and the count was the measure. It is **zero**. What replaces it as the measure
-is harder and is round four's: of everything this document asserts, how much
-could fail?
+and the count was the measure. It is **zero**, and round four's question was the
+one that replaced it: of everything this document asserts, how much could fail?
+The honest answer after one round of asking is "less than before, and not none" —
+mutation ran on a deterministic sample rather than the whole space, and the
+survivors it has not reached are the next person's round.

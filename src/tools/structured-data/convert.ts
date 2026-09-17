@@ -741,7 +741,7 @@ function roundedNumbersInYaml(documents: readonly Document.Parsed[]): readonly R
         const source: unknown = node.source;
         if (typeof source !== 'string' || !isRounded(source)) return undefined;
         found.push({
-          path: `${stream ? `$[${position.toString()}]` : '$'}${yamlPath(ancestors)}`,
+          path: `${stream ? `$[${position.toString()}]` : '$'}${yamlPath(ancestors, node)}`,
           source,
           value: Number(source),
         });
@@ -759,13 +759,24 @@ function roundedNumbersInYaml(documents: readonly Document.Parsed[]): readonly R
  * `ancestors` alternates collection, pair, collection, pair as it descends, and
  * each pair carries its own key - so the path is read off it rather than
  * tracked in a variable that a `visit.BREAK` could leave stale.
+ *
+ * THE VISITED NODE IS PASSED TOO, BECAUSE THE LAST STEP HAS NO ANCESTOR TO READ
+ * IT FROM. Each step pairs an ancestor with the NEXT one, and the last ancestor
+ * has no next - so the step into the node itself was silently dropped. For a
+ * map that is invisible, since a scalar inside one always has a Pair between it
+ * and the map; for a sequence the item IS the child, and the index went
+ * missing. Measured, against a document with two rounded integers in a
+ * sequence: `At $, $` - one path, twice, for two different numbers, in a report
+ * whose whole claim is that it names WHICH. The same document read as JSON
+ * answered `$[0], $[1]`, which is what a reader comparing the two would have
+ * seen and what nothing here was asking.
  */
-function yamlPath(ancestors: readonly unknown[]): string {
+function yamlPath(ancestors: readonly unknown[], visited: unknown): string {
   const parts: string[] = [];
 
   for (let index = 0; index < ancestors.length; index += 1) {
     const node = ancestors[index];
-    const child = ancestors[index + 1];
+    const child = ancestors[index + 1] ?? visited;
 
     if (isMap(node)) {
       const key: unknown = isPair(child) ? child.key : null;
@@ -776,7 +787,7 @@ function yamlPath(ancestors: readonly unknown[]): string {
       continue;
     }
 
-    if (isSeq(node) && child !== undefined) {
+    if (isSeq(node)) {
       const at = node.items.indexOf(child);
       if (at >= 0) parts.push(`[${at.toString()}]`);
     }
@@ -824,6 +835,31 @@ function duplicateYamlDirective(text: string): number | null {
   return null;
 }
 
+/**
+ * A directive introducing nothing, which is SF5V's finding one round later.
+ *
+ * Round four asked what every one of the suite's 94 error cases was refused
+ * FOR, rather than only that it was refused, and found 9MMA in exactly the
+ * state SF5V had been in: a bare `%YAML 1.2` with no document, refused by the
+ * rule that an empty input is not a document, with the message "nothing to
+ * parse: the input is empty". True of the bytes and not what is wrong with
+ * them - a directive introduces a document, and this one introduces nothing.
+ * The coincidence matters for the reason it did last time: correct the empty
+ * rule again and the parser accepts a document the spec calls invalid, with
+ * nothing to notice.
+ *
+ * ASKED OF THE LIBRARY, NOT OF THE TEXT, and the suite is why. The obvious
+ * version scans for a line starting with `%YAML` that no `---` follows, and
+ * the suite refused it on the first run: XLQ9 is a multi-line scalar one of
+ * whose lines reads `%YAML 1.2`, which is content rather than a directive. The
+ * parser already knows the difference - a directive with no document yields NO
+ * DOCUMENTS AT ALL - so the only thing left to decide is which of the two
+ * refusals a zero-document input gets, and a `%` at the start of a line
+ * decides that safely: every document that is not empty produces a document,
+ * so this is never reached for one.
+ */
+const DIRECTIVE_LINE = /^%/m;
+
 function readYamlSource(text: string): ToolResult<Reading> {
   const duplicate = duplicateYamlDirective(text);
   if (duplicate !== null) {
@@ -855,6 +891,13 @@ function readYamlSource(text: string): ToolResult<Reading> {
   for (const document of documents) {
     const error = document.errors[0];
     if (error !== undefined) return yamlParseFailure(error);
+  }
+
+  if (documents.length === 0 && DIRECTIVE_LINE.test(text)) {
+    return fail('parse-error', 'That directive has no document after it.', {
+      position: positionFromOffset(text, text.search(DIRECTIVE_LINE)),
+      detail: 'A directive introduces a document, which begins with ---. Add one, or remove it.',
+    });
   }
 
   const filled = documents.filter((document) => !isEmptyDocument(document));

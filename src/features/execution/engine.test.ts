@@ -152,6 +152,28 @@ function settled(requestId: string, result: ToolResult<ToolOutputs>): WorkerResp
   return { kind: 'settled', requestId, result, timing: { importMs: 0, runMs: 0 } };
 }
 
+/**
+ * The result, or null if the request is still in flight.
+ *
+ * For the two ceiling tests, where the failure being guarded against is a
+ * request that is never settled at all. `await` on one of those is a sixty
+ * second test timeout rather than a sentence about what went wrong.
+ */
+async function settledOrNull(
+  promise: Promise<ToolResult<ToolOutputs>>,
+): Promise<ToolResult<ToolOutputs> | null> {
+  const marker = Symbol('pending');
+  const raced = await Promise.race([
+    promise,
+    new Promise<typeof marker>((resolve) =>
+      setTimeout(() => {
+        resolve(marker);
+      }, 0),
+    ),
+  ]);
+  return raced === marker ? null : raced;
+}
+
 /* -------------------------------------------------------------------------- */
 
 describe('execution engine, worker path', () => {
@@ -278,11 +300,18 @@ describe('timeout', () => {
    * points at the thing they can actually change.
    */
   it("uses the tool's own timeout message when it declares one", async () => {
-    const { engine, clock } = setup({
+    const { engine, workers, clock } = setup({
       ...WORKER_META,
       timeoutMessage: 'That pattern is too slow and was stopped.',
     });
     const promise = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
+
+    // The tool BEGAN and then ran over, which is the only case its own message
+    // describes: a request the worker never reached is told it never started.
+    const posted = workers[0]?.posted[0]?.message;
+    if (posted?.kind === 'execute') {
+      workers[0]?.reply({ kind: 'started', requestId: posted.requestId });
+    }
 
     clock.fireAll();
 
@@ -790,9 +819,14 @@ describe('a timeout with other requests in flight', () => {
 
     const [slowId] = executeIds(workers[0]);
     expect(slowId).toBeDefined();
+    // The worker reached it and said so, which is what a tool that really does
+    // run over looks like - and what makes the message below the tool's own
+    // rather than the one for a request that never started.
+    if (slowId !== undefined) workers[0]?.reply({ kind: 'started', requestId: slowId });
 
     // Only the slow tool's deadline fires. The bystander's has not elapsed.
-    const [slowTimer] = clock.handles();
+    // The newest handle is the slow tool's, because `started` re-armed it.
+    const slowTimer = clock.handles().at(-1);
     expect(slowTimer).toBeDefined();
     if (slowTimer !== undefined) clock.fire(slowTimer);
 
@@ -1102,6 +1136,147 @@ describe('a timeout with other requests in flight', () => {
     expect(slowId).toBeDefined();
     // Nothing is left holding a deadline: both entries are gone.
     expect(clock.pending()).toBe(0);
+  });
+
+  /*
+   * THE CEILING, WHICH NOTHING HAD EVER ASKED ABOUT.
+   *
+   * `MAX_REPLAYS` is the one bound above the starts-based budget, and it is
+   * what stops a cascade rather than a single bad input: a request that has
+   * never started keeps its budget however many times a neighbour destroys the
+   * worker underneath it, so without an absolute ceiling "never started" would
+   * mean "replayed for as long as anything keeps dying". Raising the constant
+   * to infinity used to fail nothing in this file.
+   *
+   * The number is asserted rather than the shape, for the reason the YAML
+   * corpus counts are: a bound nobody has counted is a bound that can drift to
+   * anything. Nine posts is one original and eight replays.
+   */
+  it('stops replaying a request that has never run, once the ceiling is reached', async () => {
+    const { engine, workers, clock } = twoToolSetup();
+
+    const bystander = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
+    const bystanderId = executeIds(workers[0])[0];
+    expect(bystanderId).toBeDefined();
+
+    // Twelve neighbours, each of which runs over and takes the worker with it.
+    // The bystander is never started by any of them.
+    for (let death = 0; death < 12; death += 1) {
+      const before = new Set(clock.handles());
+      void engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
+      const timer = clock.handles().find((handle) => !before.has(handle));
+      expect(timer).toBeDefined();
+      if (timer === undefined) break;
+      clock.fire(timer);
+    }
+
+    // Settled-or-not rather than awaited: a ceiling that has been raised
+    // leaves this promise pending forever, and a test that hangs for a minute
+    // to say so is a test nobody will run twice.
+    const result = await settledOrNull(bystander);
+    expect(result).not.toBeNull();
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) expect(result.error.code).toBe('internal');
+
+    const posts = workers.flatMap((worker) =>
+      executeIds(worker).filter((id) => id === bystanderId),
+    );
+    expect(posts).toHaveLength(9);
+  });
+
+  /*
+   * A MESSAGE THAT KILLS THE WORKER BEFORE IT CAN REPORT `started`.
+   *
+   * The starts-based budget rests on one sentence: a request the worker never
+   * began cannot be the poison. That is true of a request sitting in a queue,
+   * and this is the case where it is not - the worker stops answering with the
+   * request already in it, having sent no `started` for anything. Nothing
+   * distinguishes the two from outside, so the poison here is treated as an
+   * innocent and gets the full never-started budget.
+   *
+   * What that costs is asserted rather than described: the cascade is bounded
+   * by the ceiling above rather than being unbounded, and every worker death
+   * costs one boot. It is the price of the fix, and the alternative - counting
+   * a queued request against its own budget - is the bug round three removed.
+   */
+  it('bounds a poisonous request the worker never acknowledged', async () => {
+    const { engine, workers, clock } = twoToolSetup();
+
+    // The poison: posted, never started, never answered, and the worker stops
+    // responding from here. Its own deadline is the longest in flight, so it is
+    // always a neighbour's that fires first.
+    const poison = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
+    const poisonId = executeIds(workers[0])[0];
+
+    for (let death = 0; death < 10; death += 1) {
+      const before = new Set(clock.handles());
+      void engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
+      const timer = clock.handles().find((handle) => !before.has(handle));
+      if (timer === undefined) break;
+      clock.fire(timer);
+    }
+
+    const result = await settledOrNull(poison);
+    expect(result).not.toBeNull();
+    expect(result?.ok).toBe(false);
+    // One boot per death, and no more: the ceiling is what stops a request
+    // nothing can identify as the cause from booting a worker forever.
+    expect(workers.length).toBeLessThanOrEqual(12);
+    expect(
+      workers.flatMap((worker) => executeIds(worker)).filter((id) => id === poisonId),
+    ).toHaveLength(9);
+  });
+
+  /*
+   * A REQUEST THAT NEVER STARTED IS NOT A TOOL THAT TOOK TOO LONG.
+   *
+   * The deadline that fires against a request the worker never reached is the
+   * WAITING half of the guarantee - "at most timeoutMs waiting, then timeoutMs
+   * running" - and it used to be reported with the running half's words. On a
+   * canvas that reads as a confident diagnosis of the wrong node: an image
+   * conversion wedges the worker, the base64 request queued behind it never
+   * executes one instruction, and at fifteen seconds the base64 node says the
+   * tool took too long and was stopped. For a tool that declares a
+   * `timeoutMessage` it is worse still, because the message is specific:
+   * `regex-tester` would tell the user their pattern is backtracking
+   * catastrophically about a pattern that was never compiled.
+   *
+   * The engine already knows - `starts` is zero - so the only thing missing
+   * was saying it. The code stays `timeout`, because the node's status is the
+   * same fact and a new one would mean a new word on screen for no gain.
+   */
+  it('says a queued request never started rather than blaming its tool', async () => {
+    const { engine, clock } = twoToolSetup();
+
+    const queued = engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
+    clock.fireAll();
+
+    const result = await queued;
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('timeout');
+    expect(result.error.message).toContain('never started');
+    // Not the tool's own diagnosis, which is about work that did not happen.
+    expect(result.error.message).not.toContain('backtracking');
+    expect(result.error.detail).toContain('without starting');
+  });
+
+  /** ...and the running half still says what it always said. */
+  it('still blames the tool when the tool really did run over', async () => {
+    const { engine, workers, clock } = twoToolSetup();
+
+    const slow = engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
+    const [slowId] = executeIds(workers[0]);
+    if (slowId !== undefined) workers[0]?.reply({ kind: 'started', requestId: slowId });
+
+    clock.fireAll();
+
+    const result = await slow;
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('timeout');
+    expect(result.error.message).toBe('That pattern is too slow.');
+    expect(result.error.detail).toContain('Exceeded');
   });
 });
 

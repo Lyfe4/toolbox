@@ -527,6 +527,18 @@ worker never acknowledges at all — the worker wedged before reaching it — st
 has to fail rather than hang. The practical guarantee is therefore: **at most
 `timeoutMs` waiting, then `timeoutMs` running.**
 
+**And which of those two ran out is now in the message.** It is two clocks and
+it used to be one sentence: a request the worker never reached was reported with
+the words for a tool that ran too long — for a tool declaring its own
+`timeoutMessage`, a specific and confident wrong diagnosis. On a canvas that is
+an image conversion wedging the worker and the base64 node queued behind it
+announcing, fifteen seconds later, that base64 is slow; with `regex-tester` in
+that position the user is told their pattern is backtracking catastrophically
+about a pattern that was never compiled. `starts` is zero in exactly that case
+and the engine already had it, so the only thing missing was saying so. The code
+stays `timeout`, because the node's status word is the same fact either way and
+a new one would be a new word on screen for no gain.
+
 **And `timeoutMs` is now a budget plus a rate**, for the one tool that needed
 it to be. A constant was honest while every tool's accepted input was bounded
 in the megabytes; `video-remux` now accepts 4 GiB, and a number that fits a
@@ -565,6 +577,18 @@ Replay is refused in exactly two cases, both deliberate:
   anyway gets a single further attempt and then reports. There is an absolute
   ceiling above both, because a worker death is cheap to cause and a worker boot
   is not.
+
+**The ceiling is what the starts rule is bought with, and nothing was holding
+it.** Raising `MAX_REPLAYS` to infinity failed no test in this repository until
+round four, which is the whole shape this round was looking for: the rule's
+_benefit_ had two tests and its _bound_ had none. The case that needs the bound
+is the one the rule cannot see — a request that kills the worker **before it can
+report `started`**, which is indistinguishable from a request merely queued
+behind one. Such a request is treated as innocent and gets the full never-started
+budget, so a neighbour timing out repeatedly replays the poison; what stops that
+being unbounded is the ceiling, and it is now asserted as a number. Nine posts:
+one original and eight replays, after which the request reports rather than
+booting a ninth worker.
 
 #### Why the budget counts starts
 
@@ -3607,6 +3631,59 @@ and a message, never a crash.
 `scripts/cross-browser-check.mjs` is the only thing in this repository that
 asserts against a real layout engine, which makes it the only thing whose
 mistakes nothing else can catch. Two of them had been standing for a while.
+
+### The run has to say which code it ran against
+
+Everything about this script's relationship to the tree is a **process rule**:
+build first, run it before committing, do not change code while it is running,
+run it again if anything changed. A process rule is not a check, and round four
+was asked to confirm that round three's run had covered round three's final
+tree. It could not, and neither can anybody else — nothing anywhere records the
+two facts together. No log is committed, the summary names no commit, and a
+build from an hour ago drives exactly as green as a build from a second ago.
+
+So the rule is an assertion now. A source file newer than the newest file in
+`dist/` means the build under test does not contain it, which is equally true
+when somebody forgot to rebuild and when somebody edited a file while the run
+was in flight. It is checked **before the browsers start**, so a stale run fails
+in a second rather than after twenty minutes of driving the wrong bytes, and
+**again at the end**, which is the half that catches the edit made during the
+run. The comparison is against `dist`'s _newest_ file rather than its oldest,
+because Vite writes the directory in one pass and a half-written build is a
+different failure that every other check here would report anyway.
+
+### The worker boundary, with text no encoder would produce
+
+`wireFidelity.integration.test.ts` answers what a wire does to a value exactly —
+sixteen payloads, compared by the diff tool against the same string typed in by
+hand, with six negative controls — and it answers it **on the main thread**,
+because jsdom has no Worker. So the structured clone that every
+`strategy: 'worker'` tool actually crosses was outside it, and the matrix has
+listed that gap since round two.
+
+It also cannot carry the payload that matters most. Every payload there arrives
+as base64 decoded to UTF-8, and a **lone surrogate has no UTF-8 encoding at
+all** — `TextDecoder` replaces it with U+FFFD before any tool sees it. A
+JavaScript string can hold one, structured clone is specified to carry one, and
+any hand-rolled serialisation between the two is where it would be lost, which
+is precisely the case a round trip cannot reach and a clone can.
+
+`checkWireFidelity` builds fourteen payloads **from code units, in the page** —
+lone high and low surrogates, a reversed pair, a high surrogate at the very end
+of a string, NUL, an astral character, a zero-width joiner sequence, a combining
+sequence, a BOM mid-string, control characters, CRLF and a lone CR. Nothing
+crosses the Playwright protocol as a string in either direction: the page seeds
+the graph itself through `localStorage`, and only numbers and booleans come
+back. The carrier is `regex-tester` in replace mode with `(?!)`, a pattern that
+is valid and can never match, so the tool's output is its subject unchanged —
+which makes the assertion the whole path rather than a tool's behaviour: the
+store, the clone in, the tool, and the clone back.
+
+Three things are asserted rather than one, and the extra two are the reason the
+first means anything: that every node was really seeded (a rejected save loads
+nothing, and nothing posts nothing), that each payload reached `postMessage` as
+the string the node held, and that the comparison can tell one payload from
+another.
 
 ### What the nine "known flaky" clipboard failures actually were
 

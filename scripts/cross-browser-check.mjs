@@ -21,9 +21,9 @@
  */
 import { deflateRawSync, deflateSync, inflateRawSync } from 'node:zlib';
 import { createWriteStream } from 'node:fs';
-import { readFile, rm } from 'node:fs/promises';
+import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
 import { firefox, webkit } from 'playwright';
 
@@ -2146,6 +2146,23 @@ async function checkRunnerLayout(browser, label) {
      * as that number, because the chrome is a border and a padding rather than
      * a token this script can read.
      */
+    /*
+     * THE FOUR MEASUREMENTS ARE FOUR DIFFERENT LAYOUTS, which every assertion
+     * below assumes and none of them checked. A combobox that stopped changing
+     * the options panel - or four reads of one layout - satisfies both of the
+     * lines under here perfectly: the gaps agree because they are the same gap,
+     * and Run is on screen because it is the same Run. The comment above
+     * already says which layout is the tall one, so that is what is asserted.
+     */
+    const runs = seen.map((entry) => entry.run);
+    check(
+      label,
+      'each target really draws its own layout rather than the same one four times',
+      new Set(runs).size > 1 &&
+        Math.max(...runs) === seen.find((entry) => entry.target === 'Markdown')?.run,
+      seen.map((entry) => `${entry.target} at ${String(entry.run)}`).join(', '),
+    );
+
     const gaps = seen.map((entry) => entry.gap);
     check(
       label,
@@ -2544,7 +2561,55 @@ async function checkInspectorMotion(browser, label) {
      * so `animationend` still fires and the phase machine cannot stall. This
      * asserts the outcome a user of that preference gets: the panel arrives
      * without a slide, and it does arrive.
+     *
+     * THE FRAME COUNT USED TO BE THE ASSERTION, AND IT WAS A RACE.
+     *
+     * It read the panel's width "two frames in" and required it to be at rest,
+     * on the reasoning that two frames is far less than a slide. Two frames is
+     * a duration this harness does not control: under the load of a full run it
+     * failed about one time in three, which three sessions wrote off as
+     * environmental. Measured instead - the exact sequence below, twelve runs
+     * across both engines - the app is right every time: under reduced motion
+     * the panel is 0 and then 340, with nothing in between, while a normal
+     * context walks 13, 201, 281, 318 on the way. The check above this one says
+     * the rule out loud: "a timing assertion in this harness would be flaky".
+     *
+     * So the question becomes one a late frame cannot answer wrongly. Sample
+     * every frame and look for an INTERMEDIATE width - a panel caught part way
+     * across. A slow machine removes samples; it cannot invent one between 0
+     * and the resting width, because nothing ever draws the panel there. The
+     * control is the same measurement WITHOUT the preference, which must find
+     * one, so "no intermediate width" is a fact about reduced motion rather
+     * than about this measurement being unable to see a slide at all.
      */
+    const traceOpen = async (page) =>
+      page.evaluate(async () => {
+        const root = document.querySelector('[data-testid="canvas-root"]');
+        root.focus();
+        const pressedAt = performance.now();
+        root.dispatchEvent(new KeyboardEvent('keydown', { key: 'i', bubbles: true }));
+
+        const widths = [];
+        let firstFrameMs = null;
+        for (let frame = 0; frame < 12; frame += 1) {
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          firstFrameMs ??= Math.round(performance.now() - pressedAt);
+          const panel = document.querySelector('[data-testid="node-inspector"]');
+          widths.push(panel ? Math.round(panel.getBoundingClientRect().width) : 0);
+        }
+
+        const panel = document.querySelector('[data-testid="node-inspector"]');
+        return {
+          widths,
+          firstFrameMs,
+          duration: panel ? getComputedStyle(panel).animationDuration : null,
+          resting: panel ? Math.round(panel.getBoundingClientRect().width) : 0,
+        };
+      });
+
+    const partWayAcross = (trace) =>
+      trace.widths.filter((width) => width > 0 && width < trace.resting);
+
     const reduced = await browser.newContext({
       viewport: { width: 1440, height: 900 },
       reducedMotion: 'reduce',
@@ -2555,27 +2620,60 @@ async function checkInspectorMotion(browser, label) {
       await reducedPage.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
       await setInspector(reducedPage, false);
 
-      const instant = await reducedPage.evaluate(async () => {
-        const root = document.querySelector('[data-testid="canvas-root"]');
-        root.focus();
-        root.dispatchEvent(new KeyboardEvent('keydown', { key: 'i', bubbles: true }));
-        // Two frames: enough for the panel to be laid out, far less than a slide.
-        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-        const panel = document.querySelector('[data-testid="node-inspector"]');
-        return {
-          duration: panel ? getComputedStyle(panel).animationDuration : null,
-          width: panel ? Math.round(panel.getBoundingClientRect().width) : null,
-        };
-      });
+      const instant = await traceOpen(reducedPage);
+      const midway = partWayAcross(instant);
 
       check(
         label,
         'reduced motion ends the slide rather than merely shortening it',
-        instant.duration === '0.001s' && instant.width >= 335,
-        `duration ${String(instant.duration)}, panel ${String(instant.width)}px two frames in`,
+        instant.duration === '0.001s' && instant.resting >= 335 && midway.length === 0,
+        `duration ${String(instant.duration)}, ${String(instant.resting)}px at rest, widths ${instant.widths.join(',')}`,
       );
     } finally {
       await reduced.close().catch(() => {});
+    }
+
+    /*
+     * THE CONTROL, WITHOUT WHICH THE LINE ABOVE IS SATISFIED BY A PANEL THAT
+     * NEVER MOVES AT ALL. If the slide were removed for everybody, or if this
+     * measurement simply could not see one, "no intermediate width" would be
+     * true for the wrong reason - which is the shape this whole file spent a
+     * round removing.
+     */
+    const moving = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const movingPage = await moving.newPage();
+    try {
+      await gotoCanvas(movingPage);
+      await movingPage.locator('[role="application"]').first().waitFor({ timeout: 15_000 });
+      await setInspector(movingPage, false);
+
+      const slide = await traceOpen(movingPage);
+      const midway = partWayAcross(slide);
+
+      /*
+       * The one condition under which finding nothing says nothing about the
+       * app: a first frame that landed after the whole 150 ms animation was
+       * over. That is a machine too loaded to sample inside the window, it is a
+       * NUMBER rather than a hunch, and it is a skip rather than a pass -
+       * because a pass here would be the check being satisfied by an absence,
+       * which is the shape this file spent a round removing.
+       */
+      if (midway.length === 0 && (slide.firstFrameMs ?? 0) > 150) {
+        skip(
+          label,
+          'the panel caught part way across',
+          `the first frame landed ${String(slide.firstFrameMs)}ms after the keystroke, past the 150ms slide, so nothing could be sampled during it`,
+        );
+      } else {
+        check(
+          label,
+          'and without the preference the panel really is caught part way across',
+          slide.duration !== '0.001s' && midway.length > 0,
+          `duration ${String(slide.duration)}, first frame ${String(slide.firstFrameMs)}ms in, widths ${slide.widths.join(',')}`,
+        );
+      }
+    } finally {
+      await moving.close().catch(() => {});
     }
   } finally {
     await context.close().catch(() => {});
@@ -7253,15 +7351,38 @@ async function checkOutputViews(browser, label) {
      * locator matches both. The one this check is about is the decoded token's,
      * because the claim is that the verdict survives ITS toggle.
      */
-    await page
-      .getByRole('region', { name: 'JWT Decoded' })
-      .getByRole('button', { name: 'Raw' })
-      .click();
+    /*
+     * AND THE SCOPING IS ASSERTED RATHER THAN TRUSTED, because the check below
+     * it cannot fail on its own. `[data-trust]` is on screen BEFORE the click
+     * as well as after, so a click that landed on the report's toggle, or on
+     * nothing at all, leaves the banner exactly where a correct click does.
+     * What makes the line mean something is that the DECODED view really went
+     * raw, which its own button's `aria-pressed` says.
+     */
+    const decoded = page.getByRole('region', { name: 'JWT Decoded' });
+    const rawButtons = await page.getByRole('button', { name: 'Raw' }).count();
+    check(
+      label,
+      'the page really has two Raw toggles, which is why this one is scoped',
+      rawButtons === 2,
+      `${String(rawButtons)} Raw button(s)`,
+    );
+
+    const before = await decoded.getByRole('button', { name: 'Raw' }).getAttribute('aria-pressed');
+    await decoded.getByRole('button', { name: 'Raw' }).click();
+    const after = await decoded.getByRole('button', { name: 'Raw' }).getAttribute('aria-pressed');
     const stillThere = await page.locator('[data-trust]').count();
+
+    check(
+      label,
+      'the Raw toggle this check presses is the decoded token’s own',
+      before === 'false' && after === 'true',
+      `${String(before)} then ${String(after)}`,
+    );
     check(
       label,
       'the JWT verdict stays on screen in the raw view',
-      stillThere === 1,
+      stillThere === 1 && after === 'true',
       `${String(stillThere)} banner(s)`,
     );
 
@@ -9114,6 +9235,7 @@ async function runChecks(engine, label) {
     await checkTruncation(browser, label);
     await checkPreviewSandbox(browser, label);
     await checkPipeline(browser, label);
+    await checkWireFidelity(browser, label);
     await checkCanvasFileInput(browser, label);
     await checkFileInputTouch(engine, label);
     await checkImageConvert(browser, label);
@@ -9425,6 +9547,26 @@ async function checkPipeline(browser, label) {
       paused === 'ok',
       `${String(paused)} after ${String(pausedMs)}ms`,
     );
+    /*
+     * AND WHAT IT COST, AS AN ASSERTION RATHER THAN A NUMBER IN THE LOG.
+     *
+     * The line above passes at any speed, and the speed is the whole subject of
+     * this block: the bystander waits out TWO worker deaths, because the second
+     * edit re-posts the runaway and the engine replays the copy ahead of it. At
+     * the regex tool's 2s deadline that is about 4 seconds, measured at 3.7.
+     * Bounded, correct, and the price of not caching a cancelled run - but a
+     * THIRD death would be a new defect, and the only thing that separates two
+     * from three is a number nothing was checking.
+     *
+     * The bound is stated against the deadline rather than as a measurement,
+     * so it moves when the tool's own limit moves.
+     */
+    check(
+      label,
+      'and waits out two worker deaths rather than three',
+      paused === 'ok' && pausedMs < 3 * 2_000,
+      `${String(pausedMs)}ms against a 2s tool deadline`,
+    );
     check(
       label,
       'and the node downstream of it is not told its input failed',
@@ -9507,6 +9649,235 @@ async function checkPipeline(browser, label) {
       'the run after a cancelled one is not left queued behind the worker it wedged',
       afterEdit === 'ok' && afterEditMs < 10_000,
       `${String(afterEdit)} after ${String(afterEditMs)}ms`,
+    );
+  } finally {
+    await context.close();
+  }
+}
+
+/* ========================================================================== *
+ * WHAT A REAL postMessage DOES TO A STRING
+ * ========================================================================== */
+
+/**
+ * THE WORKER BOUNDARY, WITH TEXT NO ENCODER WOULD EVER PRODUCE.
+ *
+ * `wireFidelity.integration.test.ts` asks what a wire does to a value and
+ * answers it exactly - sixteen payloads, compared by the diff tool against the
+ * same string typed in by hand, with six negative controls. It runs entirely
+ * on the MAIN THREAD, because jsdom has no Worker, so the one thing it cannot
+ * say anything about is the structured clone that a `strategy: 'worker'` tool
+ * actually crosses. docs/conversion-matrix.md has listed that gap under "still
+ * unverified" since round two.
+ *
+ * It also cannot carry the payload that matters most. Every payload there
+ * arrives as base64 decoded to UTF-8, and a LONE SURROGATE has no UTF-8
+ * encoding at all - `TextDecoder` replaces it with U+FFFD before any tool sees
+ * it. A JavaScript string can hold one, structured clone is specified to carry
+ * one, and any hand-rolled serialisation between the two is where it would be
+ * lost. That is precisely the case a round trip cannot reach and a clone can.
+ *
+ * SO THE PAYLOADS ARE BUILT FROM CODE UNITS, IN THE PAGE. Nothing here sends a
+ * string over the Playwright protocol in either direction: the page builds each
+ * payload from an array of numbers, seeds the graph itself, and every
+ * comparison is `===` between two strings that have never left the browser.
+ * Only numbers and booleans come back.
+ *
+ * THE CARRIER is `regex-tester` in replace mode with `(?!)`, a pattern that is
+ * valid and can never match, so the tool's output is its subject unchanged.
+ * It is a worker tool, its `unicode` option is `none` so nothing forces
+ * well-formedness, and it is the only tool here whose text output is its text
+ * input. What is asserted is therefore the whole path: the store, the clone
+ * into the worker, the tool, and the clone back.
+ */
+async function checkWireFidelity(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    await page.addInitScript(() => {
+      /*
+       * Every payload as UTF-16 code units, because writing them as string
+       * literals would mean this file containing a lone surrogate - which is
+       * exactly the character no tool in the chain between here and the page
+       * can be trusted to carry.
+       */
+      const PAYLOADS = [
+        { name: 'a lone high surrogate', units: [0x61, 0xd800, 0x62] },
+        { name: 'a lone low surrogate', units: [0x61, 0xdc00, 0x62] },
+        { name: 'a reversed surrogate pair', units: [0xdc00, 0xd800] },
+        { name: 'a high surrogate at the very end', units: [0x61, 0x62, 0xd83d] },
+        { name: 'a NUL byte', units: [0x62, 0x65, 0x66, 0x00, 0x61, 0x66] },
+        { name: 'an astral character', units: [0x78, 0xd834, 0xdd1e, 0x79] },
+        {
+          name: 'an emoji with a zero-width joiner',
+          units: [0xd83d, 0xdc68, 0x200d, 0xd83d, 0xdc69, 0x200d, 0xd83d, 0xdc67],
+        },
+        { name: 'a combining sequence', units: [0x65, 0x0301, 0x20, 0x00e9] },
+        { name: 'a non-breaking space', units: [0x74, 0x65, 0x6e, 0x00a0, 0x6b, 0x67] },
+        { name: 'a right-to-left override', units: [0x61, 0x202e, 0x62, 0x202c, 0x63] },
+        { name: 'CRLF and a lone CR', units: [0x61, 0x0d, 0x0a, 0x62, 0x0d, 0x63] },
+        { name: 'a byte order mark in the middle', units: [0x61, 0xfeff, 0x62] },
+        { name: 'control characters', units: [0x07, 0x1b, 0x5b, 0x41, 0x7f] },
+        { name: 'an unassigned plane 15 code point', units: [0x61, 0xdbc0, 0xdc00] },
+      ];
+
+      const build = (units) => units.map((unit) => String.fromCharCode(unit)).join('');
+      const expected = PAYLOADS.map((payload) => build(payload.units));
+
+      window.__wire = {
+        names: PAYLOADS.map((payload) => payload.name),
+        expected,
+        sent: {},
+        pairs: [],
+      };
+
+      /*
+       * The graph is seeded through the app's own saved-canvas route rather
+       * than typed in: a share link carries structure and never a node's
+       * input, which is the privacy guarantee working as intended. A save that
+       * the schema rejects loads nothing at all, so the node count asserted
+       * below is what tells us the version literal here is still current.
+       */
+      const graph = {
+        version: 6,
+        nodes: PAYLOADS.map((payload, index) => ({
+          id: `n${String(index)}`,
+          toolId: 'regex-tester',
+          position: { x: index * 40, y: index * 40 },
+          options: {
+            pattern: '(?!)',
+            mode: 'replace',
+            replacement: 'X',
+            global: true,
+            ignoreCase: false,
+            multiline: false,
+            dotAll: false,
+            unicode: 'none',
+            sticky: false,
+          },
+          inputs: { input: expected[index] },
+          fileInputs: {},
+        })),
+        edges: [],
+        nextId: PAYLOADS.length + 1,
+      };
+
+      try {
+        window.localStorage.setItem('patchbay:graph:v3', JSON.stringify(graph));
+      } catch {
+        /* A context that refuses storage fails the node count below, loudly. */
+      }
+
+      const Native = window.Worker;
+      window.Worker = class extends Native {
+        constructor(url, options) {
+          super(url, options);
+          this.addEventListener('message', (event) => {
+            const data = event.data;
+            if (data?.kind !== 'settled') return;
+            const sent = window.__wire.sent[data.requestId];
+            if (sent === undefined) return;
+            const got = data.result?.ok === true ? data.result.value?.output?.text : null;
+            window.__wire.pairs.push({ sent, got: typeof got === 'string' ? got : null });
+          });
+        }
+        postMessage(message, transfer) {
+          if (message?.kind === 'execute' && typeof message.inputs?.input?.text === 'string') {
+            window.__wire.sent[message.requestId] = message.inputs.input.text;
+          }
+          return super.postMessage(message, transfer);
+        }
+      };
+    });
+
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+
+    /*
+     * THE INSTRUMENT HAS TO BE LOOKING. A save the schema rejected, a key that
+     * moved, or a `version` literal that went stale all produce an empty canvas
+     * - and an empty canvas posts nothing, which every assertion below about
+     * what came back would then satisfy by having nothing to disagree with.
+     */
+    const nodes = await page.locator('[data-testid^="node-n"]').count();
+    const wanted = await page.evaluate(() => window.__wire.names.length);
+    check(
+      label,
+      'the seeded canvas really loaded every node',
+      nodes === wanted,
+      `${String(nodes)} of ${String(wanted)}`,
+    );
+    if (nodes !== wanted) return;
+
+    const settled = await page
+      .waitForFunction((count) => window.__wire.pairs.length >= count, wanted, { timeout: 60_000 })
+      .then(() => true)
+      .catch(() => false);
+
+    check(
+      label,
+      'every payload crossed into a real worker and came back',
+      settled,
+      settled ? '' : 'the worker never answered for all of them',
+    );
+    if (!settled) return;
+
+    /*
+     * Compared in the page, returned as numbers. `sent` is what the engine
+     * handed to `postMessage` and `got` is what came back off it, so the two
+     * halves say different things: whether the payload survived the store, and
+     * whether it survived the clone.
+     */
+    const verdict = await page.evaluate(() => {
+      const wire = window.__wire;
+      const units = (text) =>
+        text === null ? [] : [...Array(text.length).keys()].map((index) => text.charCodeAt(index));
+
+      return wire.expected.map((want, index) => {
+        const pair = wire.pairs.find((candidate) => candidate.sent === want);
+        const other = wire.expected[(index + 1) % wire.expected.length];
+        return {
+          name: wire.names[index],
+          left: pair !== undefined,
+          returned: pair?.got === want,
+          // The comparison has to be able to say no: the same answer against a
+          // different payload must not also be equal.
+          discriminates: pair?.got !== other,
+          wantUnits: units(want),
+          gotUnits: units(pair?.got ?? null),
+        };
+      });
+    });
+
+    const notSent = verdict.filter((entry) => !entry.left);
+    check(
+      label,
+      'each payload reached the worker as the string the node held',
+      notSent.length === 0,
+      notSent.map((entry) => `${entry.name} [${entry.wantUnits.join(' ')}]`).join('; '),
+    );
+
+    const mangled = verdict.filter((entry) => entry.left && !entry.returned);
+    check(
+      label,
+      'and came back from it code unit for code unit',
+      verdict.length > 0 && mangled.length === 0,
+      mangled
+        .map(
+          (entry) =>
+            `${entry.name}: wanted [${entry.wantUnits.join(' ')}] got [${entry.gotUnits.join(' ')}]`,
+        )
+        .join('; ') || `${String(verdict.length)} payloads`,
+    );
+
+    check(
+      label,
+      'and the comparison can tell one payload from another',
+      verdict.length > 0 && verdict.every((entry) => entry.discriminates),
+      verdict
+        .filter((entry) => !entry.discriminates)
+        .map((entry) => entry.name)
+        .join(', ') || 'all',
     );
   } finally {
     await context.close();
@@ -11613,7 +11984,97 @@ async function checkLargeVideo(browser, label) {
   }
 }
 
+/* ========================================================================== *
+ * WHICH TREE THIS RUN IS ABOUT
+ * ========================================================================== */
+
+/**
+ * The newest modification time under a set of roots, and the file that carries it.
+ *
+ * Follows directories, skips nothing: a source file is anything a build reads,
+ * and deciding which ones matter is how a staleness check acquires a hole.
+ */
+async function newestUnder(roots, skip = () => false) {
+  let newest = { at: 0, file: null };
+
+  const walk = async (path) => {
+    const info = await stat(path).catch(() => null);
+    if (info === null) return;
+    if (info.isDirectory()) {
+      const entries = await readdir(path).catch(() => []);
+      for (const entry of entries) await walk(join(path, entry));
+      return;
+    }
+    if (skip(path)) return;
+    if (info.mtimeMs > newest.at) newest = { at: info.mtimeMs, file: path };
+  };
+
+  for (const root of roots) await walk(join(ROOT, root));
+  return newest;
+}
+
+/**
+ * The one exclusion, and it is a fact rather than a judgement.
+ *
+ * A `*.test.ts` is reachable from no entry point, so Rollup never puts one in
+ * `dist` and editing one cannot make the build stale. Excluding it is what
+ * stops this check turning every test edit into a mandatory rebuild - which is
+ * the kind of friction that gets a check deleted. Nothing else is excluded:
+ * deciding which ordinary source files "probably do not matter" is how a
+ * staleness check acquires a hole.
+ */
+const isTestFile = (path) => /\.test\.[cm]?[jt]sx?$/.test(path);
+
+/**
+ * THE RUN HAS TO SAY WHICH CODE IT RAN AGAINST, AND NOTHING DID.
+ *
+ * This script drives `dist/`, which is whatever `pnpm build` last wrote. Every
+ * instruction about it - run it before committing, do not change code while it
+ * is running, run it again if anything changed - is a process rule, and a
+ * process rule is not a check. Round four could not confirm from the repository
+ * that round three's run had covered round three's final tree, because nothing
+ * anywhere records the two facts together: no log is committed, the summary
+ * names no commit, and a build from an hour ago drives exactly as green as a
+ * build from a second ago.
+ *
+ * So the rule becomes an assertion. A source file newer than the newest file in
+ * `dist/` means the build under test does not contain it - which is true
+ * whether somebody forgot to rebuild, or edited a file while the run was in
+ * flight. It is asserted BEFORE the browsers start, so a stale run fails in a
+ * second rather than in twenty minutes, and again at the END, which is the half
+ * that catches an edit made while it ran.
+ *
+ * `dist/` is compared by its NEWEST file rather than its oldest: Vite writes the
+ * whole directory in one pass, and a build interrupted half way through is a
+ * different failure that every other check in this file would report anyway.
+ */
+const SOURCE_ROOTS = ['src', 'public', 'vite', 'index.html', 'vite.config.ts', 'package.json'];
+
+async function checkBuildIsCurrent(label, when) {
+  const built = await newestUnder(['dist']);
+  const source = await newestUnder(SOURCE_ROOTS, isTestFile);
+  const stale = source.at > built.at;
+
+  check(
+    'Build output',
+    `the build under test is ${when} the source it was made from`,
+    !stale && built.at > 0,
+    stale
+      ? `${relative(ROOT, source.file ?? '')} is ${Math.round((source.at - built.at) / 1000).toString()}s newer than dist - rebuild and run this again`
+      : `dist at ${new Date(built.at).toISOString()}, newest source ${relative(ROOT, source.file ?? '')}`,
+  );
+
+  return { built, source, stale, label };
+}
+
 /* ========================================================================== */
+
+const before = await checkBuildIsCurrent('start', 'no older than');
+if (before.stale) {
+  console.error('cross-browser: refusing to drive a stale build.');
+  process.exitCode = 1;
+  process.exit();
+}
 
 const server = await serveDist(PORT);
 
@@ -11626,6 +12087,10 @@ try {
 } finally {
   server.close();
 }
+
+// The half that catches an edit made WHILE this ran, which is the case the
+// instruction "do not change code while check:browsers is running" is about.
+await checkBuildIsCurrent('end', 'still no older than');
 
 console.log('');
 if (skipped.length > 0) {

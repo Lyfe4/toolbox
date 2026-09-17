@@ -59,9 +59,24 @@ async function shippedOptions(): Promise<readonly unknown[]> {
 
 let options: readonly unknown[] = [];
 
+/*
+ * A MINUTE, BECAUSE OF WHAT THIS HOOK ACTUALLY DOES.
+ *
+ * `calculateConfigForFile` stands up the whole flat config - typescript-eslint
+ * included - to answer what is in force for one file, and that is seconds of
+ * work rather than the milliseconds a hook is assumed to take. Vitest's default
+ * is ten, and under the load of a full `pnpm test` this file failed about one
+ * run in four with `Hook timed out in 10000ms`: a collection error, so its nine
+ * assertions were reported as SKIPPED rather than failed, which is the shape
+ * that reads as coverage.
+ *
+ * Not an excuse and not a retry. The number is wrong for the work, and the work
+ * is what makes the test worth having - reading the rule out of the real config
+ * is the whole reason a copy of the selector would prove nothing.
+ */
 beforeAll(async () => {
   options = await shippedOptions();
-});
+}, 60_000);
 
 /**
  * Lint one snippet with the shipped options and return only this rule's

@@ -80,6 +80,40 @@ describe('format detection', () => {
     expect(detect('items: [a, b, c]\nother: 1')).toBe('yaml');
   });
 
+  it('does not call a YAML block sequence CSV either', () => {
+    /*
+     * ROUND ONE'S FIX, WHICH HAD NO TEST UNTIL ROUND FOUR. `- a, b` over
+     * `- c, d` has one comma on every line and two consistent fields, so the
+     * detector said CSV and the tool returned a two-column table whose header
+     * was `- a`. Disabling the guard changed nothing any test noticed - and
+     * decision 1's "does it also parse as a YAML MAPPING" rule does not rescue
+     * it, because a block sequence is not a mapping.
+     */
+    expect(detect('- a, b\n- c, d\n')).toBe('yaml');
+    expect(detect('-\n- x, y\n')).toBe('yaml');
+    // The trailing space is what makes it a sequence: `-1,2` is a table row.
+    expect(detect('-1,2\n-3,4\n')).toBe('csv');
+  });
+
+  it('spots a table whose very first character is a quote', () => {
+    /*
+     * The detector mirrors the parser's rule that a quote only opens a quoted
+     * field at the START of one, and that rule is carried by a flag whose
+     * INITIAL value nothing was testing. Set it the other way and the opening
+     * quote of the first field is a literal: the commas inside it are counted
+     * as separators, the first record disagrees with every other, and an
+     * ordinary spreadsheet export - any file whose first column heading
+     * contains a comma - falls through to YAML and comes back as one string.
+     */
+    expect(detect('"name, full",age\n"ada l",36\n')).toBe('csv');
+
+    const parsed = parseAuto('"name, full",age\n"ada l",36\n', ',');
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value).toEqual([{ 'name, full': 'ada l', age: '36' }]);
+    }
+  });
+
   it('needs two records before it will call something a table', () => {
     // `Hello, world` used to satisfy "every line agrees on its field count",
     // because there was only one line to agree. It was detected as CSV, and a
@@ -378,15 +412,88 @@ describe('format detection', () => {
   });
 
   it('decides from the start of a large document rather than reading all of it', () => {
-    // Detection ran `split` over the whole input to look at twenty lines of it,
-    // which cost 119 ms on a 4 MB paste before any work had begun.
-    const rows = ['id,name'];
-    for (let index = 0; index < 200_000; index += 1) rows.push(`${index.toString()},name`);
-    const source = rows.join('\n');
+    /*
+     * Detection ran `split` over the whole input to look at twenty lines of it,
+     * which cost 119 ms on a 4 MB paste before any work had begun.
+     *
+     * THE TAIL CANNOT CHANGE THE VERDICT, which is the deterministic half of
+     * the claim and the one worth asserting first: sixty consistent CSV lines
+     * followed by two hundred kilobytes of prose is still a CSV, because the
+     * decision is taken from a bounded prefix. A reader that took the whole
+     * document into account would call this something else.
+     */
+    const rows = (count: number): string[] => {
+      const out = ['id,name'];
+      for (let index = 0; index < count; index += 1) out.push(`${index.toString()},name`);
+      return out;
+    };
 
-    const started = performance.now();
-    expect(detect(source)).toBe('csv');
-    expect(performance.now() - started).toBeLessThan(250);
+    expect(detect([...rows(60), 'x'.repeat(200_000)].join('\n'))).toBe('csv');
+
+    // And it still decides, rather than giving up, on a document of the size
+    // the defect was measured against.
+    const large = rows(200_000).join('\n');
+    expect(large.length).toBeGreaterThan(2_000_000);
+    expect(detect(large)).toBe('csv');
+
+    /*
+     * TWO GUARDS BOUND THE PREFIX, AND EACH WAS COVERING FOR THE OTHER.
+     *
+     * `DETECTION_RECORDS` stops after fifty records and `DETECTION_BUDGET`
+     * stops after 64 kB, and the document above defeats neither: remove either
+     * constant and the verdict does not move, because whichever is left still
+     * stops the walk. Two constants with no test between them, each looking
+     * covered because of the other.
+     *
+     * So one document per guard, each built to be decided by ITS guard alone.
+     * Both come back as a mapping rather than a table when their own guard is
+     * removed, which is what makes them assertions rather than illustrations.
+     */
+
+    // Sixty two-field rows, then sixty with a third field: inside 64 kB, so
+    // only the RECORD CAP keeps the tail out of the decision.
+    const pastTheRecordCap = [
+      ...Array.from({ length: 60 }, (_unused, index) => `${index.toString()},name`),
+      ...Array.from({ length: 60 }, (_unused, index) => `${index.toString()},name,extra`),
+    ].join('\n');
+    expect(pastTheRecordCap.length).toBeLessThan(64 * 1024);
+    expect(detect(pastTheRecordCap)).toBe('csv');
+
+    // Three 25 kB two-field rows, then a three-field row: only three records,
+    // so only the BYTE BUDGET keeps the fourth out of the decision.
+    const wide = 'x'.repeat(25_000);
+    const pastTheByteBudget = [
+      ...Array.from({ length: 3 }, (_unused, index) => `${wide},${index.toString()}`),
+      'a,b,c',
+    ].join('\n');
+    expect(pastTheByteBudget.length).toBeGreaterThan(64 * 1024);
+    expect(detect(pastTheByteBudget)).toBe('csv');
+
+    /*
+     * THE CLOCK THAT USED TO BE HERE IS GONE, AND ITS ABSENCE IS THE POINT.
+     *
+     * It asserted 250 ms against a defect measured at 119, which is two times'
+     * headroom - and this suite runs a hundred and twenty files at once, so it
+     * failed whenever the machine was busy. The obvious repairs were tried and
+     * measured rather than assumed:
+     *
+     *   - A RATIO against a smaller document. The decision is bounded, but the
+     *     whole string is still trimmed and scanned for a `sep=` directive, so
+     *     the cost is not flat in the tail: the ratio wandered between 2 and 34
+     *     for CORRECT behaviour. A measurement of the machine in the clothes of
+     *     a complexity claim.
+     *   - A TIGHTER ABSOLUTE BOUND, on the fastest of three samples. Ten
+     *     attempts each, on this document: 3.8-7.8 ms correct, 17.8-27.5 ms
+     *     with the defect reintroduced. That is a 2.3x separation, and 2.3x is
+     *     not enough for a wall clock competing with a hundred and nineteen
+     *     other test files.
+     *
+     * So the cost is NOT asserted here, and nothing else asserts it either.
+     * What is asserted is the half that is deterministic and the half that
+     * actually protects the user: the verdict comes from a bounded prefix, so
+     * the size of the document cannot change the answer. Saying that out loud
+     * beats a green line that means "the machine was quiet".
+     */
   });
 });
 
@@ -807,6 +914,40 @@ describe('CSV parsing', () => {
 
   it('does not invent a row for a trailing newline', () => {
     expect(parsed('a,b\n1,2\n', 'csv')).toHaveLength(1);
+  });
+
+  it('counts a CRLF inside a quoted cell as ONE line, not two', () => {
+    /*
+     * The line a parse error names is the only way to find it in a 16 MB file,
+     * and a multi-line cell is where the count goes wrong. The code comment
+     * beside the CRLF branch says exactly that - "or every position reported
+     * after a multi-line cell points too high up the file" - and nothing was
+     * asking: the oracle corpus compares FIELDS against CPython, which is
+     * blind to line numbers, and every other position test has no quoted
+     * newline above it.
+     *
+     * Four lines here, and the bad row is the fourth. The ROW's own line is
+     * what this asks about: an unterminated-quote error carries a byte offset
+     * and is converted back to a line by counting the text, so it would be
+     * right whatever the counter did. A row error has no offset, only the
+     * number the parser was keeping while it read.
+     */
+    const rows = parseCsvRows('a,b\r\n"one\r\ntwo",x\r\n1,2,3\r\n', ',');
+    expect(rows.ok).toBe(true);
+    if (rows.ok) expect(rows.value.map((row) => row.line)).toEqual([1, 2, 4]);
+
+    const result = parseSource('a,b\r\n"one\r\ntwo",x\r\n1,2,3\r\n', 'csv', ',');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain('Row 3');
+      expect(result.error.position?.line).toBe(4);
+    }
+
+    // The same file with LF endings is the same four lines, which is what makes
+    // the number above about the cell rather than about the terminator.
+    const lf = parseSource('a,b\n"one\ntwo",x\n1,2,3\n', 'csv', ',');
+    expect(lf.ok).toBe(false);
+    if (!lf.ok) expect(lf.error.position?.line).toBe(4);
   });
 
   it('keeps a record whose only field is a quoted empty string', () => {

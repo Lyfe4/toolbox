@@ -50,6 +50,8 @@ interface Report {
   readonly notes: readonly Note[];
   readonly from: Readonly<Record<string, unknown>>;
   readonly to: Readonly<Record<string, unknown>>;
+  /** Whether the source format was guessed. On the port, and nothing read it. */
+  readonly detected: unknown;
 }
 
 async function convert(
@@ -89,6 +91,7 @@ async function convert(
           : [],
       from: data.from !== undefined && isJsonObject(data.from) ? data.from : {},
       to: data.to !== undefined && isJsonObject(data.to) ? data.to : {},
+      detected: data.detected,
     },
   };
 }
@@ -425,5 +428,126 @@ describe('a byte order mark', () => {
     const bytes = new TextEncoder().encode('{"a": 1}');
     const { report } = await convert(bytes, { target: 'json' });
     expect(report.notes).toEqual([]);
+  });
+});
+
+/* ========================================================================== *
+ * What the reports say, asked of the things nothing was asking
+ * ========================================================================== */
+
+/**
+ * ROUND FOUR: THE ASSERTIONS THAT COULD NOT FAIL.
+ *
+ * Every test below was written because a deliberate break of the code it
+ * describes changed nothing that any test noticed. They are not new behaviour;
+ * they are the claims docs/conversion-matrix.md already makes, asked out loud.
+ */
+describe('the claims the reports make about themselves', () => {
+  /*
+   * THE PATH IS THE WHOLE VALUE OF THE REPORT, AND IT WAS WRONG FOR A SEQUENCE.
+   *
+   * `yamlPath` pairs each ancestor with the next one, and the last ancestor has
+   * no next - so the step into the visited node itself was dropped. For a map
+   * that is invisible (a Pair always stands between a scalar and its map); for
+   * a sequence the item IS the child, and the index went missing.
+   *
+   * Measured before the fix, on `- <big>\n- <big>`: `At $, $` - one path, twice,
+   * for two different numbers, in the report whose entire claim is that it says
+   * WHICH. The instrument that decides it is the JSON reader, which answers the
+   * same question about the same document through a completely separate route -
+   * a scanner over the source text in `lib/jsonNumbers.ts` rather than the YAML
+   * library's own node tree.
+   */
+  const BIG = '12345678901234567890';
+  const ALSO_BIG = '99999999999999999999';
+
+  it('names a rounded integer in a YAML sequence by its index', async () => {
+    const { report } = await convert(`- ${BIG}\n- ${ALSO_BIG}\n`, {
+      source: 'yaml',
+      target: 'yaml',
+    });
+
+    const note = report.notes.find((entry) => entry.title.includes('rounded'));
+    expect(note?.body).toContain('At $[0], $[1].');
+  });
+
+  it('and gives the same answer the JSON reader gives for the same document', async () => {
+    // Two readers, two mechanisms, one document. This is what turned "the path
+    // looks odd" into "the path is wrong".
+    const asYaml = await convert(`- ${BIG}\n- ${ALSO_BIG}\n`, { source: 'yaml', target: 'json' });
+    const asJson = await convert(`[${BIG}, ${ALSO_BIG}]`, { source: 'json', target: 'json' });
+
+    const paths = (report: Report): string =>
+      report.notes.find((entry) => entry.title.includes('rounded'))?.body.split('At ')[1] ?? '';
+
+    expect(paths(asYaml.report)).not.toBe('');
+    expect(paths(asYaml.report)).toBe(paths(asJson.report));
+  });
+
+  it('names one nested two sequences deep', async () => {
+    const { report } = await convert(`a:\n  - - ${BIG}\n`, { source: 'yaml', target: 'json' });
+    expect(titles(report)).toContain('The number at $.a[0][0] was rounded');
+  });
+
+  /*
+   * THE CAP IS FIVE, WHICH THE MATRIX SAYS AND NOTHING CHECKED. Every list in
+   * these reports is capped with a count, because a thousand-row export with
+   * one nested column would otherwise produce a thousand paths. Six paths and
+   * "and 1 more" reads exactly like five paths and "and 2 more" unless somebody
+   * counts.
+   */
+  it('lists five paths and counts the rest', async () => {
+    const rows = Array.from({ length: 7 }, (_unused, index) => ({
+      [`k${String(index)}`]: { deep: index },
+    }));
+    const { report } = await convert(JSON.stringify(rows), { source: 'json', target: 'csv' });
+
+    const nested = report.notes.find((entry) => entry.title.includes('nested values'));
+    expect(nested?.title).toBe('7 nested values were written into their cells as JSON');
+    expect(nested?.body).toContain('$[4].k4');
+    expect(nested?.body).not.toContain('$[5].k5');
+    expect(nested?.body).toContain('and 2 more');
+
+    const absent = report.notes.find((entry) => entry.title.includes('absent from some rows'));
+    expect(absent?.title).toBe('7 columns were absent from some rows');
+    expect(absent?.body).toContain('k5,');
+    expect(absent?.body).not.toContain('k6');
+    expect(absent?.body).toContain('and 2 more');
+  });
+
+  it('names every path when there are five or fewer, with no count', async () => {
+    // The negative control for the cap: at the boundary the sentence must not
+    // grow a "more" clause for a list that has nothing more in it.
+    const rows = Array.from({ length: 5 }, (_unused, index) => ({ k: { deep: index } }));
+    const { report } = await convert(JSON.stringify(rows), { source: 'json', target: 'csv' });
+
+    const nested = report.notes.find((entry) => entry.title.includes('nested values'));
+    expect(nested?.body).toContain('$[4].k');
+    expect(nested?.body).not.toContain('more');
+  });
+});
+
+/* -------------------------------------------------------------------------- *
+ * The flag on the port
+ * -------------------------------------------------------------------------- */
+
+describe('the `detected` flag the report carries', () => {
+  /*
+   * A FIELD ON A PORT THAT NOTHING IN THE APP READS IS STILL A PROMISE.
+   *
+   * The summary says `CSV (detected) → JSON` and that word IS asserted. The
+   * boolean beside it is a separate value, on a `json` port anything on the
+   * canvas can be wired to, and inverting it changed nothing any test noticed -
+   * so the report would have said it guessed when the user had chosen, and
+   * chosen when it had guessed, to every reader but the panel.
+   */
+  it('is true when the format was guessed and false when it was chosen', async () => {
+    const guessed = await convert('name,age\nada,36\ngrace,45', { target: 'json' });
+    expect(guessed.report.detected).toBe(true);
+    expect(guessed.report.summary).toContain('(detected)');
+
+    const told = await convert('name,age\nada,36\ngrace,45', { source: 'csv', target: 'json' });
+    expect(told.report.detected).toBe(false);
+    expect(told.report.summary).not.toContain('(detected)');
   });
 });

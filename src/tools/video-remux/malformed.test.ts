@@ -503,15 +503,34 @@ describe('a transport stream that lies about its own shape', () => {
   });
 
   it('answers for a corrupted transport stream, whatever the damage', () => {
+    /*
+     * THE TIME BOUND IS ON THE WHOLE PROPERTY, NOT ON EACH CASE, AND THAT IS
+     * THE DIFFERENCE BETWEEN MEASURING THIS READER AND MEASURING THIS MACHINE.
+     *
+     * It used to be `expect(Date.now() - started).toBeLessThan(500)` per case,
+     * which failed about one full `pnpm test` in four and passed six times out
+     * of six when this file was run alone. Measured on an idle machine, 300
+     * cases: median 1.8ms, p95 12.3ms, slowest 23ms, one second in total. So
+     * the per-case bound had twenty-two times the headroom it needed and was
+     * still being crossed - by the scheduler, with a hundred and twenty test
+     * files in flight, rather than by anything this code did.
+     *
+     * A total is the same statement about the reader and a much weaker one
+     * about the scheduler: one stalled case cannot cross it, and a reader that
+     * resynchronised through the file forever would cross it on the first. The
+     * budget is fifteen times the measured cost.
+     *
+     * The size bound below stays per case, because it has no clock in it.
+     */
+    const started = Date.now();
+
     fc.assert(
       fc.property(
         fc.integer({ min: 0, max: validTs.byteLength - 1 }),
         fc.integer({ min: 0, max: 255 }),
         (at, value) => {
           const damaged = withBytesAt(validTs, at, [value]);
-          const started = Date.now();
           const done = remux(sourceOf(damaged), 'container');
-          expect(Date.now() - started).toBeLessThan(500);
           // A repackage copies, so it can never honestly produce meaningfully
           // more media than it was given - and for this container that bound
           // covers the assembly buffer as well as the output.
@@ -522,6 +541,8 @@ describe('a transport stream that lies about its own shape', () => {
       ),
       { numRuns: 300 },
     );
+
+    expect(Date.now() - started).toBeLessThan(15_000);
   });
 
   it('reads or refuses any bytes laid out on a packet grid', () => {
@@ -752,15 +773,17 @@ describe('an AVI that lies about its own shape', () => {
   });
 
   it('answers for a corrupted AVI, whatever the damage', () => {
+    // The time bound is on the whole property. See the transport-stream
+    // version above for the measurements behind that.
+    const started = Date.now();
+
     fc.assert(
       fc.property(
         fc.integer({ min: 0, max: validAvi.byteLength - 1 }),
         fc.integer({ min: 0, max: 255 }),
         (at, value) => {
           const damaged = withBytesAt(validAvi, at, [value]);
-          const started = Date.now();
           const done = remux(sourceOf(damaged), 'audio');
-          expect(Date.now() - started).toBeLessThan(500);
           if (done.ok) {
             expect(binarySize(done.value.bytes)).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
           }
@@ -768,6 +791,8 @@ describe('an AVI that lies about its own shape', () => {
       ),
       { numRuns: 300 },
     );
+
+    expect(Date.now() - started).toBeLessThan(15_000);
   });
 
   it('reads or refuses any bytes claiming to be a RIFF AVI', () => {
@@ -863,15 +888,17 @@ describe('the properties that must hold for any bytes at all', () => {
     ['MP4', validMp4],
     ['Matroska', validMkv],
   ])('answers for a corrupted %s, whatever the damage', (_name, valid) => {
+    // As above: one budget for the property rather than a stopwatch on each of
+    // four hundred cases, which is a measurement of the scheduler.
+    const started = Date.now();
+
     fc.assert(
       fc.property(
         fc.integer({ min: 0, max: valid.byteLength - 1 }),
         fc.integer({ min: 0, max: 255 }),
         (at, value) => {
           const damaged = withBytesAt(valid, at, [value]);
-          const started = Date.now();
           const done = remux(sourceOf(damaged), 'container');
-          expect(Date.now() - started).toBeLessThan(500);
           if (done.ok) {
             expect(binarySize(done.value.bytes)).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
           }
@@ -879,6 +906,8 @@ describe('the properties that must hold for any bytes at all', () => {
       ),
       { numRuns: 400 },
     );
+
+    expect(Date.now() - started).toBeLessThan(15_000);
   });
 
   it('answers for a file cut short at any point', () => {

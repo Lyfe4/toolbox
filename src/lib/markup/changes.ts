@@ -30,9 +30,11 @@ import type { Nodes as HastNodes, RootContent } from 'hast';
  * TWO CONSEQUENCES OF THAT CHOICE, STATED RATHER THAN HIDDEN:
  *
  *   - An attribute whose VALUE changed is not reported, because the name is
- *     still there. The one case in this app is `id`, which the sanitiser
- *     namespaces to `user-content-*` on purpose and says so in its own
- *     documentation - so the silence here is not the same silence.
+ *     still there. The one case in this app is `id`, which the pipeline
+ *     namespaces to `user-content-*` on purpose - and "documented elsewhere"
+ *     turned out to mean "in a comment", not on screen. A census therefore
+ *     also carries the identifier VALUES, which is the one attribute whose
+ *     value this app is known to rewrite; see `renamedIdentifiers`.
  *   - An element that moved is not reported either, only one that appeared or
  *     disappeared. A `<p>` that gained a parent is the same `<p>`, and calling
  *     that a loss would put a note on almost every document.
@@ -56,6 +58,32 @@ export interface MarkupChange {
 export interface Census {
   readonly elements: ReadonlyMap<string, number>;
   readonly attributes: ReadonlySet<string>;
+  /**
+   * Every `id` and `name` the document DECLARES, as written.
+   *
+   * The one exception to "a census is a set of names": these are values, and
+   * they are here because they are the only values in this app that a pipeline
+   * rewrites. A set of identifiers is still nothing anybody can render - there
+   * is no markup in it, nothing to copy and nothing to put on a port - which
+   * is the property that made a census safe to hand across a module boundary
+   * in the first place.
+   *
+   * Not every `href`: only the in-document ones, below.
+   */
+  readonly identifiers: ReadonlySet<string>;
+  /**
+   * What every in-document link points at - the `x` of `href="#x"`.
+   *
+   * The other half of the identifier question, and the half with the visible
+   * consequence. A link whose target is not an identifier in the SAME document
+   * is a link that goes nowhere, and a document can acquire one without losing
+   * an element or an attribute: `HTML → HTML (normalised)` takes the document
+   * out to Markdown, which has no spelling for a heading's id, and the id
+   * comes back as a slug of the heading's TEXT. Every link to the old name is
+   * then dead, and both documents still contain exactly one `id` and one
+   * `href`. See `deadFragments`.
+   */
+  readonly fragments: ReadonlySet<string>;
 }
 
 /** hast spells attributes as JSX-ish property names; HTML authors do not. */
@@ -85,6 +113,8 @@ export function censusOfHtml(html: string): Census {
 export function censusOf(tree: HastNodes): Census {
   const elements = new Map<string, number>();
   const attributes = new Set<string>();
+  const identifiers = new Set<string>();
+  const fragments = new Set<string>();
 
   const walk = (node: RootContent | HastNodes): void => {
     if (node.type === 'element') {
@@ -94,13 +124,90 @@ export function censusOf(tree: HastNodes): Census {
         // and `null` mean the parser did not see one.
         if (value === undefined || value === null || value === false) continue;
         attributes.add(attributeName(property));
+        if (typeof value !== 'string' || value === '') continue;
+        if (property === 'id' || property === 'name') identifiers.add(value);
+        // `#` alone is the top of the page in every browser and points at no
+        // identifier by design, so it is not a fragment anybody can break.
+        if (property === 'href' && value.startsWith('#') && value.length > 1)
+          fragments.add(value.slice(1));
       }
     }
     if ('children' in node) for (const child of node.children) walk(child);
   };
 
   walk(tree);
-  return { elements, attributes };
+  return { elements, attributes, identifiers, fragments };
+}
+
+/**
+ * Links in a document that point at nothing in it, because WE moved the target.
+ *
+ * The second clause is the whole of it. A document can arrive with a dead
+ * anchor already in it - `<a href="#gone">` where nothing is called `gone` -
+ * and reporting that would be blaming the author for something the conversion
+ * did not do. So a fragment is only counted when the name it points at, with
+ * or without the prefix, is one the SOURCE document declared: the link is dead
+ * because the identifier it named was renamed or dropped on the way through.
+ */
+export function deadFragments(
+  declared: ReadonlySet<string>,
+  after: Census,
+  prefix: string,
+): readonly string[] {
+  const dead: string[] = [];
+
+  for (const fragment of after.fragments) {
+    if (after.identifiers.has(fragment)) continue;
+    const bare = fragment.startsWith(prefix) ? fragment.slice(prefix.length) : fragment;
+    if (declared.has(fragment) || declared.has(bare)) dead.push(fragment);
+  }
+
+  return dead;
+}
+
+/** Identifiers the source declared that are in the result under no spelling. */
+export function droppedIdentifiers(
+  declared: ReadonlySet<string>,
+  after: Census,
+  prefix: string,
+): readonly string[] {
+  return [...declared].filter(
+    (identifier) =>
+      !after.identifiers.has(identifier) && !after.identifiers.has(`${prefix}${identifier}`),
+  );
+}
+
+/**
+ * Identifiers the second document carries under a prefix the first did not.
+ *
+ * `id="location"` going in and `id="user-content-location"` coming out is a
+ * value the author wrote that is not in the output, and `compareCensus` cannot
+ * see it because `id` is present on both sides. It is deliberate - an id can
+ * shadow a global wherever the output is pasted, which is the whole reason the
+ * prefix exists - and it is still something that went in and did not come out.
+ *
+ * An identifier the pipeline INVENTED is not a rename: a heading slug is a new
+ * id under the same prefix, and the un-prefixed form was never in the input.
+ * The question is therefore asked of the input's own identifiers, one at a
+ * time, which is what keeps this from reporting every document with a heading
+ * in it - and for a Markdown source "the input's own" means the ones the
+ * author really typed, which is `markdownAuthorIdentifiers` rather than a
+ * census of the tree.
+ */
+export function renamedIdentifiers(
+  before: ReadonlySet<string>,
+  after: ReadonlySet<string>,
+  prefix: string,
+): readonly string[] {
+  const renamed: string[] = [];
+
+  for (const identifier of before) {
+    if (identifier.startsWith(prefix)) continue;
+    if (after.has(identifier)) continue;
+    if (after.has(`${prefix}${identifier}`)) renamed.push(identifier);
+  }
+
+  return renamed;
 }
 
 /**

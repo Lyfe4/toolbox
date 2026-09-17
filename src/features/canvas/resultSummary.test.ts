@@ -217,6 +217,50 @@ describe('the remaining data types', () => {
     expect(summariseValue(json({ a: 1, b: 2, c: 3 }))).toBe('3 keys');
     expect(summariseValue(json([1, 2]))).toBe('2 items');
   });
+
+  it('describes a JSON value that is not a collection at all', () => {
+    /*
+     * A `json` port can carry a scalar - `structured-data` reading `42` is one -
+     * and the branch for it sits below the two above, where breaking it turns
+     * every scalar into the word "null" and neither of those assertions moves.
+     */
+    expect(summariseValue(json('ada'))).toBe('ada');
+    expect(summariseValue(json(42))).toBe('42');
+    expect(summariseValue(json(false))).toBe('false');
+    expect(summariseValue(json(null))).toBe('null');
+  });
+});
+
+/* -------------------------------------------------------------------------- *
+ * The ceiling on the sentence
+ * -------------------------------------------------------------------------- */
+
+describe('the sixty characters a summary is allowed', () => {
+  /*
+   * THE LIMIT IS ALSO THE ACCESSIBLE NAME, which is why it exists at all: a
+   * 30 MB decoded document in a node's name is a string an assistive technology
+   * reads from end to end. The number and the comparison at the boundary were
+   * both unasserted - `60` could become anything and `<=` could become `<` with
+   * nothing to notice - and a cap nobody has counted is a cap that drifts.
+   */
+  it('keeps a line exactly at the limit whole', () => {
+    const exact = 'x'.repeat(SUMMARY_LIMIT);
+    expect(summariseValue(text(exact))).toBe(exact);
+    expect(summariseValue(text(exact))).toHaveLength(SUMMARY_LIMIT);
+  });
+
+  it('clips one character past it, and the ellipsis is inside the budget', () => {
+    const over = 'x'.repeat(SUMMARY_LIMIT + 1);
+    const summary = summariseValue(text(over));
+
+    expect(summary).toHaveLength(SUMMARY_LIMIT);
+    expect(summary.endsWith('…')).toBe(true);
+    expect(summary).toBe(`${'x'.repeat(SUMMARY_LIMIT - 1)}…`);
+  });
+
+  it('is sixty, which is the number the README and the node both state', () => {
+    expect(SUMMARY_LIMIT).toBe(60);
+  });
 });
 
 describe('which output a node summarises', () => {
@@ -381,5 +425,53 @@ describe('the loss a node prints on its own face', () => {
       'video-remux',
       'text-convert',
     ]);
+  });
+});
+
+/* -------------------------------------------------------------------------- *
+ * A note whose shape is wrong
+ * -------------------------------------------------------------------------- */
+
+describe('a report port carrying something that is not a note', () => {
+  /*
+   * `lossSummary` reads a payload off a port and puts it on a node's face, and
+   * every guard on the way is untested by construction: the tools in this
+   * repository all produce well-formed notes, so nothing exercises the branch
+   * that decides what to do when one does not. Break the type guard and a note
+   * whose title is a number reaches `clip`, which calls `String#replace` on it
+   * and throws - out of a render, from a port, which is the one thing a summary
+   * must never do.
+   */
+  const entry = getManifestEntry('structured-data');
+  const port = entry.outputs.find((candidate) => candidate.presentation === 'report');
+
+  const withNotes = (notes: unknown): Parameters<typeof lossSummary>[1] => {
+    expect(port).toBeDefined();
+    return { [port?.id ?? 'report']: json({ notes }) };
+  };
+
+  it('ignores a note whose title is not a string', () => {
+    expect(lossSummary(entry, withNotes([{ level: 'warn', title: 7 }]))).toBeNull();
+    expect(lossSummary(entry, withNotes([{ level: 'warn', title: null }]))).toBeNull();
+    expect(lossSummary(entry, withNotes([{ level: 'warn' }]))).toBeNull();
+  });
+
+  it('ignores a note whose title is the empty string', () => {
+    // An empty title on a node is an empty "Lossy ·" prefix over nothing at
+    // all, which reads as a rendering fault rather than as a caveat.
+    expect(lossSummary(entry, withNotes([{ level: 'warn', title: '' }]))).toBeNull();
+  });
+
+  it('still reads the well-formed ones beside them', () => {
+    // The control: the guards above must not be "return null for everything".
+    expect(
+      lossSummary(
+        entry,
+        withNotes([
+          { level: 'warn', title: 7 },
+          { level: 'warn', title: 'A real loss' },
+        ]),
+      ),
+    ).toBe('A real loss');
   });
 });

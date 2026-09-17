@@ -2,6 +2,9 @@ import {
   compareCensus,
   compareMarkup,
   censusOfHtml,
+  deadFragments,
+  droppedIdentifiers,
+  renamedIdentifiers,
   type Census,
   type MarkupChange,
 } from '@/lib/markup/changes';
@@ -70,6 +73,25 @@ export interface NormalisationInput {
    */
   readonly unsanitised: Census | null;
   readonly linkify: boolean;
+  /**
+   * The `id` and `name` values a MARKDOWN source's own raw HTML declared, and
+   * null for an HTML source, where the input is markup this module can parse.
+   *
+   * Supplied rather than derived because only the Markdown parser can tell an
+   * identifier the author typed from the crowd this tool invents around it -
+   * a heading slug, a footnote anchor - and those are not losses. See
+   * `markdownAuthorIdentifiers`.
+   */
+  readonly markdownIdentifiers: ReadonlySet<string> | null;
+  /**
+   * The prefix the pipeline puts in front of author-supplied identifiers.
+   *
+   * Passed in rather than imported: `pipelines.ts` is loaded dynamically, on
+   * purpose, and a static import of one constant from it would put the whole
+   * markup library back in the module graph that the dynamic import exists to
+   * keep it out of.
+   */
+  readonly idNamespace: string;
 }
 
 /** An attribute's name as a sentence fragment: `data-*` rather than eleven of them. */
@@ -94,12 +116,24 @@ function plural(count: number, one: string, many: string): string {
 }
 
 export function normalisationNotes(input: NormalisationInput): readonly ToolNote[] {
+  /*
+   * Asked of the OUTPUT, and only where the output is HTML.
+   *
+   * A Markdown or plain-text target has no identifiers left in it to rename or
+   * break, so naming one would describe a document the reader is not holding.
+   * Where the output IS HTML the question is asked of it rather than of the
+   * sanitised hub, because the two answer differently and the one the reader
+   * has is the output - see `identifierNotes`.
+   */
+  const identifiers =
+    input.target === 'html' || input.target === 'html-sanitised' ? identifierNotes(input) : [];
+
   if (input.source === 'html' && (input.target === 'html' || input.target === 'html-sanitised')) {
-    return htmlNotes(input);
+    return [...identifiers, ...htmlNotes(input)];
   }
   if (input.source === 'markdown' && input.target === 'markdown') return markdownNotes(input);
-  if (input.source === 'markdown') return markdownToHtmlNotes(input);
-  return [];
+  if (input.source === 'markdown') return [...identifiers, ...markdownToHtmlNotes(input)];
+  return identifiers;
 }
 
 /**
@@ -147,6 +181,88 @@ function markdownToHtmlNotes(input: NormalisationInput): readonly ToolNote[] {
       `Markdown can contain raw HTML and this document does. ${parts.join(' and ')} ${plural(elements.length + attributes.length, 'is', 'are')} not on the allow-list, so ${plural(elements.length + attributes.length, 'it was', 'they were')} removed on the way out. That list is what makes this output safe to paste into a page; it is also why a README's <details> block does not survive.`,
     ),
   ];
+}
+
+/**
+ * AN IDENTIFIER THE AUTHOR WROTE, UNDER A PREFIX THEY DID NOT.
+ *
+ * `id="location"` goes in and `id="user-content-location"` comes out, of every
+ * HTML this tool produces. It is deliberate and it is worth keeping - an id
+ * can shadow a global wherever this output is pasted, and the built-in
+ * clobbering it replaced was neither idempotent nor able to move an `href` -
+ * but `compareMarkup` cannot see it, because `id` is present on both sides.
+ * The matrix recorded that silence under "still unverified" and called the
+ * behaviour "documented elsewhere". Elsewhere was a comment in this repository.
+ *
+ * `warn` RATHER THAN `info`, WHICH IS A CLOSER CALL THAN IT LOOKS. The byte
+ * order mark next door is `info`: it is removed, the document still means the
+ * same thing, and nothing outside the document was pointing at it. An
+ * identifier is different in that last respect. Links INSIDE the document are
+ * moved to match, so those still work - but a stylesheet, a script or another
+ * page that referred to `#location` finds nothing, and finding nothing is
+ * exactly the failure nobody reports. So it goes on the node's face.
+ *
+ * It fires only on a rename. A heading slug this tool INVENTED carries the
+ * same prefix and is not a rename, which is what keeps this off every document
+ * with a heading in it.
+ *
+ * AND WRITING IT FOUND A SECOND THING, WHICH IS WORSE THAN THE FIRST. Asking
+ * the OUTPUT rather than the sanitised hub is what showed it: `HTML → HTML
+ * (normalised)` takes the document out to Markdown, Markdown has no spelling
+ * for a heading's id, and the id comes back as a slug of the heading's TEXT.
+ * Measured, on `<h2 id="location">Where</h2>` with a link to `#location`: the
+ * output is `<h2 id="user-content-where">` and the link still says
+ * `#user-content-location`, which is now in no document anywhere. Both
+ * documents contain one `id` and one `href`, so `compareMarkup` sees nothing at
+ * all - a table of contents can be dead on arrival with every count equal.
+ */
+function identifierNotes(input: NormalisationInput): readonly ToolNote[] {
+  const prefix = input.idNamespace;
+  const declared = input.markdownIdentifiers ?? censusOfHtml(input.input).identifiers;
+  if (declared.size === 0) return [];
+
+  const after = censusOfHtml(input.output);
+  const notes: ToolNote[] = [];
+
+  // Capped with a count, the same bargain the by-path reports make: a document
+  // with two hundred anchors would otherwise produce a list nobody reads.
+  const listed = (names: readonly string[], describe: (name: string) => string): string => {
+    const shown = names.slice(0, 5).map(describe).join(', ');
+    const rest = names.length - Math.min(names.length, 5);
+    return rest > 0 ? `${shown}, and ${rest.toString()} more` : shown;
+  };
+
+  const renamed = renamedIdentifiers(declared, after.identifiers, prefix);
+  if (renamed.length > 0) {
+    notes.push(
+      lost(
+        `${renamed.length.toString()} ${plural(renamed.length, 'identifier was', 'identifiers were')} namespaced`,
+        `${listed(renamed, (name) => `${name} became ${prefix}${name}`)}. Every id and name this tool writes is prefixed ${prefix} so that markup pasted into a page cannot shadow something already there. Links inside the document are moved to match, so they still work; anything OUTSIDE it that pointed at the old name - a stylesheet, a script, a link from another page - will not find it.`,
+      ),
+    );
+  }
+
+  const dropped = droppedIdentifiers(declared, after, prefix);
+  if (dropped.length > 0) {
+    notes.push(
+      lost(
+        `${dropped.length.toString()} ${plural(dropped.length, 'identifier is', 'identifiers are')} not in the result`,
+        `${listed(dropped, (name) => name)} went in and did not come out. Markdown has no spelling for an id, so normalising takes them out to Markdown and never brings them back - a heading gets a fresh id made from its own text instead. Choose HTML (sanitised) to keep the ones the document came with.`,
+      ),
+    );
+  }
+
+  const dead = deadFragments(declared, after, prefix);
+  if (dead.length > 0) {
+    notes.push(
+      lost(
+        `${dead.length.toString()} ${plural(dead.length, 'link in the document points', 'links in the document point')} at nothing`,
+        `${listed(dead, (name) => `#${name}`)} ${plural(dead.length, 'is', 'are')} in the output and ${plural(dead.length, 'names', 'name')} an id that is not. The link was working in the document that went in, and the id it named was renamed or dropped on the way through. Choose HTML (sanitised), which changes no document structure and moves every in-document link to match.`,
+      ),
+    );
+  }
+
+  return notes;
 }
 
 function htmlNotes(input: NormalisationInput): readonly ToolNote[] {

@@ -197,7 +197,9 @@ export const textConvertTool = defineTool({
       htmlToText,
       markdownToHtml,
       markdownMarkupBeforeSanitising,
+      markdownAuthorIdentifiers,
       sanitiseHtml,
+      ID_NAMESPACE,
     } = await import('@/lib/markup/pipelines');
 
     const toHtmlOptions = { headingIds: options.headingIds, linkify: options.linkify };
@@ -286,6 +288,15 @@ export const textConvertTool = defineTool({
               ? markdownMarkupBeforeSanitising(text, toHtmlOptions)
               : null,
           linkify: options.linkify,
+          /*
+           * The ids the AUTHOR wrote, which is a different question per
+           * source: an HTML document declares its own, and a Markdown one
+           * declares them inside raw HTML - among a crowd of slugs and
+           * footnote anchors this tool invented, which are not the author's
+           * and are not worth a word when they are namespaced.
+           */
+          markdownIdentifiers: source === 'markdown' ? markdownAuthorIdentifiers(text) : null,
+          idNamespace: ID_NAMESPACE,
         }),
       ];
 

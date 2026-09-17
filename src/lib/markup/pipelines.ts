@@ -15,7 +15,7 @@ import remarkRehype from 'remark-rehype';
 import remarkStringify from 'remark-stringify';
 import { unified } from 'unified';
 
-import { censusOf, type Census } from './changes';
+import { censusOf, censusOfHtml, type Census } from './changes';
 import { SANITISE_SCHEMA } from './sanitise';
 
 import type { Element as HastElement, ElementContent, Nodes as HastNodes, RootContent } from 'hast';
@@ -392,6 +392,43 @@ export function markdownMarkupBeforeSanitising(
 ): Census {
   const processor = markdownProcessor(options, false);
   return censusOf(processor.runSync(processor.parse(markdown)));
+}
+
+/**
+ * THE IDENTIFIERS THE AUTHOR OF A MARKDOWN DOCUMENT WROTE, AND ONLY THOSE.
+ *
+ * `namespaceIds` prefixes every `id` and `name` in the tree, and by the time it
+ * runs most of them are ours: `rehypeSlug` has made one per heading and
+ * `remarkRehype` has made `fn-1`, `fnref-1` and `footnote-label` for every
+ * footnote. Prefixing an id THIS TOOL invented costs the author nothing and is
+ * not worth a word; prefixing one they wrote is a name that went in and did not
+ * come out. A census of the pre-sanitised tree cannot tell the two apart -
+ * measured, and it reported a heading slug as a rename on the first run.
+ *
+ * So the question is asked of the source instead. In mdast, raw HTML is an
+ * `html` node and nothing else is: a `<div id="x">` the author typed is one,
+ * and the same `<div id="x">` inside a fenced block is a `code` node, which is
+ * the distinction that stops a README ABOUT HTML from being told its examples
+ * were renamed.
+ *
+ * `remarkGfm` is in the chain because the tagfilter and the footnote syntax
+ * change which text is an `html` node at all; nothing after it can, so the
+ * parse stops there.
+ */
+export function markdownAuthorIdentifiers(markdown: string): ReadonlySet<string> {
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(markdown);
+  const raw: string[] = [];
+
+  const walk = (node: MdastContent | MdastRoot): void => {
+    if (node.type === 'html') raw.push(node.value);
+    if ('children' in node) for (const child of node.children) walk(child);
+  };
+
+  walk(tree);
+  // Joined with a newline rather than concatenated: two adjacent raw blocks are
+  // two fragments, and running them together could close one tag with another
+  // one's bracket.
+  return raw.length === 0 ? new Set() : censusOfHtml(raw.join('\n')).identifiers;
 }
 
 /**

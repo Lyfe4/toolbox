@@ -400,3 +400,175 @@ describe('Markdown to HTML, which was labelled exact and is not', () => {
     expect(notes).toEqual([]);
   });
 });
+
+/* ========================================================================== *
+ * The identifiers the author wrote
+ * ========================================================================== */
+
+describe('an id the author wrote, under a prefix they did not', () => {
+  /*
+   * THE SILENCE `compareMarkup` CANNOT SEE.
+   *
+   * Every HTML this tool produces has its `id` and `name` attributes prefixed
+   * `user-content-`, so that markup pasted into a page cannot shadow something
+   * already on it. `id` is present in both documents, so the census comparison
+   * finds nothing and reported nothing - which the matrix recorded under "still
+   * unverified" and described as "documented elsewhere". Elsewhere was a
+   * comment in this repository, and a comment is not a channel.
+   *
+   * Links inside the document are moved to follow it, so the document still
+   * works. Anything outside it that pointed at the old name does not, and that
+   * is the failure nobody reports: `#location` in a stylesheet, a script, or a
+   * link from another page simply finds nothing.
+   */
+  const SOURCE = '<h2 id="location">Where</h2>\n<p><a href="#location">jump</a></p>';
+
+  it('names it for the sanitised target, which keeps the document working', async () => {
+    const { output, notes } = await convert(SOURCE, { source: 'html', target: 'html-sanitised' });
+
+    // The rename really happened, and the in-document link went with it, which
+    // is what the note is about and what it says.
+    expect(output).toContain('id="user-content-location"');
+    expect(output).toContain('href="#user-content-location"');
+
+    expect(losses(notes)).toContain('1 identifier was namespaced');
+    const note = notes.find((entry) => entry.title === '1 identifier was namespaced');
+    expect(note?.body).toContain('location became user-content-location');
+    // Nothing is dead here: the target moved and the link moved with it.
+    expect(titles(notes).some((title) => title.includes('at nothing'))).toBe(false);
+  });
+
+  /*
+   * THE ONE THE INSTRUMENT FOUND, WHICH IS WORSE THAN THE ONE IT WAS WRITTEN
+   * FOR.
+   *
+   * `HTML → HTML (normalised)` takes the document out to Markdown. Markdown has
+   * no spelling for a heading's id, so it is dropped, and `rehypeSlug` invents
+   * a fresh one from the heading's TEXT on the way back. The link that pointed
+   * at the author's id is carried through untouched and now names something
+   * that is in no document anywhere.
+   *
+   * `compareMarkup` sees nothing: one `id` in, one `id` out, one `href` in, one
+   * `href` out. A table of contents can arrive dead with every count equal,
+   * which is exactly the shape this round exists to find.
+   */
+  it('reports a link the normalising round trip left pointing at nothing', async () => {
+    const { output, notes } = await convert(SOURCE, { source: 'html', target: 'html' });
+
+    // The defect, measured rather than described.
+    expect(output).toContain('id="user-content-where"');
+    expect(output).toContain('href="#user-content-location"');
+    expect(output).not.toContain('id="user-content-location"');
+
+    expect(losses(notes)).toContain('1 link in the document points at nothing');
+    const dead = notes.find((entry) => entry.title.includes('at nothing'));
+    expect(dead?.body).toContain('#user-content-location');
+    // And the cause is named beside the consequence.
+    expect(losses(notes)).toContain('1 identifier is not in the result');
+  });
+
+  it('says nothing about a link that was already dead when it arrived', async () => {
+    /*
+     * The negative control that makes the note above mean anything. A document
+     * can arrive with an anchor pointing at nothing, and blaming the conversion
+     * for it would be a confident wrong sentence about somebody else's markup.
+     */
+    const { notes } = await convert('<p><a href="#gone">g</a></p>', {
+      source: 'html',
+      target: 'html',
+    });
+
+    expect(titles(notes).some((title) => title.includes('at nothing'))).toBe(false);
+  });
+
+  it('counts them, and names the first five', async () => {
+    const many = Array.from(
+      { length: 7 },
+      (_unused, index) => `<p id="a${String(index)}">x</p>`,
+    ).join('\n');
+    const { notes } = await convert(many, { source: 'html', target: 'html-sanitised' });
+
+    const note = notes.find((entry) => entry.title.includes('identifiers were namespaced'));
+    expect(note?.title).toBe('7 identifiers were namespaced');
+    expect(note?.body).toContain('a0 became user-content-a0');
+    expect(note?.body).toContain('a4 became user-content-a4');
+    expect(note?.body).not.toContain('a5 became');
+    expect(note?.body).toContain('and 2 more');
+  });
+
+  it('reports one an author wrote inside a Markdown document', async () => {
+    const { output, notes } = await convert('# T\n\n<p id="here">x</p>\n', {
+      source: 'markdown',
+      target: 'html',
+    });
+
+    expect(output).toContain('id="user-content-here"');
+    expect(losses(notes)).toContain('1 identifier was namespaced');
+  });
+
+  /* -- The negative controls, which are the whole of why this is trustworthy - */
+
+  it('says nothing about a document with no identifier in it', async () => {
+    const { notes } = await convert('<p>plain</p>', { source: 'html', target: 'html-sanitised' });
+    expect(titles(notes)).not.toContain('1 identifier was namespaced');
+  });
+
+  it('says nothing about a heading slug this tool invented', async () => {
+    /*
+     * THE FALSE POSITIVE THE FIRST VERSION HAD, and the reason the question is
+     * asked of the source rather than of the pre-sanitised tree. `rehypeSlug`
+     * makes an id per heading and `remarkRehype` makes one per footnote; both
+     * carry the prefix and neither is a name the author chose, so reporting
+     * them would put a loss on almost every Markdown document there is.
+     */
+    const { output, notes } = await convert('# Setup\n\nwords\n', {
+      source: 'markdown',
+      target: 'html',
+      headingIds: true,
+    });
+
+    expect(output).toContain('id="user-content-setup"');
+    expect(losses(notes)).not.toContain('1 identifier was namespaced');
+  });
+
+  it('says nothing about a footnote anchor this tool invented', async () => {
+    const { output, notes } = await convert('A[^1]\n\n[^1]: note\n', {
+      source: 'markdown',
+      target: 'html',
+    });
+
+    expect(output).toContain('user-content-fn-1');
+    expect(notes.filter((entry) => entry.title.includes('namespaced'))).toEqual([]);
+  });
+
+  it('says nothing about markup inside a fenced block, which was never parsed', async () => {
+    // A README ABOUT HTML. The tag is escaped to visible text rather than
+    // renamed, so a note would describe something that did not happen.
+    const { notes } = await convert('```html\n<div id="main">x</div>\n```\n', {
+      source: 'markdown',
+      target: 'html',
+    });
+
+    expect(notes.filter((entry) => entry.title.includes('namespaced'))).toEqual([]);
+  });
+
+  it('says nothing the second time, because the prefix is already there', async () => {
+    // The idempotence the hand-rolled namespacing exists to provide. A
+    // document that has been through this tool once has nothing left to rename.
+    const first = await convert(SOURCE, { source: 'html', target: 'html-sanitised' });
+    const second = await convert(first.output, { source: 'html', target: 'html-sanitised' });
+
+    expect(second.output).toContain('id="user-content-location"');
+    expect(second.notes.filter((entry) => entry.title.includes('namespaced'))).toEqual([]);
+  });
+
+  it('says nothing for a plain-text target, where no identifier survives at all', async () => {
+    const { output, notes } = await convert('# T\n\n<p id="here">x</p>\n', {
+      source: 'markdown',
+      target: 'text',
+    });
+
+    expect(output).not.toContain('user-content');
+    expect(notes.filter((entry) => entry.title.includes('namespaced'))).toEqual([]);
+  });
+});

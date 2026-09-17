@@ -254,6 +254,106 @@ describe('refusing, against the yaml-test-suite', () => {
     const corrupted: SuiteCase = { ...entry, documents: [{ name: 'not what the suite says' }] };
     expect(agrees(corrupted)).toBe(false);
   });
+
+  /* ------------------------------------------------------------------------ *
+   * ...AND WHAT EACH ONE WAS REFUSED FOR
+   * ------------------------------------------------------------------------ */
+
+  /*
+   * THE ASSERTION ABOVE IS `ok === false`, NINETY-FOUR TIMES, AND THAT IS ALL
+   * IT IS.
+   *
+   * Round three found SF5V being refused by the rule that an empty input is
+   * not a document - true of its bytes, and nothing to do with its fault,
+   * which is two `%YAML` directives. The case had been green the whole time
+   * and went on being green while the reason was wrong; what exposed it was
+   * correcting the empty rule, at which point the parser started ACCEPTING a
+   * document the spec calls invalid. The conclusion written down at the time
+   * was that a test which passes for the wrong reason is invisible until the
+   * right reason changes.
+   *
+   * The conclusion that was not drawn is that the other ninety-three
+   * assertions have exactly the same shape. So this bucket the refusals by the
+   * rule that produced them and asserts the counts - which is what would have
+   * shown SF5V without anybody having to change anything, and which found 9MMA
+   * in the same state on its first run: a bare `%YAML 1.2` with no document,
+   * refused for being empty.
+   *
+   * `empty`, `depth` and `json-boundary` are asserted at ZERO because each is a
+   * rule this file enforces on top of the parser, and a rule that also refuses
+   * VALID documents of the same shape cannot be evidence that an invalid one
+   * was understood.
+   */
+  const reasonOf = (message: string): string => {
+    if (message.includes('Nothing to parse')) return 'empty';
+    if (/%YAML directives|directive has no document/.test(message)) return 'directive';
+    if (message.includes('nested more than')) return 'depth';
+    if (/JSON cannot represent|itself a collection/.test(message)) return 'json-boundary';
+    return 'parser';
+  };
+
+  it('refuses each error case for a reason about the document, not about the input', () => {
+    const counts = new Map<string, string[]>();
+
+    for (const entry of errorCases) {
+      const result = parseSource(entry.yaml, 'yaml', ',');
+      const reason = result.ok ? 'ACCEPTED' : reasonOf(result.error.message);
+      counts.set(reason, [...(counts.get(reason) ?? []), entry.id]);
+    }
+
+    // Numbers rather than "none of them", so a corpus that shrank cannot
+    // satisfy this by having nothing left to classify.
+    expect(errorCases).toHaveLength(94);
+    expect(counts.get('ACCEPTED')).toBeUndefined();
+    expect(counts.get('empty')).toBeUndefined();
+    expect(counts.get('depth')).toBeUndefined();
+    expect(counts.get('json-boundary')).toBeUndefined();
+    expect(counts.get('directive')).toEqual(['9MMA', 'SF5V']);
+    expect(counts.get('parser')).toHaveLength(92);
+  });
+
+  it('names the fault in each of the two this file refuses itself', () => {
+    // The two the `yaml` package does not flag at any log level, so they are
+    // the only ones whose message is ours to get right.
+    const sf5v = parseSource('%YAML 1.2\n%YAML 1.2\n---\n', 'yaml', ',');
+    expect(sf5v.ok).toBe(false);
+    if (!sf5v.ok) expect(sf5v.error.message).toBe('That document has two %YAML directives.');
+
+    const mma = parseSource('%YAML 1.2\n', 'yaml', ',');
+    expect(mma.ok).toBe(false);
+    if (!mma.ok) expect(mma.error.message).toBe('That directive has no document after it.');
+  });
+
+  it('still says "empty" about a document that really is empty', () => {
+    /*
+     * THE CONTROL FOR THE ZEROES ABOVE. "No error case is refused for being
+     * empty" is worth nothing unless something still is - otherwise the rule
+     * could have been deleted and every assertion would be greener than ever.
+     */
+    for (const text of ['', '   \n\n', '# only a comment\n']) {
+      const result = parseSource(text, 'yaml', ',');
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(reasonOf(result.error.message)).toBe('empty');
+    }
+
+    // And a directive with a real document after it is not refused at all,
+    // which is what keeps the new rule from being "refuse anything with a %".
+    expect(parseSource('%YAML 1.2\n---\na: 1\n', 'yaml', ',').ok).toBe(true);
+  });
+
+  it('does not mistake a %YAML line inside a scalar for a directive', () => {
+    /*
+     * THE SUITE CAUGHT THE FIRST VERSION OF THE RULE ABOVE, ON ITS FIRST RUN.
+     * XLQ9 is a multi-line scalar one of whose lines reads `%YAML 1.2`, and a
+     * text scan for "a directive no --- follows" refused it - a valid document,
+     * rejected by a checker written to make a refusal more precise. The rule
+     * asks the parser instead: a directive with no document yields no
+     * documents, and a scalar yields one.
+     */
+    const scalar = parseSource('--- |\n %YAML 1.2\n text\n', 'yaml', ',');
+    expect(scalar.ok).toBe(true);
+    if (scalar.ok) expect(scalar.value).toBe('%YAML 1.2\ntext\n');
+  });
 });
 
 /* ========================================================================== *

@@ -316,15 +316,36 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
     // reliable remedy is to destroy the worker and build a new one.
     replaceWorker();
 
+    /*
+     * WHICH HALF OF THE GUARANTEE RAN OUT.
+     *
+     * "At most `timeoutMs` waiting, then `timeoutMs` running" is two clocks,
+     * and `starts` says which one this is. A request the worker never reached
+     * has not executed a single instruction, so every word about the tool
+     * taking too long is about work that did not happen - and for a tool with
+     * its own `timeoutMessage` it is a specific, confident, wrong diagnosis:
+     * `regex-tester` would tell somebody their pattern is backtracking
+     * catastrophically about a pattern it never compiled. On a canvas that is
+     * the base64 node queued behind a wedged image conversion, reporting at
+     * fifteen seconds that base64 is slow.
+     *
+     * The code stays `timeout` - it is the same fact, the node's status word
+     * is right either way, and a new one would be a new word on screen for no
+     * gain. Only the sentence changes, to the one that is true.
+     */
     entry.settle(
-      fail(
-        'timeout',
-        // A tool that knows WHY it is likely to run over says so itself.
-        // "This pattern is too slow" is actionable; "the tool took too long"
-        // invites the user to blame the app and try again.
-        entry.timeoutMessage ?? 'The tool took too long and was stopped.',
-        { detail: `Exceeded ${(entry.timeoutMs / 1000).toString()}s.` },
-      ),
+      entry.starts === 0
+        ? fail('timeout', 'This run never started, and the worker was replaced.', {
+            detail: `Waited ${(entry.timeoutMs / 1000).toString()}s without starting. Another tool was still holding the worker.`,
+          })
+        : fail(
+            'timeout',
+            // A tool that knows WHY it is likely to run over says so itself.
+            // "This pattern is too slow" is actionable; "the tool took too long"
+            // invites the user to blame the app and try again.
+            entry.timeoutMessage ?? 'The tool took too long and was stopped.',
+            { detail: `Exceeded ${(entry.timeoutMs / 1000).toString()}s.` },
+          ),
     );
 
     recover(casualties, 'Another tool on this canvas ran over its time limit.', { replay: true });

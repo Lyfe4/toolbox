@@ -1374,6 +1374,63 @@ afterwards, in both engines, in 3.7 s — and `check:browsers` now puts that
 as it could was passing for a reason that had nothing to do with the app being
 right.
 
+### Whether the assertions could fail at all
+
+Every serious bug in the three sections above passed a green suite. So the
+question after them is not "what else is broken" but **"of everything the tests
+assert, how much could fail if the thing it describes broke"** — and the only
+honest way to answer it is to break things on purpose and watch.
+
+**Mutation testing on the conversion code.** One small, syntactically valid
+change at a time — an operator flipped, a boundary moved, a constant nudged, a
+negation dropped — with the tests that claim to cover it run against each. A
+change nothing notices is a claim nothing is holding. The tooling is dev-only
+and nothing ships with it.
+
+Reading the survivors is the work, and **about half were equivalent**: a
+mutant that makes `cellToString` send a number through `JSON.stringify` produces
+the same string, so nothing noticing it is correct. What was left was six real
+gaps in `structured-data` alone, including a **defect**: two rounded integers in
+a YAML sequence were both reported at path `$`, where the same document read as
+JSON answered `$[0], $[1]`. The path is the entire value of that report.
+
+**The same question, asked of the harness.** `check:browsers` had an assertion
+that the JWT verdict "stays on screen in the raw view" — true before the click as
+well as after, so it passed whether or not the click landed on the right one of
+the page's two `Raw` toggles. And four measurements of four layouts were
+compared for agreement, which four reads of _one_ layout satisfy perfectly.
+
+**And the thing it could not answer.** "Was `check:browsers` run against the
+final code?" has no answer in this repository, for any commit: nothing records
+the build and the tree together. That is a check now rather than an instruction —
+a source file newer than the build under test fails the run, before the browsers
+start and again at the end, which is the half that catches an edit made while it
+was running.
+
+**Four assertions turned out to be measuring this machine rather than this
+code**, and they are the ones that had been written off as environmental. A
+check that the inspector "arrives without a slide" under reduced motion read the
+panel's width two frames after the keystroke — and two frames is a duration no
+harness controls, so it failed about one run in three under load while the app
+was right twelve times out of twelve. It samples every frame for an
+_intermediate_ width now, which a slow machine can only remove and never invent,
+with the same measurement without the preference as the control. Three
+`video-remux` properties ran a 500 ms stopwatch inside each of three hundred
+cases against a worst case of 23 ms; the budget is on the property now. And one
+structured-data timing assertion was **deleted** rather than repaired, because
+measurement showed no wall-clock bound could separate correct from broken in a
+suite this parallel — what replaced it is deterministic, and the cost claim is
+now written down as unasserted.
+
+**What that costs.** Mutation runs a deterministic sample rather than the whole
+space, so "the survivors it has not reached" is a real category and is written
+down as one in
+[the matrix](docs/conversion-matrix.md#found-in-round-four-by-breaking-things-on-purpose).
+Every new assertion here was run against the break that exposed it and seen to
+fail — which is not a formality: the first version of one of them asserted a
+position recomputed from a byte offset, which is right whatever the line counter
+does, and it passed against the break it was written for.
+
 ## Performance
 
 All figures from the production build, measured in Firefox on a desktop
