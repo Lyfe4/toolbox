@@ -460,7 +460,7 @@ about.
 
 ## Testing
 
-3,878 tests across 116 files. The count is not the interesting part; what the
+4,646 tests across 121 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Every conversion, with a verdict and the evidence behind it
@@ -476,22 +476,30 @@ code and agreeing with it.
 So the ranking of evidence in that document is the working rule here, and the
 top of it is **an external reference, committed as a fixture**:
 
-| Conversion                | Held to                                                              |
-| ------------------------- | -------------------------------------------------------------------- |
-| CSV, reading and writing  | CPython's `csv` module, 32 documents, 12 record sets, 9 dictionaries |
-| YAML, reading and writing | the yaml-test-suite, 402 cases; and js-yaml reading our output       |
-| The unified patch         | real `git diff --no-index`, 38 patches at two context widths         |
-| Markdown → HTML           | CommonMark 0.31.2 and the GFM extensions                             |
-| base64 both ways          | RFC 4648 §10                                                         |
-| MD5, SHA-1/256/384/512    | RFC 1321 appendix A.5 and the FIPS 180-4 examples                    |
-| JWT decode and HS256      | RFC 7515 appendix A.1                                                |
-| The regex match list      | `String.prototype.matchAll`                                          |
-| OKLCH round-tripping      | 166,112 sRGB colours on a fixed stride, calibrated by a full sweep   |
+| Conversion                      | Held to                                                                         |
+| ------------------------------- | ------------------------------------------------------------------------------- |
+| CSV, reading and writing        | CPython's `csv` module, 32 documents, 12 record sets, 9 dictionaries            |
+| YAML, reading and writing       | the yaml-test-suite, 402 cases; js-yaml AND CPython's PyYAML reading our output |
+| The unified patch               | real `git diff --no-index`, 38 patches at two context widths                    |
+| Markdown → HTML                 | CommonMark 0.31.2 and the GFM extensions                                        |
+| base64 both ways                | RFC 4648 §10                                                                    |
+| MD5, SHA-1/256/384/512          | RFC 1321 appendix A.5 and the FIPS 180-4 examples                               |
+| JWT decode, HS256, RS256, ES256 | RFC 7515 appendices A.1, A.2 and A.3                                            |
+| Image downscaling               | Pillow's box filter, where four reference filters agree                         |
+| The video tool's output         | a real decoder, frame by frame against the source                               |
+| The regex match list            | `String.prototype.matchAll`                                                     |
+| OKLCH round-tripping            | 166,112 sRGB colours on a fixed stride, calibrated by a full sweep              |
 
-Three of those rest on a fixture a script in [`scripts/`](scripts) generates
-and checks in — CSV from CPython, the patch from git, YAML from the suite's own
-release — so nothing shells out at test time and a change to either side is a
-diff in review. The others rest on a published document rather than on a
+Most of those rest on a fixture a script in [`scripts/`](scripts) generates and
+checks in — CSV from CPython, the patch from git, YAML from the suite's own
+release and from PyYAML, the JWS keys from CPython's `cryptography`, the
+downscale from Pillow, the video clip from a real x264 — so nothing shells out
+at test time and a change to either side is a diff in review. **A generator that
+has to convert something itself before the comparison verifies its own output
+first**: the JWS one refuses to write a fixture unless two independent verifiers
+both accept the RFC's signature and both reject it with one bit flipped, and the
+YAML event composer has to reproduce 278 of the suite's own answers before it is
+allowed to decide the 29 the suite does not answer. The others rest on a published document rather than on a
 program: the CommonMark and GFM suites are upstream files pinned by version in
 `src/lib/markup/spec/`, and the RFC and FIPS vectors are written at the
 assertion, because a vector that has been copied is a vector somebody can read.
@@ -1422,14 +1430,95 @@ measurement showed no wall-clock bound could separate correct from broken in a
 suite this parallel — what replaced it is deterministic, and the cost claim is
 now written down as unasserted.
 
-**What that costs.** Mutation runs a deterministic sample rather than the whole
-space, so "the survivors it has not reached" is a real category and is written
+**What that costs.** Mutation ran a deterministic sample rather than the whole
+space, so "the survivors it has not reached" was a real category and was written
 down as one in
 [the matrix](docs/conversion-matrix.md#found-in-round-four-by-breaking-things-on-purpose).
+**Round five emptied it** - 765 mutants, the whole space over the conversion
+code, with `node scripts/mutate.mjs` committed so the next person re-runs it
+rather than re-inventing it.
 Every new assertion here was run against the break that exposed it and seen to
 fail — which is not a formality: the first version of one of them asserted a
 position recomputed from a byte offset, which is right whatever the line counter
 does, and it passed against the break it was written for.
+
+### The four cells no test could settle
+
+Four rows in the matrix carried **not verified** from round one to round five,
+and they had one thing in common: none of them could be settled from inside the
+test suite. Each needed an answer from somewhere that is not this repository.
+
+**A specification's own bytes, for RS256 and ES256.** Every verification here
+outside RFC 7515 appendix A.1 signed with WebCrypto and then checked with
+WebCrypto, which proves two halves of one primitive agree with each other and is
+equally true of a broken pair. A.2 and A.3 publish the key, the signing input
+and the signature. The RFC gives its keys as JWKs and this tool takes SPKI PEM,
+so the conversion happens in the generator, in CPython's `cryptography` — and
+the generator refuses to write a fixture unless CPython **and** Node's WebCrypto
+both accept the RFC's signature with the derived key and both reject it with one
+bit flipped. It is then checked again in Gecko and WebKit through the tool's own
+worker, with a tampered token and a swapped key as controls in each.
+
+**A second language's YAML library, reading what this one writes.** js-yaml has
+been the only independent reader since round two, and one reader is enough to
+catch a writer that is wrong and not enough to tell a wrong writer from a
+limited reader. CPython's PyYAML now reads the same corpus and the answers are
+committed. It found what one reader could not: **eleven documents came out with
+a raw tab inside a plain scalar**, which PyYAML and ruamel.yaml both refuse at
+the scanner — the whole document, not the value — and which js-yaml reads
+happily. One tab anywhere in a converted file and no Python reader will open any
+of it. Those are quoted now, narrowly: only where the library would have used a
+plain scalar, because a tab inside a block scalar is read correctly by all four
+and a Makefile arriving as one long escaped line would be a worse document.
+
+**A reference resampler, for the image downscale.** `drawImage` onto a smaller
+canvas is the browser's own resampler and no specification pins it down, which
+is why this cell had no reference. The way in is to stop asking which filter an
+engine uses: at an integer reduction a region constant over a wide neighbourhood
+has one answer and every filter gives it. So the pattern is flat 64×64 blocks —
+two of them one-pixel checkerboards, where a point sampler gives black or white
+and every symmetric kernel gives the mean — and the generator **measures** which
+of the 4096 output pixels Pillow's box, bilinear, Hamming and Lanczos all agree
+about. 2927 of them. On those, Gecko is within one level and WebKit is exact.
+The tolerance is two and it is carried by a control: nearest-neighbour sits 128
+levels away on the same pixels, and that control is asserted, so a tolerance
+loosened until it passed would take the control with it.
+
+**A real decoder, for the video tool's output.** The line that had stood since
+that tool landed was "nothing here has ever played a file it made". Everything
+in the suite was about bytes, and every one of those assertions is true of a
+file no player will open. A real x264 clip — twelve frames, one flat colour
+each, 2.4 kB — now goes through the whole product, and the output and the source
+are both decoded by the engine and compared frame by frame. Identical, all
+twelve, in Gecko. WebKit records a **skip**, and the skip is measured rather than
+assumed: Playwright's WebKit answers `probably` to `canPlayType` for H.264 and
+then refuses every H.264 file it is given, including the one ffmpeg wrote, so
+the control runs first and the engine's refusal of our output is not read as a
+defect in the remuxer.
+
+**Each of the four found something it was not looking for**, which is now the
+fourth round running that writing the instrument was worth more than the
+question it was written for:
+
+- A document told its YAML was invalid when it was valid. `true:` beside
+  `"true":` is two keys to YAML and one key to JSON, and refusing it is right —
+  but the message blamed the document, and somebody reading it goes looking for
+  a syntax error that is not there. It is a JSON-boundary refusal now, worded
+  like the three beside it.
+- Eleven files CPython cannot open, above.
+- A code comment that was false about every engine: `verify.ts` says a malformed
+  signature makes `subtle.verify` throw. Measured, it returns `false` — for an
+  empty, 32-, 63- and 65-byte P-256 signature and for an empty and a 7-byte RSA
+  one — and rethrowing from that catch leaves the whole suite green. What
+  engines actually do is a measurement in `check:browsers` now.
+- A 64 kB bound that nothing was holding. Detection asks whether a
+  delimited-looking document also parses as a YAML mapping, and gives that parse
+  a bounded prefix for the obvious reason. Removing the bound moved no verdict
+  anywhere in the suite — a 16 MB paste would have been fully parsed by a
+  function whose job is to guess, with every test green. That is the cost guard
+  round four had to delete a stopwatch for, and it is a verdict rather than a
+  duration: a YAML fault past the budget cannot be seen by a bounded parse and
+  cannot be missed by an unbounded one.
 
 ## Performance
 

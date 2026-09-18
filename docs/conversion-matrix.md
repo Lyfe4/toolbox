@@ -32,6 +32,7 @@ passes" is not an entry in it.
 - [Found this round](#found-this-round)
 - [What was looked for and not found](#what-was-looked-for-and-not-found)
 - [Found in round four, by breaking things on purpose](#found-in-round-four-by-breaking-things-on-purpose)
+- [Found in round five, by asking something outside this repository](#found-in-round-five-by-asking-something-outside-this-repository)
 - [Still unverified, and how to verify it](#still-unverified-and-how-to-verify-it)
 
 ## What the verdicts mean
@@ -121,12 +122,12 @@ auto-detected unless you say otherwise; the target is always explicit.
 
 ### Writing
 
-| To   | Verdict                              | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ---- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| JSON | **exact**                            | `JSON.stringify`. Subject to the same integer ceiling on the way in.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| YAML | **exact**, with one named exception  | Every document the tool can read from the yaml-test-suite is re-serialised and read back by **js-yaml**, a separate implementation with a separate ancestry, as a dev-only oracle. 278 of 279 come back as the same value. The one that does not is NAT4, whose strings are nothing but newlines: our writer emits `\n` as a keep-chomped `\|+` block scalar, js-yaml 5.4.2 refuses it, and CPython's PyYAML 6.0.3 — asked as a third opinion, because two implementations disagreeing is evidence about neither — reads it correctly. Recorded as js-yaml's limit, and asserted as itself. |
-| CSV  | **exact**, with two stated spellings | 12 record sets written by CPython's `csv.writer` and by this writer, byte for byte. Two deliberate differences, each asserted as itself: no terminator after the last record (RFC 4180 permits both), and a field with leading or trailing whitespace is quoted where Python leaves it bare — the oracle was asked to read both spellings and returned the same field for each.                                                                                                                                                                                                             |
-| TSV  | **exact**                            | Same corpus, tab delimiter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| To   | Verdict                                               | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JSON | **exact**                                             | `JSON.stringify`. Subject to the same integer ceiling on the way in.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| YAML | **fixed in round five**, with three named differences | Every document the tool can read from the yaml-test-suite is re-serialised and read back by **js-yaml**, and — new in round five — by **CPython’s PyYAML**, committed as [`spec/yaml-writer-pyyaml.json`](../src/tools/structured-data/spec/yaml-writer-pyyaml.json). The second reader found what one reader could not: eleven documents came out with a **raw tab inside a plain scalar**, which PyYAML 6.0.3 and ruamel.yaml 0.19.1 both refuse at the scanner — the whole document, not the value — and which js-yaml reads without complaint. Those are quoted now. What is left is 32 of 284, in three groups named and asserted in [`yaml.writer.pyyaml.test.ts`](../src/tools/structured-data/yaml.writer.pyyaml.test.ts): a root-level block scalar at column 0 (PyYAML alone refuses it; `yaml`, js-yaml and ruamel read it), the same with an explicit indentation indicator (the readers split two and two), and three where PyYAML resolves YAML **1.1** timestamps and sexagesimals. NAT4 remains js-yaml’s own limit, asserted as itself. |
+| CSV  | **exact**, with two stated spellings                  | 12 record sets written by CPython's `csv.writer` and by this writer, byte for byte. Two deliberate differences, each asserted as itself: no terminator after the last record (RFC 4180 permits both), and a field with leading or trailing whitespace is quoted where Python leaves it bare — the oracle was asked to read both spellings and returned the same field for each.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| TSV  | **exact**                                             | Same corpus, tab delimiter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ### Between formats
 
@@ -265,13 +266,14 @@ Two properties hold the round trip honest where a byte comparison cannot:
 
 [`src/tools/jwt-decode`](../src/tools/jwt-decode).
 
-| Operation                   | Verdict          | Evidence                                                                                                                                                                                                                                                                                                                                                                     |
-| --------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Decode header and payload   | **exact**        | RFC 7515 appendix A.1, added this round: the published header and payload, decoded to the values the RFC prints.                                                                                                                                                                                                                                                             |
-| HS256 verification          | **exact**        | The same appendix's key and signature. Verified, and reported invalid when one character of the signature or of the payload changes.                                                                                                                                                                                                                                         |
-| HS384/512, RS\*, PS\*, ES\* | **not verified** | WebCrypto does the work and the surrounding code is exercised, but no published vector is checked for these. RFC 7515 has appendices for RS256 and ES256 and they are not used yet.                                                                                                                                                                                          |
-| `alg: none`                 | **exact**        | Refused outright, as its own status.                                                                                                                                                                                                                                                                                                                                         |
-| Large numeric claims        | **lossy, told**  | A `sub` or `jti` that is a 64-bit integer is rounded by `JSON.parse`, the same loss as [structured data’s](#numbers-past-253-unavoidable-and-no-longer-silent) and asked the same exact way. Reported by path on a `Report` port; the decoded claims and the signature verdict are unchanged, because the signature is checked against the bytes the rounding never touched. |
+| Operation                    | Verdict          | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Decode header and payload    | **exact**        | RFC 7515 appendix A.1, added this round: the published header and payload, decoded to the values the RFC prints.                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| HS256 verification           | **exact**        | The same appendix's key and signature. Verified, and reported invalid when one character of the signature or of the payload changes.                                                                                                                                                                                                                                                                                                                                                                                                          |
+| RS256 and ES256 verification | **exact**        | RFC 7515 appendices A.2 and A.3, added in round five. The RFC gives its keys as JWKs and this tool takes SPKI PEM, so the conversion is CPython's `cryptography` in [`scripts/generate-jws-oracle.mjs`](../scripts/generate-jws-oracle.mjs), which refuses to write a fixture unless CPython **and** Node's WebCrypto both accept the RFC's signature and both reject it with one bit flipped. Verified in the unit suite and again in Gecko and WebKit through the tool's own worker, with the tampered token and a swapped key as controls. |
+| HS384/512, PS\*, ES384/512   | **not verified** | WebCrypto does the work and the surrounding code is exercised, but no published vector is checked for these, and RFC 7515 publishes none. What round five's A.2 and A.3 do cover is everything around them that is ours: the PEM path, the curve table and the algorithm table, which A.2 and A.3 between them exercise for the RSA and EC branches. What is left is the hash size, and it is one entry in a table.                                                                                                                           |
+| `alg: none`                  | **exact**        | Refused outright, as its own status.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Large numeric claims         | **lossy, told**  | A `sub` or `jti` that is a 64-bit integer is rounded by `JSON.parse`, the same loss as [structured data’s](#numbers-past-253-unavoidable-and-no-longer-silent) and asked the same exact way. Reported by path on a `Report` port; the decoded claims and the signature verdict are unchanged, because the signature is checked against the bytes the rounding never touched.                                                                                                                                                                  |
 
 ## Colour
 
@@ -327,27 +329,28 @@ red is `oklch(0.628 0.258 29.23)`, green `oklch(0.866 0.295 142.5)`, blue
 are the browser's; what this tool owns is the header inspection, the limits and
 the report.
 
-| Conversion                | Verdict          | Evidence                                                                                                                                                  |
-| ------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PNG ↔ WebP (lossless-ish) | **lossy, told**  | Re-encoding always. Pixel fidelity measured on decoded pixels in two real engines.                                                                        |
-| → JPEG                    | **lossy, told**  | Quality option, and transparency matted onto white with a note.                                                                                           |
-| Animated GIF → still      | **lossy, told**  | Note on the result, repeated in the summary line.                                                                                                         |
-| EXIF, GPS, colour profile | **lossy, told**  | Stripped, and the report says what was removed — which in an app whose pitch is that your data does not move is the note that most needed making.         |
-| Orientation               | **exact**        | Honoured by both engines, asserted on decoded pixels.                                                                                                     |
-| Downscaling               | **not verified** | An 8× downscale of one-pixel stripes comes back uniform grey rather than aliased, which is right, but there is no reference resampler to compare against. |
+| Conversion                | Verdict         | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PNG ↔ WebP (lossless-ish) | **lossy, told** | Re-encoding always. Pixel fidelity measured on decoded pixels in two real engines.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| → JPEG                    | **lossy, told** | Quality option, and transparency matted onto white with a note.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Animated GIF → still      | **lossy, told** | Note on the result, repeated in the summary line.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| EXIF, GPS, colour profile | **lossy, told** | Stripped, and the report says what was removed — which in an app whose pitch is that your data does not move is the note that most needed making.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Orientation               | **exact**       | Honoured by both engines, asserted on decoded pixels.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Downscaling               | **exact**       | Round five. There is still no specification for `drawImage`, so the reference is built rather than found: a 4× reduction of a pattern of flat 64×64 blocks, downscaled offline by Pillow, with the generator **measuring** which of the 4096 output pixels box, bilinear, Hamming and Lanczos all agree about — 2927 — rather than arguing that they must. On those, both engines are within **one level** and WebKit is exact. The tolerance is two, and it is carried by a control: nearest-neighbour sits 128 levels away on the same pixels, and that control is asserted, so a tolerance loosened until it passed would take the control with it. See [`scripts/generate-resample-oracle.mjs`](../scripts/generate-resample-oracle.mjs). |
 
 ## Video
 
 [`src/tools/video-remux`](../src/tools/video-remux). A container change, never a
 re-encode.
 
-| Conversion                    | Verdict          | Evidence                                                                                                                            |
-| ----------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| MKV/MOV/TS/AVI → MP4          | **lossy, told**  | Every coded picture is the encoder's own, byte for byte; the framing around it is rewritten and the result says so.                 |
-| Recording location and date   | **lossy, told**  | Warned on the result and asserted on the output bytes.                                                                              |
-| Rotation                      | **exact**        | The track header's transform is carried, which a rebuilt header would have dropped.                                                 |
-| Codecs an MP4 cannot carry    | **lossy, told**  | Refused by name.                                                                                                                    |
-| Playback of the produced file | **not verified** | Nothing in this repository has ever played a file this tool made. It is the last item on [docs/manual-checks.md](manual-checks.md). |
+| Conversion                    | Verdict             | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MKV/MOV/TS/AVI → MP4          | **lossy, told**     | Every coded picture is the encoder's own, byte for byte; the framing around it is rewritten and the result says so.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Recording location and date   | **lossy, told**     | Warned on the result and asserted on the output bytes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Rotation                      | **exact**           | The track header's transform is carried, which a rebuilt header would have dropped.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Codecs an MP4 cannot carry    | **lossy, told**     | Refused by name.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Playback of the produced file | **exact, in Gecko** | Round five, and it is the sentence this document has carried since the tool landed. A real x264 clip — twelve frames, one flat colour each, encoded once by ffmpeg and committed as [`spec/playback.json`](../src/tools/video-remux/spec/playback.json) — goes through the whole product, and the output and the source are both decoded by the engine and compared frame by frame. Identical, all twelve. The comparison is source against output **in the same engine**, because Gecko and ffmpeg disagree about the YUV-to-RGB matrix and that is a decoder's business; what a remuxer must not change is anything. |
+| The same, in WebKit           | **not verified**    | Playwright's WebKit on Windows answers `probably` to `canPlayType` for H.264 and then refuses every H.264 file it is given, **including the source clip ffmpeg wrote**. The control runs first for exactly this reason, and the check records an honest skip naming it rather than a failure. Settling it needs Safari itself, which is [docs/manual-checks.md](manual-checks.md)'s job.                                                                                                                                                                                                                               |
 
 ## The canvas: one node's failure reaching another
 
@@ -786,6 +789,41 @@ looked for. Round one and two's list still holds; these are round three's.
   are byte-identical either way; the reports are additive. The JWT tool's decoded
   value and signature verdict are asserted unchanged beside the new note.
 
+And round five's, all of them from the new instruments rather than from the
+suite:
+
+- **The two engines disagreeing about a downscale.** The expectation going in
+  was that Gecko and WebKit would differ enough to force a loose tolerance.
+  Measured over all 4096 output pixels: Gecko is within **one** level of the
+  reference and WebKit is **exact**. The tolerance is two because the
+  measurement is one, not because the engines needed room.
+- **`imageSmoothingQuality` mattering, or `imageSmoothingEnabled` mattering.**
+  High, medium and low give identical results in both engines at an integer
+  reduction — and in Gecko, setting `imageSmoothingEnabled` to **false** changes
+  nothing either. The two lines in `convert.ts` that set them are insurance
+  against an engine that is not one of these two, and they say so; this is the
+  measurement behind that sentence rather than a guess. What _does_ point-sample
+  is `createImageBitmap`'s own `resizeQuality: 'pixelated'`, which lands 128
+  levels from the reference — so the check has been shown to fail against a real
+  API rather than only against a hypothetical.
+- **A frame dropped, repeated or reordered by the remuxer.** The playback check
+  resolves each decoded frame to its own colour among the twelve and requires
+  the sequence to be 0..11. It was, first run, in the one engine that can play
+  anything.
+- **A second scanner-level fault in what this tool writes as YAML.** After the
+  tab fix, **zero** of the 284 documents fail PyYAML's scanner; every remaining
+  refusal is a `ParserError`, which is a different stage and a different
+  question. The assertion is on the stage rather than on the ids, so a value
+  going back to being written raw reappears here.
+- **An error case in the yaml-test-suite refused by the key-collision rule.**
+  Zero of the 94, which is the same question round four asked of the empty-input
+  rule and could not ask of this one until the two collisions were separated.
+- **A malformed signature that makes WebCrypto throw.** The `try` in `verify.ts`
+  says one does. An empty, 32-, 63- and 65-byte P-256 signature and an empty and
+  a 7-byte RSA one all come back `false` from Node's WebCrypto, and rethrowing
+  from that catch leaves the whole suite green. What the engines do is a
+  measurement in `check:browsers` now rather than a claim in a comment.
+
 ## Found in round four, by breaking things on purpose
 
 Round four asked one question of everything in this document: **could the
@@ -870,36 +908,383 @@ count equal, which is exactly what `compareMarkup` is documented as being unable
 to see. Both halves are reported now, and the negative control is a document that
 arrived with a dead anchor already in it, which is not this tool's to claim.
 
+## Found in round five, by asking something outside this repository
+
+Round five is the one that was left until last because none of it could be done
+inside the test suite. Every item below needed a reference from somewhere else:
+a specification's own bytes, another language's library, a real encoder, a real
+decoder.
+
+### The twenty-nine the suite would only describe
+
+The yaml-test-suite answers most of its cases with an `in.json`. Twenty-nine
+carry none, and for three rounds this document counted them and moved on —
+visible, which was the point, and undecided, which was the cost.
+
+They are not undescribed. Every case in the suite carries a `test.event`, and
+an event stream fixes the node graph completely: what opened, what closed, every
+scalar with the style it was written in, every anchor and every alias. So the
+generator composes the value from the events, and the suite's own answer decides
+all twenty-nine.
+
+**The composer is not trusted on its own say-so**, because it is code this
+repository wrote, which is the evidence this document ranks lowest. Before it is
+allowed to decide a case the suite does not answer, it has to reproduce the ones
+the suite does: **278 of the 279**, the exception being RR7F, whose `in.json`
+prints a mapping in a different order and which this document has called an
+ordering difference since round two. The generator throws rather than writing a
+fixture if anything else disagrees.
+
+The twenty-nine come out as:
+
+| What the events describe          | How many | What this tool must do                                             |
+| --------------------------------- | -------- | ------------------------------------------------------------------ |
+| A value JSON can hold             | 13       | Produce it. All thirteen already agreed.                           |
+| A key that is itself a collection | 15       | Refuse at the JSON boundary, which it does, with that message.     |
+| Two keys that collide             | 1        | Refuse — and **the message was wrong**, which is the next section. |
+
+**The key-naming rule came out of the measurement rather than out of taste.** A
+mapping key is named by its own scalar TEXT, not by the value it resolves to.
+The two differ in exactly one place and it is the place that matters: an empty
+plain key resolves to `null`, and `JSON.stringify(null)` is the four letters
+`null` — a key that was never in the document. Naming it `""` is what the
+document says, what this tool produces, and what agrees with **278** of the
+suite's own answers. The other rule agreed with 277.
+
+### A document told it was invalid, which was valid
+
+2JQS is `: a` over `: b` — a mapping with the same empty key twice. The suite
+composes it rather than marking it an error, so refusing it is this tool's
+decision and not the document's fault. The message said **"That is not valid
+YAML."**
+
+It is the same shape as round three's SF5V and round four's 9MMA: a case refused
+for a reason that was about something else. And it was not only the suite's
+case. The rule that produced it is `collidesAsJsKey`, which exists because
+`true:` and `"true":` are two keys to YAML and one key to JavaScript — and so
+are `1:` and `"1":`, and `~:` and `"":`. Every one of those documents is valid
+YAML by every reference there is: the suite composes them, js-yaml reads them,
+PyYAML reads them. It is **JSON** that cannot hold them, which is the same
+boundary that refuses a `!!set`, a `!!binary` and a collection key — and the
+only one of the four that was blaming the document.
+
+Someone told their valid YAML is invalid goes looking for a syntax error that is
+not there. The two are separated now:
+
+- `That mapping has the same key twice.` — genuinely one key written twice.
+- `Two different YAML keys become the same JSON key.` — the JSON boundary,
+  worded like its three neighbours.
+
+Both are asserted in both directions, because a distinction that only fires one
+way is decoration. And the oracle test can now ask of the 94 error cases what it
+could not ask before: **none of them is refused by the key-collision rule**,
+which is the same question round four asked of the empty-input rule.
+
+### A third implementation, reading what this tool writes
+
+The writing row has rested on js-yaml since round two. One independent reader is
+enough to catch a writer that is wrong and not enough to tell a wrong writer
+from a limited reader — which came up twice, and both times was settled by
+asking CPython by hand, in a comment, with nothing to notice if the answer
+changed.
+
+So the same corpus is written out, read by **PyYAML**, and the verdict committed.
+It found what one reader could not: **eleven documents came out with a raw tab
+inside a plain scalar**. PyYAML 6.0.3 and ruamel.yaml 0.19.1 both refuse those at
+the SCANNER — the whole document, not the value — and js-yaml reads them without
+complaint. One tab anywhere in a converted file and every Python reader refuses
+all of it.
+
+That is legal YAML by the 1.2 grammar and it is a file CPython cannot open, so
+it is fixed: a string with a tab in it is written double-quoted, where the tab
+becomes `\t` and all four implementations agree. Narrowly — only where the
+library would have used a PLAIN scalar. A tab inside a block scalar is read
+correctly by all four, and a Makefile arriving as one long escaped line would be
+a worse document than the one it replaced.
+
+**What is left is 32 of 284, in three groups, each recorded with who agrees:**
+
+| Group                                                    | How many | Who reads it                                                       |
+| -------------------------------------------------------- | -------- | ------------------------------------------------------------------ |
+| A root block scalar with content at column 0             | 23       | `yaml`, js-yaml, ruamel. PyYAML alone refuses.                     |
+| The same with an explicit indentation indicator (`\|1-`) | 6        | `yaml` and js-yaml. PyYAML and ruamel refuse.                      |
+| PyYAML resolving YAML **1.1** types                      | 3        | A 1.2 reader returns the strings; PyYAML returns dates and base-60 |
+
+The first is recorded as PyYAML's limit and **is not fixed**: the emitter has no
+option for root indentation, and fixing it means rewriting emitted YAML text by
+hand to insert an indentation indicator — which is the very thing the second
+group shows implementations disagree about. The third is the reader's schema
+rather than this writer's output, and is worth knowing about for a different
+reason: a file from this tool fed to a YAML 1.1 reader can change type on the
+way in, and no quoting decision on this side is visible to it.
+
+### The one conversion with no reference at all
+
+Image resampling is `drawImage` onto a smaller canvas — the browser's own
+resampler, which no specification pins down. It has been `not verified` since
+round one on exactly that ground, and the check that existed was narrow: one
+pattern, one question, "is this an average rather than a sample".
+
+A reference is possible anyway, and the way in is to stop asking which filter an
+engine uses. At an integer reduction, a region constant over a wide
+neighbourhood has one answer and every filter gives it. So the pattern is a 4x4
+grid of 64x64 flat blocks — two of them one-pixel checkerboards, which is where
+a point sampler gives black or white and every symmetric kernel gives the
+mean — reduced 4x, and the generator **measures** which of the 4096 output
+pixels Pillow's box, bilinear, Hamming and Lanczos all agree about. 2927 of
+them.
+
+Measured on those pixels: **Gecko is within one level and WebKit is exact**, at
+`imageSmoothingQuality` high, medium and low alike. Both engines do an exact
+area average at an integer reduction.
+
+The tolerance is **two**, and it is carried by a control rather than by taste:
+nearest-neighbour sits 128 levels from the reference on the same pixels, and
+that control is asserted, so a tolerance loosened until it passed would take the
+control with it. Shown failing against two deliberate breaks, both measured in
+Gecko: `createImageBitmap`'s `resizeQuality: 'pixelated'` gives **128** levels,
+and drawing the bitmap at its own size into the smaller canvas — a crop instead
+of a scale, which is a plausible edit — gives **255**. Where the four reference filters disagree — by up to 57
+levels — the bound is their own spread and the number is reported rather than
+asserted, because holding a browser to one of four kernels is not a claim about
+this tool.
+
+### Something played a file the video tool made
+
+`docs/manual-checks.md` has carried one line since the tool landed: nothing here
+has ever played a file it made. Everything in the suite is about bytes — the
+coded pictures survive, the index is in front of the media, the parameter set
+says 640x480 — and every one of those is true of files no player will open. A
+container is a contract with a decoder.
+
+A real x264 clip is committed for the purpose: twelve frames at 320x240, one
+flat colour each, every frame a keyframe, 2.4 kB. It goes through the whole
+product, and then the output and the source are **both decoded by the engine**
+and compared frame by frame. Identical, all twelve, in Gecko.
+
+Shown failing against two deliberate breaks, both measured in Gecko: the same
+clip re-encoded in reverse resolves to `[11, 10, ... 0]` against the ordering
+check, and a copy with the sample table's count overwritten does not load at
+all. Three things make the equality mean something rather than nothing:
+
+- **The comparison is source against output in the same engine.** Gecko returns
+  `rgb(237, 39, 19)` where ffmpeg returns `rgb(219, 18, 18)` for the same coded
+  frame — a different YUV-to-RGB matrix, which is a decoder's business. What a
+  remuxer must not change is anything.
+- **Equality is the easiest thing in the world to get for the wrong reason.**
+  Two files that decode to nothing are equal, and so are twelve samples of one
+  frame. So each decoded frame is also required to be nearest to its OWN colour
+  among the twelve, which is a frame count, an ordering and a drop check in one
+  comparison.
+- **The decoder has to be able to say no.** The same bytes with the sample
+  table's count overwritten must fail to load, or "it played" means only that
+  something was handed a URL.
+
+**WebKit records a skip, and the skip is measured.** Playwright's WebKit on
+Windows answers `probably` to `canPlayType` for H.264 and then refuses every
+H.264 file it is given, **including the source clip ffmpeg wrote**. The control
+runs first for exactly that reason: without it, the engine's refusal of our
+output would read as a defect in the remuxer.
+
+### RS256 and ES256, from the RFC rather than from ourselves
+
+Every verification in this repository outside RFC 7515 appendix A.1 signs with
+WebCrypto and then checks with WebCrypto, which proves two halves of one
+primitive agree with each other and is equally true of a broken pair. A.2 and
+A.3 publish the key, the signing input and the signature for RS256 and ES256.
+
+The RFC gives its keys as JWKs and this tool takes SPKI PEM, so the conversion
+is the only step between the specification's bytes and a test — and it happens
+in the generator, in CPython's `cryptography`, not in the test file. The
+generator refuses to write a fixture unless CPython **and** Node's WebCrypto both
+accept the RFC's signature with the derived key and both reject it with one bit
+flipped.
+
+It is then checked twice: in the unit suite, and in Gecko and WebKit through the
+tool's own worker and its own verdict banner, with a tampered token and a
+swapped key as controls in each engine. The swapped key is not decoration: it is
+what says the algorithm and curve tables in `verify.ts` are read rather than
+decorative, and the mutants that name the wrong curve or the wrong padding are
+each caught.
+
+**And one claim in the code turned out to be false.** The `try` around
+`subtle.verify` says a malformed signature "throws rather than returning false".
+Measured against Node's WebCrypto: an empty, 32-, 63- and 65-byte P-256
+signature and an empty and a 7-byte RSA one all come back `false`. Rethrowing
+from that catch leaves the whole suite green. The test that looks like it covers
+it says so in its own comment rather than claiming coverage it does not have,
+and which engines throw is now MEASURED in `check:browsers` instead of asserted
+from a code comment.
+
+### A cost guard that is not a clock
+
+Round four deleted a timing assertion rather than repairing it, because
+measurement showed no wall-clock bound could separate correct from broken in a
+suite running a hundred and twenty files at once. That was right and it left
+nothing guarding the path getting several times slower.
+
+There is a guard, and looking for it found the hole it was needed for. The
+expensive thing in detection is not the record walk — that is bounded twice and
+both bounds have had a document each since round four. It is the YAML
+verification: when a document looks delimited, detection asks whether it also
+parses as a **mapping**, and that is a real parse. It is given
+`body.slice(0, DETECTION_BUDGET)` for the same reason the walk is bounded, and
+**removing the slice moved no verdict anywhere in the suite**. A 16 MB paste
+would have been fully parsed by a function whose entire job is to guess, and
+every test would have stayed green.
+
+The guard works because a YAML fault past the budget cannot be seen by a bounded
+parse and cannot be missed by an unbounded one, so the VERDICT says which
+happened: a head of `key: a, b` lines that is both delimited-looking and a
+mapping, and a fault after 64 kB. Bounded, the verdict stays `yaml`; unbounded,
+the parse fails and it becomes `csv`. The positive partner puts the same fault
+inside the budget and requires the verdict to move.
+
+**What is still not guarded, said plainly.** `stripBom`, the `sep=` scan and
+`trim` all touch the whole string before any bound applies, so detection is
+linear in the input whatever happens. There is no clock-free witness for that:
+the function has no observable seam a counter could sit in, and the only way to
+see the work is to time it.
+
+### The harness now says which harness it was
+
+Round four made `check:browsers` refuse to drive a stale build, and the
+exclusion it uses is a path pattern over test files and nothing else — which is
+correct, and which says nothing about the harness itself. `scripts/` is not a
+source root and should not be: an edit to a check cannot make `dist` stale.
+
+But harness code changes what a run MEANS, and an edit made while a run is in
+flight produces a summary about a mixture of two harnesses, with the half that
+ran first carrying the old assertions. So the harness hashes itself and
+everything it loads, prints the digest at the start so a run can be matched to a
+tree, and asserts it unchanged at the end.
+
+### The category round four wrote down, emptied
+
+Round four ran mutation over a **deterministic sample** and said so, and wrote
+"the survivors it has not reached" down as a real category rather than pretending
+the number was a score. Round five ran the whole space over the conversion code:
+**765 mutants**, every one of them, with the tests that claim to cover each file.
+
+| File                         | Mutants | Killed | Timed out | Survived |
+| ---------------------------- | ------- | ------ | --------- | -------- |
+| `structured-data/convert.ts` | 333     | 253    | 6         | 74       |
+| `structured-data/csv.ts`     | 147     | 133    | 3         | 11       |
+| `structured-data/jsonc.ts`   | 64      | 44     | 8         | 12       |
+| `structured-data/report.ts`  | 9       | 9      | 0         | 0        |
+| `diff/compute.ts`            | 212     | 177    | 2         | 33       |
+
+A **timeout is a kill**, and it is recorded separately rather than absorbed
+because the thing it catches is different: `index += 1` becoming `index += 0`
+inside a scanner is an infinite loop, and vitest cannot interrupt a blocked
+worker thread. The first sweep of this round sat on one for four minutes before
+anybody looked at it.
+
+**The diff tool was the thinnest of the five going in** — round four's forty
+mutants against a tool held to real `git diff` output — and it is the whole file
+now.
+
+Reading the survivors is the work, and the shape of what they found is the same
+every time: **not a wrong answer, but a claim with nothing behind it.**
+
+| Broken on purpose                                                      | What nothing noticed                                                                                                         |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `fellBack: false`, at five separate returns                            | The Detected report says it GUESSED when it was told. Round four fixed this once at the other end, for `detected: !chosen`   |
+| `detected.fellBack && foundNothing`                                    | A `---` document whose lines YAML folds is refused as "not a format", instead of being the document it declared itself to be |
+| The doubled-quote skip in detection                                    | A quoted field holding `","` counts three fields, the rows go ragged, and a CSV falls through to YAML                        |
+| `fieldStarted = false` at a record boundary                            | The opening quote of the SECOND row is read as a literal, and the comma inside it is counted                                 |
+| `counts.length >= DETECTION_RECORDS`                                   | The cap reads fifty-one records. Only a document with exactly fifty terminated records can tell                              |
+| The CRLF skip in detection                                             | A record whose first character is the delimiter loses it, and comes back a field short                                       |
+| `depth + 1` in the OBJECT branch                                       | The depth guard never fires for `{"a":{"a":…}}`. The existing test was `[[[[…]]]]`, arrays only                              |
+| The line and column pulled out of a `JSON.parse` message               | A caret under innocent text. The only thing asserted was that a position EXISTED                                             |
+| `invisible: differs && rendersTheSame(…)`                              | Every line an option ignored — a case difference, say — reported as an invisible one                                         |
+| `invisible: false` on an added line                                    | An addition reported as an invisible difference from nothing                                                                 |
+| `MAX_REFINE_LINE_LENGTH` and `MAX_REFINE_TOTAL_CHARS`, at the boundary | Every test near those bounds was far past them or far short of them                                                          |
+| The two offsets that end a block comment                               | One swallows the character after the comment, the other the rest of the file. Both still parse                               |
+| `+` inside the two messages this round added                           | The detail under the headline becomes the three letters `NaN`                                                                |
+
+**Thirty-three of the 130 survivors are killed by the twelve assertions round
+five added**, and every one of those was run against the specific mutant that
+exposed it and seen to fail — which is the only reason to believe a new test is
+about what its name says. The `fellBack` table alone accounts for ten of them,
+because one table over one function's returns is worth more than ten examples.
+
+**And what is left is written down rather than counted.** A survivor is not a
+defect, and about half of these cannot be one:
+
+- **Equivalent.** `sortKeysDeep`'s comparator returning `-0` instead of `-1`
+  still sorts, because the `a > b` arm returns 1; `<` becoming `<=` there cannot
+  fire, because object keys are unique. `cellToString`'s `||` becoming `&&` is
+  round four's own example and is still equivalent. A scanner reading one
+  character past the end reads `undefined`, which is not a delimiter, a quote or
+  a newline.
+- **Reachable, and the reach does not change an answer.** Three of the four CRLF
+  mutants in detection move the cursor by one character, and detection's verdict
+  is a comparison of field COUNTS that one character cannot move — unless that
+  character is the delimiter, which is the document that killed the fourth.
+- **Unreachable with this runtime.** `jsonErrorPosition` has a second arm for a
+  message with an offset and no line and column. V8 prints both, always, so that
+  arm is never taken — and it computes the same answer when it is, because
+  offset 18 in the test's document IS line 3 column 7. Exercising it would mean
+  stubbing `JSON.parse`, which is a test of the stub.
+- **Unreachable with a valid document.** The JSONC stripper's block-comment
+  guard is `char === '/' && source[index + 1] === '*'`, and an `||` there would
+  open a comment on a lone `/`. There is no lone `/` outside a string in any
+  JSON document — the line-comment branch above it takes `//` first — so the
+  only inputs that reach it are ones this tool already refuses.
+
+The honest summary is that the **unreached** category is now empty and the
+**unkilled** one is not. What replaced "we sampled" is a list somebody can read,
+with a reason beside each entry, and `node scripts/mutate.mjs` to re-run it.
+
 ## Still unverified, and how to verify it
 
-In the order I would do them.
+Five rounds in, the list is short and every item on it is short for a stated
+reason rather than for want of trying.
 
-1. **JWT beyond HS256.** RFC 7515 appendices A.2 (RS256) and A.3 (ES256) carry
-   complete key material and signatures. Two more fixtures.
-2. **Image resampling.** No reference. A fixed 8×8 pattern downscaled by a known
-   factor, compared against the same operation in a reference resampler run
-   offline and committed as expected pixels, would turn `not verified` into a
-   verdict.
-3. **The video tool's output, played.** Still nothing in this repository has
-   played a file it made.
-4. **The 29 YAML cases the suite describes only as an event stream.** They carry
-   no `in.json`, so the fixture cannot decide them and the count is asserted
-   rather than the cases being dropped. Reading the suite's `test.event` files
-   and comparing a composed event stream would decide them; it needs an event
-   emitter this tool does not have.
-5. **Our YAML writer against a third implementation.** js-yaml is one independent
-   reader. PyYAML settled two disagreements by hand — the `\n` block scalar in
-   round two and the empty-document rule in round three — but it is not in the
-   suite. A generator that runs our writer's output through CPython and commits
-   the answers would make the writing row rest on two references rather than one
-   and a footnote.
-6. **`compareMarkup` against an element that MOVED.** It counts what each
+1. **HS384/512, PS\*, ES384/512.** RFC 7515 publishes vectors for HS256, RS256
+   and ES256 and for nothing else, so there is no external answer to check these
+   against. What round five's A.2 and A.3 do settle is everything around them
+   that is ours — the SPKI PEM path, the curve table and the algorithm table —
+   because those two exercise the RSA and the EC branch between them. What is
+   left unchecked is one entry in a hash table per algorithm. **What it would
+   take:** a published vector from somewhere that is not this repository; the
+   JOSE cookbook (RFC 7520) has several and is the obvious next place to look.
+
+2. **Playback in WebKit.** Gecko plays the file the video tool made and every
+   frame matches the source. Playwright's WebKit refuses every H.264 file it is
+   given, _including the one ffmpeg wrote_, so it cannot answer. **What it would
+   take:** Safari itself, on a Mac. That is what
+   [docs/manual-checks.md](manual-checks.md) is for, and the entry is now a
+   comparison against a known-good clip rather than "play it and see".
+
+3. **`compareMarkup` against an element that MOVED.** It counts what each
    document contains, so an element that gained a parent is not reported. Stated
-   in the code, and still true. The other half of that note — an attribute whose
-   VALUE changed — was **resolved in round four**: the `id` namespacing it named
-   is measured and reported, and the instrument that does it found a broken link
-   the census could not see. See
-   [An identifier, and a link to nothing](#an-identifier-and-a-link-to-nothing).
+   in the code, and still true. **What it would take:** a tree diff rather than a
+   census — which is a different instrument, not a fix to this one. The other
+   half of that note, an attribute whose VALUE changed, was resolved in round
+   four.
+
+4. **A root-level block scalar, and which implementation is right.** Round five
+   measured it rather than settling it: `yaml`, js-yaml and ruamel.yaml read a
+   root `|` with content at column 0; PyYAML refuses it. With an explicit
+   indicator the readers split two and two, because the indicator is defined
+   relative to the parent node and at the root that is -1. **What it would take:**
+   a ruling, not a measurement — the spec text is not decisive and four
+   implementations do not agree. Writing the output differently would mean
+   rewriting emitted YAML by hand, which is a new hazard in exchange for a
+   contested one.
+
+5. **The cost of detection, in wall-clock terms.** Round four deleted the
+   assertion and round five replaced the part that could be replaced: the three
+   bounds on the decision are each held by a document that its own bound alone
+   decides, and the third of those — the YAML verification — is what turns a
+   bounded guess into a full parse of a 16 MB file if it is removed. What is left
+   is linear: `stripBom`, the `sep=` scan and `trim` touch the whole string
+   before any bound applies. **What it would take:** an observable seam for a
+   counter to sit in, and there is not one; the only other way to see that work
+   is a clock, which measurement showed cannot separate correct from broken in a
+   suite this parallel.
 
 ## A plan for the rounds after this one
 
@@ -920,30 +1305,39 @@ breaking the harness on purpose, and by classifying the 94 YAML refusals instead
 of counting them. It found a real defect in the by-path reports, a broken
 in-document link `compareMarkup` is documented as unable to see, a second suite
 case refused for the wrong reason, and six claims in this file that nothing was
-holding. The original plan for this round read:
+holding.
 
-> The boundaries jsdom cannot see. Unchanged from round two's
-> plan, and now with one more item: the worker boundary with hostile text, plus a
-> pass over `check:browsers` asking of every check the question the
-> negative-assertion audit asked — can this fail? Round two did that for the skips
-> and found one worth converting; it did not do it for the assertions. Round
-> three's SF5V finding is the same question asked of a different suite, and it
-> found something, which is an argument for asking it everywhere.
+**Round five — done, and it was everything that needed a second opinion.** The
+cells left were the ones no test could settle from inside: a specification's own
+bytes for RS256 and ES256, a second language's YAML library reading what this
+one writes, a reference resampler for an image downscale, and a real decoder for
+a file the video tool made. Of the six items round four left, **five moved**:
+image downscaling and RS256/ES256 are `exact`, the video tool's output is
+`exact` in one engine and an honest skip in the other, the 29 YAML cases the
+suite would only describe are decided, and the writing row rests on two
+independent readers rather than one and a footnote. The sixth — `compareMarkup`
+against an element that moved — is unchanged and is a different instrument
+rather than a fix to this one.
 
-Both halves were done. The worker boundary is asserted over a real
-`postMessage` in both engines, with payloads a UTF-8 round trip cannot carry;
-`check:browsers` gained a check that its own build is not stale; and the
-`can this fail?` pass went through the conversion code rather than only the
-harness.
+Each of the four new instruments found something the round was not looking for:
+a valid document told it was invalid, eleven files CPython cannot open, a code
+comment that was false about every engine, and a 64 kB bound that nothing was
+holding.
 
-**Round five — the two binary tools.** Image resampling against a reference, and
-the video tool's output played by something. Both need work outside the test
-suite, which is why they are last rather than because they matter least.
+**Round six — the shape of it.** Two candidates, and they are different in kind:
+
+- **The evidence that is still ours.** Three fixtures in this repository are
+  generated by a script this repository wrote: the YAML event composer, the
+  resampling agreement mask, and the JWS key conversion. Each is validated
+  against an external answer before it is trusted — 278 of the suite's own
+  cases, four reference filters, two independent verifiers — and that is the
+  right shape, but it is worth asking of each one whether the validation could
+  pass while the generator was wrong.
+- **The tools this document has never covered.** Base64, hash, regex and colour
+  each have a row, and the rows are thinner than the four above. Hash has
+  published vectors and does not use them; regex has no corpus at all.
 
 Running through all of them: **every `lossy, silent` cell should become
 `lossy, told` or `exact`.** That was the whole of what this document was for,
 and the count was the measure. It is **zero**, and round four's question was the
 one that replaced it: of everything this document asserts, how much could fail?
-The honest answer after one round of asking is "less than before, and not none" —
-mutation ran on a deterministic sample rather than the whole space, and the
-survivors it has not reached are the next person's round.

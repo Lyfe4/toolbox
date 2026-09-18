@@ -1,13 +1,16 @@
 import {
+  Document as YamlDocument,
   isMap,
   isPair,
   isScalar,
   isSeq,
   parseAllDocuments,
-  stringify as stringifyYaml,
   visit,
   type Document,
+  type DocumentOptions,
   type ParsedNode,
+  type SchemaOptions,
+  type ToStringOptions,
   type YAMLError,
 } from 'yaml';
 
@@ -621,6 +624,30 @@ function collidesAsJsKey(a: ParsedNode, b: ParsedNode): boolean {
 }
 
 /**
+ * Whether two colliding keys are the SAME key, or only the same JSON key.
+ *
+ * THE DIFFERENCE IS THE WHOLE MESSAGE, and for a long time it was not made.
+ * Both kinds arrived as the library's `DUPLICATE_KEY` and both came back as
+ * "That is not valid YAML." - which is true of `a: 1 / a: 1` and is FALSE of
+ * `true: / "true":`. That second document is valid YAML by every reference
+ * there is: yaml-test-suite composes it, js-yaml reads it, PyYAML reads it. It
+ * is THIS TOOL that cannot carry it, because JSON object keys are strings and
+ * both of those become `"true"` - the same JSON boundary that refuses a `!!set`
+ * or a collection key, and the only one of the three that was blaming the
+ * document for it.
+ *
+ * Someone told their valid YAML is invalid goes looking for a syntax error
+ * that is not there. Someone told two of their keys become one JSON key knows
+ * both what happened and what to do about it.
+ */
+function isSameYamlKey(a: ParsedNode, b: ParsedNode): boolean {
+  if (!isScalar(a) || !isScalar(b)) return a === b;
+  // Object.is, not ===, so two NaN keys are the same key. The comparison is on
+  // the RESOLVED value: `0x10:` and `16:` really are one key to YAML.
+  return Object.is(a.value, b.value);
+}
+
+/**
  * Finds the first mapping key that is itself a collection.
  *
  * `? [a, b] : v` is legal YAML. JavaScript objects have string keys only, so
@@ -666,6 +693,39 @@ function yamlParseFailure<T = never>(error: YAMLError): ToolResult<T> {
     ...(start ? { position: positionFromLineColumn(start.line, start.col) } : {}),
     detail,
   });
+}
+
+/**
+ * The two refusals a colliding key gets, and they say different things.
+ *
+ * Both are refusals - a document that means two things at one key has no JSON
+ * form either way - but only one of them is about the document being wrong.
+ * The `same-json-key` half is this tool's JSON boundary, which is why it is
+ * worded like the other three (`!!set`, `!!binary`, a collection key) rather
+ * than like a syntax error, and why the oracle test can now assert that no
+ * document the yaml-test-suite marks invalid is refused by it.
+ */
+function duplicateKeyFailure<T = never>(
+  text: string,
+  error: YAMLError,
+  kind: 'same-key' | 'same-json-key',
+): ToolResult<T> {
+  const position = positionFromOffset(text, error.pos[0]);
+
+  return kind === 'same-key'
+    ? fail('parse-error', 'That mapping has the same key twice.', {
+        position,
+        detail:
+          'A mapping may name each key once. Two entries with one key have no single value, so ' +
+          'which one survived would be a coin toss.',
+      })
+    : fail('unsupported-type', 'Two different YAML keys become the same JSON key.', {
+        position,
+        detail:
+          'This is valid YAML - `true:` and `"true":` are two keys, and so are `1:` and `"1":`, ' +
+          'and `~:` and `"":`. JSON object keys are strings, so both become one and one value ' +
+          'would be lost with nothing to say so.',
+      });
 }
 
 function yamlThrownFailure<T = never>(error: unknown): ToolResult<T> {
@@ -869,6 +929,19 @@ function readYamlSource(text: string): ToolResult<Reading> {
     });
   }
 
+  /*
+   * Which kind of key collision happened where, keyed by the offset the library
+   * reports the error at - which is the SECOND key's start, measured rather
+   * than assumed. A side channel is needed because `uniqueKeys` answers a
+   * yes/no question and the library keeps nothing but a position afterwards.
+   */
+  const collisions = new Map<number, 'same-key' | 'same-json-key'>();
+  const uniqueKeys = (a: ParsedNode, b: ParsedNode): boolean => {
+    if (!collidesAsJsKey(a, b)) return false;
+    collisions.set(b.range[0], isSameYamlKey(a, b) ? 'same-key' : 'same-json-key');
+    return true;
+  };
+
   let documents: Document.Parsed[];
 
   try {
@@ -883,14 +956,18 @@ function readYamlSource(text: string): ToolResult<Reading> {
      * "please use YAML.parseAllDocuments()" - an error naming an API the user
      * has no access to, for a file that is not wrong.
      */
-    documents = parseAllDocuments(text, { logLevel: 'error', uniqueKeys: collidesAsJsKey });
+    documents = parseAllDocuments(text, { logLevel: 'error', uniqueKeys });
   } catch (error) {
     return yamlThrownFailure(error);
   }
 
   for (const document of documents) {
     const error = document.errors[0];
-    if (error !== undefined) return yamlParseFailure(error);
+    if (error !== undefined) {
+      const collision = error.code === 'DUPLICATE_KEY' ? collisions.get(error.pos[0]) : undefined;
+      if (collision !== undefined) return duplicateKeyFailure(text, error, collision);
+      return yamlParseFailure(error);
+    }
   }
 
   if (documents.length === 0 && DIRECTIVE_LINE.test(text)) {
@@ -1363,6 +1440,55 @@ export interface SerialiseOptions {
   readonly documents?: number;
 }
 
+/**
+ * WRITES A DOCUMENT RATHER THAN CALLING `stringify`, TO QUOTE ONE CHARACTER.
+ *
+ * A string with a TAB in it is written by the library as a plain scalar, tab
+ * and all - `note: a\tb`. That is legal YAML by the 1.2 grammar, which allows
+ * `s-white` inside a plain scalar. It is also a file CPython cannot open:
+ * PyYAML 6.0.3 and ruamel.yaml 0.19.1 both stop at the scanner with "found
+ * character '\t' that cannot start any token", and they stop on the whole
+ * DOCUMENT, not on that one value. One tab anywhere in a converted file and
+ * every Python reader refuses all of it.
+ *
+ * Measured, not assumed: eleven documents in the yaml-test-suite corpus came
+ * out of this writer in a form both Python readers refused, and the fixture in
+ * `spec/yaml-writer-pyyaml.json` is where that measurement lives. js-yaml reads
+ * them, which is exactly why one independent reader was not enough.
+ *
+ * So a string containing a tab is written double-quoted, where the tab becomes
+ * `\t` and all four implementations agree about it. Nothing else is restyled:
+ * the library's choices are better than anything written here, and the block
+ * scalar that makes a multi-line value readable is the reason to use YAML.
+ */
+function writeYamlDocument(
+  data: JsonValue,
+  options: DocumentOptions & SchemaOptions & ToStringOptions,
+): string {
+  const document = new YamlDocument(data, options);
+
+  visit(document, {
+    Scalar(_key, node) {
+      // Keys as well as values: `visit` reaches both, and a key with a tab in
+      // it takes the document down in exactly the same way.
+      if (
+        typeof node.value === 'string' &&
+        node.value.includes('\t') &&
+        // Only where a PLAIN scalar is what the library would write. A tab
+        // inside a block scalar is read correctly by all four implementations,
+        // and a Makefile or a snippet of indented code arriving as one long
+        // double-quoted line with `\n` in it would be a worse document than
+        // the one it replaced.
+        !node.value.includes('\n')
+      ) {
+        node.type = 'QUOTE_DOUBLE';
+      }
+    },
+  });
+
+  return document.toString(options);
+}
+
 /** The value-only wrapper, for callers with nothing to report to. */
 export function serialise(
   data: JsonValue,
@@ -1441,13 +1567,13 @@ export function writeTarget(
            * is implicit, which is legal and asymmetric for no reason.
            */
           return ok({
-            text: data.map((entry) => `---\n${stringifyYaml(entry, yamlOptions)}`).join(''),
+            text: data.map((entry) => `---\n${writeYamlDocument(entry, yamlOptions)}`).join(''),
             notes: [],
             stream: true,
           });
         }
 
-        return ok({ text: stringifyYaml(data, yamlOptions), notes: [], stream: false });
+        return ok({ text: writeYamlDocument(data, yamlOptions), notes: [], stream: false });
       } catch (error) {
         if (error instanceof RangeError) return tooDeep();
         return fail('internal', 'Could not write that value as YAML.', {

@@ -11,6 +11,7 @@ import {
   linesOf,
   MAX_EDIT_DISTANCE,
   MAX_REFINE_LINE_LENGTH,
+  MAX_REFINE_TOTAL_CHARS,
   MAX_ROWS,
   normaliseNewlines,
   toJson,
@@ -407,6 +408,40 @@ describe('differences that cannot be seen', () => {
     expect(report('a  b', 'a b').rows.some((row) => row.invisible)).toBe(false);
   });
 
+  it('does not call a line invisible when it did not change at all', () => {
+    /*
+     * `invisible` is `differs && rendersTheSame(...)`, and round five's
+     * mutation sweep turned that `&&` into `||` with nothing noticing: an
+     * unchanged line renders the same as itself, so every context row in every
+     * comparison would have been flagged as an invisible difference. The tests
+     * above all compare pairs that DO differ, which is why none of them could
+     * see it.
+     */
+    const result = report('keep\nchange me\nkeep too', 'keep\nchanged\nkeep too');
+    const unchanged = result.rows.filter((row) => row.kind === 'same' && row.oldText === null);
+    expect(unchanged.length).toBeGreaterThan(0);
+    expect(unchanged.some((row) => row.invisible)).toBe(false);
+
+    // And an added line is not an invisible difference either: there is
+    // nothing for it to be invisibly different FROM.
+    const added = report('a', 'a\nb').rows.filter((row) => row.kind === 'add');
+    expect(added.length).toBeGreaterThan(0);
+    expect(added.some((row) => row.invisible)).toBe(false);
+
+    /*
+     * AND A DIFFERENCE AN OPTION IGNORED IS NOT AN INVISIBLE ONE. `ABC` against
+     * `abc` under `ignoreCase` is one row, its `oldText` is kept, and the
+     * difference is perfectly visible - `visualKey` does not case-fold. This is
+     * the case that separates `differs && rendersTheSame` from `differs ||
+     * rendersTheSame`, because it is the only one where `differs` is true and
+     * the rendering is not the same.
+     */
+    const cased = report('ABC', 'abc', { ignoreCase: true });
+    expect(cased.rows.every((row) => row.kind === 'same')).toBe(true);
+    expect(cased.rows.some((row) => row.oldText !== null)).toBe(true);
+    expect(cased.rows.some((row) => row.invisible)).toBe(false);
+  });
+
   it('does not treat lookalike letters as invisible', () => {
     // Cyrillic а against Latin a. Folding homoglyphs has no correct answer and
     // no end, so the tool does not pretend to have one.
@@ -601,6 +636,50 @@ describe('word-level refinement', () => {
     const long = 'x'.repeat(MAX_REFINE_LINE_LENGTH + 1);
     const result = report(long, `${long}y`);
     expect(result.rows.every((row) => row.parts === null)).toBe(true);
+  });
+
+  it('refines a line of exactly the longest length, and not one longer', () => {
+    /*
+     * BOTH SIDES OF `MAX_REFINE_LINE_LENGTH`, because a bound only means
+     * something if one document is inside it and one is outside. Round five's
+     * sweep turned that `>` into `>=` with nothing noticing: every test with a
+     * long line was far past the limit, and every test near it was far short.
+     */
+    // Words rather than one run of `x`: refinement is word-level, so a single
+    // 4,000-character token is replaced wholesale and yields nothing to keep.
+    const words = 'word '.repeat(MAX_REFINE_LINE_LENGTH / 5 - 1);
+    const atLimit = `${words}aaaaa`;
+    expect(atLimit).toHaveLength(MAX_REFINE_LINE_LENGTH);
+
+    const refined = report(atLimit, `${words}bbbbb`);
+    expect(refined.refinement).toBe('applied');
+    expect(refined.rows.some((row) => row.parts !== null)).toBe(true);
+
+    const overLimit = `${words}aaaaaa`;
+    expect(overLimit).toHaveLength(MAX_REFINE_LINE_LENGTH + 1);
+    const plain = report(overLimit, `${words}bbbbbb`);
+    expect(plain.rows.every((row) => row.parts === null)).toBe(true);
+
+    /*
+     * AND EITHER SIDE BEING TOO LONG IS ENOUGH. The guard is an `||` over both
+     * lines, and an `&&` there would refine a pair where one side is enormous
+     * and the other is three characters - which is exactly the pair the bound
+     * exists for, because the cost is in the longer one.
+     */
+    const lopsided = report(overLimit, words);
+    expect(lopsided.rows.every((row) => row.parts === null)).toBe(true);
+  });
+
+  it('spends exactly the whole budget rather than stopping one character short', () => {
+    /*
+     * The other bound, and the same shape. `MAX_REFINE_TOTAL_CHARS` is a total
+     * across the comparison, so one changed line of half of it on each side is
+     * a budget of exactly the limit - which must still be spent. One character
+     * more must not be.
+     */
+    const half = MAX_REFINE_TOTAL_CHARS / 2;
+    expect(report('a'.repeat(half), 'b'.repeat(half)).refinement).toBe('applied');
+    expect(report('a'.repeat(half), 'b'.repeat(half + 1)).refinement).toBe('skipped-too-large');
   });
 
   it('skips refinement wholesale rather than doing half of it', () => {

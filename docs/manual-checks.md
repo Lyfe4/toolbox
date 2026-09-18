@@ -186,11 +186,24 @@ of the video tool unchanged and that the index round-trips through the tool's
 own reader. That is a real assertion about a real answer, and it is not the
 question a person has.
 
-**What has changed since this list was last written.** Exactly one file this
-tool produced has been played: a `.mov` off one phone, which came out the right
-way up, scrubbed correctly and kept its sound in step. That is the whole of the
-evidence that the writer, the rotation matrix and the timing tables work on
-anything a real encoder wrote.
+**What has changed since this list was last written.** Round five put a real
+decoder on this tool's output for the first time inside the repository: a real
+x264 clip, twelve frames of flat colour, through the whole product, with the
+output and the source both decoded by Gecko and compared frame by frame. All
+twelve identical. So "no decoder has ever opened a file this tool made" is no
+longer true, and the automated check is in `check:browsers` rather than here.
+
+**That does not make this entry redundant, and the reason is in the skip beside
+it.** Playwright's WebKit answers `probably` to `canPlayType` for H.264 and then
+refuses every H.264 file it is given, _including the one ffmpeg wrote thirty
+seconds earlier_ — so the engine behind Safari has still never opened one of
+these files, and only Safari itself can say. The other thing the automated check
+cannot be is a real recording: its clip is 320x240, twelve keyframes and no
+audio, which is not a camcorder.
+
+Before round five, exactly one file this tool produced had been played at all: a
+`.mov` off one phone, which came out the right way up, scrubbed correctly and
+kept its sound in step.
 
 Two new readers — MPEG-TS and AVI — put that back where it was, and they are
 more exposed than the first two were. **Every fixture behind them is hand-built,

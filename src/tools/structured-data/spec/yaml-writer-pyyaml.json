@@ -1,0 +1,3907 @@
+{
+  "generator": "this tool’s YAML writer, read by CPython PyYAML",
+  "reader": "PyYAML 6.0.3 on CPython 3.14.7",
+  "corpus": "yaml-test-suite data-2022-01-17",
+  "counts": {
+    "total": 284,
+    "agreed": 252,
+    "disagreed": [
+      "4Q9F",
+      "6FWR",
+      "6JQW",
+      "6VJK",
+      "6WPF",
+      "7A4E",
+      "7T8X",
+      "93WF",
+      "96L6",
+      "9TFX",
+      "9YRD",
+      "B3HG",
+      "DK3J",
+      "DWX9",
+      "EX5H",
+      "FP8R",
+      "G992",
+      "HS5T",
+      "K527",
+      "M9B4",
+      "MJS9",
+      "NP9H",
+      "PRH3",
+      "Q8AD",
+      "RZT7",
+      "T26H",
+      "T4YY",
+      "T5N4",
+      "TL85",
+      "TS54",
+      "U9NS",
+      "UGM3"
+    ]
+  },
+  "cases": [
+    {
+      "id": "229Q",
+      "label": "Spec Example 2.4. Sequence of Mappings",
+      "value": [
+        {
+          "name": "Mark McGwire",
+          "hr": 65,
+          "avg": 0.278
+        },
+        {
+          "name": "Sammy Sosa",
+          "hr": 63,
+          "avg": 0.288
+        }
+      ],
+      "yaml": "- name: Mark McGwire\n  hr: 65\n  avg: 0.278\n- name: Sammy Sosa\n  hr: 63\n  avg: 0.288\n",
+      "pyyaml": {
+        "id": "229Q",
+        "agrees": true
+      }
+    },
+    {
+      "id": "26DV",
+      "label": "Whitespace around colon in mappings",
+      "value": {
+        "top1": {
+          "key1": "scalar1"
+        },
+        "top2": {
+          "key2": "scalar2"
+        },
+        "top3": {
+          "scalar1": "scalar3"
+        },
+        "top4": {
+          "scalar2": "scalar4"
+        },
+        "top5": "scalar5",
+        "top6": {
+          "key6": "scalar6"
+        }
+      },
+      "yaml": "top1:\n  key1: scalar1\ntop2:\n  key2: scalar2\ntop3:\n  scalar1: scalar3\ntop4:\n  scalar2: scalar4\ntop5: scalar5\ntop6:\n  key6: scalar6\n",
+      "pyyaml": {
+        "id": "26DV",
+        "agrees": true
+      }
+    },
+    {
+      "id": "27NA",
+      "label": "Spec Example 5.9. Directive Indicator",
+      "value": "text",
+      "yaml": "text\n",
+      "pyyaml": {
+        "id": "27NA",
+        "agrees": true
+      }
+    },
+    {
+      "id": "2AUY",
+      "label": "Tags in Block Sequence",
+      "value": ["a", "b", 42, "d"],
+      "yaml": "- a\n- b\n- 42\n- d\n",
+      "pyyaml": {
+        "id": "2AUY",
+        "agrees": true
+      }
+    },
+    {
+      "id": "2EBW",
+      "label": "Allowed characters in keys",
+      "value": {
+        "a!\"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~": "safe",
+        "?foo": "safe question mark",
+        ":foo": "safe colon",
+        "-foo": "safe dash",
+        "this is#not": "a comment"
+      },
+      "yaml": "a!\"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~: safe\n?foo: safe question mark\n:foo: safe colon\n-foo: safe dash\nthis is#not: a comment\n",
+      "pyyaml": {
+        "id": "2EBW",
+        "agrees": true
+      }
+    },
+    {
+      "id": "2G84/02",
+      "label": "Literal modifers",
+      "value": "",
+      "yaml": "\"\"\n",
+      "pyyaml": {
+        "id": "2G84/02",
+        "agrees": true
+      }
+    },
+    {
+      "id": "2G84/03",
+      "label": "Literal modifers",
+      "value": "",
+      "yaml": "\"\"\n",
+      "pyyaml": {
+        "id": "2G84/03",
+        "agrees": true
+      }
+    },
+    {
+      "id": "2LFX",
+      "label": "Spec Example 6.13. Reserved Directives [1.3]",
+      "value": "foo",
+      "yaml": "foo\n",
+      "pyyaml": {
+        "id": "2LFX",
+        "agrees": true
+      }
+    },
+    {
+      "id": "2SXE",
+      "label": "Anchors With Colon in Name",
+      "value": {
+        "key": "value",
+        "foo": "key"
+      },
+      "yaml": "key: value\nfoo: key\n",
+      "pyyaml": {
+        "id": "2SXE",
+        "agrees": true
+      }
+    },
+    {
+      "id": "33X3",
+      "label": "Three explicit integers in a block sequence",
+      "value": [1, -2, 33],
+      "yaml": "- 1\n- -2\n- 33\n",
+      "pyyaml": {
+        "id": "33X3",
+        "agrees": true
+      }
+    },
+    {
+      "id": "35KP",
+      "label": "Tags for Root Objects",
+      "value": [
+        {
+          "a": "b"
+        },
+        ["c"],
+        "d e"
+      ],
+      "yaml": "- a: b\n- - c\n- d e\n",
+      "pyyaml": {
+        "id": "35KP",
+        "agrees": true
+      }
+    },
+    {
+      "id": "36F6",
+      "label": "Multiline plain scalar with empty line",
+      "value": {
+        "plain": "a b\nc"
+      },
+      "yaml": "plain: |-\n  a b\n  c\n",
+      "pyyaml": {
+        "id": "36F6",
+        "agrees": true
+      }
+    },
+    {
+      "id": "3ALJ",
+      "label": "Block Sequence in Block Sequence",
+      "value": [["s1_i1", "s1_i2"], "s2"],
+      "yaml": "- - s1_i1\n  - s1_i2\n- s2\n",
+      "pyyaml": {
+        "id": "3ALJ",
+        "agrees": true
+      }
+    },
+    {
+      "id": "3GZX",
+      "label": "Spec Example 7.1. Alias Nodes",
+      "value": {
+        "First occurrence": "Foo",
+        "Second occurrence": "Foo",
+        "Override anchor": "Bar",
+        "Reuse anchor": "Bar"
+      },
+      "yaml": "First occurrence: Foo\nSecond occurrence: Foo\nOverride anchor: Bar\nReuse anchor: Bar\n",
+      "pyyaml": {
+        "id": "3GZX",
+        "agrees": true
+      }
+    },
+    {
+      "id": "3MYT",
+      "label": "Plain Scalar looking like key, comment, anchor and tag",
+      "value": "k:#foo &a !t s",
+      "yaml": "k:#foo &a !t s\n",
+      "pyyaml": {
+        "id": "3MYT",
+        "agrees": true
+      }
+    },
+    {
+      "id": "3R3P",
+      "label": "Single block sequence with anchor",
+      "value": ["a"],
+      "yaml": "- a\n",
+      "pyyaml": {
+        "id": "3R3P",
+        "agrees": true
+      }
+    },
+    {
+      "id": "3RLN/00",
+      "label": "Leading tabs in double quoted",
+      "value": "1 leading \ttab",
+      "yaml": "\"1 leading \\ttab\"\n",
+      "pyyaml": {
+        "id": "3RLN/00",
+        "agrees": true
+      }
+    },
+    {
+      "id": "3RLN/01",
+      "label": "Leading tabs in double quoted",
+      "value": "2 leading \ttab",
+      "yaml": "\"2 leading \\ttab\"\n",
+      "pyyaml": {
+        "id": "3RLN/01",
+        "agrees": true
+      }
+    },
+    {
+      "id": "3RLN/02",
+      "label": "Leading tabs in double quoted",
+      "value": "3 leading tab",
+      "yaml": "3 leading tab\n",
+      "pyyaml": {
+        "id": "3RLN/02",
+        "agrees": true
+      }
+    },
+    {
+      "id": "3RLN/03",
+      "label": "Leading tabs in double quoted",
+      "value": "4 leading \t  tab",
+      "yaml": "\"4 leading \\t  tab\"\n",
+      "pyyaml": {
+        "id": "3RLN/03",
+        "agrees": true
+      }
+    },
+    {
+      "id": "3RLN/04",
+      "label": "Leading tabs in double quoted",
+      "value": "5 leading \t  tab",
+      "yaml": "\"5 leading \\t  tab\"\n",
+      "pyyaml": {
+        "id": "3RLN/04",
+        "agrees": true
+      }
+    },
+    {
+      "id": "3RLN/05",
+      "label": "Leading tabs in double quoted",
+      "value": "6 leading tab",
+      "yaml": "6 leading tab\n",
+      "pyyaml": {
+        "id": "3RLN/05",
+        "agrees": true
+      }
+    },
+    {
+      "id": "3UYS",
+      "label": "Escaped slash in double quotes",
+      "value": {
+        "escaped slash": "a/b"
+      },
+      "yaml": "escaped slash: a/b\n",
+      "pyyaml": {
+        "id": "3UYS",
+        "agrees": true
+      }
+    },
+    {
+      "id": "4ABK",
+      "label": "Flow Mapping Separate Values",
+      "value": {
+        "unquoted": "separate",
+        "http://foo.com": null,
+        "omitted value": null
+      },
+      "yaml": "unquoted: separate\nhttp://foo.com: null\nomitted value: null\n",
+      "pyyaml": {
+        "id": "4ABK",
+        "agrees": true
+      }
+    },
+    {
+      "id": "4CQQ",
+      "label": "Spec Example 2.18. Multi-line Flow Scalars",
+      "value": {
+        "plain": "This unquoted scalar spans many lines.",
+        "quoted": "So does this quoted scalar.\n"
+      },
+      "yaml": "plain: This unquoted scalar spans many lines.\nquoted: |\n  So does this quoted scalar.\n",
+      "pyyaml": {
+        "id": "4CQQ",
+        "agrees": true
+      }
+    },
+    {
+      "id": "4GC6",
+      "label": "Spec Example 7.7. Single Quoted Characters",
+      "value": "here's to \"quotes\"",
+      "yaml": "here's to \"quotes\"\n",
+      "pyyaml": {
+        "id": "4GC6",
+        "agrees": true
+      }
+    },
+    {
+      "id": "4MUZ/00",
+      "label": "Flow mapping colon on line after key",
+      "value": {
+        "foo": "bar"
+      },
+      "yaml": "foo: bar\n",
+      "pyyaml": {
+        "id": "4MUZ/00",
+        "agrees": true
+      }
+    },
+    {
+      "id": "4MUZ/01",
+      "label": "Flow mapping colon on line after key",
+      "value": {
+        "foo": "bar"
+      },
+      "yaml": "foo: bar\n",
+      "pyyaml": {
+        "id": "4MUZ/01",
+        "agrees": true
+      }
+    },
+    {
+      "id": "4MUZ/02",
+      "label": "Flow mapping colon on line after key",
+      "value": {
+        "foo": "bar"
+      },
+      "yaml": "foo: bar\n",
+      "pyyaml": {
+        "id": "4MUZ/02",
+        "agrees": true
+      }
+    },
+    {
+      "id": "4Q9F",
+      "label": "Folded Block Scalar [1.3]",
+      "value": "ab cd\nef\n\ngh\n",
+      "yaml": "|\nab cd\nef\n\ngh\n",
+      "pyyaml": {
+        "id": "4Q9F",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "4QFQ",
+      "label": "Spec Example 8.2. Block Indentation Indicator [1.3]",
+      "value": ["detected\n", "\n\n# detected\n", " explicit\n", "detected\n"],
+      "yaml": "- |\n  detected\n- |\n  \n\n  # detected\n- |2\n   explicit\n- |\n  detected\n",
+      "pyyaml": {
+        "id": "4QFQ",
+        "agrees": true
+      }
+    },
+    {
+      "id": "4RWC",
+      "label": "Trailing spaces after flow collection",
+      "value": [1, 2, 3],
+      "yaml": "- 1\n- 2\n- 3\n",
+      "pyyaml": {
+        "id": "4RWC",
+        "agrees": true
+      }
+    },
+    {
+      "id": "4UYU",
+      "label": "Colon in Double Quoted String",
+      "value": "foo: bar\": baz",
+      "yaml": "'foo: bar\": baz'\n",
+      "pyyaml": {
+        "id": "4UYU",
+        "agrees": true
+      }
+    },
+    {
+      "id": "4V8U",
+      "label": "Plain scalar with backslashes",
+      "value": "plain\\value\\with\\backslashes",
+      "yaml": "plain\\value\\with\\backslashes\n",
+      "pyyaml": {
+        "id": "4V8U",
+        "agrees": true
+      }
+    },
+    {
+      "id": "4WA9",
+      "label": "Literal scalars",
+      "value": [
+        {
+          "aaa": "xxx\n",
+          "bbb": "xxx\n"
+        }
+      ],
+      "yaml": "- aaa: |\n    xxx\n  bbb: |\n    xxx\n",
+      "pyyaml": {
+        "id": "4WA9",
+        "agrees": true
+      }
+    },
+    {
+      "id": "4ZYM",
+      "label": "Spec Example 6.4. Line Prefixes",
+      "value": {
+        "plain": "text lines",
+        "quoted": "text lines",
+        "block": "text\n \tlines\n"
+      },
+      "yaml": "plain: text lines\nquoted: text lines\nblock: |\n  text\n   \tlines\n",
+      "pyyaml": {
+        "id": "4ZYM",
+        "agrees": true
+      }
+    },
+    {
+      "id": "52DL",
+      "label": "Explicit Non-Specific Tag [1.3]",
+      "value": "a",
+      "yaml": "a\n",
+      "pyyaml": {
+        "id": "52DL",
+        "agrees": true
+      }
+    },
+    {
+      "id": "54T7",
+      "label": "Flow Mapping",
+      "value": {
+        "foo": "you",
+        "bar": "far"
+      },
+      "yaml": "foo: you\nbar: far\n",
+      "pyyaml": {
+        "id": "54T7",
+        "agrees": true
+      }
+    },
+    {
+      "id": "57H4",
+      "label": "Spec Example 8.22. Block Collection Nodes",
+      "value": {
+        "sequence": ["entry", ["nested"]],
+        "mapping": {
+          "foo": "bar"
+        }
+      },
+      "yaml": "sequence:\n  - entry\n  - - nested\nmapping:\n  foo: bar\n",
+      "pyyaml": {
+        "id": "57H4",
+        "agrees": true
+      }
+    },
+    {
+      "id": "58MP",
+      "label": "Flow mapping edge cases",
+      "value": {
+        "x": ":x"
+      },
+      "yaml": "x: :x\n",
+      "pyyaml": {
+        "id": "58MP",
+        "agrees": true
+      }
+    },
+    {
+      "id": "5BVJ",
+      "label": "Spec Example 5.7. Block Scalar Indicators",
+      "value": {
+        "literal": "some\ntext\n",
+        "folded": "some text\n"
+      },
+      "yaml": "literal: |\n  some\n  text\nfolded: |\n  some text\n",
+      "pyyaml": {
+        "id": "5BVJ",
+        "agrees": true
+      }
+    },
+    {
+      "id": "5C5M",
+      "label": "Spec Example 7.15. Flow Mappings",
+      "value": [
+        {
+          "one": "two",
+          "three": "four"
+        },
+        {
+          "five": "six",
+          "seven": "eight"
+        }
+      ],
+      "yaml": "- one: two\n  three: four\n- five: six\n  seven: eight\n",
+      "pyyaml": {
+        "id": "5C5M",
+        "agrees": true
+      }
+    },
+    {
+      "id": "5GBF",
+      "label": "Spec Example 6.5. Empty Lines",
+      "value": {
+        "Folding": "Empty line\nas a line feed",
+        "Chomping": "Clipped empty lines\n"
+      },
+      "yaml": "Folding: |-\n  Empty line\n  as a line feed\nChomping: |\n  Clipped empty lines\n",
+      "pyyaml": {
+        "id": "5GBF",
+        "agrees": true
+      }
+    },
+    {
+      "id": "5KJE",
+      "label": "Spec Example 7.13. Flow Sequence",
+      "value": [
+        ["one", "two"],
+        ["three", "four"]
+      ],
+      "yaml": "- - one\n  - two\n- - three\n  - four\n",
+      "pyyaml": {
+        "id": "5KJE",
+        "agrees": true
+      }
+    },
+    {
+      "id": "5MUD",
+      "label": "Colon and adjacent value on next line",
+      "value": {
+        "foo": "bar"
+      },
+      "yaml": "foo: bar\n",
+      "pyyaml": {
+        "id": "5MUD",
+        "agrees": true
+      }
+    },
+    {
+      "id": "5NYZ",
+      "label": "Spec Example 6.9. Separated Comment",
+      "value": {
+        "key": "value"
+      },
+      "yaml": "key: value\n",
+      "pyyaml": {
+        "id": "5NYZ",
+        "agrees": true
+      }
+    },
+    {
+      "id": "5T43",
+      "label": "Colon at the beginning of adjacent flow scalar",
+      "value": [
+        {
+          "key": "value"
+        },
+        {
+          "key": ":value"
+        }
+      ],
+      "yaml": "- key: value\n- key: :value\n",
+      "pyyaml": {
+        "id": "5T43",
+        "agrees": true
+      }
+    },
+    {
+      "id": "5TYM",
+      "label": "Spec Example 6.21. Local Tag Prefix",
+      "value": ["fluorescent", "green"],
+      "yaml": "- fluorescent\n- green\n",
+      "pyyaml": {
+        "id": "5TYM",
+        "agrees": true
+      }
+    },
+    {
+      "id": "5WE3",
+      "label": "Spec Example 8.17. Explicit Block Mapping Entries",
+      "value": {
+        "explicit key": null,
+        "block key\n": ["one", "two"]
+      },
+      "yaml": "explicit key: null\n\"block key\\n\":\n  - one\n  - two\n",
+      "pyyaml": {
+        "id": "5WE3",
+        "agrees": true
+      }
+    },
+    {
+      "id": "652Z",
+      "label": "Question mark at start of flow key",
+      "value": {
+        "?foo": "bar",
+        "bar": 42
+      },
+      "yaml": "?foo: bar\nbar: 42\n",
+      "pyyaml": {
+        "id": "652Z",
+        "agrees": true
+      }
+    },
+    {
+      "id": "65WH",
+      "label": "Single Entry Block Sequence",
+      "value": ["foo"],
+      "yaml": "- foo\n",
+      "pyyaml": {
+        "id": "65WH",
+        "agrees": true
+      }
+    },
+    {
+      "id": "6BCT",
+      "label": "Spec Example 6.3. Separation Spaces",
+      "value": [
+        {
+          "foo": "bar"
+        },
+        ["baz", "baz"]
+      ],
+      "yaml": "- foo: bar\n- - baz\n  - baz\n",
+      "pyyaml": {
+        "id": "6BCT",
+        "agrees": true
+      }
+    },
+    {
+      "id": "6CA3",
+      "label": "Tab indented top flow",
+      "value": [],
+      "yaml": "[]\n",
+      "pyyaml": {
+        "id": "6CA3",
+        "agrees": true
+      }
+    },
+    {
+      "id": "6CK3",
+      "label": "Spec Example 6.26. Tag Shorthands",
+      "value": ["foo", "bar", "baz"],
+      "yaml": "- foo\n- bar\n- baz\n",
+      "pyyaml": {
+        "id": "6CK3",
+        "agrees": true
+      }
+    },
+    {
+      "id": "6FWR",
+      "label": "Block Scalar Keep",
+      "value": "ab\n\n \n",
+      "yaml": "|+\nab\n\n \n",
+      "pyyaml": {
+        "id": "6FWR",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "6H3V",
+      "label": "Backslashes in singlequotes",
+      "value": {
+        "foo: bar\\": "baz'"
+      },
+      "yaml": "\"foo: bar\\\\\": baz'\n",
+      "pyyaml": {
+        "id": "6H3V",
+        "agrees": true
+      }
+    },
+    {
+      "id": "6HB6",
+      "label": "Spec Example 6.1. Indentation Spaces",
+      "value": {
+        "Not indented": {
+          "By one space": "By four\n  spaces\n",
+          "Flow style": ["By two", "Also by two", "Still by two"]
+        }
+      },
+      "yaml": "Not indented:\n  By one space: |\n    By four\n      spaces\n  Flow style:\n    - By two\n    - Also by two\n    - Still by two\n",
+      "pyyaml": {
+        "id": "6HB6",
+        "agrees": true
+      }
+    },
+    {
+      "id": "6JQW",
+      "label": "Spec Example 2.13. In literals, newlines are preserved",
+      "value": "\\//||\\/||\n// ||  ||__\n",
+      "yaml": "|\n\\//||\\/||\n// ||  ||__\n",
+      "pyyaml": {
+        "id": "6JQW",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "6JWB",
+      "label": "Tags for Block Objects",
+      "value": {
+        "foo": [
+          "a",
+          {
+            "key": "value"
+          }
+        ]
+      },
+      "yaml": "foo:\n  - a\n  - key: value\n",
+      "pyyaml": {
+        "id": "6JWB",
+        "agrees": true
+      }
+    },
+    {
+      "id": "6KGN",
+      "label": "Anchor for empty node",
+      "value": {
+        "a": null,
+        "b": null
+      },
+      "yaml": "a: null\nb: null\n",
+      "pyyaml": {
+        "id": "6KGN",
+        "agrees": true
+      }
+    },
+    {
+      "id": "6LVF",
+      "label": "Spec Example 6.13. Reserved Directives",
+      "value": "foo",
+      "yaml": "foo\n",
+      "pyyaml": {
+        "id": "6LVF",
+        "agrees": true
+      }
+    },
+    {
+      "id": "6M2F",
+      "label": "Aliases in Explicit Block Mapping",
+      "value": {
+        "a": "b",
+        "": "a"
+      },
+      "yaml": "a: b\n\"\": a\n",
+      "pyyaml": {
+        "id": "6M2F",
+        "agrees": true
+      }
+    },
+    {
+      "id": "6SLA",
+      "label": "Allowed characters in quoted mapping key",
+      "value": {
+        "foo\nbar:baz\tx \\$%^&*()x": 23,
+        "x\\ny:z\\tx $%^&*()x": 24
+      },
+      "yaml": "\"foo\\nbar:baz\\tx \\\\$%^&*()x\": 23\nx\\ny:z\\tx $%^&*()x: 24\n",
+      "pyyaml": {
+        "id": "6SLA",
+        "agrees": true
+      }
+    },
+    {
+      "id": "6VJK",
+      "label": "Spec Example 2.15. Folded newlines are preserved for \"more indented\" and blank lines",
+      "value": "Sammy Sosa completed another fine season with great stats.\n\n  63 Home Runs\n  0.288 Batting Average\n\nWhat a year!\n",
+      "yaml": "|\nSammy Sosa completed another fine season with great stats.\n\n  63 Home Runs\n  0.288 Batting Average\n\nWhat a year!\n",
+      "pyyaml": {
+        "id": "6VJK",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "6WLZ",
+      "label": "Spec Example 6.18. Primary Tag Handle [1.3]",
+      "value": ["bar", "bar"],
+      "yaml": "- bar\n- bar\n",
+      "pyyaml": {
+        "id": "6WLZ",
+        "agrees": true
+      }
+    },
+    {
+      "id": "6WPF",
+      "label": "Spec Example 6.8. Flow Folding [1.3]",
+      "value": " foo\nbar\nbaz ",
+      "yaml": "|1-\n foo\nbar\nbaz \n",
+      "pyyaml": {
+        "id": "6WPF",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "6XDY",
+      "label": "Two document start markers",
+      "value": [null, null],
+      "yaml": "- null\n- null\n",
+      "pyyaml": {
+        "id": "6XDY",
+        "agrees": true
+      }
+    },
+    {
+      "id": "6ZKB",
+      "label": "Spec Example 9.6. Stream",
+      "value": [
+        "Document",
+        null,
+        {
+          "matches %": 20
+        }
+      ],
+      "yaml": "- Document\n- null\n- matches %: 20\n",
+      "pyyaml": {
+        "id": "6ZKB",
+        "agrees": true
+      }
+    },
+    {
+      "id": "735Y",
+      "label": "Spec Example 8.20. Block Node Types",
+      "value": [
+        "flow in block",
+        "Block scalar\n",
+        {
+          "foo": "bar"
+        }
+      ],
+      "yaml": "- flow in block\n- |\n  Block scalar\n- foo: bar\n",
+      "pyyaml": {
+        "id": "735Y",
+        "agrees": true
+      }
+    },
+    {
+      "id": "74H7",
+      "label": "Tags in Implicit Mapping",
+      "value": {
+        "23": false,
+        "a": "b",
+        "c": 42,
+        "e": "f",
+        "g": "h"
+      },
+      "yaml": "\"23\": false\na: b\nc: 42\ne: f\ng: h\n",
+      "pyyaml": {
+        "id": "74H7",
+        "agrees": true
+      }
+    },
+    {
+      "id": "753E",
+      "label": "Block Scalar Strip [1.3]",
+      "value": "ab",
+      "yaml": "ab\n",
+      "pyyaml": {
+        "id": "753E",
+        "agrees": true
+      }
+    },
+    {
+      "id": "7A4E",
+      "label": "Spec Example 7.6. Double Quoted Lines",
+      "value": " 1st non-empty\n2nd non-empty 3rd non-empty ",
+      "yaml": "|1-\n 1st non-empty\n2nd non-empty 3rd non-empty \n",
+      "pyyaml": {
+        "id": "7A4E",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "7BMT",
+      "label": "Node and Mapping Key Anchors [1.3]",
+      "value": {
+        "top1": {
+          "key1": "one"
+        },
+        "top2": {
+          "key2": "two"
+        },
+        "top3": {
+          "key3": "three"
+        },
+        "top4": {
+          "key4": "four"
+        },
+        "top5": {
+          "key5": "five"
+        },
+        "top6": "six",
+        "top7": "seven"
+      },
+      "yaml": "top1:\n  key1: one\ntop2:\n  key2: two\ntop3:\n  key3: three\ntop4:\n  key4: four\ntop5:\n  key5: five\ntop6: six\ntop7: seven\n",
+      "pyyaml": {
+        "id": "7BMT",
+        "agrees": true
+      }
+    },
+    {
+      "id": "7BUB",
+      "label": "Spec Example 2.10. Node for “Sammy Sosa” appears twice in this document",
+      "value": {
+        "hr": ["Mark McGwire", "Sammy Sosa"],
+        "rbi": ["Sammy Sosa", "Ken Griffey"]
+      },
+      "yaml": "hr:\n  - Mark McGwire\n  - Sammy Sosa\nrbi:\n  - Sammy Sosa\n  - Ken Griffey\n",
+      "pyyaml": {
+        "id": "7BUB",
+        "agrees": true
+      }
+    },
+    {
+      "id": "7FWL",
+      "label": "Spec Example 6.24. Verbatim Tags",
+      "value": {
+        "foo": "baz"
+      },
+      "yaml": "foo: baz\n",
+      "pyyaml": {
+        "id": "7FWL",
+        "agrees": true
+      }
+    },
+    {
+      "id": "7T8X",
+      "label": "Spec Example 8.10. Folded Lines - 8.13. Final Empty Lines",
+      "value": "\nfolded line\nnext line\n  * bullet\n\n  * list\n  * lines\n\nlast line\n",
+      "yaml": "|\n\nfolded line\nnext line\n  * bullet\n\n  * list\n  * lines\n\nlast line\n",
+      "pyyaml": {
+        "id": "7T8X",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "7TMG",
+      "label": "Comment in flow sequence before comma",
+      "value": ["word1", "word2"],
+      "yaml": "- word1\n- word2\n",
+      "pyyaml": {
+        "id": "7TMG",
+        "agrees": true
+      }
+    },
+    {
+      "id": "7W2P",
+      "label": "Block Mapping with Missing Values",
+      "value": {
+        "a": null,
+        "b": null,
+        "c": null
+      },
+      "yaml": "a: null\nb: null\nc: null\n",
+      "pyyaml": {
+        "id": "7W2P",
+        "agrees": true
+      }
+    },
+    {
+      "id": "7Z25",
+      "label": "Bare document after document end marker",
+      "value": [
+        "scalar1",
+        {
+          "key": "value"
+        }
+      ],
+      "yaml": "- scalar1\n- key: value\n",
+      "pyyaml": {
+        "id": "7Z25",
+        "agrees": true
+      }
+    },
+    {
+      "id": "7ZZ5",
+      "label": "Empty flow collections",
+      "value": {
+        "nested sequences": [[[[]]], [[{}]]],
+        "key1": [],
+        "key2": {}
+      },
+      "yaml": "nested sequences:\n  - - - []\n  - - - {}\nkey1: []\nkey2: {}\n",
+      "pyyaml": {
+        "id": "7ZZ5",
+        "agrees": true
+      }
+    },
+    {
+      "id": "82AN",
+      "label": "Three dashes and content without space",
+      "value": "---word1 word2",
+      "yaml": "|-\n  ---word1 word2\n",
+      "pyyaml": {
+        "id": "82AN",
+        "agrees": true
+      }
+    },
+    {
+      "id": "87E4",
+      "label": "Spec Example 7.8. Single Quoted Implicit Keys",
+      "value": {
+        "implicit block key": [
+          {
+            "implicit flow key": "value"
+          }
+        ]
+      },
+      "yaml": "implicit block key:\n  - implicit flow key: value\n",
+      "pyyaml": {
+        "id": "87E4",
+        "agrees": true
+      }
+    },
+    {
+      "id": "8CWC",
+      "label": "Plain mapping key ending with colon",
+      "value": {
+        "key ends with two colons::": "value"
+      },
+      "yaml": "\"key ends with two colons::\": value\n",
+      "pyyaml": {
+        "id": "8CWC",
+        "agrees": true
+      }
+    },
+    {
+      "id": "8KB6",
+      "label": "Multiline plain flow mapping key without value",
+      "value": [
+        {
+          "single line": null,
+          "a": "b"
+        },
+        {
+          "multi line": null,
+          "a": "b"
+        }
+      ],
+      "yaml": "- single line: null\n  a: b\n- multi line: null\n  a: b\n",
+      "pyyaml": {
+        "id": "8KB6",
+        "agrees": true
+      }
+    },
+    {
+      "id": "8MK2",
+      "label": "Explicit Non-Specific Tag",
+      "value": "a",
+      "yaml": "a\n",
+      "pyyaml": {
+        "id": "8MK2",
+        "agrees": true
+      }
+    },
+    {
+      "id": "8QBE",
+      "label": "Block Sequence in Block Mapping",
+      "value": {
+        "key": ["item1", "item2"]
+      },
+      "yaml": "key:\n  - item1\n  - item2\n",
+      "pyyaml": {
+        "id": "8QBE",
+        "agrees": true
+      }
+    },
+    {
+      "id": "8UDB",
+      "label": "Spec Example 7.14. Flow Sequence Entries",
+      "value": [
+        "double quoted",
+        "single quoted",
+        "plain text",
+        ["nested"],
+        {
+          "single": "pair"
+        }
+      ],
+      "yaml": "- double quoted\n- single quoted\n- plain text\n- - nested\n- single: pair\n",
+      "pyyaml": {
+        "id": "8UDB",
+        "agrees": true
+      }
+    },
+    {
+      "id": "8XYN",
+      "label": "Anchor with unicode character",
+      "value": ["unicode anchor"],
+      "yaml": "- unicode anchor\n",
+      "pyyaml": {
+        "id": "8XYN",
+        "agrees": true
+      }
+    },
+    {
+      "id": "93JH",
+      "label": "Block Mappings in Block Sequence",
+      "value": [
+        {
+          "key": "value",
+          "key2": "value2"
+        },
+        {
+          "key3": "value3"
+        }
+      ],
+      "yaml": "- key: value\n  key2: value2\n- key3: value3\n",
+      "pyyaml": {
+        "id": "93JH",
+        "agrees": true
+      }
+    },
+    {
+      "id": "93WF",
+      "label": "Spec Example 6.6. Line Folding [1.3]",
+      "value": "trimmed\n\n\nas space",
+      "yaml": "|-\ntrimmed\n\n\nas space\n",
+      "pyyaml": {
+        "id": "93WF",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "96L6",
+      "label": "Spec Example 2.14. In the folded scalars, newlines become spaces",
+      "value": "Mark McGwire's year was crippled by a knee injury.\n",
+      "yaml": "|\nMark McGwire's year was crippled by a knee injury.\n",
+      "pyyaml": {
+        "id": "96L6",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "96NN/00",
+      "label": "Leading tab content in literals",
+      "value": {
+        "foo": "\tbar"
+      },
+      "yaml": "foo: \"\\tbar\"\n",
+      "pyyaml": {
+        "id": "96NN/00",
+        "agrees": true
+      }
+    },
+    {
+      "id": "96NN/01",
+      "label": "Leading tab content in literals",
+      "value": {
+        "foo": "\tbar"
+      },
+      "yaml": "foo: \"\\tbar\"\n",
+      "pyyaml": {
+        "id": "96NN/01",
+        "agrees": true
+      }
+    },
+    {
+      "id": "9BXH",
+      "label": "Multiline doublequoted flow mapping key without value",
+      "value": [
+        {
+          "single line": null,
+          "a": "b"
+        },
+        {
+          "multi line": null,
+          "a": "b"
+        }
+      ],
+      "yaml": "- single line: null\n  a: b\n- multi line: null\n  a: b\n",
+      "pyyaml": {
+        "id": "9BXH",
+        "agrees": true
+      }
+    },
+    {
+      "id": "9DXL",
+      "label": "Spec Example 9.6. Stream [1.3]",
+      "value": [
+        {
+          "Mapping": "Document"
+        },
+        null,
+        {
+          "matches %": 20
+        }
+      ],
+      "yaml": "- Mapping: Document\n- null\n- matches %: 20\n",
+      "pyyaml": {
+        "id": "9DXL",
+        "agrees": true
+      }
+    },
+    {
+      "id": "9FMG",
+      "label": "Multi-level Mapping Indent",
+      "value": {
+        "a": {
+          "b": {
+            "c": "d"
+          },
+          "e": {
+            "f": "g"
+          }
+        },
+        "h": "i"
+      },
+      "yaml": "a:\n  b:\n    c: d\n  e:\n    f: g\nh: i\n",
+      "pyyaml": {
+        "id": "9FMG",
+        "agrees": true
+      }
+    },
+    {
+      "id": "9J7A",
+      "label": "Simple Mapping Indent",
+      "value": {
+        "foo": {
+          "bar": "baz"
+        }
+      },
+      "yaml": "foo:\n  bar: baz\n",
+      "pyyaml": {
+        "id": "9J7A",
+        "agrees": true
+      }
+    },
+    {
+      "id": "9KAX",
+      "label": "Various combinations of tags and anchors",
+      "value": [
+        "scalar1",
+        "scalar2",
+        "scalar3",
+        {
+          "key5": "value4"
+        },
+        {
+          "a6": 1,
+          "b6": 2
+        },
+        {
+          "key8": "value7"
+        },
+        {
+          "key10": "value9"
+        },
+        "value11"
+      ],
+      "yaml": "- scalar1\n- scalar2\n- scalar3\n- key5: value4\n- a6: 1\n  b6: 2\n- key8: value7\n- key10: value9\n- value11\n",
+      "pyyaml": {
+        "id": "9KAX",
+        "agrees": true
+      }
+    },
+    {
+      "id": "9MQT/00",
+      "label": "Scalar doc with '...' in content",
+      "value": "a ...x b",
+      "yaml": "a ...x b\n",
+      "pyyaml": {
+        "id": "9MQT/00",
+        "agrees": true
+      }
+    },
+    {
+      "id": "9SA2",
+      "label": "Multiline double quoted flow mapping key",
+      "value": [
+        {
+          "single line": "value"
+        },
+        {
+          "multi line": "value"
+        }
+      ],
+      "yaml": "- single line: value\n- multi line: value\n",
+      "pyyaml": {
+        "id": "9SA2",
+        "agrees": true
+      }
+    },
+    {
+      "id": "9SHH",
+      "label": "Spec Example 5.8. Quoted Scalar Indicators",
+      "value": {
+        "single": "text",
+        "double": "text"
+      },
+      "yaml": "single: text\ndouble: text\n",
+      "pyyaml": {
+        "id": "9SHH",
+        "agrees": true
+      }
+    },
+    {
+      "id": "9TFX",
+      "label": "Spec Example 7.6. Double Quoted Lines [1.3]",
+      "value": " 1st non-empty\n2nd non-empty 3rd non-empty ",
+      "yaml": "|1-\n 1st non-empty\n2nd non-empty 3rd non-empty \n",
+      "pyyaml": {
+        "id": "9TFX",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "9U5K",
+      "label": "Spec Example 2.12. Compact Nested Mapping",
+      "value": [
+        {
+          "item": "Super Hoop",
+          "quantity": 1
+        },
+        {
+          "item": "Basketball",
+          "quantity": 4
+        },
+        {
+          "item": "Big Shoes",
+          "quantity": 1
+        }
+      ],
+      "yaml": "- item: Super Hoop\n  quantity: 1\n- item: Basketball\n  quantity: 4\n- item: Big Shoes\n  quantity: 1\n",
+      "pyyaml": {
+        "id": "9U5K",
+        "agrees": true
+      }
+    },
+    {
+      "id": "9WXW",
+      "label": "Spec Example 6.18. Primary Tag Handle",
+      "value": ["bar", "bar"],
+      "yaml": "- bar\n- bar\n",
+      "pyyaml": {
+        "id": "9WXW",
+        "agrees": true
+      }
+    },
+    {
+      "id": "9YRD",
+      "label": "Multiline Scalar at Top Level",
+      "value": "a b c d\ne",
+      "yaml": "|-\na b c d\ne\n",
+      "pyyaml": {
+        "id": "9YRD",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "A2M4",
+      "label": "Spec Example 6.2. Indentation Indicators",
+      "value": {
+        "a": ["b", ["c", "d"]]
+      },
+      "yaml": "a:\n  - b\n  - - c\n    - d\n",
+      "pyyaml": {
+        "id": "A2M4",
+        "agrees": true
+      }
+    },
+    {
+      "id": "A6F9",
+      "label": "Spec Example 8.4. Chomping Final Line Break",
+      "value": {
+        "strip": "text",
+        "clip": "text\n",
+        "keep": "text\n"
+      },
+      "yaml": "strip: text\nclip: |\n  text\nkeep: |\n  text\n",
+      "pyyaml": {
+        "id": "A6F9",
+        "agrees": true
+      }
+    },
+    {
+      "id": "A984",
+      "label": "Multiline Scalar in Mapping",
+      "value": {
+        "a": "b c",
+        "d": "e f"
+      },
+      "yaml": "a: b c\nd: e f\n",
+      "pyyaml": {
+        "id": "A984",
+        "agrees": true
+      }
+    },
+    {
+      "id": "AB8U",
+      "label": "Sequence entry that looks like two with wrong indentation",
+      "value": ["single multiline - sequence entry"],
+      "yaml": "- single multiline - sequence entry\n",
+      "pyyaml": {
+        "id": "AB8U",
+        "agrees": true
+      }
+    },
+    {
+      "id": "AZ63",
+      "label": "Sequence With Same Indentation as Parent Mapping",
+      "value": {
+        "one": [2, 3],
+        "four": 5
+      },
+      "yaml": "one:\n  - 2\n  - 3\nfour: 5\n",
+      "pyyaml": {
+        "id": "AZ63",
+        "agrees": true
+      }
+    },
+    {
+      "id": "AZW3",
+      "label": "Lookahead test cases",
+      "value": [
+        {
+          "bla\"keks": "foo"
+        },
+        {
+          "bla]keks": "foo"
+        }
+      ],
+      "yaml": "- bla\"keks: foo\n- bla]keks: foo\n",
+      "pyyaml": {
+        "id": "AZW3",
+        "agrees": true
+      }
+    },
+    {
+      "id": "B3HG",
+      "label": "Spec Example 8.9. Folded Scalar [1.3]",
+      "value": "folded text\n",
+      "yaml": "|\nfolded text\n",
+      "pyyaml": {
+        "id": "B3HG",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "BEC7",
+      "label": "Spec Example 6.14. “YAML” directive",
+      "value": "foo",
+      "yaml": "foo\n",
+      "pyyaml": {
+        "id": "BEC7",
+        "agrees": true
+      }
+    },
+    {
+      "id": "BU8L",
+      "label": "Node Anchor and Tag on Seperate Lines",
+      "value": {
+        "key": {
+          "a": "b"
+        }
+      },
+      "yaml": "key:\n  a: b\n",
+      "pyyaml": {
+        "id": "BU8L",
+        "agrees": true
+      }
+    },
+    {
+      "id": "C2DT",
+      "label": "Spec Example 7.18. Flow Mapping Adjacent Values",
+      "value": {
+        "adjacent": "value",
+        "readable": "value",
+        "empty": null
+      },
+      "yaml": "adjacent: value\nreadable: value\nempty: null\n",
+      "pyyaml": {
+        "id": "C2DT",
+        "agrees": true
+      }
+    },
+    {
+      "id": "C4HZ",
+      "label": "Spec Example 2.24. Global Tags",
+      "value": [
+        {
+          "center": {
+            "x": 73,
+            "y": 129
+          },
+          "radius": 7
+        },
+        {
+          "start": {
+            "x": 73,
+            "y": 129
+          },
+          "finish": {
+            "x": 89,
+            "y": 102
+          }
+        },
+        {
+          "start": {
+            "x": 73,
+            "y": 129
+          },
+          "color": 16772795,
+          "text": "Pretty vector drawing."
+        }
+      ],
+      "yaml": "- center:\n    x: 73\n    y: 129\n  radius: 7\n- start:\n    x: 73\n    y: 129\n  finish:\n    x: 89\n    y: 102\n- start:\n    x: 73\n    y: 129\n  color: 16772795\n  text: Pretty vector drawing.\n",
+      "pyyaml": {
+        "id": "C4HZ",
+        "agrees": true
+      }
+    },
+    {
+      "id": "CC74",
+      "label": "Spec Example 6.20. Tag Handles",
+      "value": "bar",
+      "yaml": "bar\n",
+      "pyyaml": {
+        "id": "CC74",
+        "agrees": true
+      }
+    },
+    {
+      "id": "CFD4",
+      "label": "Empty implicit key in single pair flow sequences",
+      "value": [
+        [
+          {
+            "": "empty key"
+          }
+        ],
+        [
+          {
+            "": "another empty key"
+          }
+        ]
+      ],
+      "yaml": "- - \"\": empty key\n- - \"\": another empty key\n",
+      "pyyaml": {
+        "id": "CFD4",
+        "agrees": true
+      }
+    },
+    {
+      "id": "CN3R",
+      "label": "Various location of anchors in flow sequence",
+      "value": [
+        {
+          "a": "b"
+        },
+        {
+          "c": "d"
+        },
+        {
+          "e": "f"
+        },
+        {
+          "g": "h"
+        }
+      ],
+      "yaml": "- a: b\n- c: d\n- e: f\n- g: h\n",
+      "pyyaml": {
+        "id": "CN3R",
+        "agrees": true
+      }
+    },
+    {
+      "id": "CPZ3",
+      "label": "Doublequoted scalar starting with a tab",
+      "value": {
+        "tab": "\tstring"
+      },
+      "yaml": "tab: \"\\tstring\"\n",
+      "pyyaml": {
+        "id": "CPZ3",
+        "agrees": true
+      }
+    },
+    {
+      "id": "CT4Q",
+      "label": "Spec Example 7.20. Single Pair Explicit Entry",
+      "value": [
+        {
+          "foo bar": "baz"
+        }
+      ],
+      "yaml": "- foo bar: baz\n",
+      "pyyaml": {
+        "id": "CT4Q",
+        "agrees": true
+      }
+    },
+    {
+      "id": "CUP7",
+      "label": "Spec Example 5.6. Node Property Indicators",
+      "value": {
+        "anchored": "value",
+        "alias": "value"
+      },
+      "yaml": "anchored: value\nalias: value\n",
+      "pyyaml": {
+        "id": "CUP7",
+        "agrees": true
+      }
+    },
+    {
+      "id": "D83L",
+      "label": "Block scalar indicator order",
+      "value": ["explicit indent and chomp", "chomp and explicit indent"],
+      "yaml": "- explicit indent and chomp\n- chomp and explicit indent\n",
+      "pyyaml": {
+        "id": "D83L",
+        "agrees": true
+      }
+    },
+    {
+      "id": "D88J",
+      "label": "Flow Sequence in Block Mapping",
+      "value": {
+        "a": ["b", "c"]
+      },
+      "yaml": "a:\n  - b\n  - c\n",
+      "pyyaml": {
+        "id": "D88J",
+        "agrees": true
+      }
+    },
+    {
+      "id": "D9TU",
+      "label": "Single Pair Block Mapping",
+      "value": {
+        "foo": "bar"
+      },
+      "yaml": "foo: bar\n",
+      "pyyaml": {
+        "id": "D9TU",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DBG4",
+      "label": "Spec Example 7.10. Plain Characters",
+      "value": [
+        "::vector",
+        ": - ()",
+        "Up, up, and away!",
+        -123,
+        "http://example.com/foo#bar",
+        ["::vector", ": - ()", "Up, up and away!", -123, "http://example.com/foo#bar"]
+      ],
+      "yaml": "- ::vector\n- \": - ()\"\n- Up, up, and away!\n- -123\n- http://example.com/foo#bar\n- - ::vector\n  - \": - ()\"\n  - Up, up and away!\n  - -123\n  - http://example.com/foo#bar\n",
+      "pyyaml": {
+        "id": "DBG4",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DC7X",
+      "label": "Various trailing tabs",
+      "value": {
+        "a": "b",
+        "seq": ["a"],
+        "c": "d"
+      },
+      "yaml": "a: b\nseq:\n  - a\nc: d\n",
+      "pyyaml": {
+        "id": "DC7X",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DE56/00",
+      "label": "Trailing tabs in double quoted",
+      "value": "1 trailing\t tab",
+      "yaml": "\"1 trailing\\t tab\"\n",
+      "pyyaml": {
+        "id": "DE56/00",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DE56/01",
+      "label": "Trailing tabs in double quoted",
+      "value": "2 trailing\t tab",
+      "yaml": "\"2 trailing\\t tab\"\n",
+      "pyyaml": {
+        "id": "DE56/01",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DE56/02",
+      "label": "Trailing tabs in double quoted",
+      "value": "3 trailing\t tab",
+      "yaml": "\"3 trailing\\t tab\"\n",
+      "pyyaml": {
+        "id": "DE56/02",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DE56/03",
+      "label": "Trailing tabs in double quoted",
+      "value": "4 trailing\t tab",
+      "yaml": "\"4 trailing\\t tab\"\n",
+      "pyyaml": {
+        "id": "DE56/03",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DE56/04",
+      "label": "Trailing tabs in double quoted",
+      "value": "5 trailing tab",
+      "yaml": "5 trailing tab\n",
+      "pyyaml": {
+        "id": "DE56/04",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DE56/05",
+      "label": "Trailing tabs in double quoted",
+      "value": "6 trailing tab",
+      "yaml": "6 trailing tab\n",
+      "pyyaml": {
+        "id": "DE56/05",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DFF7",
+      "label": "Spec Example 7.16. Flow Mapping Entries",
+      "value": {
+        "explicit": "entry",
+        "implicit": "entry",
+        "": null
+      },
+      "yaml": "explicit: entry\nimplicit: entry\n\"\": null\n",
+      "pyyaml": {
+        "id": "DFF7",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DHP8",
+      "label": "Flow Sequence",
+      "value": ["foo", "bar", 42],
+      "yaml": "- foo\n- bar\n- 42\n",
+      "pyyaml": {
+        "id": "DHP8",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DK3J",
+      "label": "Zero indented block scalar with line that looks like a comment",
+      "value": "line1 # no comment line3\n",
+      "yaml": "|\nline1 # no comment line3\n",
+      "pyyaml": {
+        "id": "DK3J",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "DK95/00",
+      "label": "Tabs that look like indentation",
+      "value": {
+        "foo": "bar"
+      },
+      "yaml": "foo: bar\n",
+      "pyyaml": {
+        "id": "DK95/00",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DK95/02",
+      "label": "Tabs that look like indentation",
+      "value": {
+        "foo": "bar baz"
+      },
+      "yaml": "foo: bar baz\n",
+      "pyyaml": {
+        "id": "DK95/02",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DK95/03",
+      "label": "Tabs that look like indentation",
+      "value": {
+        "foo": 1
+      },
+      "yaml": "foo: 1\n",
+      "pyyaml": {
+        "id": "DK95/03",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DK95/04",
+      "label": "Tabs that look like indentation",
+      "value": {
+        "foo": 1,
+        "bar": 2
+      },
+      "yaml": "foo: 1\nbar: 2\n",
+      "pyyaml": {
+        "id": "DK95/04",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DK95/05",
+      "label": "Tabs that look like indentation",
+      "value": {
+        "foo": 1,
+        "bar": 2
+      },
+      "yaml": "foo: 1\nbar: 2\n",
+      "pyyaml": {
+        "id": "DK95/05",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DK95/07",
+      "label": "Tabs that look like indentation",
+      "value": null,
+      "yaml": "null\n",
+      "pyyaml": {
+        "id": "DK95/07",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DK95/08",
+      "label": "Tabs that look like indentation",
+      "value": {
+        "foo": "bar baz \t \t "
+      },
+      "yaml": "foo: \"bar baz \\t \\t \"\n",
+      "pyyaml": {
+        "id": "DK95/08",
+        "agrees": true
+      }
+    },
+    {
+      "id": "DWX9",
+      "label": "Spec Example 8.8. Literal Content",
+      "value": "\n\nliteral\n \n\ntext\n",
+      "yaml": "|\n\n\nliteral\n \n\ntext\n",
+      "pyyaml": {
+        "id": "DWX9",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "E76Z",
+      "label": "Aliases in Implicit Block Mapping",
+      "value": {
+        "a": "b",
+        "b": "a"
+      },
+      "yaml": "a: b\nb: a\n",
+      "pyyaml": {
+        "id": "E76Z",
+        "agrees": true
+      }
+    },
+    {
+      "id": "EHF6",
+      "label": "Tags for Flow Objects",
+      "value": {
+        "k": ["a", "b"]
+      },
+      "yaml": "k:\n  - a\n  - b\n",
+      "pyyaml": {
+        "id": "EHF6",
+        "agrees": true
+      }
+    },
+    {
+      "id": "EX5H",
+      "label": "Multiline Scalar at Top Level [1.3]",
+      "value": "a b c d\ne",
+      "yaml": "|-\na b c d\ne\n",
+      "pyyaml": {
+        "id": "EX5H",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "EXG3",
+      "label": "Three dashes and content without space [1.3]",
+      "value": "---word1 word2",
+      "yaml": "|-\n  ---word1 word2\n",
+      "pyyaml": {
+        "id": "EXG3",
+        "agrees": true
+      }
+    },
+    {
+      "id": "F2C7",
+      "label": "Anchors and Tags",
+      "value": ["a", 2, 4, "d"],
+      "yaml": "- a\n- 2\n- 4\n- d\n",
+      "pyyaml": {
+        "id": "F2C7",
+        "agrees": true
+      }
+    },
+    {
+      "id": "F3CP",
+      "label": "Nested flow collections on one line",
+      "value": {
+        "a": [
+          "b",
+          "c",
+          {
+            "d": ["e", "f"]
+          }
+        ]
+      },
+      "yaml": "a:\n  - b\n  - c\n  - d:\n      - e\n      - f\n",
+      "pyyaml": {
+        "id": "F3CP",
+        "agrees": true
+      }
+    },
+    {
+      "id": "F6MC",
+      "label": "More indented lines at the beginning of folded block scalars",
+      "value": {
+        "a": " more indented\nregular\n",
+        "b": "\n\n more indented\nregular\n"
+      },
+      "yaml": "a: |2\n   more indented\n  regular\nb: |2\n  \n\n   more indented\n  regular\n",
+      "pyyaml": {
+        "id": "F6MC",
+        "agrees": true
+      }
+    },
+    {
+      "id": "F8F9",
+      "label": "Spec Example 8.5. Chomping Trailing Lines",
+      "value": {
+        "strip": "# text",
+        "clip": "# text\n",
+        "keep": "# text\n\n"
+      },
+      "yaml": "strip: \"# text\"\nclip: |\n  # text\nkeep: |+\n  # text\n\n",
+      "pyyaml": {
+        "id": "F8F9",
+        "agrees": true
+      }
+    },
+    {
+      "id": "FBC9",
+      "label": "Allowed characters in plain scalars",
+      "value": {
+        "safe": "a!\"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~ !\"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~",
+        "safe question mark": "?foo",
+        "safe colon": ":foo",
+        "safe dash": "-foo"
+      },
+      "yaml": "safe: a!\"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~ !\"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~\nsafe question mark: ?foo\nsafe colon: :foo\nsafe dash: -foo\n",
+      "pyyaml": {
+        "id": "FBC9",
+        "agrees": true
+      }
+    },
+    {
+      "id": "FH7J",
+      "label": "Tags on Empty Scalars",
+      "value": [
+        "",
+        {
+          "": "a",
+          "b": ""
+        },
+        {
+          "": null
+        }
+      ],
+      "yaml": "- \"\"\n- \"\": a\n  b: \"\"\n- \"\": null\n",
+      "pyyaml": {
+        "id": "FH7J",
+        "agrees": true
+      }
+    },
+    {
+      "id": "FP8R",
+      "label": "Zero indented block scalar",
+      "value": "line1 line2 line3\n",
+      "yaml": "|\nline1 line2 line3\n",
+      "pyyaml": {
+        "id": "FP8R",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "FQ7F",
+      "label": "Spec Example 2.1. Sequence of Scalars",
+      "value": ["Mark McGwire", "Sammy Sosa", "Ken Griffey"],
+      "yaml": "- Mark McGwire\n- Sammy Sosa\n- Ken Griffey\n",
+      "pyyaml": {
+        "id": "FQ7F",
+        "agrees": true
+      }
+    },
+    {
+      "id": "FRK4",
+      "label": "Spec Example 7.3. Completely Empty Flow Nodes",
+      "value": {
+        "foo": null,
+        "": "bar"
+      },
+      "yaml": "foo: null\n\"\": bar\n",
+      "pyyaml": {
+        "id": "FRK4",
+        "agrees": true
+      }
+    },
+    {
+      "id": "FTA2",
+      "label": "Single block sequence with anchor and explicit document start",
+      "value": ["a"],
+      "yaml": "- a\n",
+      "pyyaml": {
+        "id": "FTA2",
+        "agrees": true
+      }
+    },
+    {
+      "id": "FUP4",
+      "label": "Flow Sequence in Flow Sequence",
+      "value": ["a", ["b", "c"]],
+      "yaml": "- a\n- - b\n  - c\n",
+      "pyyaml": {
+        "id": "FUP4",
+        "agrees": true
+      }
+    },
+    {
+      "id": "G4RS",
+      "label": "Spec Example 2.17. Quoted Scalars",
+      "value": {
+        "unicode": "Sosa did fine.☺",
+        "control": "\b1998\t1999\t2000\n",
+        "hex esc": "\r\n is \r\n",
+        "single": "\"Howdy!\" he cried.",
+        "quoted": " # Not a 'comment'.",
+        "tie-fighter": "|\\-*-/|"
+      },
+      "yaml": "unicode: Sosa did fine.☺\ncontrol: \"\\b1998\\t1999\\t2000\\n\"\nhex esc: \"\\r\\n is \\r\\n\"\nsingle: '\"Howdy!\" he cried.'\nquoted: \" # Not a 'comment'.\"\ntie-fighter: \"|\\\\-*-/|\"\n",
+      "pyyaml": {
+        "id": "G4RS",
+        "agrees": true
+      }
+    },
+    {
+      "id": "G992",
+      "label": "Spec Example 8.9. Folded Scalar",
+      "value": "folded text\n",
+      "yaml": "|\nfolded text\n",
+      "pyyaml": {
+        "id": "G992",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "GH63",
+      "label": "Mixed Block Mapping (explicit to implicit)",
+      "value": {
+        "a": 1.3,
+        "fifteen": "d"
+      },
+      "yaml": "a: 1.3\nfifteen: d\n",
+      "pyyaml": {
+        "id": "GH63",
+        "agrees": true
+      }
+    },
+    {
+      "id": "H2RW",
+      "label": "Blank lines",
+      "value": {
+        "foo": 1,
+        "bar": 2,
+        "text": "a\n  \nb\n\nc\n\nd\n"
+      },
+      "yaml": "foo: 1\nbar: 2\ntext: |\n  a\n    \n  b\n\n  c\n\n  d\n",
+      "pyyaml": {
+        "id": "H2RW",
+        "agrees": true
+      }
+    },
+    {
+      "id": "H3Z8",
+      "label": "Literal unicode",
+      "value": {
+        "wanted": "love ♥ and peace ☮"
+      },
+      "yaml": "wanted: love ♥ and peace ☮\n",
+      "pyyaml": {
+        "id": "H3Z8",
+        "agrees": true
+      }
+    },
+    {
+      "id": "HM87/00",
+      "label": "Scalars in flow start with syntax char",
+      "value": [":x"],
+      "yaml": "- :x\n",
+      "pyyaml": {
+        "id": "HM87/00",
+        "agrees": true
+      }
+    },
+    {
+      "id": "HM87/01",
+      "label": "Scalars in flow start with syntax char",
+      "value": ["?x"],
+      "yaml": "- ?x\n",
+      "pyyaml": {
+        "id": "HM87/01",
+        "agrees": true
+      }
+    },
+    {
+      "id": "HMK4",
+      "label": "Spec Example 2.16. Indentation determines scope",
+      "value": {
+        "name": "Mark McGwire",
+        "accomplishment": "Mark set a major league home run record in 1998.\n",
+        "stats": "65 Home Runs\n0.278 Batting Average\n"
+      },
+      "yaml": "name: Mark McGwire\naccomplishment: |\n  Mark set a major league home run record in 1998.\nstats: |\n  65 Home Runs\n  0.278 Batting Average\n",
+      "pyyaml": {
+        "id": "HMK4",
+        "agrees": true
+      }
+    },
+    {
+      "id": "HMQ5",
+      "label": "Spec Example 6.23. Node Properties",
+      "value": {
+        "foo": "bar",
+        "baz": "foo"
+      },
+      "yaml": "foo: bar\nbaz: foo\n",
+      "pyyaml": {
+        "id": "HMQ5",
+        "agrees": true
+      }
+    },
+    {
+      "id": "HS5T",
+      "label": "Spec Example 7.12. Plain Lines",
+      "value": "1st non-empty\n2nd non-empty 3rd non-empty",
+      "yaml": "|-\n1st non-empty\n2nd non-empty 3rd non-empty\n",
+      "pyyaml": {
+        "id": "HS5T",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "J3BT",
+      "label": "Spec Example 5.12. Tabs and Spaces",
+      "value": {
+        "quoted": "Quoted \t",
+        "block": "void main() {\n\tprintf(\"Hello, world!\\n\");\n}\n"
+      },
+      "yaml": "quoted: \"Quoted \\t\"\nblock: |\n  void main() {\n  \tprintf(\"Hello, world!\\n\");\n  }\n",
+      "pyyaml": {
+        "id": "J3BT",
+        "agrees": true
+      }
+    },
+    {
+      "id": "J5UC",
+      "label": "Multiple Pair Block Mapping",
+      "value": {
+        "foo": "blue",
+        "bar": "arrr",
+        "baz": "jazz"
+      },
+      "yaml": "foo: blue\nbar: arrr\nbaz: jazz\n",
+      "pyyaml": {
+        "id": "J5UC",
+        "agrees": true
+      }
+    },
+    {
+      "id": "J7VC",
+      "label": "Empty Lines Between Mapping Elements",
+      "value": {
+        "one": 2,
+        "three": 4
+      },
+      "yaml": "one: 2\nthree: 4\n",
+      "pyyaml": {
+        "id": "J7VC",
+        "agrees": true
+      }
+    },
+    {
+      "id": "J9HZ",
+      "label": "Spec Example 2.9. Single Document with Two Comments",
+      "value": {
+        "hr": ["Mark McGwire", "Sammy Sosa"],
+        "rbi": ["Sammy Sosa", "Ken Griffey"]
+      },
+      "yaml": "hr:\n  - Mark McGwire\n  - Sammy Sosa\nrbi:\n  - Sammy Sosa\n  - Ken Griffey\n",
+      "pyyaml": {
+        "id": "J9HZ",
+        "agrees": true
+      }
+    },
+    {
+      "id": "JEF9/00",
+      "label": "Trailing whitespace in streams",
+      "value": ["\n\n"],
+      "yaml": "- |+\n  \n\n",
+      "pyyaml": {
+        "id": "JEF9/00",
+        "agrees": true
+      }
+    },
+    {
+      "id": "JEF9/01",
+      "label": "Trailing whitespace in streams",
+      "value": ["\n"],
+      "yaml": "- |+\n  \n",
+      "pyyaml": {
+        "id": "JEF9/01",
+        "agrees": true
+      }
+    },
+    {
+      "id": "JEF9/02",
+      "label": "Trailing whitespace in streams",
+      "value": ["\n"],
+      "yaml": "- |+\n  \n",
+      "pyyaml": {
+        "id": "JEF9/02",
+        "agrees": true
+      }
+    },
+    {
+      "id": "JHB9",
+      "label": "Spec Example 2.7. Two Documents in a Stream",
+      "value": [
+        ["Mark McGwire", "Sammy Sosa", "Ken Griffey"],
+        ["Chicago Cubs", "St Louis Cardinals"]
+      ],
+      "yaml": "- - Mark McGwire\n  - Sammy Sosa\n  - Ken Griffey\n- - Chicago Cubs\n  - St Louis Cardinals\n",
+      "pyyaml": {
+        "id": "JHB9",
+        "agrees": true
+      }
+    },
+    {
+      "id": "JQ4R",
+      "label": "Spec Example 8.14. Block Sequence",
+      "value": {
+        "block sequence": [
+          "one",
+          {
+            "two": "three"
+          }
+        ]
+      },
+      "yaml": "block sequence:\n  - one\n  - two: three\n",
+      "pyyaml": {
+        "id": "JQ4R",
+        "agrees": true
+      }
+    },
+    {
+      "id": "JR7V",
+      "label": "Question marks in scalars",
+      "value": [
+        "a?string",
+        "another ? string",
+        {
+          "key": "value?"
+        },
+        ["a?string"],
+        ["another ? string"],
+        {
+          "key": "value?"
+        },
+        {
+          "key": "value?"
+        },
+        {
+          "key?": "value"
+        }
+      ],
+      "yaml": "- a?string\n- another ? string\n- key: value?\n- - a?string\n- - another ? string\n- key: value?\n- key: value?\n- key?: value\n",
+      "pyyaml": {
+        "id": "JR7V",
+        "agrees": true
+      }
+    },
+    {
+      "id": "JS2J",
+      "label": "Spec Example 6.29. Node Anchors",
+      "value": {
+        "First occurrence": "Value",
+        "Second occurrence": "Value"
+      },
+      "yaml": "First occurrence: Value\nSecond occurrence: Value\n",
+      "pyyaml": {
+        "id": "JS2J",
+        "agrees": true
+      }
+    },
+    {
+      "id": "JTV5",
+      "label": "Block Mapping with Multiline Scalars",
+      "value": {
+        "a true": "null d",
+        "e 42": null
+      },
+      "yaml": "a true: null d\ne 42: null\n",
+      "pyyaml": {
+        "id": "JTV5",
+        "agrees": true
+      }
+    },
+    {
+      "id": "K3WX",
+      "label": "Colon and adjacent value after comment on next line",
+      "value": {
+        "foo": "bar"
+      },
+      "yaml": "foo: bar\n",
+      "pyyaml": {
+        "id": "K3WX",
+        "agrees": true
+      }
+    },
+    {
+      "id": "K4SU",
+      "label": "Multiple Entry Block Sequence",
+      "value": ["foo", "bar", 42],
+      "yaml": "- foo\n- bar\n- 42\n",
+      "pyyaml": {
+        "id": "K4SU",
+        "agrees": true
+      }
+    },
+    {
+      "id": "K527",
+      "label": "Spec Example 6.6. Line Folding",
+      "value": "trimmed\n\n\nas space",
+      "yaml": "|-\ntrimmed\n\n\nas space\n",
+      "pyyaml": {
+        "id": "K527",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "K54U",
+      "label": "Tab after document header",
+      "value": "scalar",
+      "yaml": "scalar\n",
+      "pyyaml": {
+        "id": "K54U",
+        "agrees": true
+      }
+    },
+    {
+      "id": "K858",
+      "label": "Spec Example 8.6. Empty Scalar Chomping",
+      "value": {
+        "strip": "",
+        "clip": "",
+        "keep": "\n"
+      },
+      "yaml": "strip: \"\"\nclip: \"\"\nkeep: |+\n  \n",
+      "pyyaml": {
+        "id": "K858",
+        "agrees": true
+      }
+    },
+    {
+      "id": "KH5V/00",
+      "label": "Inline tabs in double quoted",
+      "value": "1 inline\ttab",
+      "yaml": "\"1 inline\\ttab\"\n",
+      "pyyaml": {
+        "id": "KH5V/00",
+        "agrees": true
+      }
+    },
+    {
+      "id": "KH5V/01",
+      "label": "Inline tabs in double quoted",
+      "value": "2 inline\ttab",
+      "yaml": "\"2 inline\\ttab\"\n",
+      "pyyaml": {
+        "id": "KH5V/01",
+        "agrees": true
+      }
+    },
+    {
+      "id": "KH5V/02",
+      "label": "Inline tabs in double quoted",
+      "value": "3 inline\ttab",
+      "yaml": "\"3 inline\\ttab\"\n",
+      "pyyaml": {
+        "id": "KH5V/02",
+        "agrees": true
+      }
+    },
+    {
+      "id": "KMK3",
+      "label": "Block Submapping",
+      "value": {
+        "foo": {
+          "bar": 1
+        },
+        "baz": 2
+      },
+      "yaml": "foo:\n  bar: 1\nbaz: 2\n",
+      "pyyaml": {
+        "id": "KMK3",
+        "agrees": true
+      }
+    },
+    {
+      "id": "KSS4",
+      "label": "Scalars on --- line",
+      "value": ["quoted string", "foo"],
+      "yaml": "- quoted string\n- foo\n",
+      "pyyaml": {
+        "id": "KSS4",
+        "agrees": true
+      }
+    },
+    {
+      "id": "L24T/00",
+      "label": "Trailing line of spaces",
+      "value": {
+        "foo": "x\n \n"
+      },
+      "yaml": "foo: |+\n  x\n   \n",
+      "pyyaml": {
+        "id": "L24T/00",
+        "agrees": true
+      }
+    },
+    {
+      "id": "L24T/01",
+      "label": "Trailing line of spaces",
+      "value": {
+        "foo": "x\n \n"
+      },
+      "yaml": "foo: |+\n  x\n   \n",
+      "pyyaml": {
+        "id": "L24T/01",
+        "agrees": true
+      }
+    },
+    {
+      "id": "L383",
+      "label": "Two scalar docs with trailing comments",
+      "value": ["foo", "foo"],
+      "yaml": "- foo\n- foo\n",
+      "pyyaml": {
+        "id": "L383",
+        "agrees": true
+      }
+    },
+    {
+      "id": "L94M",
+      "label": "Tags in Explicit Mapping",
+      "value": {
+        "a": 47,
+        "c": "d"
+      },
+      "yaml": "a: 47\nc: d\n",
+      "pyyaml": {
+        "id": "L94M",
+        "agrees": true
+      }
+    },
+    {
+      "id": "L9U5",
+      "label": "Spec Example 7.11. Plain Implicit Keys",
+      "value": {
+        "implicit block key": [
+          {
+            "implicit flow key": "value"
+          }
+        ]
+      },
+      "yaml": "implicit block key:\n  - implicit flow key: value\n",
+      "pyyaml": {
+        "id": "L9U5",
+        "agrees": true
+      }
+    },
+    {
+      "id": "LE5A",
+      "label": "Spec Example 7.24. Flow Nodes",
+      "value": ["a", "b", "c", "c", ""],
+      "yaml": "- a\n- b\n- c\n- c\n- \"\"\n",
+      "pyyaml": {
+        "id": "LE5A",
+        "agrees": true
+      }
+    },
+    {
+      "id": "LP6E",
+      "label": "Whitespace After Scalars in Flow",
+      "value": [
+        ["a", "b", "c"],
+        {
+          "a": "b",
+          "c": "d",
+          "e": "f"
+        },
+        []
+      ],
+      "yaml": "- - a\n  - b\n  - c\n- a: b\n  c: d\n  e: f\n- []\n",
+      "pyyaml": {
+        "id": "LP6E",
+        "agrees": true
+      }
+    },
+    {
+      "id": "LQZ7",
+      "label": "Spec Example 7.4. Double Quoted Implicit Keys",
+      "value": {
+        "implicit block key": [
+          {
+            "implicit flow key": "value"
+          }
+        ]
+      },
+      "yaml": "implicit block key:\n  - implicit flow key: value\n",
+      "pyyaml": {
+        "id": "LQZ7",
+        "agrees": true
+      }
+    },
+    {
+      "id": "M29M",
+      "label": "Literal Block Scalar",
+      "value": {
+        "a": "ab\n\ncd\nef\n"
+      },
+      "yaml": "a: |\n  ab\n\n  cd\n  ef\n",
+      "pyyaml": {
+        "id": "M29M",
+        "agrees": true
+      }
+    },
+    {
+      "id": "M5C3",
+      "label": "Spec Example 8.21. Block Scalar Nodes",
+      "value": {
+        "literal": "value\n",
+        "folded": "value\n"
+      },
+      "yaml": "literal: |\n  value\nfolded: |\n  value\n",
+      "pyyaml": {
+        "id": "M5C3",
+        "agrees": true
+      }
+    },
+    {
+      "id": "M6YH",
+      "label": "Block sequence indentation",
+      "value": [
+        "x\n",
+        {
+          "foo": "bar"
+        },
+        [42]
+      ],
+      "yaml": "- |\n  x\n- foo: bar\n- - 42\n",
+      "pyyaml": {
+        "id": "M6YH",
+        "agrees": true
+      }
+    },
+    {
+      "id": "M7A3",
+      "label": "Spec Example 9.3. Bare Documents",
+      "value": ["Bare document", "%!PS-Adobe-2.0 # Not the first line\n"],
+      "yaml": "- Bare document\n- |\n  %!PS-Adobe-2.0 # Not the first line\n",
+      "pyyaml": {
+        "id": "M7A3",
+        "agrees": true
+      }
+    },
+    {
+      "id": "M7NX",
+      "label": "Nested flow collections",
+      "value": {
+        "a": [
+          "b",
+          "c",
+          {
+            "d": ["e", "f"]
+          }
+        ]
+      },
+      "yaml": "a:\n  - b\n  - c\n  - d:\n      - e\n      - f\n",
+      "pyyaml": {
+        "id": "M7NX",
+        "agrees": true
+      }
+    },
+    {
+      "id": "M9B4",
+      "label": "Spec Example 8.7. Literal Scalar",
+      "value": "literal\n\ttext\n",
+      "yaml": "|\nliteral\n\ttext\n",
+      "pyyaml": {
+        "id": "M9B4",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "MJS9",
+      "label": "Spec Example 6.7. Block Folding",
+      "value": "foo \n\n\t bar\n\nbaz\n",
+      "yaml": "|\nfoo \n\n\t bar\n\nbaz\n",
+      "pyyaml": {
+        "id": "MJS9",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "MUS6/02",
+      "label": "Directive variants",
+      "value": null,
+      "yaml": "null\n",
+      "pyyaml": {
+        "id": "MUS6/02",
+        "agrees": true
+      }
+    },
+    {
+      "id": "MUS6/03",
+      "label": "Directive variants",
+      "value": null,
+      "yaml": "null\n",
+      "pyyaml": {
+        "id": "MUS6/03",
+        "agrees": true
+      }
+    },
+    {
+      "id": "MUS6/04",
+      "label": "Directive variants",
+      "value": null,
+      "yaml": "null\n",
+      "pyyaml": {
+        "id": "MUS6/04",
+        "agrees": true
+      }
+    },
+    {
+      "id": "MUS6/05",
+      "label": "Directive variants",
+      "value": null,
+      "yaml": "null\n",
+      "pyyaml": {
+        "id": "MUS6/05",
+        "agrees": true
+      }
+    },
+    {
+      "id": "MUS6/06",
+      "label": "Directive variants",
+      "value": null,
+      "yaml": "null\n",
+      "pyyaml": {
+        "id": "MUS6/06",
+        "agrees": true
+      }
+    },
+    {
+      "id": "MXS3",
+      "label": "Flow Mapping in Block Sequence",
+      "value": [
+        {
+          "a": "b"
+        }
+      ],
+      "yaml": "- a: b\n",
+      "pyyaml": {
+        "id": "MXS3",
+        "agrees": true
+      }
+    },
+    {
+      "id": "MYW6",
+      "label": "Block Scalar Strip",
+      "value": "ab",
+      "yaml": "ab\n",
+      "pyyaml": {
+        "id": "MYW6",
+        "agrees": true
+      }
+    },
+    {
+      "id": "MZX3",
+      "label": "Non-Specific Tags on Scalars",
+      "value": ["plain", "double quoted", "single quoted", "block\n", "plain again"],
+      "yaml": "- plain\n- double quoted\n- single quoted\n- |\n  block\n- plain again\n",
+      "pyyaml": {
+        "id": "MZX3",
+        "agrees": true
+      }
+    },
+    {
+      "id": "NAT4",
+      "label": "Various empty or newline only quoted strings",
+      "value": {
+        "a": " ",
+        "b": " ",
+        "c": " ",
+        "d": " ",
+        "e": "\n",
+        "f": "\n",
+        "g": "\n\n",
+        "h": "\n\n"
+      },
+      "yaml": "a: \" \"\nb: \" \"\nc: \" \"\nd: \" \"\ne: |+\n  \nf: |+\n  \ng: |+\n  \n\nh: |+\n  \n\n",
+      "pyyaml": {
+        "id": "NAT4",
+        "agrees": true
+      }
+    },
+    {
+      "id": "NB6Z",
+      "label": "Multiline plain value with tabs on empty lines",
+      "value": {
+        "key": "value with\ntabs"
+      },
+      "yaml": "key: |-\n  value with\n  tabs\n",
+      "pyyaml": {
+        "id": "NB6Z",
+        "agrees": true
+      }
+    },
+    {
+      "id": "NHX8",
+      "label": "Empty Lines at End of Document",
+      "value": {
+        "": null
+      },
+      "yaml": "\"\": null\n",
+      "pyyaml": {
+        "id": "NHX8",
+        "agrees": true
+      }
+    },
+    {
+      "id": "NJ66",
+      "label": "Multiline plain flow mapping key",
+      "value": [
+        {
+          "single line": "value"
+        },
+        {
+          "multi line": "value"
+        }
+      ],
+      "yaml": "- single line: value\n- multi line: value\n",
+      "pyyaml": {
+        "id": "NJ66",
+        "agrees": true
+      }
+    },
+    {
+      "id": "NKF9",
+      "label": "Empty keys in block and flow mapping",
+      "value": [
+        {
+          "key": "value",
+          "": "empty key"
+        },
+        {
+          "key": "value",
+          "": "empty key"
+        },
+        {
+          "": null
+        },
+        {
+          "": null
+        }
+      ],
+      "yaml": "- key: value\n  \"\": empty key\n- key: value\n  \"\": empty key\n- \"\": null\n- \"\": null\n",
+      "pyyaml": {
+        "id": "NKF9",
+        "agrees": true
+      }
+    },
+    {
+      "id": "NP9H",
+      "label": "Spec Example 7.5. Double Quoted Line Breaks",
+      "value": "folded to a space,\nto a line feed, or \t \tnon-content",
+      "yaml": "|-\nfolded to a space,\nto a line feed, or \t \tnon-content\n",
+      "pyyaml": {
+        "id": "NP9H",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "P2AD",
+      "label": "Spec Example 8.1. Block Scalar Header",
+      "value": ["literal\n", " folded\n", "keep\n\n", " strip"],
+      "yaml": "- |\n  literal\n- |2\n   folded\n- |+\n  keep\n\n- \" strip\"\n",
+      "pyyaml": {
+        "id": "P2AD",
+        "agrees": true
+      }
+    },
+    {
+      "id": "P76L",
+      "label": "Spec Example 6.19. Secondary Tag Handle",
+      "value": "1 - 3",
+      "yaml": "1 - 3\n",
+      "pyyaml": {
+        "id": "P76L",
+        "agrees": true
+      }
+    },
+    {
+      "id": "P94K",
+      "label": "Spec Example 6.11. Multi-Line Comments",
+      "value": {
+        "key": "value"
+      },
+      "yaml": "key: value\n",
+      "pyyaml": {
+        "id": "P94K",
+        "agrees": true
+      }
+    },
+    {
+      "id": "PBJ2",
+      "label": "Spec Example 2.3. Mapping Scalars to Sequences",
+      "value": {
+        "american": ["Boston Red Sox", "Detroit Tigers", "New York Yankees"],
+        "national": ["New York Mets", "Chicago Cubs", "Atlanta Braves"]
+      },
+      "yaml": "american:\n  - Boston Red Sox\n  - Detroit Tigers\n  - New York Yankees\nnational:\n  - New York Mets\n  - Chicago Cubs\n  - Atlanta Braves\n",
+      "pyyaml": {
+        "id": "PBJ2",
+        "agrees": true
+      }
+    },
+    {
+      "id": "PRH3",
+      "label": "Spec Example 7.9. Single Quoted Lines",
+      "value": " 1st non-empty\n2nd non-empty 3rd non-empty ",
+      "yaml": "|1-\n 1st non-empty\n2nd non-empty 3rd non-empty \n",
+      "pyyaml": {
+        "id": "PRH3",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "PUW8",
+      "label": "Document start on last line",
+      "value": [
+        {
+          "a": "b"
+        },
+        null
+      ],
+      "yaml": "- a: b\n- null\n",
+      "pyyaml": {
+        "id": "PUW8",
+        "agrees": true
+      }
+    },
+    {
+      "id": "PW8X",
+      "label": "Anchors on Empty Scalars",
+      "value": [
+        null,
+        "a",
+        {
+          "": "a",
+          "b": null
+        },
+        {
+          "": null
+        },
+        {
+          "": null
+        },
+        {
+          "": null
+        }
+      ],
+      "yaml": "- null\n- a\n- \"\": a\n  b: null\n- \"\": null\n- \"\": null\n- \"\": null\n",
+      "pyyaml": {
+        "id": "PW8X",
+        "agrees": true
+      }
+    },
+    {
+      "id": "Q5MG",
+      "label": "Tab at beginning of line followed by a flow mapping",
+      "value": {},
+      "yaml": "{}\n",
+      "pyyaml": {
+        "id": "Q5MG",
+        "agrees": true
+      }
+    },
+    {
+      "id": "Q88A",
+      "label": "Spec Example 7.23. Flow Content",
+      "value": [
+        ["a", "b"],
+        {
+          "a": "b"
+        },
+        "a",
+        "b",
+        "c"
+      ],
+      "yaml": "- - a\n  - b\n- a: b\n- a\n- b\n- c\n",
+      "pyyaml": {
+        "id": "Q88A",
+        "agrees": true
+      }
+    },
+    {
+      "id": "Q8AD",
+      "label": "Spec Example 7.5. Double Quoted Line Breaks [1.3]",
+      "value": "folded to a space,\nto a line feed, or \t \tnon-content",
+      "yaml": "|-\nfolded to a space,\nto a line feed, or \t \tnon-content\n",
+      "pyyaml": {
+        "id": "Q8AD",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "QF4Y",
+      "label": "Spec Example 7.19. Single Pair Flow Mappings",
+      "value": [
+        {
+          "foo": "bar"
+        }
+      ],
+      "yaml": "- foo: bar\n",
+      "pyyaml": {
+        "id": "QF4Y",
+        "agrees": true
+      }
+    },
+    {
+      "id": "R4YG",
+      "label": "Spec Example 8.2. Block Indentation Indicator",
+      "value": ["detected\n", "\n\n# detected\n", " explicit\n", "\t\ndetected\n"],
+      "yaml": "- |\n  detected\n- |\n  \n\n  # detected\n- |2\n   explicit\n- |\n  \t\n  detected\n",
+      "pyyaml": {
+        "id": "R4YG",
+        "agrees": true
+      }
+    },
+    {
+      "id": "R52L",
+      "label": "Nested flow mapping sequence and mappings",
+      "value": {
+        "top1": [
+          "item1",
+          {
+            "key2": "value2"
+          },
+          "item3"
+        ],
+        "top2": "value2"
+      },
+      "yaml": "top1:\n  - item1\n  - key2: value2\n  - item3\ntop2: value2\n",
+      "pyyaml": {
+        "id": "R52L",
+        "agrees": true
+      }
+    },
+    {
+      "id": "RLU9",
+      "label": "Sequence Indent",
+      "value": {
+        "foo": [42],
+        "bar": [44]
+      },
+      "yaml": "foo:\n  - 42\nbar:\n  - 44\n",
+      "pyyaml": {
+        "id": "RLU9",
+        "agrees": true
+      }
+    },
+    {
+      "id": "RR7F",
+      "label": "Mixed Block Mapping (implicit to explicit)",
+      "value": {
+        "a": 4.2,
+        "d": 23
+      },
+      "yaml": "a: 4.2\nd: 23\n",
+      "pyyaml": {
+        "id": "RR7F",
+        "agrees": true
+      }
+    },
+    {
+      "id": "RTP8",
+      "label": "Spec Example 9.2. Document Markers",
+      "value": "Document",
+      "yaml": "Document\n",
+      "pyyaml": {
+        "id": "RTP8",
+        "agrees": true
+      }
+    },
+    {
+      "id": "RZT7",
+      "label": "Spec Example 2.28. Log File",
+      "value": [
+        {
+          "Time": "2001-11-23 15:01:42 -5",
+          "User": "ed",
+          "Warning": "This is an error message for the log file"
+        },
+        {
+          "Time": "2001-11-23 15:02:31 -5",
+          "User": "ed",
+          "Warning": "A slightly different error message."
+        },
+        {
+          "Date": "2001-11-23 15:03:17 -5",
+          "User": "ed",
+          "Fatal": "Unknown variable \"bar\"",
+          "Stack": [
+            {
+              "file": "TopClass.py",
+              "line": 23,
+              "code": "x = MoreObject(\"345\\n\")\n"
+            },
+            {
+              "file": "MoreClass.py",
+              "line": 58,
+              "code": "foo = bar"
+            }
+          ]
+        }
+      ],
+      "yaml": "- Time: 2001-11-23 15:01:42 -5\n  User: ed\n  Warning: This is an error message for the log file\n- Time: 2001-11-23 15:02:31 -5\n  User: ed\n  Warning: A slightly different error message.\n- Date: 2001-11-23 15:03:17 -5\n  User: ed\n  Fatal: Unknown variable \"bar\"\n  Stack:\n    - file: TopClass.py\n      line: 23\n      code: |\n        x = MoreObject(\"345\\n\")\n    - file: MoreClass.py\n      line: 58\n      code: foo = bar\n",
+      "pyyaml": {
+        "id": "RZT7",
+        "agrees": false,
+        "read": [
+          {
+            "Time": "!datetime!datetime.datetime(2001, 11, 23, 15, 1, 42, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=68400)))",
+            "User": "ed",
+            "Warning": "This is an error message for the log file"
+          },
+          {
+            "Time": "!datetime!datetime.datetime(2001, 11, 23, 15, 2, 31, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=68400)))",
+            "User": "ed",
+            "Warning": "A slightly different error message."
+          },
+          {
+            "Date": "!datetime!datetime.datetime(2001, 11, 23, 15, 3, 17, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=68400)))",
+            "User": "ed",
+            "Fatal": "Unknown variable \"bar\"",
+            "Stack": [
+              {
+                "file": "TopClass.py",
+                "line": 23,
+                "code": "x = MoreObject(\"345\\n\")\n"
+              },
+              {
+                "file": "MoreClass.py",
+                "line": 58,
+                "code": "foo = bar"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "S3PD",
+      "label": "Spec Example 8.18. Implicit Block Mapping Entries",
+      "value": {
+        "plain key": "in-line value",
+        "": null,
+        "quoted key": ["entry"]
+      },
+      "yaml": "plain key: in-line value\n\"\": null\nquoted key:\n  - entry\n",
+      "pyyaml": {
+        "id": "S3PD",
+        "agrees": true
+      }
+    },
+    {
+      "id": "S4JQ",
+      "label": "Spec Example 6.28. Non-Specific Tags",
+      "value": ["12", 12, "12"],
+      "yaml": "- \"12\"\n- 12\n- \"12\"\n",
+      "pyyaml": {
+        "id": "S4JQ",
+        "agrees": true
+      }
+    },
+    {
+      "id": "S4T7",
+      "label": "Document with footer",
+      "value": {
+        "aaa": "bbb"
+      },
+      "yaml": "aaa: bbb\n",
+      "pyyaml": {
+        "id": "S4T7",
+        "agrees": true
+      }
+    },
+    {
+      "id": "S7BG",
+      "label": "Colon followed by comma",
+      "value": [":,"],
+      "yaml": "- :,\n",
+      "pyyaml": {
+        "id": "S7BG",
+        "agrees": true
+      }
+    },
+    {
+      "id": "S9E8",
+      "label": "Spec Example 5.3. Block Structure Indicators",
+      "value": {
+        "sequence": ["one", "two"],
+        "mapping": {
+          "sky": "blue",
+          "sea": "green"
+        }
+      },
+      "yaml": "sequence:\n  - one\n  - two\nmapping:\n  sky: blue\n  sea: green\n",
+      "pyyaml": {
+        "id": "S9E8",
+        "agrees": true
+      }
+    },
+    {
+      "id": "SKE5",
+      "label": "Anchor before zero indented sequence",
+      "value": {
+        "seq": ["a", "b"]
+      },
+      "yaml": "seq:\n  - a\n  - b\n",
+      "pyyaml": {
+        "id": "SKE5",
+        "agrees": true
+      }
+    },
+    {
+      "id": "SM9W/00",
+      "label": "Single character streams",
+      "value": [null],
+      "yaml": "- null\n",
+      "pyyaml": {
+        "id": "SM9W/00",
+        "agrees": true
+      }
+    },
+    {
+      "id": "SM9W/01",
+      "label": "Single character streams",
+      "value": {
+        "": null
+      },
+      "yaml": "\"\": null\n",
+      "pyyaml": {
+        "id": "SM9W/01",
+        "agrees": true
+      }
+    },
+    {
+      "id": "SSW6",
+      "label": "Spec Example 7.7. Single Quoted Characters [1.3]",
+      "value": "here's to \"quotes\"",
+      "yaml": "here's to \"quotes\"\n",
+      "pyyaml": {
+        "id": "SSW6",
+        "agrees": true
+      }
+    },
+    {
+      "id": "SYW4",
+      "label": "Spec Example 2.2. Mapping Scalars to Scalars",
+      "value": {
+        "hr": 65,
+        "avg": 0.278,
+        "rbi": 147
+      },
+      "yaml": "hr: 65\navg: 0.278\nrbi: 147\n",
+      "pyyaml": {
+        "id": "SYW4",
+        "agrees": true
+      }
+    },
+    {
+      "id": "T26H",
+      "label": "Spec Example 8.8. Literal Content [1.3]",
+      "value": "\n\nliteral\n \n\ntext\n",
+      "yaml": "|\n\n\nliteral\n \n\ntext\n",
+      "pyyaml": {
+        "id": "T26H",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "T4YY",
+      "label": "Spec Example 7.9. Single Quoted Lines [1.3]",
+      "value": " 1st non-empty\n2nd non-empty 3rd non-empty ",
+      "yaml": "|1-\n 1st non-empty\n2nd non-empty 3rd non-empty \n",
+      "pyyaml": {
+        "id": "T4YY",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "T5N4",
+      "label": "Spec Example 8.7. Literal Scalar [1.3]",
+      "value": "literal\n\ttext\n",
+      "yaml": "|\nliteral\n\ttext\n",
+      "pyyaml": {
+        "id": "T5N4",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "TE2A",
+      "label": "Spec Example 8.16. Block Mappings",
+      "value": {
+        "block mapping": {
+          "key": "value"
+        }
+      },
+      "yaml": "block mapping:\n  key: value\n",
+      "pyyaml": {
+        "id": "TE2A",
+        "agrees": true
+      }
+    },
+    {
+      "id": "TL85",
+      "label": "Spec Example 6.8. Flow Folding",
+      "value": " foo\nbar\nbaz ",
+      "yaml": "|1-\n foo\nbar\nbaz \n",
+      "pyyaml": {
+        "id": "TL85",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "TS54",
+      "label": "Folded Block Scalar",
+      "value": "ab cd\nef\n\ngh\n",
+      "yaml": "|\nab cd\nef\n\ngh\n",
+      "pyyaml": {
+        "id": "TS54",
+        "read": "refused",
+        "detail": "ParserError",
+        "agrees": false
+      }
+    },
+    {
+      "id": "U3C3",
+      "label": "Spec Example 6.16. “TAG” directive",
+      "value": "foo",
+      "yaml": "foo\n",
+      "pyyaml": {
+        "id": "U3C3",
+        "agrees": true
+      }
+    },
+    {
+      "id": "U3XV",
+      "label": "Node and Mapping Key Anchors",
+      "value": {
+        "top1": {
+          "key1": "one"
+        },
+        "top2": {
+          "key2": "two"
+        },
+        "top3": {
+          "key3": "three"
+        },
+        "top4": {
+          "key4": "four"
+        },
+        "top5": {
+          "key5": "five"
+        },
+        "top6": "six",
+        "top7": "seven"
+      },
+      "yaml": "top1:\n  key1: one\ntop2:\n  key2: two\ntop3:\n  key3: three\ntop4:\n  key4: four\ntop5:\n  key5: five\ntop6: six\ntop7: seven\n",
+      "pyyaml": {
+        "id": "U3XV",
+        "agrees": true
+      }
+    },
+    {
+      "id": "U9NS",
+      "label": "Spec Example 2.8. Play by Play Feed from a Game",
+      "value": [
+        {
+          "time": "20:03:20",
+          "player": "Sammy Sosa",
+          "action": "strike (miss)"
+        },
+        {
+          "time": "20:03:47",
+          "player": "Sammy Sosa",
+          "action": "grand slam"
+        }
+      ],
+      "yaml": "- time: 20:03:20\n  player: Sammy Sosa\n  action: strike (miss)\n- time: 20:03:47\n  player: Sammy Sosa\n  action: grand slam\n",
+      "pyyaml": {
+        "id": "U9NS",
+        "agrees": false,
+        "read": [
+          {
+            "time": 72200,
+            "player": "Sammy Sosa",
+            "action": "strike (miss)"
+          },
+          {
+            "time": 72227,
+            "player": "Sammy Sosa",
+            "action": "grand slam"
+          }
+        ]
+      }
+    },
+    {
+      "id": "UDM2",
+      "label": "Plain URL in flow mapping",
+      "value": [
+        {
+          "url": "http://example.org"
+        }
+      ],
+      "yaml": "- url: http://example.org\n",
+      "pyyaml": {
+        "id": "UDM2",
+        "agrees": true
+      }
+    },
+    {
+      "id": "UDR7",
+      "label": "Spec Example 5.4. Flow Collection Indicators",
+      "value": {
+        "sequence": ["one", "two"],
+        "mapping": {
+          "sky": "blue",
+          "sea": "green"
+        }
+      },
+      "yaml": "sequence:\n  - one\n  - two\nmapping:\n  sky: blue\n  sea: green\n",
+      "pyyaml": {
+        "id": "UDR7",
+        "agrees": true
+      }
+    },
+    {
+      "id": "UGM3",
+      "label": "Spec Example 2.27. Invoice",
+      "value": {
+        "invoice": 34843,
+        "date": "2001-01-23",
+        "bill-to": {
+          "given": "Chris",
+          "family": "Dumars",
+          "address": {
+            "lines": "458 Walkman Dr.\nSuite #292\n",
+            "city": "Royal Oak",
+            "state": "MI",
+            "postal": 48046
+          }
+        },
+        "ship-to": {
+          "given": "Chris",
+          "family": "Dumars",
+          "address": {
+            "lines": "458 Walkman Dr.\nSuite #292\n",
+            "city": "Royal Oak",
+            "state": "MI",
+            "postal": 48046
+          }
+        },
+        "product": [
+          {
+            "sku": "BL394D",
+            "quantity": 4,
+            "description": "Basketball",
+            "price": 450
+          },
+          {
+            "sku": "BL4438H",
+            "quantity": 1,
+            "description": "Super Hoop",
+            "price": 2392
+          }
+        ],
+        "tax": 251.42,
+        "total": 4443.52,
+        "comments": "Late afternoon is best. Backup contact is Nancy Billsmer @ 338-4338."
+      },
+      "yaml": "invoice: 34843\ndate: 2001-01-23\nbill-to:\n  given: Chris\n  family: Dumars\n  address:\n    lines: |\n      458 Walkman Dr.\n      Suite #292\n    city: Royal Oak\n    state: MI\n    postal: 48046\nship-to:\n  given: Chris\n  family: Dumars\n  address:\n    lines: |\n      458 Walkman Dr.\n      Suite #292\n    city: Royal Oak\n    state: MI\n    postal: 48046\nproduct:\n  - sku: BL394D\n    quantity: 4\n    description: Basketball\n    price: 450\n  - sku: BL4438H\n    quantity: 1\n    description: Super Hoop\n    price: 2392\ntax: 251.42\ntotal: 4443.52\ncomments: Late afternoon is best. Backup contact is Nancy Billsmer @ 338-4338.\n",
+      "pyyaml": {
+        "id": "UGM3",
+        "agrees": false,
+        "read": {
+          "invoice": 34843,
+          "date": "!date!datetime.date(2001, 1, 23)",
+          "bill-to": {
+            "given": "Chris",
+            "family": "Dumars",
+            "address": {
+              "lines": "458 Walkman Dr.\nSuite #292\n",
+              "city": "Royal Oak",
+              "state": "MI",
+              "postal": 48046
+            }
+          },
+          "ship-to": {
+            "given": "Chris",
+            "family": "Dumars",
+            "address": {
+              "lines": "458 Walkman Dr.\nSuite #292\n",
+              "city": "Royal Oak",
+              "state": "MI",
+              "postal": 48046
+            }
+          },
+          "product": [
+            {
+              "sku": "BL394D",
+              "quantity": 4,
+              "description": "Basketball",
+              "price": 450
+            },
+            {
+              "sku": "BL4438H",
+              "quantity": 1,
+              "description": "Super Hoop",
+              "price": 2392
+            }
+          ],
+          "tax": 251.42,
+          "total": 4443.52,
+          "comments": "Late afternoon is best. Backup contact is Nancy Billsmer @ 338-4338."
+        }
+      }
+    },
+    {
+      "id": "UKK6/00",
+      "label": "Syntax character edge cases",
+      "value": [
+        {
+          "": null
+        }
+      ],
+      "yaml": "- \"\": null\n",
+      "pyyaml": {
+        "id": "UKK6/00",
+        "agrees": true
+      }
+    },
+    {
+      "id": "UKK6/01",
+      "label": "Syntax character edge cases",
+      "value": {
+        ":": null
+      },
+      "yaml": "\":\": null\n",
+      "pyyaml": {
+        "id": "UKK6/01",
+        "agrees": true
+      }
+    },
+    {
+      "id": "UKK6/02",
+      "label": "Syntax character edge cases",
+      "value": "",
+      "yaml": "\"\"\n",
+      "pyyaml": {
+        "id": "UKK6/02",
+        "agrees": true
+      }
+    },
+    {
+      "id": "UT92",
+      "label": "Spec Example 9.4. Explicit Documents",
+      "value": [
+        {
+          "matches %": 20
+        },
+        null
+      ],
+      "yaml": "- matches %: 20\n- null\n",
+      "pyyaml": {
+        "id": "UT92",
+        "agrees": true
+      }
+    },
+    {
+      "id": "UV7Q",
+      "label": "Legal tab after indentation",
+      "value": {
+        "x": ["x x"]
+      },
+      "yaml": "x:\n  - x x\n",
+      "pyyaml": {
+        "id": "UV7Q",
+        "agrees": true
+      }
+    },
+    {
+      "id": "V55R",
+      "label": "Aliases in Block Sequence",
+      "value": ["a", "b", "a", "b"],
+      "yaml": "- a\n- b\n- a\n- b\n",
+      "pyyaml": {
+        "id": "V55R",
+        "agrees": true
+      }
+    },
+    {
+      "id": "VJP3/01",
+      "label": "Flow collections over many lines",
+      "value": {
+        "k": {
+          "k": "v"
+        }
+      },
+      "yaml": "k:\n  k: v\n",
+      "pyyaml": {
+        "id": "VJP3/01",
+        "agrees": true
+      }
+    },
+    {
+      "id": "W42U",
+      "label": "Spec Example 8.15. Block Sequence Entry Types",
+      "value": [
+        null,
+        "block node\n",
+        ["one", "two"],
+        {
+          "one": "two"
+        }
+      ],
+      "yaml": "- null\n- |\n  block node\n- - one\n  - two\n- one: two\n",
+      "pyyaml": {
+        "id": "W42U",
+        "agrees": true
+      }
+    },
+    {
+      "id": "W4TN",
+      "label": "Spec Example 9.5. Directives Documents",
+      "value": ["%!PS-Adobe-2.0\n", null],
+      "yaml": "- |\n  %!PS-Adobe-2.0\n- null\n",
+      "pyyaml": {
+        "id": "W4TN",
+        "agrees": true
+      }
+    },
+    {
+      "id": "W5VH",
+      "label": "Allowed characters in alias",
+      "value": {
+        "a": "scalar a",
+        "b": "scalar a"
+      },
+      "yaml": "a: scalar a\nb: scalar a\n",
+      "pyyaml": {
+        "id": "W5VH",
+        "agrees": true
+      }
+    },
+    {
+      "id": "WZ62",
+      "label": "Spec Example 7.2. Empty Content",
+      "value": {
+        "foo": "",
+        "": "bar"
+      },
+      "yaml": "foo: \"\"\n\"\": bar\n",
+      "pyyaml": {
+        "id": "WZ62",
+        "agrees": true
+      }
+    },
+    {
+      "id": "X8DW",
+      "label": "Explicit key and value seperated by comment",
+      "value": {
+        "key": "value"
+      },
+      "yaml": "key: value\n",
+      "pyyaml": {
+        "id": "X8DW",
+        "agrees": true
+      }
+    },
+    {
+      "id": "XLQ9",
+      "label": "Multiline scalar that looks like a YAML directive",
+      "value": "scalar %YAML 1.2",
+      "yaml": "scalar %YAML 1.2\n",
+      "pyyaml": {
+        "id": "XLQ9",
+        "agrees": true
+      }
+    },
+    {
+      "id": "XV9V",
+      "label": "Spec Example 6.5. Empty Lines [1.3]",
+      "value": {
+        "Folding": "Empty line\nas a line feed",
+        "Chomping": "Clipped empty lines\n"
+      },
+      "yaml": "Folding: |-\n  Empty line\n  as a line feed\nChomping: |\n  Clipped empty lines\n",
+      "pyyaml": {
+        "id": "XV9V",
+        "agrees": true
+      }
+    },
+    {
+      "id": "Y2GN",
+      "label": "Anchor with colon in the middle",
+      "value": {
+        "key": "value"
+      },
+      "yaml": "key: value\n",
+      "pyyaml": {
+        "id": "Y2GN",
+        "agrees": true
+      }
+    },
+    {
+      "id": "Y79Y/001",
+      "label": "Tabs in various contexts",
+      "value": {
+        "foo": "\t\n",
+        "bar": 1
+      },
+      "yaml": "foo: |+\n  \t\nbar: 1\n",
+      "pyyaml": {
+        "id": "Y79Y/001",
+        "agrees": true
+      }
+    },
+    {
+      "id": "Y79Y/002",
+      "label": "Tabs in various contexts",
+      "value": [["foo"]],
+      "yaml": "- - foo\n",
+      "pyyaml": {
+        "id": "Y79Y/002",
+        "agrees": true
+      }
+    },
+    {
+      "id": "Y79Y/010",
+      "label": "Tabs in various contexts",
+      "value": [-1],
+      "yaml": "- -1\n",
+      "pyyaml": {
+        "id": "Y79Y/010",
+        "agrees": true
+      }
+    },
+    {
+      "id": "YD5X",
+      "label": "Spec Example 2.5. Sequence of Sequences",
+      "value": [
+        ["name", "hr", "avg"],
+        ["Mark McGwire", 65, 0.278],
+        ["Sammy Sosa", 63, 0.288]
+      ],
+      "yaml": "- - name\n  - hr\n  - avg\n- - Mark McGwire\n  - 65\n  - 0.278\n- - Sammy Sosa\n  - 63\n  - 0.288\n",
+      "pyyaml": {
+        "id": "YD5X",
+        "agrees": true
+      }
+    },
+    {
+      "id": "Z67P",
+      "label": "Spec Example 8.21. Block Scalar Nodes [1.3]",
+      "value": {
+        "literal": "value\n",
+        "folded": "value\n"
+      },
+      "yaml": "literal: |\n  value\nfolded: |\n  value\n",
+      "pyyaml": {
+        "id": "Z67P",
+        "agrees": true
+      }
+    },
+    {
+      "id": "Z9M4",
+      "label": "Spec Example 6.22. Global Tag Prefix",
+      "value": ["bar"],
+      "yaml": "- bar\n",
+      "pyyaml": {
+        "id": "Z9M4",
+        "agrees": true
+      }
+    },
+    {
+      "id": "ZF4X",
+      "label": "Spec Example 2.6. Mapping of Mappings",
+      "value": {
+        "Mark McGwire": {
+          "hr": 65,
+          "avg": 0.278
+        },
+        "Sammy Sosa": {
+          "hr": 63,
+          "avg": 0.288
+        }
+      },
+      "yaml": "Mark McGwire:\n  hr: 65\n  avg: 0.278\nSammy Sosa:\n  hr: 63\n  avg: 0.288\n",
+      "pyyaml": {
+        "id": "ZF4X",
+        "agrees": true
+      }
+    },
+    {
+      "id": "ZH7C",
+      "label": "Anchors in Mapping",
+      "value": {
+        "a": "b",
+        "c": "d"
+      },
+      "yaml": "a: b\nc: d\n",
+      "pyyaml": {
+        "id": "ZH7C",
+        "agrees": true
+      }
+    },
+    {
+      "id": "ZK9H",
+      "label": "Nested top level flow mapping",
+      "value": {
+        "key": [[["value"]]]
+      },
+      "yaml": "key:\n  - - - value\n",
+      "pyyaml": {
+        "id": "ZK9H",
+        "agrees": true
+      }
+    },
+    {
+      "id": "ZWK4",
+      "label": "Key with anchor after missing explicit mapping value",
+      "value": {
+        "a": 1,
+        "b": null,
+        "c": 3
+      },
+      "yaml": "a: 1\nb: null\nc: 3\n",
+      "pyyaml": {
+        "id": "ZWK4",
+        "agrees": true
+      }
+    }
+  ]
+}

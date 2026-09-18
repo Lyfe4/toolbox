@@ -24,10 +24,14 @@ import suite from './spec/yaml-test-suite.json';
  *
  * WHAT THIS DOES NOT CLAIM. The suite's `in.json` is the value, not the
  * spelling: JSON objects are unordered, so one case below differs only in the
- * order the suite chose to print a mapping in. And 29 cases describe their
- * expectation as an event stream with no JSON at all; those are counted rather
- * than dropped, so the number of cases this fixture cannot decide is a number
- * somebody can see.
+ * order the suite chose to print a mapping in.
+ *
+ * AND THE 29 THAT USED TO BE COUNTED ARE NOW DECIDED. Those are the cases the
+ * suite answers only as an event stream. Round five composes the value from
+ * those events in the generator - 13 of them have a JSON value this tool is
+ * held to, and the other 16 have a reason it does not, which is itself an
+ * expectation: a refusal this tool documents, asserted by name. See "the cases
+ * the suite answers only as events" below.
  *
  * THE DIVERGENCE LIST IS EXACT, NOT A THRESHOLD, and every entry is asserted
  * to STILL diverge. Fixing one is meant to turn this file red, so that the
@@ -40,6 +44,10 @@ interface SuiteCase {
   readonly yaml: string;
   readonly error: boolean;
   readonly documents?: readonly unknown[] | null;
+  /** True for a case whose expectation was composed from its `test.event`. */
+  readonly fromEvents?: boolean;
+  /** Why that composed value has no JSON form, for the ones that do not. */
+  readonly reason?: string;
 }
 
 const cases = suite.cases as readonly SuiteCase[];
@@ -139,15 +147,173 @@ describe('the fixture itself', () => {
     expect(suite.counts.withJson).toBeGreaterThan(250);
   });
 
-  it('counts what it cannot decide, rather than dropping it', () => {
-    const undecidable = cases.filter(
-      (entry) => !entry.error && (entry.documents === null || entry.documents === undefined),
+  /*
+   * THE 29 THE FIXTURE USED TO BE UNABLE TO DECIDE.
+   *
+   * They carry no `in.json`, and for three rounds this file counted them and
+   * moved on - visible, which was the point, and undecided, which was the cost.
+   * They carry a `test.event` like every other case, and an event stream is a
+   * complete description of the node graph: what opened, what closed, every
+   * scalar with the style it was written in, every anchor and every alias. So
+   * the generator composes the value from it.
+   *
+   * AND THE COMPOSER IS NOT TRUSTED ON ITS OWN SAY-SO. It is code this
+   * repository wrote, which is the evidence this document ranks lowest. Before
+   * it is allowed to decide a case the suite does not answer, it has to
+   * reproduce the ones the suite DOES: 278 of the 279, with the one exception
+   * being RR7F, whose `in.json` prints a mapping in a different order and which
+   * this file has called an ordering difference since round two. The generator
+   * throws rather than writing a fixture if any other case disagrees.
+   */
+  it('decides every case, including the ones the suite answers only as events', () => {
+    const fromEvents = cases.filter((entry) => entry.fromEvents === true);
+    expect(fromEvents).toHaveLength(29);
+    expect(suite.counts.fromEvents).toBe(29);
+
+    // The composer's credentials, in the fixture rather than in a comment.
+    expect(suite.counts.composerAgreedWithJson).toBe(278);
+
+    // 13 have a JSON value; the other 16 have a reason, and every one of those
+    // reasons is a refusal this tool already documents.
+    expect(suite.counts.fromEventsWithValue).toBe(13);
+    expect(Object.keys(suite.counts.fromEventsByReason).sort()).toEqual([
+      'collection-key',
+      'duplicate-key',
+    ]);
+    expect(suite.counts.fromEventsByReason['collection-key']).toHaveLength(15);
+    expect(suite.counts.fromEventsByReason['duplicate-key']).toEqual(['2JQS']);
+
+    // Nothing is left over: 29 = 13 + 15 + 1.
+    const undecided = fromEvents.filter(
+      (entry) => entry.documents === null || entry.documents === undefined,
     );
-    // Cases the suite describes only as an event stream. The number is pinned
-    // so that a regeneration which quietly stopped reading `in.json` would
-    // show up here rather than as a smaller corpus passing just as happily.
-    expect(undecidable).toHaveLength(suite.counts.eventStreamOnly);
-    expect(suite.counts.eventStreamOnly).toBe(29);
+    expect(undecided).toHaveLength(16);
+    expect(undecided.every((entry) => entry.reason !== undefined)).toBe(true);
+  });
+});
+
+/**
+ * The cases the suite answers only as an event stream, held to that answer.
+ *
+ * A composed VALUE is compared like any other case, up in the block above -
+ * they are ordinary `documents` now. What is here is the other sixteen, where
+ * the events describe something JSON has no form for. "No JSON form" is not an
+ * excuse to assert nothing: this tool has a documented refusal for each of the
+ * two reasons, and being refused for the RIGHT one is the assertion.
+ */
+describe('the cases the suite answers only as events', () => {
+  const byReason = (reason: string): readonly SuiteCase[] =>
+    cases.filter((entry) => entry.reason === reason);
+
+  it.each(byReason('collection-key').map((entry) => [entry.id, entry] as const))(
+    'refuses %s for the key being a collection, which is what its events say it is',
+    (_id, entry) => {
+      const result = parseSource(entry.yaml, 'yaml', ',');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toBe(
+        'A YAML key is itself a collection, which JSON cannot represent.',
+      );
+    },
+  );
+
+  it.each(byReason('duplicate-key').map((entry) => [entry.id, entry] as const))(
+    'refuses %s for two keys colliding, which is what its events say happens',
+    (_id, entry) => {
+      const result = parseSource(entry.yaml, 'yaml', ',');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      // 2JQS is `: a` over `: b` - two empty keys, which are the same key. The
+      // suite composes it rather than marking it an error, so the refusal is
+      // this tool's and the message has to say so rather than blaming the YAML.
+      expect(result.error.message).toBe('That mapping has the same key twice.');
+    },
+  );
+
+  /*
+   * AND THE NEGATIVE CONTROL FOR THE WHOLE BLOCK.
+   *
+   * Sixteen refusals could equally be one parser that refuses everything
+   * awkward. These are the documents next door to them: a collection key that
+   * is a VALUE rather than a key, and a mapping whose two empty-looking keys
+   * are genuinely different. Both must be accepted.
+   */
+  it('can tell these apart from the documents beside them', () => {
+    expect(parseSource('a: [1, 2]\nb: {c: d}\n', 'yaml', ',').ok).toBe(true);
+    expect(parseSource('? a\n: 1\n? b\n: 2\n', 'yaml', ',').ok).toBe(true);
+  });
+});
+
+/**
+ * THE MESSAGE A COLLIDING KEY GETS, WHICH USED TO BE THE WRONG ONE.
+ *
+ * `true:` beside `"true":` is valid YAML - the suite composes documents of that
+ * shape, js-yaml reads them and PyYAML reads them. It is JSON that cannot hold
+ * it, because object keys are strings and both of those become `"true"`. This
+ * tool refuses it, correctly, and until round five told the person that their
+ * YAML was invalid: a sentence that sends somebody looking for a syntax error
+ * that is not there.
+ *
+ * The two cases are separated now, and the separation is asserted in both
+ * directions - a genuinely duplicated key must NOT get the JSON-boundary
+ * wording either, or the distinction is decoration.
+ */
+describe('a key that collides only once the document is JSON', () => {
+  const refusal = (source: string): { message: string; detail: string } => {
+    const result = parseSource(source, 'yaml', ',');
+    expect(result.ok).toBe(false);
+    return result.ok
+      ? { message: '', detail: '' }
+      : { message: result.error.message, detail: result.error.detail ?? '' };
+  };
+
+  const message = (source: string): string => refusal(source).message;
+
+  it.each([
+    ['a boolean against its own spelling', 'true: a\n"true": b\n'],
+    ['a number against its own spelling', '1: a\n"1": b\n'],
+    ['null against the empty string', '~: a\n"": b\n'],
+  ])('says that %s is two YAML keys and one JSON key', (_name, source) => {
+    expect(message(source)).toBe('Two different YAML keys become the same JSON key.');
+  });
+
+  it.each([
+    ['the same plain key twice', 'a: 1\na: 2\n'],
+    ['the same empty key twice', ': a\n: b\n'],
+    ['the same quoted key twice', '"a": 1\n"a": 2\n'],
+  ])('says that %s is the same key twice', (_name, source) => {
+    expect(message(source)).toBe('That mapping has the same key twice.');
+  });
+
+  /*
+   * AND THE SENTENCE UNDER THE HEADLINE IS THE ACTIONABLE HALF.
+   *
+   * The headline says which of the two happened; the detail says what to do
+   * about it, and it is the only place the user is told that `true:` and
+   * `"true":` are the two keys in question. Asserted because round five's
+   * mutation sweep could turn the `+` joining those strings into a `-` - which
+   * makes the whole detail the three letters `NaN` - with every other
+   * assertion in this file still green.
+   */
+  it('says what to do about it, in both cases', () => {
+    expect(refusal('true: a\n"true": b\n').detail).toContain('`true:` and `"true":` are two keys');
+    expect(refusal('a: 1\na: 2\n').detail).toContain('A mapping may name each key once');
+  });
+
+  /*
+   * The collision is reported at the SECOND key, and the position is what
+   * makes either message actionable. Asserted because the offset the library
+   * hands back is the one this file keys its side channel on: if that ever
+   * stopped being the second key's start, every collision would fall through
+   * to "That is not valid YAML." and every test above would still pass except
+   * this one.
+   */
+  it('points at the second key rather than at the document', () => {
+    const result = parseSource('first: 1\ntrue: a\n"true": b\n', 'yaml', ',');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.position?.line).toBe(3);
+    expect(result.error.position?.column).toBe(1);
   });
 });
 
@@ -288,6 +454,7 @@ describe('refusing, against the yaml-test-suite', () => {
     if (message.includes('Nothing to parse')) return 'empty';
     if (/%YAML directives|directive has no document/.test(message)) return 'directive';
     if (message.includes('nested more than')) return 'depth';
+    if (message === 'That mapping has the same key twice.') return 'duplicate-key';
     if (/JSON cannot represent|itself a collection/.test(message)) return 'json-boundary';
     return 'parser';
   };
@@ -308,6 +475,16 @@ describe('refusing, against the yaml-test-suite', () => {
     expect(counts.get('empty')).toBeUndefined();
     expect(counts.get('depth')).toBeUndefined();
     expect(counts.get('json-boundary')).toBeUndefined();
+    /*
+     * AND THE KEY-COLLISION RULE IS AT ZERO TOO, WHICH IT COULD NOT BE ASKED
+     * BEFORE. Until round five both kinds of collision came back as "That is
+     * not valid YAML.", so a case refused for having two keys that JSON cannot
+     * tell apart was indistinguishable here from one refused for a real syntax
+     * fault - and 93 of the 94 fell in the same bucket whatever their reason.
+     * `Two different YAML keys become the same JSON key.` now classifies as
+     * `json-boundary`, which is already asserted absent above.
+     */
+    expect(counts.get('duplicate-key')).toBeUndefined();
     expect(counts.get('directive')).toEqual(['9MMA', 'SF5V']);
     expect(counts.get('parser')).toHaveLength(92);
   });

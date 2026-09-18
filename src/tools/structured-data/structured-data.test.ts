@@ -470,6 +470,57 @@ describe('format detection', () => {
     expect(detect(pastTheByteBudget)).toBe('csv');
 
     /*
+     * AND THE THIRD BOUND, WHICH NOTHING WAS HOLDING AT ALL.
+     *
+     * The walk is not the expensive thing in this function. When a document
+     * looks delimited, detection then asks whether it ALSO parses as a YAML
+     * mapping - a real parse, by the `yaml` package - and that call is given
+     * `body.slice(0, DETECTION_BUDGET)` for exactly the same reason the walk is
+     * bounded. Removing the slice and handing it the whole `body` changed no
+     * verdict anywhere in this suite: a 16 MB paste would have been fully
+     * parsed by a function whose job is to guess, and every test stayed green.
+     *
+     * THIS IS THE COST GUARD THAT IS NOT A CLOCK. It works because a YAML fault
+     * past the budget cannot be seen by a bounded parse and cannot be missed by
+     * an unbounded one, so the VERDICT says which happened:
+     *
+     *   - a head of `key: a, b` lines, which looks delimited AND is a mapping,
+     *     so the verdict is yaml;
+     *   - a YAML fault after 64 kB. Bounded, the fault is never read and the
+     *     verdict stays yaml. Unbounded, the parse fails, the mapping test says
+     *     no, and the verdict becomes csv.
+     *
+     * The lines are 255 characters plus a newline so that 65536 falls exactly
+     * on a line boundary - a slice that cut a key in half would make the head
+     * fail to parse on its own, and the whole thing would be measuring the cut.
+     */
+    const LINE_LENGTH = 255;
+    const mappingLine = (index: number): string => {
+      const key = `key${index.toString().padStart(6, '0')}: `;
+      const rest = LINE_LENGTH - key.length - 2;
+      const left = Math.floor(rest / 2);
+      return `${key}${'a'.repeat(left)}, ${'b'.repeat(rest - left)}`;
+    };
+
+    const mappingRows = Array.from({ length: 300 }, (_unused, index) => mappingLine(index));
+    const fault = 'broken: [1, 2';
+
+    expect(mappingRows.join('\n').length).toBeGreaterThan(64 * 1024);
+    // The head on its own is the control: it has to be yaml to begin with, or
+    // the two below are a comparison between two identical wrong answers.
+    expect(detect(`${mappingRows.join('\n')}\n`)).toBe('yaml');
+    expect(detect(`${mappingRows.join('\n')}\n${fault}\n`)).toBe('yaml');
+
+    // THE POSITIVE PARTNER. The same fault inside the budget must move the
+    // verdict, or "the verdict did not move" above says nothing about where
+    // the fault was.
+    expect(
+      detect(
+        `${mappingRows.slice(0, 20).join('\n')}\n${fault}\n${mappingRows.slice(20).join('\n')}\n`,
+      ),
+    ).toBe('csv');
+
+    /*
      * THE CLOCK THAT USED TO BE HERE IS GONE, AND ITS ABSENCE IS THE POINT.
      *
      * It asserted 250 ms against a defect measured at 119, which is two times'
@@ -488,12 +539,169 @@ describe('format detection', () => {
      *     not enough for a wall clock competing with a hundred and nineteen
      *     other test files.
      *
-     * So the cost is NOT asserted here, and nothing else asserts it either.
-     * What is asserted is the half that is deterministic and the half that
-     * actually protects the user: the verdict comes from a bounded prefix, so
-     * the size of the document cannot change the answer. Saying that out loud
-     * beats a green line that means "the machine was quiet".
+     * So WALL-CLOCK cost is not asserted here and is not asserted anywhere.
+     * What replaced it is above: three bounds, each held by a document its own
+     * bound alone decides, and the third of them - the YAML verification - is
+     * the one that turns a bounded guess into a full parse of a 16 MB file if
+     * it is removed. That is the regression the deleted stopwatch was aimed at,
+     * and it is now caught by a verdict rather than by a duration.
+     *
+     * WHAT IS STILL NOT GUARDED, SAID PLAINLY. `stripBom`, the `sep=` scan and
+     * `trim` all touch the whole string before any bound applies, so detection
+     * is linear in the input no matter what. No clock-free witness for a linear
+     * cost exists here - the function has no observable seam a counter could
+     * sit in, and the only way to see that work is to time it, which is what
+     * measurement showed cannot separate correct from broken in this suite. A
+     * line that says "not measured" beats a green one that means "the machine
+     * was quiet".
      */
+  });
+});
+
+/* ---------------------------------------------------------------------- *
+ * The half of the verdict nothing was checking
+ * ---------------------------------------------------------------------- */
+
+/*
+ * `detectSource` returns THREE things and this file only ever read one.
+ *
+ * Round five's mutation sweep found five separate `fellBack: false` literals
+ * that could be flipped to `true` with no test noticing, and `fellBack` is not
+ * bookkeeping: it is the difference between "this document said it was YAML"
+ * and "nothing else matched, so YAML". The `Detected` report port prints it as
+ * whether the tool GUESSED, which round four already had to fix once at the
+ * other end - `detected: !chosen` on the report port said it guessed when it
+ * was told, to every reader but the panel.
+ *
+ * It also changes behaviour. `parseAuto` only second-guesses a successful YAML
+ * parse when detection fell back, so a `---` document that YAML reads to a
+ * folded scalar is accepted when the flag is right and refused as "not a
+ * format" when it is wrong.
+ *
+ * So the table asserts the whole verdict for one document per return in
+ * `detectSource`, which is what makes it a table rather than three examples.
+ */
+describe('what detection says it decided, and whether it guessed', () => {
+  it.each([
+    ['an empty document', '', 'json', false],
+    ['a JSON object', '{"a": 1}', 'json', false],
+    ['a JSON array', '[1, 2]', 'json', false],
+    ['a document marker', '---\na: 1\n', 'yaml', false],
+    ['a YAML directive', '%YAML 1.2\n---\na: 1\n', 'yaml', false],
+    ['a block sequence item', '- a\n- b\n', 'yaml', false],
+    ['a lone sequence dash', '-', 'yaml', false],
+    ['a dash on its own line', '-\nalpha\n', 'yaml', false],
+    ['a sep= directive', 'sep=;\na;b\nc;d\n', 'csv', false],
+    ['a comma table', 'a,b\n1,2\n', 'csv', false],
+    ['a tab table', 'a\tb\n1\t2\n', 'tsv', false],
+    ['a mapping that looks delimited', 'tags: a, b\nnames: c, d\n', 'yaml', false],
+    ['prose nothing matched', 'hello there\n', 'yaml', true],
+  ])('reads %s as %s, having guessed: %s', (_name, source, format, fellBack) => {
+    const detected = detectSource(source, ',');
+    expect(detected.format).toBe(format);
+    expect(detected.fellBack).toBe(fellBack);
+  });
+
+  /*
+   * AND THE FLAG REACHES THE ANSWER, which is what makes the column above
+   * worth asserting rather than a field nobody reads. `---` over two lines is
+   * a YAML document meaning "a b"; the same two lines without the marker are
+   * a paragraph of prose that YAML folds into one string, and this tool refuses
+   * that rather than handing back a plausible-looking scalar.
+   */
+  it('accepts a folded scalar that declared itself and refuses one that did not', () => {
+    expect(parseAuto('---\na\nb\n', ',')).toEqual({ ok: true, value: 'a b' });
+
+    const prose = parseAuto('a\nb\n', ',');
+    expect(prose.ok).toBe(false);
+  });
+});
+
+/* ---------------------------------------------------------------------- *
+ * Detection, over the shapes a real export actually has
+ * ---------------------------------------------------------------------- */
+
+/*
+ * `looksDelimited` mirrors the parser's quote rule and its line rule, and
+ * round five's sweep found both unasserted: the CRLF skip, the doubled-quote
+ * skip, and the record cap could each be broken with nothing noticing. A
+ * detector that disagrees with the parser about where the fields are is a
+ * detector that hands the parser a delimiter it will then read differently -
+ * which is the failure mode this whole tool is about.
+ */
+describe('detection over the shapes a real export has', () => {
+  it('counts a CRLF document the same way it counts an LF one', () => {
+    const rows = 'id,name\r\n1,ada\r\n2,grace\r\n';
+    expect(detect(rows)).toBe('csv');
+    expect(detectSource(rows, ',')).toEqual({ format: 'csv', delimiter: ',', fellBack: false });
+
+    // The same bytes with LF, so the assertion above is about the CR and not
+    // about the commas.
+    expect(detect(rows.replaceAll('\r\n', '\n'))).toBe('csv');
+  });
+
+  it('skips a CR and its LF together, so the next record starts where it starts', () => {
+    /*
+     * A record whose FIRST character is the delimiter is what makes this
+     * visible: advancing by the wrong amount over a CRLF eats it, and that
+     * record comes back one field short. Every other CRLF document survives a
+     * wrong skip with its field counts intact, which is why the ordinary one
+     * above cannot decide this.
+     */
+    expect(detect('a,b\r\n,c\r\n')).toBe('csv');
+    expect(detect('a,b\n,c\n')).toBe('csv');
+  });
+
+  it('lets a quote open a quoted field at the start of the SECOND record', () => {
+    /*
+     * The state that says "a field has begun" has to be cleared at a record
+     * boundary as well as at a delimiter. Left set, the opening quote of the
+     * second row is read as a literal, the comma inside it is counted, and a
+     * perfectly ordinary export becomes a document with ragged rows.
+     */
+    expect(detect('a,b\n"c,d",e\n')).toBe('csv');
+  });
+
+  it('does not let a quote in the middle of a field open a quoted one', () => {
+    /*
+     * `a"b` is a field with a literal quote in it, to this detector and to the
+     * parser both - a quote only opens a quoted field at the START of one. A
+     * detector that disagreed would swallow the rest of the document into one
+     * field and hand the parser a delimiter it then reads differently.
+     */
+    expect(detect('a"b,c\nd"e,f\n')).toBe('csv');
+    expect(parsed('a"b,c\nd"e,f\n', 'csv')).toEqual([{ 'a"b': 'd"e', c: 'f' }]);
+  });
+
+  it('stops at the fiftieth record exactly, not the fifty-first', () => {
+    /*
+     * The record cap has a document each side of it. Fifty consistent records
+     * then a wider one: counted to fifty, the tail is never seen and this is a
+     * table; counted to fifty-one, the wider record lands in the comparison and
+     * the whole document falls through to YAML.
+     */
+    const two = Array.from({ length: 50 }, (_unused, index) => `${index.toString()},name`);
+    // TERMINATED, which is the whole of what makes this decide anything: an
+    // unterminated last record is only counted when the walk read the whole
+    // document, so without the trailing newline both sides of the cap agree.
+    expect(detect([...two, 'a,b,c', ''].join('\n'))).toBe('csv');
+
+    // One record fewer, so the wider row IS inside the cap: the comparison
+    // sees it and refuses to call the document a table.
+    expect(detect([...two.slice(0, 49), 'a,b,c', ''].join('\n'))).toBe('yaml');
+  });
+
+  it('does not count a delimiter that is inside a quoted field', () => {
+    /*
+     * `"a"",""b"` is ONE field whose text is `a","b` - two doubled quotes and
+     * a comma between them. A detector that ended the quoted field at the
+     * first doubled quote counts three fields in that row and two in the next,
+     * calls the document inconsistent, and falls through to YAML - where a
+     * comma-separated table comes back as one folded string.
+     */
+    const table = '"a"",""b",c\n"x",y\n';
+    expect(detect(table)).toBe('csv');
+    expect(parsed(table, 'csv')).toEqual([{ 'a","b': 'x', c: 'y' }]);
   });
 });
 
@@ -507,8 +715,30 @@ describe('JSON parsing', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe('parse-error');
-      expect(result.error.position).toBeDefined();
-      expect(result.error.position?.line).toBeGreaterThan(1);
+      /*
+       * THE ACTUAL PLACE, NOT MERELY "SOMEWHERE PAST THE FIRST LINE".
+       *
+       * `jsonErrorPosition` reads V8's message with two regular expressions and
+       * pulls capture groups out of them by index. Round five's mutation sweep
+       * flipped `lineColumn[1]` to `[0]` and `[2]` to `[3]` with nothing
+       * noticing, because the only thing asserted was that a position existed.
+       * A position that exists and points at the wrong character is worse than
+       * none: it is a caret under innocent text.
+       *
+       * The document is `{ "a": 1, "b" 2 }` over three lines, and the fault is
+       * the missing colon after `"b"` - line 3, column 7.
+       *
+       * WHAT THIS CANNOT REACH, SAID RATHER THAN IMPLIED. V8 prints the fault
+       * BOTH ways - "at position 18 (line 3 column 7)" - so the offset arm of
+       * `jsonErrorPosition` is never taken, and its capture index can be
+       * changed without any test noticing. It computes the same answer: offset
+       * 18 in this document IS line 3, column 7. The arm is there because the
+       * wording of that message is not a contract, and there is no way to
+       * exercise it short of stubbing `JSON.parse`, which would be a test of
+       * the stub.
+       */
+      expect(result.error.position?.line).toBe(3);
+      expect(result.error.position?.column).toBe(7);
     }
   });
 
@@ -542,6 +772,37 @@ describe('JSON parsing', () => {
       expect(result.error.code).toBe('limit-exceeded');
       expect(result.error.message).toContain('nested more than');
     }
+  });
+
+  it('counts depth through an object as well as through an array', () => {
+    /*
+     * THE TEST ABOVE IS `[[[[...]]]]`, AND THAT IS ALL IT IS.
+     *
+     * `toJsonValue` recurses with `depth + 1` in two places, one per container
+     * kind, and round five's sweep turned the OBJECT one into `depth - 1` with
+     * nothing noticing. A depth counter that never grows is a guard that never
+     * fires, and what a person then gets is whichever of `JSON.parse`, the tree
+     * walk or `JSON.stringify` overflows first - which is the confusing message
+     * the guard was added to replace.
+     */
+    const open = '{"a":'.repeat(MAX_DEPTH + 1);
+    const close = '}'.repeat(MAX_DEPTH + 1);
+    const result = parseSource(`${open}1${close}`, 'json', ',');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('limit-exceeded');
+      expect(result.error.message).toContain('nested more than');
+    }
+
+    /*
+     * AND EXACTLY THE LIMIT IS READ, which is the assertion that pins the
+     * number rather than its neighbourhood. `MAX_DEPTH` levels is the deepest
+     * document this tool accepts - the guard is `depth >= MAX_DEPTH` and the
+     * walk starts at zero - so a document one level shallower would be
+     * satisfied by an off-by-one in either direction.
+     */
+    const exact = '{"a":'.repeat(MAX_DEPTH) + '1' + '}'.repeat(MAX_DEPTH);
+    expect(parseSource(exact, 'json', ',').ok).toBe(true);
   });
 
   it('gives the same answer when the parser itself runs out of stack', () => {
@@ -794,8 +1055,16 @@ describe('YAML parsing', () => {
       const result = parseSource(source, 'yaml', ',');
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.error.code).toBe('parse-error');
-        expect(result.error.detail).toContain('unique');
+        /*
+         * AND IT IS A JSON-BOUNDARY REFUSAL, NOT A SYNTAX ERROR. All three of
+         * these documents are valid YAML - the yaml-test-suite composes
+         * documents of this shape, js-yaml reads them and PyYAML reads them.
+         * What cannot hold them is JSON. Round five separated the two; see
+         * `duplicateKeyFailure` and "a key that collides only once the document
+         * is JSON" in the oracle test.
+         */
+        expect(result.error.code).toBe('unsupported-type');
+        expect(result.error.message).toBe('Two different YAML keys become the same JSON key.');
         expect(result.error.position?.line).toBe(2);
       }
     }

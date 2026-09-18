@@ -4,8 +4,31 @@
   "counts": {
     "total": 402,
     "error": 94,
-    "withJson": 279,
-    "eventStreamOnly": 29
+    "withJson": 292,
+    "fromEvents": 29,
+    "fromEventsWithValue": 13,
+    "fromEventsByReason": {
+      "collection-key": [
+        "4FJ6",
+        "6BFJ",
+        "6PBE",
+        "9MMW",
+        "KK5P",
+        "LX3P",
+        "M2N8/00",
+        "M2N8/01",
+        "M5DY",
+        "Q9WF",
+        "RZP5",
+        "SBG9",
+        "V9D5",
+        "X38W",
+        "XW4D"
+      ],
+      "duplicate-key": ["2JQS"]
+    },
+    "composerAgreedWithJson": 278,
+    "eventStreamOnly": 16
   },
   "cases": [
     {
@@ -126,7 +149,9 @@
       "label": "Block Mapping with Missing Keys",
       "yaml": ": a\n: b\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "duplicate-key"
     },
     {
       "id": "2LFX",
@@ -290,7 +315,14 @@
       "label": "Flow Mapping Separate Values",
       "yaml": "{\nunquoted : \"separate\",\nhttp://foo.com,\nomitted value:,\n}\n",
       "error": false,
-      "documents": null
+      "documents": [
+        {
+          "unquoted": "separate",
+          "http://foo.com": null,
+          "omitted value": null
+        }
+      ],
+      "fromEvents": true
     },
     {
       "id": "4CQQ",
@@ -315,7 +347,9 @@
       "label": "Nested implicit complex keys",
       "yaml": "---\n[\n  [ a, [ [[b,c]]: d, e]]: 23\n]\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "4GC6",
@@ -673,7 +707,9 @@
       "label": "Mapping, key and flow sequence item anchors",
       "yaml": "---\n&mapping\n&key [ &item a, b, c ]: value\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "6CA3",
@@ -774,14 +810,22 @@
       "label": "Aliases in Explicit Block Mapping",
       "yaml": "? &a a\n: &b b\n: *a\n",
       "error": false,
-      "documents": null
+      "documents": [
+        {
+          "a": "b",
+          "": "a"
+        }
+      ],
+      "fromEvents": true
     },
     {
       "id": "6PBE",
       "label": "Zero-indented sequences in explicit mapping keys",
       "yaml": "---\n?\n- a\n- b\n:\n- c\n- d\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "6S55",
@@ -1305,7 +1349,9 @@
       "label": "Single Pair Implicit Entries",
       "yaml": "- [ YAML : separate ]\n- [ \"JSON like\":adjacent ]\n- [ {JSON: like}:adjacent ]\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "9MQT/00",
@@ -1586,7 +1632,21 @@
       "label": "Empty implicit key in single pair flow sequences",
       "yaml": "- [ : empty key ]\n- [: another empty key]\n",
       "error": false,
-      "documents": null
+      "documents": [
+        [
+          [
+            {
+              "": "empty key"
+            }
+          ],
+          [
+            {
+              "": "another empty key"
+            }
+          ]
+        ]
+      ],
+      "fromEvents": true
     },
     {
       "id": "CML9",
@@ -1787,7 +1847,14 @@
       "label": "Spec Example 7.16. Flow Mapping Entries",
       "yaml": "{\n? explicit: entry,\nimplicit: entry,\n?\n}\n",
       "error": false,
-      "documents": null
+      "documents": [
+        {
+          "explicit": "entry",
+          "implicit": "entry",
+          "": null
+        }
+      ],
+      "fromEvents": true
     },
     {
       "id": "DHP8",
@@ -2026,7 +2093,19 @@
       "label": "Tags on Empty Scalars",
       "yaml": "- !!str\n-\n  !!null : a\n  b: !!str\n- !!str : !!null\n",
       "error": false,
-      "documents": null
+      "documents": [
+        [
+          "",
+          {
+            "": "a",
+            "b": ""
+          },
+          {
+            "": null
+          }
+        ]
+      ],
+      "fromEvents": true
     },
     {
       "id": "FP8R",
@@ -2047,7 +2126,13 @@
       "label": "Spec Example 7.3. Completely Empty Flow Nodes",
       "yaml": "{\n  ? foo :,\n  : bar,\n}\n",
       "error": false,
-      "documents": null
+      "documents": [
+        {
+          "foo": null,
+          "": "bar"
+        }
+      ],
+      "fromEvents": true
     },
     {
       "id": "FTA2",
@@ -2477,7 +2562,9 @@
       "label": "Various combinations of explicit block mappings",
       "yaml": "complex1:\n  ? - a\ncomplex2:\n  ? - a\n  : b\ncomplex3:\n  ? - a\n  : >\n    b\ncomplex4:\n  ? >\n    a\n  :\ncomplex5:\n  ? - a\n  : - b\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "KMK3",
@@ -2612,7 +2699,9 @@
       "label": "Implicit Flow Mapping Key on one line",
       "yaml": "[flow]: block\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "M29M",
@@ -2630,14 +2719,18 @@
       "label": "Question mark edge cases",
       "yaml": "- ? : x\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "M2N8/01",
       "label": "Question mark edge cases",
       "yaml": "? []: x\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "M5C3",
@@ -2656,7 +2749,9 @@
       "label": "Spec Example 2.11. Mapping between Sequences",
       "yaml": "? - Detroit Tigers\n  - Chicago cubs\n:\n  - 2001-07-23\n\n? [ New York Yankees,\n    Atlanta Braves ]\n: [ 2001-07-02, 2001-08-12,\n    2001-08-14 ]\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "M6YH",
@@ -2831,7 +2926,12 @@
       "label": "Empty Lines at End of Document",
       "yaml": ":\n\n\n",
       "error": false,
-      "documents": null
+      "documents": [
+        {
+          "": null
+        }
+      ],
+      "fromEvents": true
     },
     {
       "id": "NJ66",
@@ -2854,7 +2954,23 @@
       "label": "Empty keys in block and flow mapping",
       "yaml": "---\nkey: value\n: empty key\n---\n{\n key: value, : empty key\n}\n---\n# empty key and value\n:\n---\n# empty key and value\n{ : }\n",
       "error": false,
-      "documents": null
+      "documents": [
+        {
+          "key": "value",
+          "": "empty key"
+        },
+        {
+          "key": "value",
+          "": "empty key"
+        },
+        {
+          "": null
+        },
+        {
+          "": null
+        }
+      ],
+      "fromEvents": true
     },
     {
       "id": "NP9H",
@@ -2930,7 +3046,26 @@
       "label": "Anchors on Empty Scalars",
       "yaml": "- &a\n- a\n-\n  &a : a\n  b: &b\n-\n  &c : &a\n-\n  ? &d\n-\n  ? &e\n  : &a\n",
       "error": false,
-      "documents": null
+      "documents": [
+        [
+          null,
+          "a",
+          {
+            "": "a",
+            "b": null
+          },
+          {
+            "": null
+          },
+          {
+            "": null
+          },
+          {
+            "": null
+          }
+        ]
+      ],
+      "fromEvents": true
     },
     {
       "id": "Q4CL",
@@ -2974,7 +3109,9 @@
       "label": "Spec Example 6.12. Separation Spaces",
       "yaml": "{ first: Sammy, last: Sosa }:\n# Statistics:\n  hr:  # Home runs\n     65\n  avg: # Average\n   0.278\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "QB6E",
@@ -3081,7 +3218,9 @@
       "label": "Various Trailing Comments [1.3]",
       "yaml": "a: \"double\n  quotes\" # lala\nb: plain\n value  # lala\nc  : #lala\n  d\n? # lala\n - seq1\n: # lala\n - #lala\n  seq2\ne: &node # lala\n - x: y\nblock: > # lala\n  abcde\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "RZT7",
@@ -3123,7 +3262,14 @@
       "label": "Spec Example 8.18. Implicit Block Mapping Entries",
       "yaml": "plain key: in-line value\n: # Both empty\n\"quoted key\":\n- entry\n",
       "error": false,
-      "documents": null
+      "documents": [
+        {
+          "plain key": "in-line value",
+          "": null,
+          "quoted key": ["entry"]
+        }
+      ],
+      "fromEvents": true
     },
     {
       "id": "S4GJ",
@@ -3182,7 +3328,9 @@
       "label": "Flow Sequence in Flow Mapping",
       "yaml": "{a: [b, c], [d, e]: f}\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "SF5V",
@@ -3213,7 +3361,12 @@
       "label": "Single character streams",
       "yaml": ":",
       "error": false,
-      "documents": null
+      "documents": [
+        {
+          "": null
+        }
+      ],
+      "fromEvents": true
     },
     {
       "id": "SR86",
@@ -3465,7 +3618,14 @@
       "label": "Syntax character edge cases",
       "yaml": "- :\n",
       "error": false,
-      "documents": null
+      "documents": [
+        [
+          {
+            "": null
+          }
+        ]
+      ],
+      "fromEvents": true
     },
     {
       "id": "UKK6/01",
@@ -3483,7 +3643,8 @@
       "label": "Syntax character edge cases",
       "yaml": "!\n",
       "error": false,
-      "documents": null
+      "documents": [""],
+      "fromEvents": true
     },
     {
       "id": "UT92",
@@ -3520,7 +3681,9 @@
       "label": "Spec Example 8.19. Compact Block Mappings",
       "yaml": "- sun: yellow\n- ? earth: blue\n  : moon: white\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "VJP3/00",
@@ -3599,7 +3762,9 @@
       "label": "Aliases in Flow Objects",
       "yaml": "{ &a [a, &b b]: *b, *a : [c, *b, d]}\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "X4QW",
@@ -3642,7 +3807,9 @@
       "label": "Various Trailing Comments",
       "yaml": "a: \"double\n  quotes\" # lala\nb: plain\n value  # lala\nc  : #lala\n  d\n? # lala\n - seq1\n: # lala\n - #lala\n  seq2\ne:\n &node # lala\n - x: y\nblock: > # lala\n  abcde\n",
       "error": false,
-      "documents": null
+      "documents": null,
+      "fromEvents": true,
+      "reason": "collection-key"
     },
     {
       "id": "Y2GN",

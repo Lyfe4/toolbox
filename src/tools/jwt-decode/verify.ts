@@ -220,8 +220,22 @@ export async function verifySignature(input: {
       textToBytes(signingInput),
     );
   } catch {
-    // A malformed signature (wrong length for the curve, say) throws rather
-    // than returning false. That is a failed check, not a verified token.
+    /*
+     * DEFENSIVE, AND NO LONGER CLAIMING TO BE ANYTHING ELSE.
+     *
+     * This comment used to say that a malformed signature - one of the wrong
+     * length for the curve, say - THROWS rather than returning false. Round
+     * five measured it in three implementations and that is not so: an empty,
+     * 32-, 63- and 65-byte P-256 signature, and an empty and a 7-byte RSA one,
+     * all come back `false` from Node's WebCrypto, from Gecko and from WebKit.
+     * Rethrowing from here leaves the entire suite green.
+     *
+     * The catch stays because the contract this tool has is that a verdict is
+     * always reached: an exception escaping into the page leaves it with no
+     * banner at all, which is the one outcome the whole design exists to
+     * prevent. What is asserted is that verdict - in the unit suite and in both
+     * engines - rather than the route it took to get there.
+     */
     valid = false;
   }
 

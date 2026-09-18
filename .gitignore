@@ -42,3 +42,6 @@ pnpm-debug.log*
 # lockfile for Netlify's own edge runtime, not for anything in this repo.
 .netlify/
 deno.lock
+
+# Mutation-testing results (see scripts/mutate.mjs) - dev-only, never committed
+.mutation/

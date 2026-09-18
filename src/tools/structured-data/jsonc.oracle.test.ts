@@ -110,6 +110,37 @@ describe('what the strip preserves', () => {
     },
   );
 
+  it('ends a block comment at its own terminator and nowhere else', () => {
+    /*
+     * THE TWO OFFSETS THAT DECIDE WHERE A BLOCK COMMENT STOPS, and round five's
+     * mutation sweep could move either with nothing noticing. The search for
+     * the terminator starts two characters past the opener, so that a comment
+     * opened and closed by three characters is NOT read as a complete one; and
+     * the cursor lands two characters past the terminator, so the character
+     * after the comment is not swallowed with it.
+     *
+     * Both failures produce a document that still PARSES, which is why the
+     * corpus above cannot see them: one swallows the character after the
+     * comment, the other swallows the rest of the file.
+     */
+
+    // The comma that follows the comment has to survive it.
+    expect(stripJsonc('{"a": 1/* c */, "b": 2}').text).toBe('{"a": 1       , "b": 2}');
+    const read = readAuto('{"a": 1/* c */, "b": 2}', ',');
+    expect(read.ok).toBe(true);
+    if (read.ok) expect(read.value.data).toEqual({ a: 1, b: 2 });
+
+    // `/*/` is an UNTERMINATED comment: the `/` is the third character of the
+    // opener, not the second half of a terminator. Searching from `index + 1`
+    // would end the comment before it began and leave a stray `/` behind.
+    const unterminated = stripJsonc('{"a": 1/*/}');
+    expect(unterminated.text).toBe('{"a": 1    ');
+    expect(unterminated.blockComments).toBe(1);
+
+    // And an empty comment is a comment, which is the tightest case there is.
+    expect(stripJsonc('{"a": 1/**/}').text).toBe('{"a": 1    }');
+  });
+
   it('reports an error at the line the original has it, not the line a shorter text would', () => {
     /*
      * Two comment lines, then a genuine fault - a missing comma - on line 5.
