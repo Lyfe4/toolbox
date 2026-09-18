@@ -51,41 +51,196 @@ if (!SITE_URL) {
 }
 
 /* ========================================================================== *
- * RFC 7515's own public-key examples
+ * The published JWS vectors
  * ========================================================================== */
 
+const jwsToBytes = (text) => Buffer.from(text.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+const jwsToText = (bytes) =>
+  bytes.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
 /**
- * The fixture `src/tools/jwt-decode/spec/rfc7515.json`, with the tampered
+ * The four fixtures under `src/tools/jwt-decode/spec/`, read from the same
+ * files the unit suite imports so the two cannot drift: a regenerated fixture
+ * changes both at once, and a deleted one fails this script before a browser
+ * starts.
+ *
+ * `scripts/generate-jws-oracle.mjs` writes them, and refuses to write one
+ * unless CPython's `cryptography` and Node's WebCrypto both reach the published
+ * verdict for every case.
+ */
+const JWS_FIXTURES = Object.fromEntries(
+  await Promise.all(
+    ['rfc7515', 'rfc7520', 'rfc4231', 'wycheproof'].map(async (name) => [
+      name,
+      JSON.parse(await readFile(join(ROOT, `src/tools/jwt-decode/spec/${name}.json`), 'utf8')),
+    ]),
+  ),
+);
+
+/**
+ * The vectors that can be driven through the tool's own UI, with the tampered
  * variants each check needs worked out here rather than written down.
  *
- * Read from the same file the unit suite imports, so the two cannot drift: a
- * regenerated fixture changes both at once, and a deleted one fails this
- * script before a browser starts.
+ * ONLY FOUR OF THE TWELVE ALGORITHMS CAN BE. `decodeToken` requires a JSON
+ * payload, because a JWT's payload is JSON - and almost every published JOSE
+ * example is a JWS rather than a JWT. RFC 7515 A.4 signs the ASCII string
+ * "Payload", the cookbook signs a line of Tolkien, and Wycheproof signs "foo".
+ * The two exceptions are Wycheproof's PS256 salt cases, whose payload is the
+ * digit string `123400` - which happens to be valid JSON.
+ *
+ * So this list is HS256, RS256, ES256 and PS256, and what it cannot reach is
+ * measured instead: see "what each engine can actually do with a published
+ * vector".
  */
-const JWS_EXAMPLES = await (async () => {
-  const fixture = JSON.parse(
-    await readFile(join(ROOT, 'src/tools/jwt-decode/spec/rfc7515.json'), 'utf8'),
+const JWS_UI_EXAMPLES = (() => {
+  const byAppendix = (appendix) =>
+    JWS_FIXTURES.rfc7515.cases.find((entry) => entry.appendix === appendix);
+  const hmac = byAppendix('A.1');
+  const rsa = byAppendix('A.2');
+  const ec = byAppendix('A.3');
+  const pssKey = JWS_FIXTURES.wycheproof.publicKeyPem.PS256;
+  const pss = JWS_FIXTURES.wycheproof.cases.filter(
+    (entry) => entry.algorithm === 'PS256' && entry.expect === 'valid' && entry.payloadIsJwtShaped,
   );
 
-  const toBytes = (text) => Buffer.from(text.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
-  const toText = (bytes) =>
-    bytes.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  if (!hmac || !rsa || !ec || !pssKey || pss.length === 0) {
+    throw new Error('cross-browser: the JWS fixtures are missing a case the UI checks need');
+  }
 
-  return fixture.cases.map((entry, index) => {
-    const flipped = toBytes(entry.signature);
+  const fromToken = (name, token, key, keyEncoding, wrongKindKey, wrongKey) => {
+    const [header, payload, signature] = token.split('.');
+    const flipped = jwsToBytes(signature);
     flipped[0] ^= 0x01;
-
     return {
-      ...entry,
-      tamperedToken: `${entry.header}.${entry.payload}.${toText(flipped)}`,
-      truncatedToken: `${entry.header}.${entry.payload}.${toText(toBytes(entry.signature).subarray(0, 32))}`,
-      otherKeyPem: fixture.cases[(index + 1) % fixture.cases.length].publicKeyPem,
+      name,
+      token,
+      key,
+      keyEncoding,
+      tamperedToken: `${header}.${payload}.${jwsToText(flipped)}`,
+      truncatedToken: `${header}.${payload}.${jwsToText(jwsToBytes(signature).subarray(0, 32))}`,
+      /** A key of another kind entirely: nothing should even import. */
+      wrongKindKey,
+      /** A key of the RIGHT kind and the wrong value: a check happens and fails. */
+      wrongKey,
     };
-  });
+  };
+
+  return [
+    /*
+     * A.1's key is the RFC's base64url secret, so this one also drives the
+     * `Secret encoding` select. It is the only published HMAC token here, and
+     * the only thing that puts the HS path in front of a real engine at all.
+     */
+    fromToken(
+      'RFC 7515 A.1 HS256',
+      hmac.token,
+      hmac.key,
+      'base64url',
+      rsa.key,
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    ),
+    fromToken('RFC 7515 A.2 RS256', rsa.token, rsa.key, 'utf8', ec.key, pssKey),
+    fromToken('RFC 7515 A.3 ES256', ec.token, ec.key, 'utf8', rsa.key, null),
+    fromToken(`Wycheproof ${pss[0].id} PS256`, pss[0].token, pssKey, 'utf8', ec.key, rsa.key),
+  ];
 })();
 
-if (JWS_EXAMPLES.length < 2) {
-  throw new Error('cross-browser: the RFC 7515 fixture is missing its examples');
+/**
+ * Every published vector, flattened to what an engine needs to answer for
+ * itself: the key, the bytes that were signed, the signature, and the WebCrypto
+ * parameters the generator PROVED those bytes verify under.
+ *
+ * The parameters come from the fixture rather than from this file on purpose.
+ * Re-deriving them here would make this script's expectations its own, which is
+ * the thing the whole exercise is against; taking them from the fixture means
+ * they are the ones two independent verifiers already agreed about.
+ */
+const JWS_ENGINE_VECTORS = (() => {
+  const out = [];
+  const push = (source, algorithm, webcrypto, key, keyEncoding, message, signature) => {
+    /*
+     * A MISSING FIELD HAS TO FAIL HERE, not in the page. The first run of this
+     * check reported `TypeError: vector.webcrypto is undefined` as five
+     * algorithm failures in each engine, which reads exactly like two browsers
+     * refusing RSA-PSS and P-384 - and was one wrong property name in this
+     * file. An `undefined` that travels into `page.evaluate` comes back wearing
+     * the browser's name.
+     */
+    if (!webcrypto?.format || !key || !message || !signature) {
+      throw new Error(`cross-browser: the ${source} ${algorithm} vector is incomplete`);
+    }
+    out.push({ source, algorithm, webcrypto, key, keyEncoding, message, signature });
+  };
+
+  for (const entry of JWS_FIXTURES.rfc7515.cases) {
+    push(
+      `RFC 7515 ${entry.appendix}`,
+      entry.algorithm,
+      entry.webcrypto,
+      entry.key,
+      entry.keyEncoding,
+      `${entry.header}.${entry.payload}`,
+      entry.signature,
+    );
+  }
+  for (const entry of JWS_FIXTURES.rfc7520.cases) {
+    push(
+      `RFC 7520 ${entry.section}`,
+      entry.algorithm,
+      entry.webcrypto,
+      entry.key,
+      entry.keyEncoding,
+      `${entry.header}.${entry.payload}`,
+      entry.signature,
+    );
+  }
+  for (const entry of JWS_FIXTURES.rfc4231.cases) {
+    push(
+      `RFC 4231 case ${entry.testCase}`,
+      entry.algorithm,
+      entry.webcrypto,
+      entry.key,
+      entry.keyEncoding,
+      entry.signingInput,
+      entry.signature,
+    );
+  }
+  /*
+   * One positive per algorithm from Wycheproof, not all two hundred. This is a
+   * question about the ENGINE - can it do PS512 at all, can it do P-384 - and a
+   * second vector for the same algorithm answers it a second time. The full
+   * suite, including every negative, runs in the unit suite.
+   */
+  const seen = new Set();
+  for (const entry of JWS_FIXTURES.wycheproof.cases) {
+    if (entry.expect !== 'valid' || seen.has(entry.algorithm)) continue;
+    seen.add(entry.algorithm);
+    const message =
+      entry.kind === 'ecdsa' ? entry.signingInput : entry.token.split('.').slice(0, 2).join('.');
+    const signature = entry.kind === 'ecdsa' ? entry.signature : entry.token.split('.')[2];
+    push(
+      `Wycheproof ${entry.id}`,
+      entry.algorithm,
+      // Hoisted to one block per algorithm in that fixture: there are two
+      // hundred cases and five keys, and inlining both made the file six times
+      // the size for a reviewer reading the same PEM over and over.
+      JWS_FIXTURES.wycheproof.webcrypto[entry.algorithm],
+      JWS_FIXTURES.wycheproof.publicKeyPem[entry.keyId],
+      'utf8',
+      message,
+      signature,
+    );
+  }
+  return out;
+})();
+
+/** The twelve `alg` values the tool offers, all of which must be represented. */
+const JWS_ALGORITHMS = [...new Set(JWS_ENGINE_VECTORS.map((entry) => entry.algorithm))].sort();
+
+if (JWS_UI_EXAMPLES.length !== 4 || JWS_ALGORITHMS.length !== 12) {
+  throw new Error(
+    `cross-browser: expected 4 UI examples and 12 algorithms, got ${JWS_UI_EXAMPLES.length} and ${JWS_ALGORITHMS.length}`,
+  );
 }
 
 /* ========================================================================== *
@@ -7468,14 +7623,23 @@ async function checkOutputViews(browser, label) {
 
     await axeInBothThemes('a rejected JWT');
 
-    /* -- RS256 and ES256, against the RFC's own examples ---------------- *
+    /* -- RS256, ES256 and PS256, against published vectors -------------- *
      *
-     * WHY THE SPECIFICATION'S TOKENS AND NOT ONES SIGNED HERE. Every other
-     * verification in this repository signs with WebCrypto and then checks
+     * WHY PUBLISHED TOKENS AND NOT ONES SIGNED HERE. Every other verification
+     * in this repository signs with WebCrypto and then checks
      * with WebCrypto, which proves two halves of one primitive agree with each
      * other. RFC 7515 A.2 and A.3 publish the key, the signing input and the
      * signature, so a `verified` here means this engine's RSASSA-PKCS1-v1_5
      * and ECDSA agree with the working group rather than with themselves.
+     *
+     * AND WHY ONLY FOUR OF THE TWELVE ALGORITHMS. Not for want of vectors -
+     * round six found published ones for all twelve. It is that this loop drives
+     * the real UI, which means `decodeToken` has to accept the token, which
+     * means the payload has to be JSON. RFC 7515 A.4 signs "Payload", the JOSE
+     * cookbook signs a line of Tolkien, Wycheproof signs "foo": all legal JWS,
+     * none of them a JWT. The two PS256 salt cases are the only published
+     * vectors outside RFC 7515 A.1-A.3 whose payload happens to parse as JSON.
+     * The other nine algorithms are put to each engine directly, below.
      *
      * AND WHY IN A BROWSER AT ALL, when the unit suite runs the same fixture.
      * The unit suite's WebCrypto is Node's. Gecko's is NSS and WebKit's is
@@ -7492,34 +7656,49 @@ async function checkOutputViews(browser, label) {
      * landing. A reload means `[data-trust]` does not exist until this run
      * produces it, so waiting for it is waiting for this run.
      */
-    const jwtVerdict = async (key, token) => {
+    const jwtVerdict = async (key, token, keyEncoding = 'utf8') => {
       await page.goto(`${ORIGIN}/tools/jwt-decode`, { waitUntil: 'networkidle' });
       await page.getByRole('heading', { level: 1, name: 'JWT' }).waitFor({ timeout: 15_000 });
       await page.getByLabel('Key', { exact: true }).fill(key);
+      /*
+       * A.1's key is base64url, and leaving this alone would hash the RFC's
+       * ASCII SPELLING of the secret rather than the secret - which reads
+       * `broken` and looks exactly like a signature problem. The control is
+       * driven for every example rather than only that one, so the utf8 cases
+       * assert that the default is the default instead of skipping the control.
+       *
+       * It is a listbox rather than a <select>, so it is clicked open and the
+       * option is clicked by its VISIBLE name - `Base64`, not `base64url`.
+       * `selectOption` fails on it with "Element is not a <select> element".
+       */
+      await page.getByRole('combobox', { name: 'Secret encoding' }).click();
+      await page
+        .getByRole('option', { name: keyEncoding === 'base64url' ? 'Base64' : 'Plain text' })
+        .click();
       await page.getByLabel('JWT input').fill(token);
       await page.getByRole('button', { name: 'Run' }).click();
       await page.locator('[data-trust]').waitFor({ timeout: 30_000 });
       return page.locator('[data-trust]').getAttribute('data-trust');
     };
 
-    for (const example of JWS_EXAMPLES) {
-      const name = `${example.appendix} ${example.algorithm}`;
+    for (const example of JWS_UI_EXAMPLES) {
+      const name = example.name;
 
-      const trust = await jwtVerdict(example.publicKeyPem, example.token);
+      const trust = await jwtVerdict(example.key, example.token, example.keyEncoding);
       check(
         label,
-        `the RFC 7515 ${name} token verifies against the key the RFC publishes`,
+        `the ${name} token verifies against the key its source publishes`,
         trust === 'verified',
         `${String(trust)}`,
       );
 
       /*
        * THE NEGATIVE CONTROL, AND IT IS THE POINT. `verified` above would mean
-       * nothing if this page reached it with a signature the RFC did not
+       * nothing if this page reached it with a signature the source did not
        * publish - and a decoder that ignored the signature entirely would
        * satisfy the line above on every token ever pasted into it.
        */
-      const tampered = await jwtVerdict(example.publicKeyPem, example.tamperedToken);
+      const tampered = await jwtVerdict(example.key, example.tamperedToken, example.keyEncoding);
       check(
         label,
         `one flipped bit turns the ${name} verdict from verified to broken`,
@@ -7528,20 +7707,37 @@ async function checkOutputViews(browser, label) {
       );
 
       /*
-       * AND THE KEY IS BEING READ, not merely present. The same token against
-       * the OTHER example's key must not verify: a `verified` that survives
-       * swapping the key is a verdict about nothing. `unverified` rather than
-       * `broken` is the right answer here and is asserted as such - an RSA key
-       * is not an EC key, so nothing was checked, and saying "the signature
-       * does not match" would be a stronger claim than this tool made.
+       * AND THE KEY IS BEING READ, not merely present. The same token against a
+       * key of ANOTHER KIND must not verify: a `verified` that survives swapping
+       * the key is a verdict about nothing. `unverified` rather than `broken` is
+       * the right answer here and is asserted as such - an RSA key is not an EC
+       * key, so nothing was checked, and saying "the signature does not match"
+       * would be a stronger claim than this tool made.
        */
-      const swapped = await jwtVerdict(example.otherKeyPem, example.token);
+      const swapped = await jwtVerdict(example.wrongKindKey, example.token, example.keyEncoding);
       check(
         label,
-        `the ${name} verdict does not survive swapping the key`,
+        `the ${name} verdict does not survive swapping in a key of another kind`,
         swapped === 'unverified',
         `${String(swapped)}`,
       );
+
+      /*
+       * AND THE SHARPER HALF OF THE SAME QUESTION, which round five could not
+       * ask because it had one key of each kind. A DIFFERENT KEY OF THE SAME
+       * KIND imports perfectly, so a real check happens and loses: the verdict
+       * has to be `broken`, not `unverified`. An `unverified` here would mean
+       * the key was never read; a `verified` would mean the signature was not.
+       */
+      if (example.wrongKey !== null) {
+        const wrongKey = await jwtVerdict(example.wrongKey, example.token, example.keyEncoding);
+        check(
+          label,
+          `the ${name} token is checked and REJECTED against another key of the same kind`,
+          wrongKey === 'broken',
+          `${String(wrongKey)}`,
+        );
+      }
     }
 
     /* -- What an engine does with a signature of the wrong width -------- *
@@ -7560,7 +7756,7 @@ async function checkOutputViews(browser, label) {
      * written from a measurement.
      */
     {
-      const [es256] = JWS_EXAMPLES.filter((entry) => entry.algorithm === 'ES256');
+      const es256 = JWS_UI_EXAMPLES.find((entry) => entry.name.endsWith('ES256'));
       const behaviour = await page.evaluate(async (pem) => {
         const body = /-----BEGIN PUBLIC KEY-----([\s\S]*?)-----END/.exec(pem)?.[1] ?? '';
         const raw = atob(body.replace(/\s+/g, ''));
@@ -7588,7 +7784,7 @@ async function checkOutputViews(browser, label) {
           }
         }
         return out;
-      }, es256.publicKeyPem);
+      }, es256.key);
 
       check(
         label,
@@ -7600,13 +7796,119 @@ async function checkOutputViews(browser, label) {
       );
 
       /* And the tool's own verdict for the same bytes, through the worker. */
-      const truncated = await jwtVerdict(es256.publicKeyPem, es256.truncatedToken);
+      const truncated = await jwtVerdict(es256.key, es256.truncatedToken);
       check(
         label,
         'a truncated ES256 signature reaches a verdict rather than an unhandled error',
         truncated === 'broken',
         `${String(truncated)}`,
       );
+    }
+
+    /* -- What each engine can actually do with a published vector ------- *
+     *
+     * THE QUESTION THE LOOP ABOVE CANNOT REACH, for eight of the twelve
+     * algorithms. `decodeToken` needs a JSON payload and almost no published
+     * JOSE example has one, so HS384, HS512, RS384, RS512, PS384, PS512, ES384
+     * and ES512 cannot be driven through the tool's own UI by anything anybody
+     * has published. The unit suite settles what `verify.ts` does with them; it
+     * runs on Node's WebCrypto, and cannot say a word about Gecko's or WebKit's.
+     *
+     * WHAT THIS ASKS INSTEAD, and it is a narrower question honestly put: does
+     * THIS ENGINE, under the real CSP, import the key and reach the published
+     * verdict for the published bytes? That is the failure this cannot
+     * otherwise see - an engine with no RSA-PSS, or no P-384, or no P-521, in
+     * which the tool would say `unverified` on a token CI calls verified.
+     *
+     * THE PARAMETERS ARE THE FIXTURE'S, NOT THIS FILE'S. Re-deriving "PS384
+     * means RSA-PSS with a 48-byte salt" here would make this script's
+     * expectations its own, which is the thing the whole exercise is against.
+     * They are the parameters the generator proved the published signature
+     * verifies under, with CPython and Node both agreeing, and they are read
+     * out of the JSON.
+     *
+     * AND EACH ONE CARRIES ITS OWN NEGATIVE. The same engine, the same key, the
+     * same call, one bit of the signature flipped: an engine that answered
+     * `true` to everything would satisfy the positive half on every algorithm.
+     */
+    {
+      const results = await page.evaluate(async (vectors) => {
+        const out = [];
+        for (const vector of vectors) {
+          try {
+            const material =
+              vector.webcrypto.format === 'raw'
+                ? vector.keyEncoding === 'base64url'
+                  ? Uint8Array.from(
+                      atob(vector.key.replace(/-/g, '+').replace(/_/g, '/')),
+                      (character) => character.charCodeAt(0),
+                    )
+                  : new TextEncoder().encode(vector.key)
+                : Uint8Array.from(
+                    atob(
+                      (/-----BEGIN PUBLIC KEY-----([\s\S]*?)-----END/.exec(vector.key)?.[1] ?? '')
+                        .replace(/\s+/g, '')
+                        .replace(/-/g, '+')
+                        .replace(/_/g, '/'),
+                    ),
+                    (character) => character.charCodeAt(0),
+                  );
+
+            const key = await crypto.subtle.importKey(
+              vector.webcrypto.format,
+              material,
+              vector.webcrypto.importKey,
+              false,
+              ['verify'],
+            );
+
+            const signature = Uint8Array.from(
+              atob(vector.signature.replace(/-/g, '+').replace(/_/g, '/')),
+              (character) => character.charCodeAt(0),
+            );
+            const message = new TextEncoder().encode(vector.message);
+            const flipped = signature.slice();
+            flipped[0] ^= 0x01;
+
+            out.push({
+              source: vector.source,
+              algorithm: vector.algorithm,
+              verified: await crypto.subtle.verify(
+                vector.webcrypto.verify,
+                key,
+                signature,
+                message,
+              ),
+              tampered: await crypto.subtle.verify(vector.webcrypto.verify, key, flipped, message),
+            });
+          } catch (error) {
+            out.push({
+              source: vector.source,
+              algorithm: vector.algorithm,
+              error: error instanceof Error ? `${error.name}: ${error.message}` : 'unknown',
+            });
+          }
+        }
+        return out;
+      }, JWS_ENGINE_VECTORS);
+
+      for (const algorithm of JWS_ALGORITHMS) {
+        const forAlgorithm = results.filter((entry) => entry.algorithm === algorithm);
+        const good = forAlgorithm.filter(
+          (entry) => entry.verified === true && entry.tampered === false,
+        );
+        check(
+          label,
+          `${algorithm}: this engine reaches the published verdict for a published vector`,
+          good.length === forAlgorithm.length && forAlgorithm.length > 0,
+          forAlgorithm
+            .map(
+              (entry) =>
+                `${entry.source} ${entry.error ?? `verified=${String(entry.verified)} tampered=${String(entry.tampered)}`}`,
+            )
+            .join('; '),
+        );
+      }
     }
 
     /* ================================================================== *
@@ -8572,8 +8874,29 @@ async function checkColdOpen(browser, label) {
       await staticPage.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded' });
 
       const headline = staticPage.locator('#cold-open-title');
-      const visible = await headline.isVisible();
-      const text = ((await headline.textContent()) ?? '').trim();
+      /*
+       * WAITED FOR, NOT SNAPSHOTTED - AND THIS WAS MEASURING THE MACHINE.
+       *
+       * `isVisible()` does not wait. With JavaScript off this document has no
+       * scripts at all, so Gecko fires DOMContentLoaded WITHOUT waiting for the
+       * render-blocking stylesheet, and the snapshot can land before the first
+       * layout. It cost a whole run to a FAIL on a page that was fine, in Gecko
+       * only, on the same bytes WebKit passed on two lines further down the same
+       * log.
+       *
+       * Produced on purpose rather than guessed at: delay the stylesheet by
+       * 150ms and `isVisible()` is false on every run, while the box that
+       * arrives a moment later is the UNSTYLED 1264x38 h1 - so the element was
+       * always there and the answer was about timing.
+       *
+       * This still fails if the first screen never renders: the timeout is the
+       * failure, and renaming the id in `dist/index.html` produces it.
+       */
+      const visible = await headline
+        .waitFor({ state: 'visible', timeout: 15_000 })
+        .then(() => true)
+        .catch(() => false);
+      const text = ((await headline.textContent().catch(() => '')) ?? '').trim();
       check(
         label,
         'the first screen renders with no JavaScript at all',

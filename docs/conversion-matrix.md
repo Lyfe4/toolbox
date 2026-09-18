@@ -33,17 +33,20 @@ passes" is not an entry in it.
 - [What was looked for and not found](#what-was-looked-for-and-not-found)
 - [Found in round four, by breaking things on purpose](#found-in-round-four-by-breaking-things-on-purpose)
 - [Found in round five, by asking something outside this repository](#found-in-round-five-by-asking-something-outside-this-repository)
+- [Found in round six, by reading the appendix list](#found-in-round-six-by-reading-the-appendix-list)
 - [Still unverified, and how to verify it](#still-unverified-and-how-to-verify-it)
 
 ## What the verdicts mean
 
-| Verdict           | Means                                                                                                                                                                                                                                                                                            |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **exact**         | The output is the one an external reference gives for the same input. Nothing is lost.                                                                                                                                                                                                           |
-| **lossy, told**   | Something cannot survive the conversion, the loss is intentional and consistent, **and the user is told without doing anything** — on the panel on `/tools` AND on the canvas node. A port that has to be wired up to be read does not count; see [Where a loss is said](#where-a-loss-is-said). |
-| **lossy, silent** | The same, except nobody is told. This is a defect, whatever the reason for the loss.                                                                                                                                                                                                             |
-| **broken**        | The output is wrong, for input a person would realistically produce.                                                                                                                                                                                                                             |
-| **not verified**  | It may be right. Nothing outside this repository has said so.                                                                                                                                                                                                                                    |
+| Verdict                    | Means                                                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **exact**                  | The output is the one an external reference gives for the same input. Nothing is lost.                                                                                                                                                                                                                                                                                                             |
+| **exact, from a suite**    | The same, where the external reference is a published TEST SUITE rather than a specification. Round six introduced it: no RFC publishes a vector for RS384, RS512, PS256, PS512 or ES384, and Project Wycheproof does. Ranked below a specification and said out loud, because a suite encodes one project's view of what an implementation should do and occasionally that is not the same thing. |
+| **exact, below the token** | The same, where the published vector is not a JWS at all - a key, a message and a signature. Also round six: nothing published is a JWS for HS384, HS512 or ES384, so what is settled is the algorithm table those three depend on and NOT the token handling around it, which the nine vectors that are tokens settle instead.                                                                    |
+| **lossy, told**            | Something cannot survive the conversion, the loss is intentional and consistent, **and the user is told without doing anything** — on the panel on `/tools` AND on the canvas node. A port that has to be wired up to be read does not count; see [Where a loss is said](#where-a-loss-is-said).                                                                                                   |
+| **lossy, silent**          | The same, except nobody is told. This is a defect, whatever the reason for the loss.                                                                                                                                                                                                                                                                                                               |
+| **broken**                 | The output is wrong, for input a person would realistically produce.                                                                                                                                                                                                                                                                                                                               |
+| **not verified**           | It may be right. Nothing outside this repository has said so.                                                                                                                                                                                                                                                                                                                                      |
 
 `lossy, silent` is deliberately not a comfortable category. **It is empty, and
 round four is the reason that sentence is worth less than it looks.** The column
@@ -84,6 +87,17 @@ Ranked, best first. The rank is what decides whether a cell says `exact` or
    fixtures are generated by scripts in [`scripts/`](../scripts) and checked
    in, so the suite needs neither Python nor git at test time and a change to
    either side shows up as a diff in review.
+
+   **A specification's vectors outrank a suite's, and round six is where that
+   started to matter.** A standards document publishes what the format IS; a
+   suite publishes what one project believes an implementation should do with
+   it, which is usually the same thing and occasionally not — Project
+   Wycheproof marks five correctly computed signatures invalid, on a key-policy
+   rule this tool's input cannot express. So where both exist the RFC is used
+   and the suite is not, that ordering is applied per algorithm rather than per
+   tool, and a suite's own files are pinned to a commit and hashed so that
+   "published" means a fixed set of bytes rather than whatever is on `main`.
+
 2. **An independent instrument inside the repository.** A second implementation
    of the inverse operation, written not to share a line with the thing it is
    checking, and validated against the oracle before being trusted. The patch
@@ -266,14 +280,19 @@ Two properties hold the round trip honest where a byte comparison cannot:
 
 [`src/tools/jwt-decode`](../src/tools/jwt-decode).
 
-| Operation                    | Verdict          | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ---------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Decode header and payload    | **exact**        | RFC 7515 appendix A.1, added this round: the published header and payload, decoded to the values the RFC prints.                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| HS256 verification           | **exact**        | The same appendix's key and signature. Verified, and reported invalid when one character of the signature or of the payload changes.                                                                                                                                                                                                                                                                                                                                                                                                          |
-| RS256 and ES256 verification | **exact**        | RFC 7515 appendices A.2 and A.3, added in round five. The RFC gives its keys as JWKs and this tool takes SPKI PEM, so the conversion is CPython's `cryptography` in [`scripts/generate-jws-oracle.mjs`](../scripts/generate-jws-oracle.mjs), which refuses to write a fixture unless CPython **and** Node's WebCrypto both accept the RFC's signature and both reject it with one bit flipped. Verified in the unit suite and again in Gecko and WebKit through the tool's own worker, with the tampered token and a swapped key as controls. |
-| HS384/512, PS\*, ES384/512   | **not verified** | WebCrypto does the work and the surrounding code is exercised, but no published vector is checked for these, and RFC 7515 publishes none. What round five's A.2 and A.3 do cover is everything around them that is ours: the PEM path, the curve table and the algorithm table, which A.2 and A.3 between them exercise for the RSA and EC branches. What is left is the hash size, and it is one entry in a table.                                                                                                                           |
-| `alg: none`                  | **exact**        | Refused outright, as its own status.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Large numeric claims         | **lossy, told**  | A `sub` or `jti` that is a 64-bit integer is rounded by `JSON.parse`, the same loss as [structured data’s](#numbers-past-253-unavoidable-and-no-longer-silent) and asked the same exact way. Reported by path on a `Report` port; the decoded claims and the signature verdict are unchanged, because the signature is checked against the bytes the rounding never touched.                                                                                                                                                                  |
+| Operation                                                          | Verdict                                | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------------------ | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Decode header and payload                                          | **exact**                              | RFC 7515 appendix A.1, added this round: the published header and payload, decoded to the values the RFC prints.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| HS256 verification                                                 | **exact**                              | The same appendix's key and signature. Verified, and reported invalid when one character of the signature or of the payload changes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| RS256, ES256 and ES512 verification                                | **exact**                              | RFC 7515 appendices A.2, A.3 and **A.4**. Round five recorded this RFC as publishing vectors for HS256, RS256 and ES256 'and for nothing else'; A.4 is a fourth, on curve P-521, and round six added it. The RFC gives its keys as JWKs and this tool takes SPKI PEM, so the conversion is CPython's `cryptography` in [`scripts/generate-jws-oracle.mjs`](../scripts/generate-jws-oracle.mjs), which refuses to write a fixture unless CPython **and** Node's WebCrypto both reach the published verdict for every case and both reject every valid signature with one bit flipped. Two curves rather than one also sharpens the key-swap control: P-256 into the ES512 path and P-521 into the ES256 path must each fail to import, which a curve table naming one curve for both would survive.                                                                                                                                                                 |
+| PS384 verification, and a second source for RS256, ES512 and HS256 | **exact**                              | RFC 7520, the JOSE cookbook, sections 4.1 to 4.4. 4.1 and 4.2 sign the same payload with the **same RSA key**, one PKCS#1 v1.5 and one PSS - the only control anywhere in this repository that isolates the padding, because checking each token under the other's algorithm can fail for no other reason: the key imports, the hash exists, the length is right.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| HS384 and HS512 verification                                       | **exact, below the token**             | RFC 4231's HMAC-SHA-384 and HMAC-SHA-512 vectors, test cases 1, 2, 6 and 7. **These are not JWS** - a key, a message and a MAC - because no published JWS or JWT vector for either algorithm exists, in RFC 7515, in the cookbook or in Wycheproof. What was unverified was one entry each in `HASH_FOR`, and the RFC publishes all three MACs over the same key and the same message, so each vector is also checked under the other two algorithms. That isolates the table and nothing else. Token splitting does not vary by hash and is settled by the nine vectors that are tokens.                                                                                                                                                                                                                                                                                                                                                                          |
+| RS384, RS512, PS256 and PS512 verification                         | **exact, from a suite**                | Project Wycheproof's JWS vectors, pinned to a commit and hashed so a regeneration from different bytes fails rather than drifts. A published test suite rather than a specification - no RFC publishes a vector for any of these four - and taken only for the algorithms no RFC covers, each group in full rather than sampled. Its negatives are the reason to reach for it: 42 PS256 cases with a modified salt, mask, hash or padding, and `alg: none` in two spellings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ES384 verification                                                 | **exact, below the token**             | Wycheproof's P-384/SHA-384 IEEE-P1363 ECDSA vectors, first group in full - 88 valid and 58 invalid. Not JWS, for the same reason as HS384: nothing published is. P1363 is the fixed-width r&#124;&#124;s encoding JWS itself uses, and the messages are ASCII digit strings, so each vector goes through `verifySignature` unchanged. A P-384 key handed to the ES256 or the ES512 path must not import at all, which is what isolates `CURVE_FOR`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| The whole pipeline, per algorithm                                  | **HS256, RS256, ES256 and PS256 only** | `run` decodes before it verifies and `decodeToken` requires a JSON payload, because RFC 7519 requires a JWT's payload to be one. **Almost every published JOSE example is a JWS and not a JWT**: A.4 signs the ASCII string `Payload`, the cookbook signs a line of Tolkien, Wycheproof signs `foo`. Four published vectors have a payload that parses as JSON - RFC 7515 A.1, A.2 and A.3, and Wycheproof's two PS256 salt cases, whose payload `123400` happens to - and those four run end to end in Gecko and WebKit through the tool's own worker and verdict banner, with a tampered token, a key of another kind and a different key of the same kind as controls. For the other eight, each engine is asked directly whether it reaches the published verdict under the parameters the fixture records - which is what would catch an engine with no RSA-PSS, no P-384 or no P-521, in which the tool would say `unverified` on a token CI calls verified. |
+| The JWK `alg` constraint                                           | **not implemented, stated**            | Five Wycheproof cases are correctly computed signatures that the suite publishes as **invalid**, because the JWK they were made with carries an `alg` that restricts the key (RFC 7517 section 4.4). This tool's key input is an SPKI PEM, which carries a key and no policy at all, so it verifies them and says so. This was not designed in - the generator's agreement gate found it and stopped - and the gate now requires both verifiers to find these cryptographically **valid** before writing them, so the disagreement is known to be this one rather than an unexplained failure.                                                                                                                                                                                                                                                                                                                                                                     |
+| `alg: none`                                                        | **exact**                              | Refused outright, as its own status.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Large numeric claims                                               | **lossy, told**                        | A `sub` or `jti` that is a 64-bit integer is rounded by `JSON.parse`, the same loss as [structured data’s](#numbers-past-253-unavoidable-and-no-longer-silent) and asked the same exact way. Reported by path on a `Report` port; the decoded claims and the signature verdict are unchanged, because the signature is checked against the bytes the rounding never touched.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 ## Colour
 
@@ -824,6 +843,34 @@ suite:
   from that catch leaves the whole suite green. What the engines do is a
   measurement in `check:browsers` now rather than a claim in a comment.
 
+And round six's, all of them about the JWT tool:
+
+- **A published JWT — not JWS — vector for anything past RFC 7515 A.3.** RFC
+  7515 A.4, all four of RFC 7520's signature examples and every Wycheproof JWS
+  group sign a payload that is not JSON, so none of them can be driven through
+  `decodeToken` and `run`. Two Wycheproof PS256 cases sign the digit string
+  `123400`, which parses as JSON by accident rather than by intent, and they are
+  the only exception found. If a published JWT vector for PS384, ES512 or any
+  HS\* exists, it was not found in RFC 7515, RFC 7519, RFC 7520, RFC 7797, RFC
+  8037 or Wycheproof.
+- **A published vector for HS384, HS512 or ES384 in JWS form.** Looked for in
+  the same six places. RFC 4231 and Wycheproof's P-1363 ECDSA file are what
+  exist, and both are a key, a message and a signature rather than a token — so
+  that is what the matrix says they settle.
+- **An algorithm this tool offers with no published vector at all.** There is
+  none left; the ledger in
+  [`jwt.test.ts`](../src/tools/jwt-decode/jwt.test.ts) asserts a named source for
+  each of the twelve and fails if one is added without one.
+- **RS384 and RS512 being covered.** They were not, and neither round five's
+  gap list nor the brief for round six mentioned them — both named "HS384/512,
+  PS\*, ES384/512" and stopped. Two algorithms the tool offers were missing from
+  the list of algorithms nothing had checked.
+- **A fixture that verifies because the generator and the tool share a table.**
+  The generator derives its WebCrypto parameters itself rather than importing
+  `verify.ts`, and `check:browsers` reads them from the fixture rather than
+  deriving them a third time. A shared table would make a wrong one agree with
+  itself in every engine.
+
 ## Found in round four, by breaking things on purpose
 
 Round four asked one question of everything in this document: **could the
@@ -1088,8 +1135,8 @@ output would read as a defect in the remuxer.
 
 ### RS256 and ES256, from the RFC rather than from ourselves
 
-Every verification in this repository outside RFC 7515 appendix A.1 signs with
-WebCrypto and then checks with WebCrypto, which proves two halves of one
+Every verification in this repository outside RFC 7515 appendix A.1 signed with
+WebCrypto and then checked with WebCrypto, which proves two halves of one
 primitive agree with each other and is equally true of a broken pair. A.2 and
 A.3 publish the key, the signing input and the signature for RS256 and ES256.
 
@@ -1099,13 +1146,6 @@ in the generator, in CPython's `cryptography`, not in the test file. The
 generator refuses to write a fixture unless CPython **and** Node's WebCrypto both
 accept the RFC's signature with the derived key and both reject it with one bit
 flipped.
-
-It is then checked twice: in the unit suite, and in Gecko and WebKit through the
-tool's own worker and its own verdict banner, with a tampered token and a
-swapped key as controls in each engine. The swapped key is not decoration: it is
-what says the algorithm and curve tables in `verify.ts` are read rather than
-decorative, and the mutants that name the wrong curve or the wrong padding are
-each caught.
 
 **And one claim in the code turned out to be false.** The `try` around
 `subtle.verify` says a malformed signature "throws rather than returning false".
@@ -1237,35 +1277,195 @@ The honest summary is that the **unreached** category is now empty and the
 **unkilled** one is not. What replaced "we sampled" is a list somebody can read,
 with a reason beside each entry, and `node scripts/mutate.mjs` to re-run it.
 
+## Found in round six, by reading the appendix list
+
+### The other nine algorithms, and the appendix nobody had read
+
+Round five closed RS256 and ES256 and wrote down why it could close no more:
+"RFC 7515 publishes vectors for HS256, RS256 and ES256 and for nothing else".
+**That sentence is wrong, and it was wrong in the specification round five had
+open.** Appendix A.4 is a fourth example — ECDSA on curve P-521, `alg: ES512` —
+and it had been there since 2015. It is also the sharpest of the four for this
+tool, because P-521 is the row where a curve table that reads the algorithm name
+as the curve name goes wrong: ES512 is not P-512.
+
+Nothing clever found it. The list of appendices was read instead of remembered.
+
+With A.4 in, the remaining eight came from three more places:
+
+| Source                      | Covers                             | What kind of thing it is                                                           |
+| --------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------- |
+| RFC 7520, the JOSE cookbook | PS384, and RS256/ES512/HS256 again | A standards-track document of worked JOSE examples.                                |
+| RFC 4231                    | HS384, HS512                       | HMAC-SHA-2 vectors. **Not JWS**: a key, a message and a MAC.                       |
+| Project Wycheproof          | RS384, RS512, PS256, PS512, ES384  | A published suite, pinned to a commit. Used only where no RFC has anything to say. |
+
+**Two of those are below the token, and that is stated rather than papered
+over.** No published JWS or JWT vector exists for HS384, HS512 or ES384. What
+was unverified for those three was one entry each in a table — which hash, which
+curve — and `verifySignature` takes its signing input as a string, so a vector
+that is a key, a message and a signature goes through the real function
+unchanged and settles the real question. What it does not exercise is token
+splitting, which does not vary by hash and is settled by the nine vectors that
+are tokens.
+
+**Each table entry is isolated by a control, not just covered by a positive.**
+RFC 4231 publishes all three MACs over the same key and the same message, so
+every vector is also checked under the other two algorithms: same key, same
+input, same code path, different hash. The cookbook's 4.1 and 4.2 sign the same
+payload with the same RSA key, one PKCS#1 v1.5 and one PSS, so checking each
+under the other's algorithm can fail for no reason except the padding. A P-384
+key is offered to the ES256 and ES512 paths and must not import; with A.4 in the
+fixture, so are P-256 and P-521 to each other's.
+
+All seventeen of those table entries and branches were then broken on purpose,
+one at a time, and every break is caught — see
+[Seventeen breaks](#seventeen-breaks-and-every-one-of-them-caught).
+
+### The pipeline the published vectors cannot reach
+
+`run` decodes before it verifies, and `decodeToken` requires the payload to be
+JSON because RFC 7519 requires a JWT's payload to be one. **Almost every
+published JOSE example is a JWS and not a JWT.** RFC 7515 A.4 signs the ASCII
+string `Payload`. The cookbook signs a line of Tolkien. Wycheproof signs `foo`.
+
+So of twelve algorithms with published vectors, exactly four can be driven
+through this tool's own UI at all: A.1 (HS256), A.2 (RS256), A.3 (ES256), and
+Wycheproof's two PS256 salt cases, whose payload is `123400` — which happens to
+parse as JSON. Those four run end to end in Gecko and WebKit through the worker
+and the verdict banner, with three controls each: a flipped bit, a key of
+another kind, and — new, and only possible now that there is more than one key
+of each kind — a DIFFERENT key of the same kind, which must read `broken` rather
+than `unverified` because a real check happens and loses.
+
+A.1 also drives the **Secret encoding** select, because its key is the RFC's
+base64url secret rather than a PEM. Leaving that alone would hash the RFC's
+ASCII spelling of the secret instead of the secret, read `broken`, and look
+exactly like a signature problem — so the select is driven for every example,
+which makes the other three assert that the default really is the default.
+
+The other eight are put to each engine directly: import this key, verify these
+bytes, under the parameters the fixture records. That is a narrower question and
+it is the one worth asking of a browser — an engine with no RSA-PSS, no P-384 or
+no P-521 is one where this tool says `unverified` on a token CI calls verified.
+The parameters are read out of the JSON rather than re-derived in the harness,
+because a harness that computes "PS384 means a 48-byte salt" for itself is
+asserting its own belief twice.
+
+This is a limitation of the tool's input contract, and it is now asserted in
+both directions — the refusal happens, and the same bytes verify — so a change
+to it is a failing test and a decision rather than something that quietly starts
+or stops happening.
+
+### Seventeen breaks, and every one of them caught
+
+A test that passes against a broken version of the code is not a test, and the
+twelve algorithms above are twelve table entries whose whole content is one
+string each. So each was broken on purpose, one at a time, and the suite run
+against it. All seventeen are caught, and by the test written for them:
+
+| The break                                  | Noticed by                                      |
+| ------------------------------------------ | ----------------------------------------------- |
+| HS384, HS512 given the wrong hash          | RFC 4231's vectors for that algorithm           |
+| RS384, RS512 given the wrong hash          | Wycheproof's JWS vectors for that algorithm     |
+| PS256, PS512 given the wrong hash          | Wycheproof's JWS vectors for that algorithm     |
+| PS384 given the wrong hash                 | RFC 7520 4.2, and the PKCS#1-versus-PSS control |
+| ES384, ES512 given the wrong hash          | Wycheproof's ES384 group; RFC 7515 A.4          |
+| ES384 on P-256; ES512 on P-256             | the same, 146 and 6 assertions respectively     |
+| PS\* verified as PKCS#1 v1.5; salt halved  | RFC 7520 4.2 and every Wycheproof PS case       |
+| PS\* imported as PKCS#1 v1.5               | the same twelve                                 |
+| `none` compared case-sensitively           | Wycheproof's `alg: NONE` case                   |
+| a failed import reported as a failed check | the key-of-another-kind controls                |
+| every signature reported as verified       | 136 of 316                                      |
+
+The least-covered break is `PS384 given the wrong hash`, at two failing tests.
+That is the one algorithm covered by a single positive vector plus one control,
+and it is worth knowing which row is thinnest.
+
+### A check that was measuring the machine, again
+
+Round six did not go looking for this one; a run reported it. **The first screen
+renders with no JavaScript at all** failed in Gecko, on the same bytes WebKit
+passed on two lines further down the same log, in a round that changed nothing
+about the first screen.
+
+The mechanism, produced on purpose rather than guessed at: with JavaScript off
+that document has no scripts, so Gecko fires `DOMContentLoaded` **without
+waiting for the render-blocking stylesheet** - and `isVisible()` does not wait
+for anything. Delay the stylesheet by 150ms and the snapshot is false on every
+run, while the bounding box that arrives a moment later is the UNSTYLED
+1264x38 `h1`. The element was always there; the answer was about timing, on a
+browser twenty minutes and two thousand checks into a run.
+
+It is the same shape as round four's stopwatch and round five's
+wait-for-the-previous-answer: a check whose verdict depends on how busy the
+machine is. It waits for the state now instead of sampling it, and the repair
+was held to the same standard as a new check - it passes with the stylesheet
+delayed, and it still FAILS when the headline is renamed out of
+`dist/index.html`, which is the break it exists to catch.
+
+### The disagreement the gate found
+
+The generator's rule is that CPython and Node must both reach the published
+verdict before a fixture is written. On the first Wycheproof run it stopped:
+case 332 is published as **invalid** and both verifiers called it valid.
+
+Neither was wrong. Wycheproof gives its keys as JWKs, and a JWK may carry an
+`alg` that RESTRICTS the key (RFC 7517 section 4.4); case 332 is a correctly
+computed RS256 signature made with a key whose JWK says `alg: PS512`, so a
+library that honours the key must refuse it. This tool's key input is an SPKI
+PEM, which carries a key and no policy at all — there is nowhere for that
+restriction to live, and inventing one would mean guessing at a constraint the
+user never expressed.
+
+So the five cases of that shape are kept, classified as `key-policy` rather than
+`cryptographic`, and the gate now asserts the OPPOSITE for them: both verifiers
+must find them valid, which is what makes the disagreement with the suite the
+one named here rather than an unexplained failure. The alternative was to drop
+five cases quietly, and a suite you are allowed to delete from is not a suite.
+
 ## Still unverified, and how to verify it
 
-Five rounds in, the list is short and every item on it is short for a stated
-reason rather than for want of trying.
+Six rounds in, the list is short and every item on it is short for a stated
+reason rather than for want of trying. Round six closed the first entry as far
+as anything published allows and replaced it with two narrower ones — one a
+limit of this tool's input contract, one a feature it does not have.
 
-1. **HS384/512, PS\*, ES384/512.** RFC 7515 publishes vectors for HS256, RS256
-   and ES256 and for nothing else, so there is no external answer to check these
-   against. What round five's A.2 and A.3 do settle is everything around them
-   that is ours — the SPKI PEM path, the curve table and the algorithm table —
-   because those two exercise the RSA and the EC branch between them. What is
-   left unchecked is one entry in a hash table per algorithm. **What it would
-   take:** a published vector from somewhere that is not this repository; the
-   JOSE cookbook (RFC 7520) has several and is the obvious next place to look.
+1. **The whole pipeline, for eight of the twelve algorithms.** Closed as far as
+   anything published allows: all twelve now rest on an external vector, and
+   round six's list of what remains is shorter and different in kind. What is
+   left is that `run` cannot be driven by most of them, because `decodeToken`
+   requires a JSON payload and almost every published JOSE example is a JWS
+   rather than a JWT. HS256, RS256, ES256 and PS256 go end to end in two
+   engines; the other eight are settled at `verifySignature`, and each engine is
+   separately asked whether it reaches the published verdict for the published
+   bytes.
+   **What it would take:** either a published JWT — not JWS — vector for the
+   other eight, which does not appear to exist, or a decision to let this tool
+   verify a JWS whose payload is not JSON. The second is a product change rather
+   than a test, and it is the tool's input contract, so it belongs in a commit
+   that argues for it.
 
-2. **Playback in WebKit.** Gecko plays the file the video tool made and every
+2. **The JWK `alg` constraint.** Five Wycheproof cases are valid signatures the
+   suite refuses because the key's JWK restricts it to another algorithm. This
+   tool takes an SPKI PEM, which carries no such field. **What it would take:** a
+   JWK key input, which is a feature and not a fix — and a real one, since a JWKS
+   endpoint's keys are JWKs. Recorded rather than done.
+
+3. **Playback in WebKit.** Gecko plays the file the video tool made and every
    frame matches the source. Playwright's WebKit refuses every H.264 file it is
    given, _including the one ffmpeg wrote_, so it cannot answer. **What it would
    take:** Safari itself, on a Mac. That is what
    [docs/manual-checks.md](manual-checks.md) is for, and the entry is now a
    comparison against a known-good clip rather than "play it and see".
 
-3. **`compareMarkup` against an element that MOVED.** It counts what each
+4. **`compareMarkup` against an element that MOVED.** It counts what each
    document contains, so an element that gained a parent is not reported. Stated
    in the code, and still true. **What it would take:** a tree diff rather than a
    census — which is a different instrument, not a fix to this one. The other
    half of that note, an attribute whose VALUE changed, was resolved in round
    four.
 
-4. **A root-level block scalar, and which implementation is right.** Round five
+5. **A root-level block scalar, and which implementation is right.** Round five
    measured it rather than settling it: `yaml`, js-yaml and ruamel.yaml read a
    root `|` with content at column 0; PyYAML refuses it. With an explicit
    indicator the readers split two and two, because the indicator is defined
@@ -1275,7 +1475,7 @@ reason rather than for want of trying.
    rewriting emitted YAML by hand, which is a new hazard in exchange for a
    contested one.
 
-5. **The cost of detection, in wall-clock terms.** Round four deleted the
+6. **The cost of detection, in wall-clock terms.** Round four deleted the
    assertion and round five replaced the part that could be replaced: the three
    bounds on the decision are each held by a document that its own bound alone
    decides, and the third of those — the YAML verification — is what turns a
@@ -1324,18 +1524,36 @@ a valid document told it was invalid, eleven files CPython cannot open, a code
 comment that was false about every engine, and a 64 kB bound that nothing was
 holding.
 
-**Round six — the shape of it.** Two candidates, and they are different in kind:
+**Round six — done, and it was one gap taken seriously.** Round five closed
+RS256 and ES256 and left nine of the twelve JWS algorithms resting on nothing
+outside this repository, with a note saying no published vector existed. Looking
+properly found one for every single one of them, in four places, and found that
+the note was wrong about the specification it had open — RFC 7515 appendix A.4
+had been publishing an ES512 vector since 2015. It also found that the gap list
+itself had a gap: RS384 and RS512 were not on it and were not covered either.
 
-- **The evidence that is still ours.** Three fixtures in this repository are
-  generated by a script this repository wrote: the YAML event composer, the
-  resampling agreement mask, and the JWS key conversion. Each is validated
-  against an external answer before it is trusted — 278 of the suite's own
-  cases, four reference filters, two independent verifiers — and that is the
-  right shape, but it is worth asking of each one whether the validation could
-  pass while the generator was wrong.
+What the round could not close it wrote down rather than worked around: nine of
+the twelve cannot be driven through the tool's whole pipeline by anything
+published, because almost every published JOSE example is a JWS and not a JWT.
+
+**Round seven — the shape of it.** Two candidates, and they are different in
+kind:
+
+- **The evidence that is still ours.** Two fixtures in this repository are
+  generated by a script this repository wrote: the YAML event composer and the
+  resampling agreement mask. Each is validated against an external answer before
+  it is trusted — 278 of the suite's own cases, four reference filters — and
+  that is the right shape, but it is worth asking of each one whether the
+  validation could pass while the generator was wrong. The JWS fixtures were the
+  third, and round six answered it for them: the generator derives its own
+  parameters rather than importing the tool's, and two independent verifiers
+  have to agree with the published verdict before anything is written.
 - **The tools this document has never covered.** Base64, hash, regex and colour
   each have a row, and the rows are thinner than the four above. Hash has
-  published vectors and does not use them; regex has no corpus at all.
+  published vectors and does not use them; regex has no corpus at all. **This is
+  the one to take**: round six's whole result came from asking "what has somebody
+  published for this?" about a tool whose row said nothing had, and hash is the
+  same question with an easier answer waiting.
 
 Running through all of them: **every `lossy, silent` cell should become
 `lossy, told` or `exact`.** That was the whole of what this document was for,

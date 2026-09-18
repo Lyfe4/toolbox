@@ -1,0 +1,237 @@
+{
+  "generator": "RFC 4231 section 4, test cases 1, 2, 6 and 7",
+  "source": "https://www.rfc-editor.org/rfc/rfc4231",
+  "keyConvertedBy": "CPython cryptography 50.0.1 3.14.7",
+  "verifiedBy": ["CPython cryptography", "Node v24.19.0 WebCrypto"],
+  "note": "HMAC vectors, not JWS: the signing input is a message rather than a header.payload pair. The only published source found for HS384 and HS512.",
+  "cases": [
+    {
+      "id": "rfc4231-1-HS256",
+      "testCase": 1,
+      "algorithm": "HS256",
+      "signingInput": "Hi There",
+      "signature": "sDRMYdjbOFNcqK_OrwvxK4gdwgDJgz2nJuk3bC4yz_c",
+      "keyEncoding": "base64url",
+      "key": "CwsLCwsLCwsLCwsLCwsLCwsLCws",
+      "webcrypto": {
+        "format": "raw",
+        "importKey": {
+          "name": "HMAC",
+          "hash": "SHA-256"
+        },
+        "verify": {
+          "name": "HMAC"
+        }
+      }
+    },
+    {
+      "id": "rfc4231-1-HS384",
+      "testCase": 1,
+      "algorithm": "HS384",
+      "signingInput": "Hi There",
+      "signature": "r9A5RNhIlWJrCCX0q0aQfxX52tvkEB7GgqoDTHzrxZz66p6pB27ef0rxUuiy-py2",
+      "keyEncoding": "base64url",
+      "key": "CwsLCwsLCwsLCwsLCwsLCwsLCws",
+      "webcrypto": {
+        "format": "raw",
+        "importKey": {
+          "name": "HMAC",
+          "hash": "SHA-384"
+        },
+        "verify": {
+          "name": "HMAC"
+        }
+      }
+    },
+    {
+      "id": "rfc4231-1-HS512",
+      "testCase": 1,
+      "algorithm": "HS512",
+      "signingInput": "Hi There",
+      "signature": "h6p83qXvYZ1P8LQkGh1ssCN59OLOTsJ4etCzBUXhfN7aqDO31rinAgOLJ06uo_Tkvp2RTuth8XAuaWwgOhJoVA",
+      "keyEncoding": "base64url",
+      "key": "CwsLCwsLCwsLCwsLCwsLCwsLCws",
+      "webcrypto": {
+        "format": "raw",
+        "importKey": {
+          "name": "HMAC",
+          "hash": "SHA-512"
+        },
+        "verify": {
+          "name": "HMAC"
+        }
+      }
+    },
+    {
+      "id": "rfc4231-2-HS256",
+      "testCase": 2,
+      "algorithm": "HS256",
+      "signingInput": "what do ya want for nothing?",
+      "signature": "W9zBRr9gdU5qBCQmCJV1x1oAPwidJzmDnexYuWTsOEM",
+      "keyEncoding": "utf8",
+      "key": "Jefe",
+      "webcrypto": {
+        "format": "raw",
+        "importKey": {
+          "name": "HMAC",
+          "hash": "SHA-256"
+        },
+        "verify": {
+          "name": "HMAC"
+        }
+      }
+    },
+    {
+      "id": "rfc4231-2-HS384",
+      "testCase": 2,
+      "algorithm": "HS384",
+      "signingInput": "what do ya want for nothing?",
+      "signature": "r0XS43ZIQDFhf3jStYprG5x-9GT1oBtH5C7Dc2MiRF6OIkDKXmnix4syOez6shZJ",
+      "keyEncoding": "utf8",
+      "key": "Jefe",
+      "webcrypto": {
+        "format": "raw",
+        "importKey": {
+          "name": "HMAC",
+          "hash": "SHA-384"
+        },
+        "verify": {
+          "name": "HMAC"
+        }
+      }
+    },
+    {
+      "id": "rfc4231-2-HS512",
+      "testCase": 2,
+      "algorithm": "HS512",
+      "signingInput": "what do ya want for nothing?",
+      "signature": "Fkt6e_z4GeLjlfvnO1bgo4e9ZCIugx_WECcM1-olBVSXWL91wFqZSm0DT2X48Ob9yuqxo01Ka0tjbgcKOLznNw",
+      "keyEncoding": "utf8",
+      "key": "Jefe",
+      "webcrypto": {
+        "format": "raw",
+        "importKey": {
+          "name": "HMAC",
+          "hash": "SHA-512"
+        },
+        "verify": {
+          "name": "HMAC"
+        }
+      }
+    },
+    {
+      "id": "rfc4231-6-HS256",
+      "testCase": 6,
+      "algorithm": "HS256",
+      "signingInput": "Test Using Larger Than Block-Size Key - Hash Key First",
+      "signature": "YOQxWR7gtn8Niiaqy_W3f44LxiE3KMUUBUYEDw7jf1Q",
+      "keyEncoding": "base64url",
+      "key": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+      "webcrypto": {
+        "format": "raw",
+        "importKey": {
+          "name": "HMAC",
+          "hash": "SHA-256"
+        },
+        "verify": {
+          "name": "HMAC"
+        }
+      }
+    },
+    {
+      "id": "rfc4231-6-HS384",
+      "testCase": 6,
+      "algorithm": "HS384",
+      "signingInput": "Test Using Larger Than Block-Size Key - Hash Key First",
+      "signature": "Ts4IRIWBPpCI0sY6BBvFtE-e8QEqK1iPPNEfBQM6xMYMLvarQDD-gpYkjfFj9ElS",
+      "keyEncoding": "base64url",
+      "key": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+      "webcrypto": {
+        "format": "raw",
+        "importKey": {
+          "name": "HMAC",
+          "hash": "SHA-384"
+        },
+        "verify": {
+          "name": "HMAC"
+        }
+      }
+    },
+    {
+      "id": "rfc4231-6-HS512",
+      "testCase": 6,
+      "algorithm": "HS512",
+      "signingInput": "Test Using Larger Than Block-Size Key - Hash Key First",
+      "signature": "gLJCY8fBo-u3FJPB3XvotJtG0fQbSu7BEhsBN4P481JrVtA34F8lmL0P0iFdah5SleZPc_Y_CuyLkVqYXXhlmA",
+      "keyEncoding": "base64url",
+      "key": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+      "webcrypto": {
+        "format": "raw",
+        "importKey": {
+          "name": "HMAC",
+          "hash": "SHA-512"
+        },
+        "verify": {
+          "name": "HMAC"
+        }
+      }
+    },
+    {
+      "id": "rfc4231-7-HS256",
+      "testCase": 7,
+      "algorithm": "HS256",
+      "signingInput": "This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm.",
+      "signature": "mwn_pxuUL8snY1-81bDpRL_cY2RPBxOTin9RU1w6NeI",
+      "keyEncoding": "base64url",
+      "key": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+      "webcrypto": {
+        "format": "raw",
+        "importKey": {
+          "name": "HMAC",
+          "hash": "SHA-256"
+        },
+        "verify": {
+          "name": "HMAC"
+        }
+      }
+    },
+    {
+      "id": "rfc4231-7-HS384",
+      "testCase": 7,
+      "algorithm": "HS384",
+      "signingInput": "This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm.",
+      "signature": "ZhcXjpQfAg01Hi8lTo_TLGAkIP6wuPua3M67gkYemcWmeMwx55kXbThg5hEMRlI-",
+      "keyEncoding": "base64url",
+      "key": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+      "webcrypto": {
+        "format": "raw",
+        "importKey": {
+          "name": "HMAC",
+          "hash": "SHA-384"
+        },
+        "verify": {
+          "name": "HMAC"
+        }
+      }
+    },
+    {
+      "id": "rfc4231-7-HS512",
+      "testCase": 7,
+      "algorithm": "HS512",
+      "signingInput": "This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm.",
+      "signature": "43tqd13Ifbqk36n5bl4__d69cfiGcomGXfWjLSDNyUS2AiysPEmCsQ1e61XD5N4VE0Z2-23gRGBlyXRA-oxqWA",
+      "keyEncoding": "base64url",
+      "key": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+      "webcrypto": {
+        "format": "raw",
+        "importKey": {
+          "name": "HMAC",
+          "hash": "SHA-512"
+        },
+        "verify": {
+          "name": "HMAC"
+        }
+      }
+    }
+  ]
+}

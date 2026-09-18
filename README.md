@@ -476,19 +476,19 @@ code and agreeing with it.
 So the ranking of evidence in that document is the working rule here, and the
 top of it is **an external reference, committed as a fixture**:
 
-| Conversion                      | Held to                                                                         |
-| ------------------------------- | ------------------------------------------------------------------------------- |
-| CSV, reading and writing        | CPython's `csv` module, 32 documents, 12 record sets, 9 dictionaries            |
-| YAML, reading and writing       | the yaml-test-suite, 402 cases; js-yaml AND CPython's PyYAML reading our output |
-| The unified patch               | real `git diff --no-index`, 38 patches at two context widths                    |
-| Markdown → HTML                 | CommonMark 0.31.2 and the GFM extensions                                        |
-| base64 both ways                | RFC 4648 §10                                                                    |
-| MD5, SHA-1/256/384/512          | RFC 1321 appendix A.5 and the FIPS 180-4 examples                               |
-| JWT decode, HS256, RS256, ES256 | RFC 7515 appendices A.1, A.2 and A.3                                            |
-| Image downscaling               | Pillow's box filter, where four reference filters agree                         |
-| The video tool's output         | a real decoder, frame by frame against the source                               |
-| The regex match list            | `String.prototype.matchAll`                                                     |
-| OKLCH round-tripping            | 166,112 sRGB colours on a fixed stride, calibrated by a full sweep              |
+| Conversion                     | Held to                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------- |
+| CSV, reading and writing       | CPython's `csv` module, 32 documents, 12 record sets, 9 dictionaries            |
+| YAML, reading and writing      | the yaml-test-suite, 402 cases; js-yaml AND CPython's PyYAML reading our output |
+| The unified patch              | real `git diff --no-index`, 38 patches at two context widths                    |
+| Markdown → HTML                | CommonMark 0.31.2 and the GFM extensions                                        |
+| base64 both ways               | RFC 4648 §10                                                                    |
+| MD5, SHA-1/256/384/512         | RFC 1321 appendix A.5 and the FIPS 180-4 examples                               |
+| JWT, all twelve JWS algorithms | RFC 7515 appendices A.1-A.4, RFC 7520, RFC 4231, Project Wycheproof             |
+| Image downscaling              | Pillow's box filter, where four reference filters agree                         |
+| The video tool's output        | a real decoder, frame by frame against the source                               |
+| The regex match list           | `String.prototype.matchAll`                                                     |
+| OKLCH round-tripping           | 166,112 sRGB colours on a fixed stride, calibrated by a full sweep              |
 
 Most of those rest on a fixture a script in [`scripts/`](scripts) generates and
 checks in — CSV from CPython, the patch from git, YAML from the suite's own
@@ -497,7 +497,8 @@ downscale from Pillow, the video clip from a real x264 — so nothing shells out
 at test time and a change to either side is a diff in review. **A generator that
 has to convert something itself before the comparison verifies its own output
 first**: the JWS one refuses to write a fixture unless two independent verifiers
-both accept the RFC's signature and both reject it with one bit flipped, and the
+both reach the PUBLISHED verdict for every case and both reject every valid
+signature with one bit flipped, and the
 YAML event composer has to reproduce 278 of the suite's own answers before it is
 allowed to decide the 29 the suite does not answer. The others rest on a published document rather than on a
 program: the CommonMark and GFM suites are upstream files pinned by version in
@@ -1458,6 +1459,28 @@ the generator refuses to write a fixture unless CPython **and** Node's WebCrypto
 both accept the RFC's signature with the derived key and both reject it with one
 bit flipped. It is then checked again in Gecko and WebKit through the tool's own
 worker, with a tampered token and a swapped key as controls in each.
+
+**Round six took the other nine**, and the first thing it found was that the
+sentence above used to end "and RFC 7515 publishes nothing else". Appendix A.4
+is a fourth example — ECDSA on P-521, which is the row a curve table gets wrong,
+because `ES512` is not `P-512`. RFC 7520's JOSE cookbook supplies PS384, RFC
+4231 supplies HS384 and HS512, and Project Wycheproof — pinned to a commit and
+hashed — supplies RS384, RS512, PS256, PS512 and ES384. **Every algorithm this
+tool offers now rests on a vector somebody else published**, and a test asserts
+that, by name, so a thirteenth added without one is a failing build.
+
+Two of those sources are below the token: RFC 4231 and Wycheproof's ECDSA file
+publish a key, a message and a signature rather than a JWS, because for HS384,
+HS512 and ES384 nothing published is a JWS. That settles what was actually
+unsettled — which hash, which curve — and the matrix says so rather than
+implying more. The reason it has to is the other finding: **almost every
+published JOSE example is a JWS and not a JWT.** A.4 signs the ASCII string
+`Payload`, the cookbook signs a line of Tolkien, Wycheproof signs `foo`; this
+tool requires a JSON payload, as a JWT has, so four of the twelve are all that
+can be driven through its whole pipeline by anything anybody has published — and
+the other eight are instead put to each engine directly, under the parameters the
+fixture records, which is what would catch a browser with no RSA-PSS or no
+P-521.
 
 **A second language's YAML library, reading what this one writes.** js-yaml has
 been the only independent reader since round two, and one reader is enough to

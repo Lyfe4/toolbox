@@ -103,14 +103,26 @@ never calls it valid. `jwt.test.ts` asserts this across `none`, `None` and
 
 ## What can and cannot be verified in a browser
 
-| Family        | Key you supply           | Verified?   |
-| ------------- | ------------------------ | ----------- |
-| HS256/384/512 | The shared HMAC secret   | Yes         |
-| RS256/384/512 | RSA public key, SPKI PEM | Yes         |
-| PS256/384/512 | RSA public key, SPKI PEM | Yes         |
-| ES256/384/512 | EC public key, SPKI PEM  | Yes         |
-| `none`        | —                        | Rejected    |
-| Anything else | —                        | Not checked |
+| Family        | Key you supply           | Verified?   | Held to                              |
+| ------------- | ------------------------ | ----------- | ------------------------------------ |
+| HS256         | The shared HMAC secret   | Yes         | RFC 7515 A.1, RFC 7520 4.4, RFC 4231 |
+| HS384/512     | The shared HMAC secret   | Yes         | RFC 4231 test cases 1, 2, 6 and 7    |
+| RS256         | RSA public key, SPKI PEM | Yes         | RFC 7515 A.2, RFC 7520 4.1           |
+| RS384/512     | RSA public key, SPKI PEM | Yes         | Project Wycheproof                   |
+| PS256/512     | RSA public key, SPKI PEM | Yes         | Project Wycheproof                   |
+| PS384         | RSA public key, SPKI PEM | Yes         | RFC 7520 4.2                         |
+| ES256         | EC public key, SPKI PEM  | Yes         | RFC 7515 A.3                         |
+| ES384         | EC public key, SPKI PEM  | Yes         | Project Wycheproof                   |
+| ES512         | EC public key, SPKI PEM  | Yes         | RFC 7515 A.4, RFC 7520 4.3           |
+| `none`        | —                        | Rejected    | Wycheproof, in both spellings        |
+| Anything else | —                        | Not checked | —                                    |
+
+Every one of those is a vector somebody else published, not an expected value
+written here; `jwt.test.ts` asserts the whole table by name and fails if an
+algorithm is offered without one. Two of the sources are not JWS — RFC 4231 and
+Wycheproof's P-1363 ECDSA file publish a key, a message and a signature — because
+for HS384, HS512 and ES384 nothing published is. See
+[docs/conversion-matrix.md](../../../docs/conversion-matrix.md#jwt).
 
 All of it is `crypto.subtle`; no cryptography is implemented here. Notes:
 
@@ -122,9 +134,15 @@ All of it is `crypto.subtle`; no cryptography is implemented here. Notes:
 - **ES\*** signatures are the fixed-width `r||s` form, and the curve is derived
   from the algorithm (`ES512` is P-521, not P-512 — the name is a hash size, not
   a curve size).
-- A malformed signature makes `subtle.verify` throw rather than return `false`.
-  That is caught and reported as **invalid**, because a failed check is a failed
-  check.
+- A malformed signature — one of the wrong width for the curve, say — comes back
+  `false` rather than throwing. **This bullet used to say the opposite**, which
+  round five measured and found untrue of Node's WebCrypto, of Gecko and of
+  WebKit; the comment in `verify.ts` was corrected then and this line was missed.
+  The `try` around `subtle.verify` stays anyway, because the contract is that a
+  verdict is always reached: an exception escaping into the page leaves it with
+  no banner at all, which is the one outcome this tool's design exists to
+  prevent. Either way the verdict is **invalid**, and that is what is asserted —
+  in the unit suite and in both engines — rather than the route it took.
 
 ## The key never travels in a share link
 

@@ -208,6 +208,19 @@ script in [`scripts/`](scripts) and **committed as a fixture**, so the suite
 needs no Python and no git at test time and a change to either side shows up as
 a diff in review.
 
+**Look for the reference before concluding there is none.** Round five closed
+RS256 and ES256 against RFC 7515's appendices and wrote down that the RFC
+published nothing else. It publishes a fourth — appendix A.4, ES512 on P-521 —
+and round six found it by reading the list of appendices. It then found vectors
+for the remaining nine algorithms in three more places. A cell that says
+`not verified` because nobody has looked is not the same claim as one that says
+it because somebody looked and there is nothing, so say which, and say where you
+looked; [docs/conversion-matrix.md](docs/conversion-matrix.md) has a section for
+exactly that. Prefer a specification's vectors to a suite's, pin a suite to a
+commit and hash the file, and when the two disagree find out WHY before deciding
+which is wrong — round six's first Wycheproof run stopped on five cases that are
+valid signatures refused on a key-policy rule this tool's input cannot express.
+
 **One oracle is enough to catch a writer that is wrong and not enough to tell a
 wrong writer from a limited reader.** Round two's js-yaml check was the only
 thing outside this repository reading this tool's YAML, and twice a
