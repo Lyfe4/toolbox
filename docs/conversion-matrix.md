@@ -26,6 +26,7 @@ passes" is not an entry in it.
 - [The canvas: what a wire does to a value](#the-canvas-what-a-wire-does-to-a-value)
 - [The seven decisions, taken](#the-seven-decisions-taken)
 - [Where a loss is said](#where-a-loss-is-said)
+- [Where a loss travels](#where-a-loss-travels)
 - [What the count was, and is](#what-the-count-was-and-is)
 - [Markdown to HTML, relabelled](#markdown-to-html-relabelled)
 - [What changed for a person pasting a document](#what-changed-for-a-person-pasting-a-document)
@@ -43,7 +44,7 @@ passes" is not an entry in it.
 | **exact**                  | The output is the one an external reference gives for the same input. Nothing is lost.                                                                                                                                                                                                                                                                                                             |
 | **exact, from a suite**    | The same, where the external reference is a published TEST SUITE rather than a specification. Round six introduced it: no RFC publishes a vector for RS384, RS512, PS256, PS512 or ES384, and Project Wycheproof does. Ranked below a specification and said out loud, because a suite encodes one project's view of what an implementation should do and occasionally that is not the same thing. |
 | **exact, below the token** | The same, where the published vector is not a JWS at all - a key, a message and a signature. Also round six: nothing published is a JWS for HS384, HS512 or ES384, so what is settled is the algorithm table those three depend on and NOT the token handling around it, which the nine vectors that are tokens settle instead.                                                                    |
-| **lossy, told**            | Something cannot survive the conversion, the loss is intentional and consistent, **and the user is told without doing anything** — on the panel on `/tools` AND on the canvas node. A port that has to be wired up to be read does not count; see [Where a loss is said](#where-a-loss-is-said).                                                                                                   |
+| **lossy, told**            | Something cannot survive the conversion, the loss is intentional and consistent, **and the user is told without doing anything** — on the panel on `/tools` AND on the canvas node. A port that has to be wired up to be read does not count; see [Where a loss is said](#where-a-loss-is-said), and [Where a loss travels](#where-a-loss-travels) for what a node DOWNSTREAM of the loss is told. |
 | **lossy, silent**          | The same, except nobody is told. This is a defect, whatever the reason for the loss.                                                                                                                                                                                                                                                                                                               |
 | **broken**                 | The output is wrong, for input a person would realistically produce.                                                                                                                                                                                                                                                                                                                               |
 | **not verified**           | It may be right. Nothing outside this repository has said so.                                                                                                                                                                                                                                                                                                                                      |
@@ -613,6 +614,127 @@ The same mechanism gives `image-convert` and `video-remux` node-visible
 warnings, which they did not have: "GPS location was removed" was told on
 `/tools` and silent on a canvas node. That was a gap in the `lossy, told`
 verdicts those two tools already carried, and it closed for free.
+
+## Where a loss travels
+
+Round three answered "is the loss reported". Round seven answers a different
+question, asked by somebody standing in front of a canvas rather than reading a
+panel: **whose loss is this, and is the thing I am looking at now the document I
+started with?**
+
+Two things read wrong, and neither was a data bug. Both conversions were
+correct, and the reports were correct.
+
+**A node carried two verdicts.** Its face said `Lossy · The nested value at
+$[0].user was written into the cell…` and its footer said `ok`. Both are true of
+the run — it succeeded, and it lost something — but they are not the same
+question, and the footer is the row a canvas of ten nodes is scanned by. So the
+footer now answers the question the face is answering. `ok` splits into three:
+
+| Verdict      | Means                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------------- |
+| `ok`         | It ran, it lost nothing, **and nothing it descends from did either.**                    |
+| `lossy`      | This node lost something. Its face says what.                                            |
+| `after loss` | This node ran cleanly; the value it worked from descends from a conversion that did not. |
+
+They replace one another rather than stacking, which is what keeps them
+readable: a canvas where half the nodes are downstream of a loss is a canvas
+where the other half still say `ok`, and the contrast a person scans for
+survives. A node's own loss outranks an inherited one, so no node ever carries
+two.
+
+**Nothing followed a loss along a wire.** A lossy JSON → CSV node wired into a
+second structured-data node set to JSON produces exactly what the first node
+warned about — `"user": "{\"name\":\"ada\"}"`, a string where the source had an
+object, and `"user": ""` for the row that had no key at all. The second node's
+face was blank and its status was `ok`, because its own conversion lost nothing.
+The node **holding** the damaged value was the silent one, and three nodes
+further along there was nothing at all.
+
+### What a downstream node can honestly claim
+
+Not that the damage is still in its output. Nothing in a graph can know that: a
+regex over a flattened cell may never touch it, a hash of it is a hash of a
+document that is not the original, and the two are indistinguishable from here.
+
+What is knowable exactly, without guessing, is **provenance** — the value this
+node worked from descends, through wires, from a conversion that lost something.
+That is the only claim `after loss` makes, and it is why the word is not a
+warning: the warning is on the node that lost it, which is the node a reader
+should be looking at.
+
+### Why it travels per PORT rather than per node
+
+This is the part that decides whether the feature is worth having, and the
+answer is not the same for every port of every tool.
+
+`structured-data` declares three outputs. `output` is the document in the target
+format; `data` is the **parsed source** structure, whose description is "for
+wiring into another tool"; `report` is the notes. Flattening a nested object
+into a CSV cell happens in the **write** half — so the damage is in `output`, and
+`data` still holds the object intact. Wiring `data` onward is the way **around**
+this loss.
+
+A rule that marked every wire leaving a lossy node would therefore put a warning
+on the workaround, which is the one thing the accessibility and reporting rules
+in this repository refuse outright. So a `warn` note now records which of its
+tool's output ports the loss is actually in (`ToolNote.reaches`), and only wires
+leaving one of those carry it:
+
+| Note                                                   | In                   | Because                                                            |
+| ------------------------------------------------------ | -------------------- | ------------------------------------------------------------------ |
+| A nested value written into a cell as JSON             | `output`             | The write half. `data` is the source structure and still has it.   |
+| A column absent from some rows                         | `output`             | The same.                                                          |
+| A number past 2^53 rounded                             | `output`, `data`     | The **read** half. The parser produced it, so both carry it.       |
+| A stream of documents that became an array             | `output`, `data`     | `json` has no document separator either.                           |
+| `text-convert`: what the sanitiser removed             | `output`, `rendered` | The sanitised hub is `rendered`, and `output` derives from it.     |
+| `text-convert`: what the Markdown round trip lost      | `output`             | The round trip runs **after** the hub, so `rendered` still has it. |
+| `base64`, `jwt-decode`, `image-convert`, `video-remux` | `output`             | One data port each.                                                |
+
+A `report` port carries nothing onward in either direction — not the node's own
+loss and not one it inherited. That port holds the **account** of a run, not its
+document, so a node fed from it is holding a description rather than a damaged
+value.
+
+Beyond the first hop the narrowing stops, and correctly: a tool declares where
+**its** losses went and has no way to know its input was already damaged, so
+everything an inheriting node produces descends from everything it was given.
+That is every port but its report.
+
+### What is asserted, and where
+
+`reaches` fails silently in every direction — a typo, an empty list, a retired
+port id and a tool that grows a second data port all look exactly like "this
+conversion happened not to lose anything". So the claim is held against the
+manifest rather than left to the call sites:
+
+- [`notePorts.test.ts`](../src/features/registry/notePorts.test.ts) runs every
+  reporting tool that jsdom can run on an input that really loses something, and
+  holds every `warn` note to a **non-empty subset** of that tool's own non-report
+  output ports. It also asserts the run lost something in the first place, so an
+  empty list of notes cannot pass the test vacuously. `image-convert` and
+  `video-remux` cannot run there — no `OffscreenCanvas`, no real container — so
+  they are held to the assumption their hard-coded `['output']` rests on instead:
+  exactly one non-report output port.
+- [`lossTrace.test.ts`](../src/features/canvas/lossTrace.test.ts) is the walk
+  itself, including the case that decides the design: a wire out of `data` marks
+  nothing.
+- [`lossVerdict.test.tsx`](../src/features/canvas/lossVerdict.test.tsx) drives
+  the real tools through the real canvas and reads the words off the rendered
+  node, including the damaged value itself — `"{\"name\":\"ada\"}"` — so the test
+  records the case rather than describing it.
+- `checkLossAlongWires` in
+  [`cross-browser-check.mjs`](../scripts/cross-browser-check.mjs) asserts in
+  Firefox and WebKit that those words are **drawn**, with a box of non-zero size,
+  with no click anywhere — and that the LED beside them differs in **shape**
+  rather than only in hue, which is a `clip-path` question jsdom resolves to the
+  empty string and therefore cannot ask.
+
+Every one of those has a negative control beside it: a conversion that loses
+nothing, a wire out of a port the loss is not in, and a **four-node lossless
+chain** in which every node must say `ok` and no accessible name may contain the
+word. A mark that fires on a clean canvas is the one people learn to ignore
+before the day it is true.
 
 ## What the count was, and is
 

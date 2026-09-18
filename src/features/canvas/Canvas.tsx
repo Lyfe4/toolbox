@@ -64,6 +64,7 @@ import { GridLayer } from './GridLayer';
 import inspectorStyles from './inspector.module.css';
 import { loadInspectorOpen, saveInspectorOpen } from './inspectorPreference';
 import { useKeyboardInset } from './keyboardInset';
+import { traceLosses } from './lossTrace';
 import { NodeInspector, type InspectorNode } from './NodeInspector';
 import { OverflowMenu, type OverflowItem } from './OverflowMenu';
 import { createDebouncedSaver, loadGraph } from './persistence';
@@ -2352,6 +2353,16 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     return labels;
   }, [selection.nodes, graph]);
 
+  /**
+   * WHERE EACH NODE'S VALUE WAS LOST, IF IT WAS LOST BEFORE THE NODE.
+   *
+   * Computed here rather than in the node, because a node knows nothing about
+   * its own wires and this is entirely a question about wires. Memoised on the
+   * graph and the run states, so panning and zooming - which change neither -
+   * do not rebuild it and the `memo` on every node still holds.
+   */
+  const lossTraces = useMemo(() => traceLosses(graph, runStates), [graph, runStates]);
+
   /** Wires feeding a node that is running right now. */
   const activeEdges = useMemo(() => {
     const active = new Set<string>();
@@ -2819,6 +2830,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
                  * each produces.
                  */
                 onConnect={beginConnectFrom}
+                inheritedLoss={lossTraces.get(id) ?? null}
               />
             );
           })}

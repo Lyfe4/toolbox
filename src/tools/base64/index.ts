@@ -139,6 +139,9 @@ export const base64Tool = defineTool({
         lost(
           'The last character was not canonical',
           `It is written "${report.writtenTail ?? ''}" and carries bits no byte of the result uses; the canonical spelling of the same bytes is "${report.canonicalTail ?? ''}". RFC 4648 section 3.5 allows a decoder to ignore those bits and this one does, so the bytes are right - but re-encoding them gives a different string from the one that went in, which matters if you are comparing signatures.`,
+          // The decoded bytes. Base64 has one data port, and this loss is in
+          // the only thing that leaves it.
+          ['output'],
         ),
       );
     }

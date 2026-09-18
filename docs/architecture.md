@@ -134,7 +134,11 @@ invented the shape; `ReportView` already drew it. See
 [docs/conversion-matrix.md](conversion-matrix.md#where-a-loss-is-said) for why
 a port on its own is not enough, and
 [A node keeps a summary, not a preview](#a-node-keeps-a-summary-not-a-preview)
-for what the canvas does with them.
+for what the canvas does with them, and
+[One verdict per node](#one-verdict-per-node-and-a-loss-that-follows-a-wire) for
+how a loss reaches the nodes DOWNSTREAM of the one that reported it - a
+per-note question, because `structured-data`'s `data` port escapes the losses
+its `output` port carries.
 
 `base64`'s first output was relabelled `Output` → `Result` at the same time,
 and not for taste: the runner prints a port’s label only when a tool has more
@@ -2114,6 +2118,79 @@ promise about what a note means — `info` is "here is what happened", `warn` is
 a diagnostic: `regex-tester` carries `warn` notes about the PATTERN on a
 `regex`-presented port, and "your pattern has slashes around it" is advice. On a
 node's face it would be the note that cries wolf.
+
+### One verdict per node, and a loss that follows a wire
+
+The paragraph above is about the summary BOX. The node's footer is a separate
+row with a separate job, and for as long as both have existed they could
+disagree: a node whose conversion lost something drew `Lossy · The nested value
+at $[0].user…` on its face and **`ok`** in its footer. Both are true of the run —
+it succeeded, and it lost something — but they are not the same question, and
+the footer is the row a canvas of ten nodes is actually scanned by.
+
+So `NodeRunStatus` — which is what the executor knows — is refined into a
+`NodeVerdict` for display, and `ok` splits into three:
+
+| Verdict      | Means                                                                   |
+| ------------ | ----------------------------------------------------------------------- |
+| `ok`         | It ran, it lost nothing, **and nothing it descends from did either**.   |
+| `lossy`      | This node lost something. Its face says what.                           |
+| `after loss` | It ran cleanly; the value it worked from descends from a loss upstream. |
+
+**They replace one another rather than stacking**, and that is what keeps them
+legible at a glance. A canvas where half the nodes descend from a loss is a
+canvas where the other half say `ok`, so the contrast a reader scans for
+survives — where a second badge added on top of `ok` would be noise on every
+node in the chain. A node's own loss outranks an inherited one, so no node ever
+carries two verdicts, which is the defect being fixed rather than a new instance
+of it.
+
+Not an engine status. `NodeRunStatus` answers "did this node run" and belongs to
+the executor, and adding a case to it would make every consumer — the cache, the
+summary counts, `data-status` — carry a display distinction they have no use for.
+
+#### What travels, and what cannot
+
+`traceLosses` walks the wires once per render and answers one question per node:
+does the value here descend from a conversion that lost something? Nothing else.
+Whether the damage is still IN this node's output is not knowable from a graph —
+a regex over a flattened cell may never touch it, a hash of it is a hash of a
+document that is not the original — so the claim made is **provenance** and the
+wording says so. The warning itself stays on the node that lost it, which is the
+node a reader should be looking at, and the accessible name of every node
+downstream names that node and its loss.
+
+**It travels per PORT, not per node**, and that is the part that decides whether
+the feature is worth having rather than a detail of it. `structured-data`'s
+`data` port carries the parsed SOURCE structure, so a loss in the write half —
+flattening a nested object into a CSV cell — is in `output` and not in `data`.
+That port's whole description is "for wiring into another tool": wiring it
+onward is the way AROUND the loss. A rule that marked every wire leaving a lossy
+node would put a warning on the workaround, which is the same defect as styling
+that implies behaviour which does not exist.
+
+So a `warn` note declares which output ports its loss is in (`ToolNote.reaches`)
+and only wires leaving one of those carry it. Past the first hop the narrowing
+stops: a tool declares where ITS losses went and cannot know its input was
+already damaged, so everything an inheriting node produces descends from
+everything it was given — every port except its `report`, which holds the
+account of a run rather than its document.
+
+The field is required rather than optional, because a default would have to be
+either "every port" or "no port" and both are silent when a new tool forgets.
+`notePorts.test.ts` is the positive partner: it runs each reporting tool on an
+input that really loses something and holds every note to a non-empty subset of
+that tool's own non-report ports.
+
+#### The LED
+
+Three states that all mean "it ran" have to be distinguishable with every colour
+discarded. `ok` is a filled square; `lossy` and `after loss` share a bite out of
+the bottom edge, and are told apart the way `idle` and `ok` already are — filled
+is about THIS node, hollow is about somewhere else. Neither carries the fact
+alone in any case: the footer says it in words and the accessible name says
+which node and what. `check:browsers` asserts the shapes in both engines,
+because `clip-path` resolves to the empty string in jsdom.
 
 ### An input port that cannot take text gets no text box, here too
 

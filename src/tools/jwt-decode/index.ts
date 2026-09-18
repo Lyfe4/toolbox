@@ -143,6 +143,9 @@ export const jwtDecodeTool = defineTool({
                 .join(
                   ', ',
                 )}. The signature is still verified against the original bytes, which this rounding does not touch.`,
+              // The decoded token. The signature verdict on the same port is
+              // unaffected - the note says so - but the claims are the port.
+              ['output'],
             ),
           ];
 

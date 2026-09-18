@@ -4285,6 +4285,254 @@ async function checkLossReports(browser, label) {
 }
 
 /**
+ * A LOSS THAT FOLLOWS A WIRE, AND ONE VERDICT PER NODE.
+ *
+ * Round three put what a conversion lost on the face of the node that lost it,
+ * and `checkLossReports` above asserts that sentence is really drawn. Two things
+ * were still wrong on a canvas somebody looked at, and neither was a data bug:
+ *
+ *   1. That node's FOOTER said `ok` under a face reading `Lossy · …`. Two
+ *      verdicts on one node, and the footer is the row a canvas of ten is
+ *      scanned by.
+ *   2. Wire it into a second node and the second one said `ok` with a blank
+ *      face, holding a string where the source had an object. The node with the
+ *      damaged value was the silent one.
+ *
+ * The unit suite can assert the words. It cannot assert that they are DRAWN, or
+ * that the LED beside them is a different SHAPE rather than only a different
+ * colour - jsdom has no layout engine and resolves `clip-path` to nothing. Both
+ * are here, in two engines, with no click anywhere.
+ *
+ * THREE NEGATIVE CONTROLS, because a mark that fires on a clean canvas is the
+ * one people learn to ignore before the day it is true:
+ *
+ *   - a long lossless chain, where every node has to say `ok`;
+ *   - the same lossy node wired onward from `data` instead of `output` - the
+ *     parsed source, which the write half's flattening is not in. That wire is
+ *     the way AROUND this loss, and a warning on it would be a warning on the
+ *     workaround;
+ *   - the node that lost it, which is not downstream of anything and has to say
+ *     `lossy` rather than `after loss`.
+ */
+async function checkLossAlongWires(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1600, height: 900 } });
+  const page = await context.newPage();
+
+  const CSV = { source: 'auto', target: 'csv', indent: 2, delimiter: 'comma', sortKeys: false };
+  const JSON_TARGET = {
+    source: 'auto',
+    target: 'json',
+    indent: 2,
+    delimiter: 'comma',
+    sortKeys: false,
+  };
+
+  /** Nested, so a table has to flatten something; flat, so it does not. */
+  const NESTED = '[{"user": {"name": "ada"}, "id": 1}, {"id": 2}]';
+  const FLAT = '[{"a": 1, "b": 2}, {"a": 3, "b": 4}]';
+
+  /**
+   * The footer's status word, whether it occupies any space, and the LED's own
+   * shape.
+   *
+   * Drawn as well as present, because `textContent` is satisfied by a node at
+   * zero height behind the inspector, and the whole claim is that somebody
+   * standing in front of the canvas reads this without pressing anything.
+   */
+  const verdictOf = (id) =>
+    page.evaluate((nodeId) => {
+      const node = document.querySelector(`[data-testid="node-${nodeId}"]`);
+      if (node === null) return null;
+      const slot = node.querySelector('[class*="nodeFooter"] > span');
+      const led = node.querySelector('[class*="led"]');
+      const box = slot === null ? null : slot.getBoundingClientRect();
+      return {
+        /*
+         * The ATTRIBUTE and the drawn TEXT both, and they are compared against
+         * each other below. An attribute nothing draws is a claim about a
+         * payload, which is the thing this file exists to distrust.
+         */
+        attribute: node.getAttribute('data-verdict'),
+        text: (slot?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+        drawn: box !== null && box.width > 0 && box.height > 0,
+        spoken: node.getAttribute('aria-label') ?? '',
+        clipPath: led === null ? '' : getComputedStyle(led).clipPath,
+      };
+    }, id);
+
+  const untilVerdict = async (id, wanted, timeout = 30_000) => {
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      const state = await verdictOf(id);
+      if ((state !== null && state.attribute === wanted) || Date.now() > deadline) return state;
+      await page.waitForTimeout(100);
+    }
+  };
+
+  /**
+   * A whole graph in a share link, so nothing has to be wired by hand.
+   *
+   * A node's typed input deliberately does not travel in a link, so the head
+   * node is filled once through the inspector and every node downstream of it
+   * follows from the run.
+   */
+  const graphLink = (nodes, edges) => `${ORIGIN}/?p=${shareParam({ v: 3, n: nodes, e: edges })}`;
+
+  const openChain = async (nodes, edges, input) => {
+    await page.goto(graphLink(nodes, edges), { waitUntil: 'networkidle' });
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+    await page.locator('[data-testid="node-n1"]').focus();
+    await page.keyboard.press('Enter');
+    const field = page.locator('[data-inspector-input]').first();
+    await field.waitFor({ timeout: 15_000 });
+    await field.fill(input);
+    /*
+     * Back out to the node. A share link opens the inspector on the first node,
+     * and a 320px rail over a 1600px viewport still covers the right-hand end
+     * of a four-node chain - so a node read while the panel is open can measure
+     * zero through no fault of the thing being tested.
+     */
+    await page.keyboard.press('Escape');
+  };
+
+  try {
+    /* -- 1. The node that lost it says so where its status goes ------------- */
+    await openChain(
+      [
+        ['n1', 'structured-data', 40, 40, CSV],
+        ['n2', 'structured-data', 400, 40, JSON_TARGET],
+      ],
+      [['n1', 'output', 'n2', 'input']],
+      NESTED,
+    );
+
+    const lossy = await untilVerdict('n1', 'lossy');
+    check(
+      label,
+      'the node that lost something says lossy in its footer, not ok',
+      lossy !== null && lossy.drawn && lossy.text === 'lossy',
+      JSON.stringify(lossy),
+    );
+
+    /* -- 2. And the node holding the damaged value says where it came from -- */
+    const after = await untilVerdict('n2', 'after-loss');
+    check(
+      label,
+      'the node downstream of it says after loss, drawn, with no click',
+      after !== null && after.drawn && after.text === 'after loss',
+      JSON.stringify(after),
+    );
+
+    check(
+      label,
+      'and its accessible name names the node upstream and what that node lost',
+      after !== null &&
+        after.spoken.includes('after a loss in Structured data') &&
+        after.spoken.includes('nested'),
+      (after?.spoken ?? '').replace(/\s+/g, ' ').slice(0, 200),
+    );
+
+    /*
+     * THE SHAPE, NOT THE HUE. Three states that all mean "it ran" have to be
+     * distinguishable with every colour discarded, which is what forced-colors
+     * mode does and what this project's rules require of every signal. The two
+     * loss states share a bite out of the square and differ by fill; `ok` has no
+     * clip at all. jsdom resolves `clip-path` to the empty string, so this claim
+     * has never been checkable anywhere but here.
+     */
+    check(
+      label,
+      'both loss LEDs carry a shape, and the same one',
+      lossy !== null &&
+        after !== null &&
+        lossy.clipPath !== 'none' &&
+        lossy.clipPath !== '' &&
+        lossy.clipPath === after.clipPath,
+      `lossy=${lossy?.clipPath ?? ''} after=${after?.clipPath ?? ''}`,
+    );
+
+    /* -- 3. The negative control that matters most: a wire from `data` ------ */
+    await openChain(
+      [
+        ['n1', 'structured-data', 40, 40, CSV],
+        ['n2', 'structured-data', 400, 40, JSON_TARGET],
+      ],
+      [['n1', 'data', 'n2', 'input']],
+      NESTED,
+    );
+
+    const viaData = await untilVerdict('n2', 'ok');
+    check(
+      label,
+      'a wire out of the port the loss is NOT in leaves the next node saying ok',
+      viaData !== null && viaData.drawn && viaData.text === 'ok',
+      JSON.stringify(viaData),
+    );
+
+    const stillLossy = await verdictOf('n1');
+    check(
+      label,
+      'while the node that lost it still says so',
+      stillLossy !== null && stillLossy.text === 'lossy',
+      JSON.stringify(stillLossy),
+    );
+
+    /* -- 4. Four hops, so the warning does not stop at the first one -------- */
+    const chain = [
+      ['n1', 'structured-data', 40, 40, CSV],
+      ['n2', 'structured-data', 340, 40, JSON_TARGET],
+      ['n3', 'structured-data', 640, 40, JSON_TARGET],
+      ['n4', 'hash', 940, 40, { algorithm: 'sha-256', encoding: 'hex' }],
+    ];
+    const chainWires = [
+      ['n1', 'output', 'n2', 'input'],
+      ['n2', 'output', 'n3', 'input'],
+      ['n3', 'output', 'n4', 'input'],
+    ];
+
+    await openChain(chain, chainWires, NESTED);
+
+    const far = await untilVerdict('n4', 'after-loss');
+    check(
+      label,
+      'three wires later the warning is still there, which is where it used to vanish',
+      far !== null && far.drawn && far.text === 'after loss',
+      JSON.stringify(far),
+    );
+
+    /* -- 5. The same four nodes, one flat table: silence -------------------- */
+    await openChain(chain, chainWires, FLAT);
+
+    const clean = [];
+    for (const id of ['n1', 'n2', 'n3', 'n4']) {
+      clean.push(await untilVerdict(id, 'ok'));
+    }
+
+    check(
+      label,
+      'a long chain that loses nothing says ok on every node and mentions no loss',
+      clean.every(
+        (state) =>
+          state !== null &&
+          state.drawn &&
+          state.text === 'ok' &&
+          !state.spoken.toLowerCase().includes('loss'),
+      ),
+      JSON.stringify(clean.map((state) => (state === null ? null : state.text))),
+    );
+
+    check(
+      label,
+      'and a clean LED has no bite taken out of it',
+      clean[0] !== null && (clean[0].clipPath === 'none' || clean[0].clipPath === ''),
+      clean[0] === null ? 'missing' : clean[0].clipPath,
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
  * The diff view in a real engine, where its non-colour signals actually exist.
  *
  * Everything here is structurally invisible to the unit suite, and every item
@@ -9749,6 +9997,7 @@ async function runChecks(engine, label) {
     await checkDeepLinks(browser, label);
     await checkStructuredData(browser, label);
     await checkLossReports(browser, label);
+    await checkLossAlongWires(browser, label);
     await checkDiff(browser, label);
     await checkRegex(browser, label);
     await checkOutputViews(browser, label);

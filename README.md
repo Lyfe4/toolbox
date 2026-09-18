@@ -172,6 +172,17 @@ itself keeps a short summary of its result — `47 matches`, `2.1 MB PNG image`,
 `+12 −3` — so a pipeline can be scanned without opening anything. See
 [architecture.md](docs/architecture.md#the-node-inspector).
 
+**And one word per node saying whether the answer is still the document you
+started with.** A node reads `ok`, `lossy` or `after loss`, and those three are
+alternatives rather than badges stacked on a status: `lossy` is a conversion
+that could not carry something and says on its own face what, `after loss` is a
+node whose own conversion was clean and whose input descends through a wire from
+one that was not, and `ok` therefore means clean all the way back. It follows
+the wire per PORT rather than per node, so wiring `Parsed data` onward — which
+is how you get the nested object past a CSV hop — is not marked as anything,
+because nothing was lost on that route. See
+[the conversion matrix](docs/conversion-matrix.md#where-a-loss-travels).
+
 It **starts closed** and slides in when you open it, and it comes back however
 you last left it. Open by default was the wrong first screen: an empty canvas
 beside an empty panel saying there was nothing to inspect.

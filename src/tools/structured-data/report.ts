@@ -89,6 +89,13 @@ function streamNotes(documents: number, wroteStream: boolean): readonly ToolNote
         lost(
           `A stream of ${count} documents became an array`,
           'The source holds several documents in one file. JSON, CSV and TSV have no spelling for a document separator, so they become the elements of an array - and converting the result back produces one document, not several. Choose YAML as the target to keep the stream.',
+          /*
+           * BOTH DATA PORTS. `json` has no spelling for a document separator
+           * either, so the parsed structure on `data` is the same flattened
+           * array the written document is - this is not one of the write-half
+           * losses `data` escapes.
+           */
+          ['output', 'data'],
         ),
       ];
 }

@@ -446,6 +446,13 @@ export function writeCsv(data: JsonValue, delimiter: string): ToolResult<Written
           ? `The nested value at ${shown[0] ?? ''} was written into the cell as JSON`
           : `${nested.length.toString()} nested values were written into their cells as JSON`,
         `A table cell holds text, so an object or an array becomes compact JSON inside it. Reading the file back gives that TEXT, not the structure. At ${shown.join(', ')}${rest > 0 ? `, and ${rest.toString()} more` : ''}.`,
+        /*
+         * THE WRITTEN DOCUMENT ONLY. This is the write half: the table is
+         * where the object had to become text, and `data` - the parsed source
+         * structure - still holds the object. That port is the way around this
+         * loss, so a downstream node fed from it is downstream of nothing.
+         */
+        ['output'],
       ),
     );
   }
@@ -458,6 +465,8 @@ export function writeCsv(data: JsonValue, delimiter: string): ToolResult<Written
       lost(
         `${names.length.toString()} column${names.length === 1 ? ' was' : 's were'} absent from some rows`,
         `CSV has one spelling for "this row has no such key" and for "this row's value is the empty string", and it is an empty cell. Reading the file back cannot tell them apart. The ${names.length === 1 ? 'column is' : 'columns are'} ${shown.join(', ')}${rest > 0 ? `, and ${rest.toString()} more` : ''}.`,
+        // The written document only, for the same reason as the note above.
+        ['output'],
       ),
     );
   }

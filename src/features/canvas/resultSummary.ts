@@ -233,6 +233,74 @@ export function summariseValue(
   }
 }
 
+/** One `warn` note, as the canvas needs it: what was lost, and where it went. */
+export interface LossNote {
+  /** The one line written for a person. */
+  readonly title: string;
+  /**
+   * The ids of THIS tool's output ports the loss is in.
+   *
+   * Written by the tool - see `ToolNote.reaches` - rather than guessed here,
+   * because the answer is not the same for every port of every tool.
+   * `structured-data`'s `data` port holds the parsed SOURCE, so a loss in the
+   * write half is not in it, and that port is the way AROUND the loss. A
+   * canvas rule that assumed "the node lost something, so everything leaving
+   * it is suspect" would put a warning on the workaround.
+   *
+   * Empty is possible and is not an error: it is what a report written before
+   * this field existed, or by a hand-edited share link, produces. A loss that
+   * names no port still prints on the node's own face - that is `lossSummary`,
+   * and it is about the node - it simply does not travel, because nothing has
+   * said where it went.
+   */
+  readonly reaches: readonly string[];
+}
+
+/**
+ * Every `warn` note a node's run produced, read off its `report` ports.
+ *
+ * ONE READER FOR TWO QUESTIONS. `lossSummary` asks "what does this node print
+ * on its own face" and `lossTrace` asks "what leaves it along a wire", and a
+ * second walk of the same payload is a second thing to keep in step with the
+ * shape - which is the mistake `lib/notes.ts` exists to have stopped making.
+ */
+export function lossNotesOf(
+  entry: ToolManifestEntry,
+  outputs: ToolOutputs | null,
+): readonly LossNote[] {
+  if (!outputs) return [];
+
+  const found: LossNote[] = [];
+
+  for (const port of entry.outputs) {
+    if (port.presentation !== 'report') continue;
+    const value = outputs[port.id];
+    if (value?.type !== 'json') continue;
+    const notes = isJsonObject(value.data) ? value.data.notes : undefined;
+    if (notes === undefined || !isJsonArray(notes)) continue;
+
+    for (const note of notes) {
+      if (!isJsonObject(note)) continue;
+      if (note.level !== 'warn') continue;
+      const title = note.title;
+      if (typeof title !== 'string' || title === '') continue;
+
+      // `undefined` for a report written before this field existed, or by a
+      // hand-edited share link. Not an error - see `LossNote.reaches`.
+      const reaches: JsonValue | undefined = note.reaches;
+      found.push({
+        title,
+        reaches:
+          reaches !== undefined && isJsonArray(reaches)
+            ? reaches.filter((id): id is string => typeof id === 'string' && id !== '')
+            : [],
+      });
+    }
+  }
+
+  return found;
+}
+
 /**
  * WHAT THE RUN COULD NOT CARRY, IF ANYTHING.
  *
@@ -256,25 +324,7 @@ export function summariseValue(
  * node's face would be the note that cries wolf.
  */
 export function lossSummary(entry: ToolManifestEntry, outputs: ToolOutputs | null): string | null {
-  if (!outputs) return null;
-
-  const titles: string[] = [];
-
-  for (const port of entry.outputs) {
-    if (port.presentation !== 'report') continue;
-    const value = outputs[port.id];
-    if (value?.type !== 'json') continue;
-    const notes = isJsonObject(value.data) ? value.data.notes : undefined;
-    if (notes === undefined || !isJsonArray(notes)) continue;
-
-    for (const note of notes) {
-      if (!isJsonObject(note)) continue;
-      if (note.level !== 'warn') continue;
-      const title = note.title;
-      if (typeof title === 'string' && title !== '') titles.push(title);
-    }
-  }
-
+  const titles = lossNotesOf(entry, outputs).map((note) => note.title);
   if (titles.length === 0) return null;
 
   /*

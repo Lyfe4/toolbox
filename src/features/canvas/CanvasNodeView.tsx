@@ -23,6 +23,7 @@ import { PortButton } from './PortButton';
 import { PORT_GLYPH_SIZE } from './PortGlyph';
 import { lossSummary, summariseOutputs } from './resultSummary';
 
+import type { LossTrace } from './lossTrace';
 import type { CanvasNode, NodeId, PortRef } from './types';
 
 /** How a port is keyed in the state sets below: "input:document". */
@@ -56,33 +57,65 @@ const CATEGORY_GLYPHS: Partial<Record<ToolCategory, typeof PortIcon>> = {
 };
 
 /**
+ * ONE VERDICT PER NODE.
+ *
+ * `NodeRunStatus` answers "did this node run", which is what the executor
+ * knows. It is not the question somebody scanning a row of ten nodes is
+ * asking, and round three made the gap visible: a node whose conversion lost
+ * something drew `Lossy · The nested value at $[0].user…` on its face and `ok`
+ * in its footer, so one node carried two verdicts and the terser one was the
+ * one people read.
+ *
+ * `ok` therefore splits into three. They are mutually exclusive by
+ * construction, so there is nothing to decide about which wins:
+ *
+ *   ok          it ran, it lost nothing, and nothing it descends from did
+ *               either. A stronger claim than it used to be, and the reason
+ *               the other two are legible: the contrast is still there on a
+ *               canvas where half the nodes are downstream of a loss.
+ *   lossy       THIS node lost something. Its face says what.
+ *   after-loss  this node ran cleanly, and the value it worked from descends
+ *               through a wire from a conversion that did not. See
+ *               `lossTrace.ts` for what that claim is and is not.
+ *
+ * A node's own loss outranks an inherited one. The sentence on its face is
+ * about its own conversion, and the footer has to agree with the face - which
+ * is the whole reason this type exists.
+ */
+export type NodeVerdict = NodeRunStatus | 'lossy' | 'after-loss';
+
+/**
  * Status is announced as words, never carried by the LED colour alone.
  *
  * The LED also changes SHAPE per state (see canvas.module.css), so the
  * distinction survives greyscale, colour blindness and forced-colors mode -
  * and this text is what a screen reader actually reads.
  */
-const STATUS_TEXT: Record<NodeRunStatus, string> = {
+const STATUS_TEXT: Record<NodeVerdict, string> = {
   idle: 'not run yet',
   blocked: 'blocked',
   running: 'running',
   ok: 'succeeded',
+  lossy: 'succeeded, and lost something',
+  'after-loss': 'succeeded, after a loss upstream',
   error: 'failed',
   'upstream-failed': 'waiting on a failed node upstream',
 };
 
 /** The short label printed in the node footer beside the LED. */
-const STATUS_LABEL: Record<NodeRunStatus, string> = {
+const STATUS_LABEL: Record<NodeVerdict, string> = {
   idle: 'idle',
   blocked: 'blocked',
   running: 'run',
   ok: 'ok',
+  lossy: 'lossy',
+  'after-loss': 'after loss',
   error: 'error',
   'upstream-failed': 'upstream',
 };
 
-function ledClass(status: NodeRunStatus): string {
-  switch (status) {
+function ledClass(verdict: NodeVerdict): string {
+  switch (verdict) {
     case 'idle':
       return cx(styles.led, styles.ledIdle);
     case 'blocked':
@@ -91,6 +124,10 @@ function ledClass(status: NodeRunStatus): string {
       return cx(styles.led, styles.ledRunning);
     case 'ok':
       return cx(styles.led, styles.ledOk);
+    case 'lossy':
+      return cx(styles.led, styles.ledLossy);
+    case 'after-loss':
+      return cx(styles.led, styles.ledAfterLoss);
     case 'error':
       return cx(styles.led, styles.ledError);
     case 'upstream-failed':
@@ -151,6 +188,16 @@ export interface CanvasNodeViewProps {
    * happen to agree today - see the note on the button below.
    */
   readonly onConnect: (nodeId: NodeId) => void;
+  /**
+   * Where the value THIS node worked from was lost, if it was lost upstream.
+   *
+   * Computed over the whole graph rather than here, because the question is
+   * about wires and a node knows nothing about its own: see `traceLosses`. Null
+   * on the overwhelming majority of nodes, which is what keeps `memo` doing its
+   * job - only a node that really is downstream of a loss gets a new object
+   * when the pipeline state changes.
+   */
+  readonly inheritedLoss: LossTrace | null;
 }
 
 /**
@@ -176,6 +223,7 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   onPortPointerDown,
   soleSelected,
   onConnect,
+  inheritedLoss,
 }: CanvasNodeViewProps) {
   const entry: ToolManifestEntry = getManifestEntry(node.toolId);
   const Glyph = CATEGORY_GLYPHS[entry.category] ?? SignalIcon;
@@ -269,6 +317,32 @@ export const CanvasNodeView = memo(function CanvasNodeView({
    */
   const lossText = run.status === 'ok' ? lossSummary(entry, run.outputs) : null;
 
+  /*
+   * WHERE THE VALUE CAME FROM, WHICH IS NOT WHAT THIS NODE DID TO IT.
+   *
+   * Only when this node ran and lost nothing of its own. A node's own loss is
+   * the stronger and more specific claim - it names the conversion in front of
+   * you - and two of them on one node is the thing this round is fixing rather
+   * than adding a second instance of.
+   *
+   * IT DOES NOT TOUCH THE SUMMARY BOX, deliberately. The box holds this node's
+   * own answer, and overwriting it on every node downstream of a loss is the
+   * canvas where half the nodes carry an inherited sentence - worse than the
+   * silence it replaced. The verdict below is a word in the row a person
+   * actually scans, and the accessible name carries the whole of it.
+   */
+  const inherited = run.status === 'ok' && lossText === null ? inheritedLoss : null;
+
+  /** One word, agreeing with the face. See `NodeVerdict`. */
+  const verdict: NodeVerdict =
+    run.status !== 'ok'
+      ? run.status
+      : lossText !== null
+        ? 'lossy'
+        : inherited !== null
+          ? 'after-loss'
+          : 'ok';
+
   const summaryText =
     run.status === 'error' && run.error
       ? run.error.message
@@ -292,7 +366,7 @@ export const CanvasNodeView = memo(function CanvasNodeView({
     entry.name,
     `at ${node.position.x.toString()}, ${node.position.y.toString()}`,
     counted(connections, 'connection'),
-    STATUS_TEXT[run.status],
+    STATUS_TEXT[verdict],
     run.blockedReason,
     /*
      * THE FILE, UNLESS THE VISIBLE TEXT HAS ALREADY SAID IT.
@@ -315,6 +389,18 @@ export const CanvasNodeView = memo(function CanvasNodeView({
     // could not carry" is the part a listener most needs first, and the box has
     // already given it the space.
     lossText === null ? null : `lossy: ${lossText}`,
+    /*
+     * WHICH NODE LOST IT, AND WHAT, for the one reader who cannot follow a wire
+     * back by eye. The footer says `after loss` in three characters more than
+     * `ok`; this is the sentence behind it, and it is the reason the screen does
+     * not need one. The origin node is on the canvas carrying the same sentence
+     * on its own face, which is where a sighted reader gets it.
+     */
+    inherited === null
+      ? null
+      : `after a loss in ${inherited.toolName}: ${inherited.title}${
+          inherited.origins > 1 ? `, and ${(inherited.origins - 1).toString()} more upstream` : ''
+        }`,
     resultSummary,
     run.status === 'error' ? run.error?.message : null,
     selected ? 'selected' : null,
@@ -337,6 +423,14 @@ export const CanvasNodeView = memo(function CanvasNodeView({
       style={{ left: node.position.x, top: node.position.y, height }}
       data-node-id={node.id}
       data-status={run.status}
+      /*
+       * The VERDICT as well as the status, because they are different questions
+       * and `data-status` is what the executor said. Read by
+       * `cross-browser-check.mjs`, which asserts the footer's own text against
+       * it rather than either alone - an attribute nothing draws would be a
+       * claim about a payload, which is the thing that file exists to distrust.
+       */
+      data-verdict={verdict}
       data-testid={`node-${node.id}`}
       role="group"
       aria-roledescription="Canvas node"
@@ -354,7 +448,7 @@ export const CanvasNodeView = memo(function CanvasNodeView({
             {formatDuration(run.durationMs)}
           </span>
         )}
-        <span className={ledClass(run.status)} aria-hidden="true" />
+        <span className={ledClass(verdict)} aria-hidden="true" />
       </div>
 
       <p className={styles.nodeSummary}>
@@ -423,7 +517,7 @@ export const CanvasNodeView = memo(function CanvasNodeView({
       )}
 
       <div className={styles.nodeFooter}>
-        <span>{STATUS_LABEL[run.status]}</span>
+        <span>{STATUS_LABEL[verdict]}</span>
         <span>{counted(connections, 'wire')}</span>
       </div>
 

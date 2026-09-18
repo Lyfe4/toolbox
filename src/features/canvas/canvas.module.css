@@ -304,6 +304,41 @@
 }
 
 /*
+ * A BITE OUT OF THE BOTTOM EDGE: the shape that means something is missing.
+ *
+ * Two states share it, and they are told apart the way `idle` and `ok` already
+ * are - FILLED is about this node, HOLLOW is about somewhere else - rather than
+ * by hue. That matters more here than anywhere else on a node: these two are
+ * adjacent in meaning, and a reader in greyscale or forced-colors who could not
+ * separate them would read "something upstream lost data" as "this conversion
+ * lost data" and go looking in the wrong place.
+ *
+ * Neither carries the fact on its own in any case. The footer beside it reads
+ * `lossy` or `after loss` in words, and the accessible name says which node and
+ * what. The LED is the third telling, not the first.
+ */
+.ledLossy,
+.ledAfterLoss {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 68% 100%, 50% 55%, 32% 100%, 0 100%);
+}
+
+.ledLossy {
+  border-color: var(--pb-signal-warn);
+  background-color: var(--pb-signal-warn);
+}
+
+/*
+ * Hollow, and in the muted ink rather than the warning one. This node did
+ * nothing wrong - the warning belongs to a node further back, which is drawing
+ * it filled - so a second amber light on every descendant would be the canvas
+ * shouting the same thing five times.
+ */
+.ledAfterLoss {
+  border-color: var(--pb-ink-muted);
+  background-color: transparent;
+}
+
+/*
  * Sized from SUMMARY_HEIGHT so the box and `nodeHeight` cannot disagree, and
  * tall enough for the two lines it is meant to hold.
  */
@@ -1195,10 +1230,18 @@
 
   .ledOk,
   .ledError,
-  .ledRunning {
+  .ledRunning,
+  .ledLossy {
     background-color: Highlight;
     border-color: Highlight;
   }
+
+  /*
+   * `ledAfterLoss` is deliberately absent: it is the hollow one, and the base
+   * `.led` rule above already gives it a CanvasText border. Filling it here
+   * would erase the filled-versus-hollow distinction in the one mode where hue
+   * is guaranteed to be unavailable.
+   */
 }
 
 /* --- Execution feedback ------------------------------------------------- */

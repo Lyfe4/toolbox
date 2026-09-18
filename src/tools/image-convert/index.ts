@@ -170,6 +170,15 @@ export const imageConvertTool = defineTool({
             level: note.level,
             title: note.title,
             body: note.body,
+            /*
+             * WHICH PORT THE LOSS IS IN, which the canvas follows along a wire.
+             * This tool declares one data port and one report port, so a loss
+             * is in `output` or it is not a loss. See `lib/notes.ts`; the
+             * subset is asserted against the manifest in `notePorts.test.ts`,
+             * so adding a second data port here fails a test rather than
+             * quietly under-reporting.
+             */
+            reaches: note.level === 'warn' ? ['output'] : [],
           })),
         },
       } as const,

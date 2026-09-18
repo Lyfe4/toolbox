@@ -81,6 +81,13 @@ function roundedNumberNotes(rounded: readonly RoundedNumber[]): ToolNote[] {
       `JavaScript has one numeric type and it is a double, so an integer past 2^53 cannot be held exactly.${
         first === undefined ? '' : ` ${first.source} became ${first.value.toString()}.`
       } At ${paths}${rest > 0 ? `, and ${rest.toString()} more` : ''}. Convert to CSV or TSV to keep the digits, where every cell stays a string.`,
+      /*
+       * BOTH DATA PORTS, because this one happens in the READ half. The parser
+       * produced the rounded number, so it is in the parsed structure as well
+       * as in whatever gets written out of it - unlike the write-half losses
+       * in csv.ts, which `data` escapes.
+       */
+      ['output', 'data'],
     ),
   ];
 }

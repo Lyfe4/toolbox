@@ -111,6 +111,32 @@ function named(changes: readonly MarkupChange[], kind: MarkupChange['kind']): st
   ];
 }
 
+/**
+ * WHICH OF THIS TOOL'S PORTS A LOSS IS ACTUALLY IN.
+ *
+ * `output` and `rendered` are not the same document, and treating them as one
+ * would put a warning on the port that ESCAPED the loss - the thing
+ * `ToolNote.reaches` exists to prevent.
+ *
+ * `rendered` is the SANITISED HUB for every target but Markdown, where index.ts
+ * re-renders it from `output`. So:
+ *
+ *   atHub     a loss the hub already has - the allow-list dropping raw HTML on
+ *             the way in, the sanitiser dropping an attribute. `output` is
+ *             derived from the hub, so it is in both, always.
+ *   afterHub  a loss the Markdown round trip caused, or one measured on
+ *             `output` itself. In `rendered` only when the two really are the
+ *             same document: a Markdown target, or an HTML target with no round
+ *             trip to have come after.
+ */
+const HUB_AND_OUTPUT: readonly string[] = ['output', 'rendered'];
+
+function afterHub(input: NormalisationInput): readonly string[] {
+  const outputIsHub =
+    input.target === 'html-sanitised' || (input.target === 'html' && input.normalised === null);
+  return input.target === 'markdown' || outputIsHub ? HUB_AND_OUTPUT : ['output'];
+}
+
 function plural(count: number, one: string, many: string): string {
   return count === 1 ? one : many;
 }
@@ -179,6 +205,9 @@ function markdownToHtmlNotes(input: NormalisationInput): readonly ToolNote[] {
     lost(
       `${(elements.length + attributes.length).toString()} ${plural(elements.length + attributes.length, 'thing the allow-list does not permit was removed', 'things the allow-list does not permit were removed')}`,
       `Markdown can contain raw HTML and this document does. ${parts.join(' and ')} ${plural(elements.length + attributes.length, 'is', 'are')} not on the allow-list, so ${plural(elements.length + attributes.length, 'it was', 'they were')} removed on the way out. That list is what makes this output safe to paste into a page; it is also why a README's <details> block does not survive.`,
+      // The allow-list runs on the way INTO the hub, so both documents are
+      // missing what it removed.
+      HUB_AND_OUTPUT,
     ),
   ];
 }
@@ -238,6 +267,8 @@ function identifierNotes(input: NormalisationInput): readonly ToolNote[] {
       lost(
         `${renamed.length.toString()} ${plural(renamed.length, 'identifier was', 'identifiers were')} namespaced`,
         `${listed(renamed, (name) => `${name} became ${prefix}${name}`)}. Every id and name this tool writes is prefixed ${prefix} so that markup pasted into a page cannot shadow something already there. Links inside the document are moved to match, so they still work; anything OUTSIDE it that pointed at the old name - a stylesheet, a script, a link from another page - will not find it.`,
+        // Measured on `input.output`, so that is the port it is a fact about.
+        afterHub(input),
       ),
     );
   }
@@ -248,6 +279,7 @@ function identifierNotes(input: NormalisationInput): readonly ToolNote[] {
       lost(
         `${dropped.length.toString()} ${plural(dropped.length, 'identifier is', 'identifiers are')} not in the result`,
         `${listed(dropped, (name) => name)} went in and did not come out. Markdown has no spelling for an id, so normalising takes them out to Markdown and never brings them back - a heading gets a fresh id made from its own text instead. Choose HTML (sanitised) to keep the ones the document came with.`,
+        afterHub(input),
       ),
     );
   }
@@ -258,6 +290,7 @@ function identifierNotes(input: NormalisationInput): readonly ToolNote[] {
       lost(
         `${dead.length.toString()} ${plural(dead.length, 'link in the document points', 'links in the document point')} at nothing`,
         `${listed(dead, (name) => `#${name}`)} ${plural(dead.length, 'is', 'are')} in the output and ${plural(dead.length, 'names', 'name')} an id that is not. The link was working in the document that went in, and the id it named was renamed or dropped on the way through. Choose HTML (sanitised), which changes no document structure and moves every in-document link to match.`,
+        afterHub(input),
       ),
     );
   }
@@ -285,6 +318,8 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
       lost(
         `${sanitisedAttributes.length.toString()} ${plural(sanitisedAttributes.length, 'attribute was', 'attributes were')} removed by the sanitiser`,
         `${sanitisedAttributes.join(', ')} ${plural(sanitisedAttributes.length, 'is', 'are')} not on the allowed list, so ${plural(sanitisedAttributes.length, 'it is', 'they are')} removed from every HTML this tool produces. That list is what stops an event handler or a javascript: URL surviving a paste, and it is deliberately narrow - styling hooks go with it.`,
+        // The sanitiser IS the hub, so `rendered` lost it too.
+        HUB_AND_OUTPUT,
       ),
     );
   }
@@ -294,6 +329,7 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
       lost(
         `${sanitisedElements.length.toString()} ${plural(sanitisedElements.length, 'element was', 'elements were')} removed by the sanitiser`,
         `${sanitisedElements.join(', ')} ${plural(sanitisedElements.length, 'is', 'are')} not on the allowed list. Scripts, styles and embedded frames are removed outright rather than escaped, because an HTML output is something people paste into a page.`,
+        HUB_AND_OUTPUT,
       ),
     );
   }
@@ -314,6 +350,8 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
       lost(
         `${droppedAttributes.length.toString()} ${plural(droppedAttributes.length, 'attribute the round trip could not carry', 'attributes the round trip could not carry')}`,
         `Normalising takes the document out to Markdown and back, and Markdown has no spelling for ${droppedAttributes.join(', ')}. Choose HTML (sanitised) to keep ${plural(droppedAttributes.length, 'it', 'them')}: it runs the sanitiser and nothing else.`,
+        // The round trip happens AFTER the hub, so `rendered` still has it.
+        afterHub(input),
       ),
     );
   }
@@ -323,6 +361,7 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
       lost(
         `${droppedElements.length.toString()} ${plural(droppedElements.length, 'element the round trip could not carry', 'elements the round trip could not carry')}`,
         `Markdown has no spelling for ${droppedElements.join(', ')}, so ${plural(droppedElements.length, 'it was', 'they were')} unwrapped or dropped. Choose HTML (sanitised) to keep the markup as it is, or set "Markup Markdown cannot express" to Keep as inline HTML.`,
+        afterHub(input),
       ),
     );
   }
@@ -332,6 +371,7 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
       lost(
         `${added.length.toString()} ${plural(added.length, 'element was', 'elements were')} invented by the round trip`,
         `${added.join(', ')} ${plural(added.length, 'is', 'are')} in the output and was not in the input. A Markdown table always has a header row, so a <table> written without one gains an empty one on the way back. Choose HTML (sanitised) for a pass that invents nothing.`,
+        afterHub(input),
       ),
     );
   }
@@ -366,7 +406,8 @@ function markdownNotes(input: NormalisationInput): readonly ToolNote[] {
   const notes: ToolNote[] = [];
 
   for (const casualty of MARKDOWN_CASUALTIES) {
-    if (casualty.test.test(input.input)) notes.push(lost(casualty.title, casualty.body));
+    if (casualty.test.test(input.input))
+      notes.push(lost(casualty.title, casualty.body, afterHub(input)));
   }
 
   /*
@@ -382,6 +423,7 @@ function markdownNotes(input: NormalisationInput): readonly ToolNote[] {
         lost(
           'A bare URL became an explicit link',
           'GitHub turns a bare https:// or www. into a link, so the round trip writes it back as [url](url). Turn off "Link bare URLs" to leave it as text.',
+          afterHub(input),
         ),
       );
     }

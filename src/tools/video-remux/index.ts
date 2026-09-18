@@ -177,6 +177,9 @@ export const videoRemuxTool = defineStreamingTool({
             level: note.level,
             title: note.title,
             body: note.body,
+            // The remuxed file is the only data port, so a loss is in it. See
+            // `lib/notes.ts`, and `notePorts.test.ts` for the check.
+            reaches: note.level === 'warn' ? ['output'] : [],
           })),
         },
       } as const,
