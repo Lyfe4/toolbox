@@ -74,6 +74,16 @@ export const structuredDataTool = defineTool({
       label: 'Converted',
       types: ['text'],
       description: 'The document serialised in the target format.',
+      /*
+       * WHAT THE DOCUMENT AMOUNTS TO, not its first line.
+       *
+       * `output` is written FROM the value on `data` - `writeTarget(data, ...)`
+       * below - so the item or key count of one is the item or key count of the
+       * other, whichever of the four formats it came out in. Without this a
+       * node reads `[` for every pretty-printed JSON document, `---` for every
+       * YAML stream and its column names for every table.
+       */
+      measuredBy: 'data',
     },
     {
       id: 'data',

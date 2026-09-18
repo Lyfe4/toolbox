@@ -8,7 +8,7 @@ import {
   type ToolValue,
 } from '@/features/registry/types';
 import { binaryHead, binarySize } from '@/lib/binary';
-import { counted } from '@/lib/plural';
+import { counted, plural } from '@/lib/plural';
 import { formatBytes, sniffBytes } from '@/lib/sniff';
 
 /**
@@ -31,6 +31,18 @@ import { formatBytes, sniffBytes } from '@/lib/sniff';
  *     for a person. Deriving a second one here would be a second wording to
  *     keep in step with the first, and the README has a section about what
  *     happens when this codebase words the same fact twice.
+ *
+ * THE FIRST EXCEPTION IS ABOUT PROSE, AND WAS BEING APPLIED TO SYNTAX. Round
+ * seven: `text` is the data type of a string, not a promise that a person
+ * wrote it, and three ports carry a serialised document on it. Pretty-printed
+ * JSON summarised as `[`, a YAML stream as `---`, every unified patch in the
+ * product as `--- original`, and a table as its column names - each of them
+ * the SAME STRING for every document of its kind, which is a summary carrying
+ * no information about the result it names. A tool that serialises something
+ * still has the something, so the port points at the sibling holding it and
+ * the node prints that; see `OutputPort.measuredBy` and `summariseOutputs`.
+ * Nothing here sniffs a format, because a Markdown file with front matter
+ * opens `---` as well.
  *
  * And one summary that is not a measurement at all: an unverified JWT leads
  * with the verdict. A node in the middle of a chain is precisely where nobody
@@ -86,11 +98,31 @@ function stringAt(value: JsonValue, key: string): string | null {
  * fix once already, when it reported `count: 5000` for a listing that had been
  * cut short. A node saying "200 matches" for a pattern that found 5,000 is the
  * quiet kind of wrong this project keeps finding.
+ *
+ * TWO WORDINGS, because the tool does two things and only one of them is a
+ * search. A replacement that matched nothing hands back the subject unchanged,
+ * so `output` reads as an ordinary result and the node said so; `Nothing
+ * replaced` is the whole point of putting this on a node's face.
+ *
+ * AND A `+` WHEN THE SCAN WAS STOPPED. `count` is a total when the scan ran to
+ * the end and a LOWER BOUND when the two-second budget cut it off - `complete`
+ * is the flag for exactly that, and it is in the payload already. The listing
+ * says "the scan was stopped early, so there may be more" in its last line; a
+ * node that has room for neither the line nor the doubt has room for the sign.
  */
 function regexSummary(value: JsonValue): string | null {
   const count = numberAt(value, 'count');
   if (count === null) return null;
-  return count === 0 ? 'No matches' : counted(count, 'match', 'matches');
+
+  const replacing = isJsonObject(value) && value.mode === 'replace';
+  if (count === 0) return replacing ? 'Nothing replaced' : 'No matches';
+
+  // `complete` is absent from a payload written before it existed, or by a
+  // hand-edited share link; only an explicit `false` is a stopped scan.
+  const partial = isJsonObject(value) && value.complete === false ? '+' : '';
+  return replacing
+    ? `${count.toString()}${partial} replaced`
+    : `${count.toString()}${partial} ${plural(count, 'match', 'matches')}`;
 }
 
 /**
@@ -349,6 +381,21 @@ export function lossSummary(entry: ToolManifestEntry, outputs: ToolOutputs | nul
  *
  * The other ports are not hidden, they are one press away in the inspector,
  * which is the whole reason a node is allowed to say this little.
+ *
+ * UNLESS THAT PORT IS A SERIALISATION, in which case the node prints what the
+ * document AMOUNTS TO and the serialisation stays the answer. Three ports are:
+ * `structured-data` writes its document from the value on `data`, `diff`
+ * renders its patch from the rows on `changes`, and `regex-tester` prints a
+ * listing of what is on `matches`. Each of those siblings is measured already
+ * - `2 items`, `+12 -3`, `47 matches` - and each of the three first lines was
+ * a constant: `[`, `--- original`, and the subject handed straight back when a
+ * replacement matched nothing.
+ *
+ * THE PORT SAYS SO, rather than this file guessing from the text. The format
+ * is an OPTION on two of the three tools, so nothing static could name it, and
+ * sniffing it would make the summary wrong for the first document that opens
+ * `---` without being YAML. `measuredBy` is declared beside the port that
+ * needs it and checked against the set in `ports.test.ts`.
  */
 export function summariseOutputs(
   entry: ToolManifestEntry,
@@ -361,6 +408,20 @@ export function summariseOutputs(
 
   const value = outputs[port.id];
   if (!value) return null;
+
+  /*
+   * A run produces every port its tool declares, so both lookups below succeed
+   * for any result this app has actually computed. They are still checked,
+   * because `ToolOutputs` is a record and the alternative is a non-null
+   * assertion - and the honest fallback for "the measure did not arrive" is
+   * the value itself, not silence.
+   */
+  const measure =
+    port.measuredBy === undefined
+      ? undefined
+      : entry.outputs.find((candidate) => candidate.id === port.measuredBy);
+  const measured = measure ? outputs[measure.id] : undefined;
+  if (measure && measured) return summariseValue(measured, measure.presentation);
 
   return summariseValue(value, port.presentation);
 }

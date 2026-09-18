@@ -56,6 +56,53 @@ describe('regex', () => {
   it('reports the real count even when the listing was truncated', () => {
     expect(summariseValue(json({ count: 5000, listed: 200 }), 'regex')).toBe('5000 matches');
   });
+
+  /*
+   * A TRUNCATED LISTING AND A STOPPED SCAN ARE DIFFERENT CLAIMS, and only one
+   * of them leaves `count` exact. `truncated` means the tool enumerated fewer
+   * matches than it found and still counted them all; `complete: false` means
+   * the two-second budget cut the scan off, so `count` is a floor. The listing
+   * on the text port says "there may be more" in its last line, and this is
+   * the node's room for the same doubt.
+   */
+  it('marks a count the scan did not finish reaching', () => {
+    expect(summariseValue(json({ count: 5000, listed: 200, complete: false }), 'regex')).toBe(
+      '5000+ matches',
+    );
+  });
+
+  it('leaves the count alone when the scan ran to the end', () => {
+    // The negative control. A `+` on every count is a `+` that means nothing,
+    // and `complete` is absent from a payload written before it existed.
+    expect(summariseValue(json({ count: 47, complete: true }), 'regex')).toBe('47 matches');
+    expect(summariseValue(json({ count: 47 }), 'regex')).toBe('47 matches');
+  });
+
+  /*
+   * REPLACING IS NOT SEARCHING, and the node is the one place the difference
+   * is invisible. A pattern that matched nothing hands the subject back
+   * unchanged, so `output` holds the text that went in and its first line read
+   * as an ordinary result - a replacement that did nothing and one that worked
+   * were the same node. `count` is what tells them apart, and it is the same
+   * number either way: the scan enumerates every match for a global pattern
+   * and exactly one for a non-global one, which is what `String#replace` does
+   * with the same regex.
+   */
+  it('counts replacements rather than matches when it was replacing', () => {
+    expect(summariseValue(json({ count: 3, mode: 'replace' }), 'regex')).toBe('3 replaced');
+    expect(summariseValue(json({ count: 1, mode: 'replace' }), 'regex')).toBe('1 replaced');
+  });
+
+  it('says nothing was replaced rather than that nothing matched', () => {
+    expect(summariseValue(json({ count: 0, mode: 'replace' }), 'regex')).toBe('Nothing replaced');
+  });
+
+  it('still talks about matches in match mode', () => {
+    // The control for the pair above: `mode` is read, not assumed, and a
+    // payload that does not carry it is a search.
+    expect(summariseValue(json({ count: 3, mode: 'match' }), 'regex')).toBe('3 matches');
+    expect(summariseValue(json({ count: 0, mode: 'match' }), 'regex')).toBe('No matches');
+  });
 });
 
 describe('diff', () => {
@@ -273,12 +320,20 @@ describe('which output a node summarises', () => {
    * making every one of its nodes report the wrong thing.
    */
   it('summarises the first declared output', () => {
-    const entry = getManifestEntry('regex-tester');
+    /*
+     * `text-convert`, because it has four outputs, the first of them carries
+     * prose, and none of them measures another - so this asserts the ordering
+     * rule on its own rather than through the serialisation rule below.
+     */
+    const entry = getManifestEntry('text-convert');
     expect(entry.outputs[0]?.id).toBe('output');
+    expect(entry.outputs[0]?.measuredBy).toBeUndefined();
     expect(
       summariseOutputs(entry, {
         output: text('result line'),
-        matches: json({ count: 9 }),
+        rendered: text('<p>result line</p>'),
+        detected: text('markdown (confident)'),
+        report: json({ summary: 'Markdown from html' }),
       }),
     ).toBe('result line');
   });
@@ -300,6 +355,206 @@ describe('which output a node summarises', () => {
       expect(summary?.length, entry.id).toBeLessThanOrEqual(SUMMARY_LIMIT);
     }
   });
+});
+
+/* -------------------------------------------------------------------------- *
+ * A first output that is a serialisation
+ * -------------------------------------------------------------------------- */
+
+/**
+ * WHEN THE FIRST LINE IS SYNTAX RATHER THAN AN ANSWER.
+ *
+ * `text` is the data type of a string, not a promise that a person wrote it,
+ * and the "first non-empty line" rule was written for prose and inherited by
+ * three ports that carry a serialised document. Each of them summarised as the
+ * SAME STRING for every document of its kind:
+ *
+ *   - pretty-printed JSON as `[` or `{`, and a YAML stream as `---`;
+ *   - every unified patch in the product as `--- original`, and an identical
+ *     pair - which produces an empty patch - as `Empty`;
+ *   - a replacement that matched nothing as the subject handed straight back,
+ *     which is indistinguishable from one that worked.
+ *
+ * A summary that cannot tell two different results apart is carrying no
+ * information about the result. So a port that serialises something names the
+ * sibling holding the something, and the node prints that sibling's summary.
+ *
+ * EVERY ASSERTION BELOW COMES IN A PAIR: the measurement that should be drawn,
+ * and the string the old rule would have drawn. The second half is what fails
+ * if `measuredBy` stops being read, because the first half alone would pass
+ * against a summariser that had simply learned these three sentences.
+ */
+describe('a node whose answer is a serialised document', () => {
+  const structured = getManifestEntry('structured-data');
+  const diff = getManifestEntry('diff');
+  const regex = getManifestEntry('regex-tester');
+
+  it('measures a pretty-printed JSON document instead of quoting its bracket', () => {
+    const face = summariseOutputs(structured, {
+      output: text('[\n  {\n    "a": 1\n  },\n  {\n    "a": 2\n  }\n]'),
+      data: json([{ a: 1 }, { a: 2 }]),
+      report: json({ summary: 'JSON (detected) - JSON' }),
+    });
+
+    expect(face).toBe('2 items');
+    expect(face).not.toBe('[');
+  });
+
+  it('measures an object document instead of quoting its brace', () => {
+    const face = summariseOutputs(structured, {
+      output: text('{\n  "a": 1,\n  "b": 2\n}'),
+      data: json({ a: 1, b: 2 }),
+      report: json({ summary: 'JSON (detected) - JSON' }),
+    });
+
+    expect(face).toBe('2 keys');
+    expect(face).not.toBe('{');
+  });
+
+  it('measures a YAML stream instead of quoting its document marker', () => {
+    const face = summariseOutputs(structured, {
+      output: text('---\na: 1\n---\nb: 2\n'),
+      data: json([{ a: 1 }, { b: 2 }]),
+      report: json({ summary: 'YAML (detected) - YAML' }),
+    });
+
+    expect(face).toBe('2 items');
+    expect(face).not.toBe('---');
+  });
+
+  /*
+   * A table's header is the one of the four that is not literally constant -
+   * it varies with the schema. It is constant across the DATA, though, which
+   * is the question a person is asking: a filter that returned two rows and
+   * one that returned five thousand were the same node.
+   */
+  it('measures a table by its rows rather than by its column names', () => {
+    const face = summariseOutputs(structured, {
+      output: text('a,b\n1,2\n3,4'),
+      data: json([
+        { a: 1, b: 2 },
+        { a: 3, b: 4 },
+      ]),
+      report: json({ summary: 'JSON (detected) - CSV' }),
+    });
+
+    expect(face).toBe('2 items');
+    expect(face).not.toBe('a,b');
+  });
+
+  it('measures a patch by what changed rather than by its header line', () => {
+    const face = summariseOutputs(diff, {
+      output: text('--- original\n+++ changed\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three\n'),
+      changes: json({ identical: false, stats: { added: 1, removed: 1 } }),
+    });
+
+    expect(face).toBe('+1 −1');
+    expect(face).not.toBe('--- original');
+  });
+
+  /*
+   * And the empty patch, which is the other half of the same defect: two
+   * identical documents produce no unified output at all, so the node said
+   * `Empty` - the word reserved for "it ran and produced nothing", about a
+   * comparison that ran and produced the most definite answer it has.
+   */
+  it('names an identical comparison rather than calling the empty patch empty', () => {
+    const face = summariseOutputs(diff, {
+      output: text(''),
+      changes: json({ identical: true, stats: { added: 0, removed: 0 } }),
+    });
+
+    expect(face).toBe('Identical');
+    expect(face).not.toBe('Empty');
+  });
+
+  it('counts a listing rather than quoting its first row', () => {
+    const face = summariseOutputs(regex, {
+      output: text('     0  alpha\n    12  amma'),
+      matches: json({ count: 2, listed: 2, mode: 'match' }),
+    });
+
+    expect(face).toBe('2 matches');
+    expect(face).not.toBe('0 alpha');
+  });
+
+  /*
+   * THE ONE WHERE THE OLD SUMMARY WAS NOT MERELY UNINFORMATIVE BUT MISLEADING.
+   * A replacement that matched nothing returns the subject unchanged, so the
+   * node drew the first line of the text that went IN, under the word `ok`, and
+   * the two runs below were the same node with the same face.
+   */
+  it('tells a replacement that did nothing from one that worked', () => {
+    const subject = 'alpha beta';
+
+    const missed = summariseOutputs(regex, {
+      output: text(subject),
+      matches: json({ count: 0, mode: 'replace' }),
+    });
+    const worked = summariseOutputs(regex, {
+      output: text('XlphX betX'),
+      matches: json({ count: 3, mode: 'replace' }),
+    });
+
+    expect(missed).toBe('Nothing replaced');
+    expect(worked).toBe('3 replaced');
+    expect(missed).not.toBe(worked);
+    expect(missed).not.toBe(subject);
+  });
+
+  /*
+   * A run produces every port its tool declares, so the branch below is
+   * unreachable from the app - but `ToolOutputs` is a record and the type
+   * demands an answer. The honest one is the value itself: a node that has an
+   * answer and no measurement of it should print the answer, not nothing.
+   */
+  it('falls back to the answer itself when the measuring port did not arrive', () => {
+    expect(summariseOutputs(structured, { output: text('[\n  1\n]') })).toBe('[');
+  });
+
+  it('is still null when the node has produced nothing at all', () => {
+    expect(summariseOutputs(structured, {})).toBeNull();
+    expect(summariseOutputs(diff, null)).toBeNull();
+  });
+
+  /*
+   * AND THE ONE THAT SAYS THE MECHANISM IS REACHABLE AT ALL. Every assertion
+   * above builds its own outputs, so all of them would pass against a manifest
+   * in which no port declared `measuredBy`. This asks the manifest, and it is
+   * the line a tool added later has to come past.
+   */
+  it('is declared by exactly the three tools whose answer is a serialisation', () => {
+    // Through the DECLARED type rather than the const literal, for the same
+    // reason the report test below reads it that way.
+    const entries: readonly ToolManifestEntry[] = TOOL_MANIFEST;
+    const measured = entries
+      .filter((entry) => entry.outputs[0]?.measuredBy !== undefined)
+      .map((entry) => `${entry.id}.${entry.outputs[0]?.measuredBy ?? ''}`);
+
+    expect(measured).toEqual(['structured-data.data', 'diff.changes', 'regex-tester.matches']);
+  });
+
+  /*
+   * THE FOUR THAT DELIBERATELY KEEP THEIR FIRST LINE, asserted so that
+   * "measure anything with a syntax" cannot quietly be applied to them.
+   *
+   *   - `hash` and `color-convert` produce ONE line and it is the whole
+   *     answer; a measurement of it would be a character count.
+   *   - `base64` encoding produces one line too. It is truncated with an
+   *     ellipsis that says so, and it varies with the input, which is the
+   *     property the four fixed above did not have.
+   *   - `text-convert` serves Markdown, HTML and plain text from one port, so
+   *     no static declaration could separate them - and for two of the three
+   *     the first line is the document's own title or opening sentence.
+   */
+  it.each(['hash', 'color-convert', 'base64', 'text-convert'] as const)(
+    '%s keeps the first line of its answer',
+    (id) => {
+      const entry = getManifestEntry(id);
+      expect(entry.outputs[0]?.measuredBy).toBeUndefined();
+      expect(summariseOutputs(entry, { output: text('# Title\nand more') })).toBe('# Title');
+    },
+  );
 });
 
 /* ========================================================================== *

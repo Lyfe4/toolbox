@@ -594,7 +594,12 @@ with a non-zero size, with no click anywhere.
 
 **On the canvas, a node summarises its FIRST output and nothing else** — a rule
 that is right for an answer and wrong for a caveat, because every tool's losses
-are on its second or third port. So four of round three's six reports would have
+are on its second or third port. (Round seven added one refinement to the rule
+itself: where that first output is a document written out as text, the node
+prints the measurement of the document rather than the first line of the
+serialisation. The answer does not move —
+[architecture.md](architecture.md#a-summary-that-could-not-tell-two-results-apart)
+has the reasoning.) So four of round three's six reports would have
 been sentences the product really produced, on ports nobody has to wire, and
 invisible to anybody standing in front of the canvas.
 
@@ -795,7 +800,11 @@ arrived. It stays removed; all four document ports now say so:
 - `diff`'s node stops saying `Identical`, which is the one summary in the set
   that asserts sameness rather than measuring something - a file that had a mark
   and a file that did not compared equal, and the node said so about two files
-  that are not the same.
+  that are not the same. **This sentence was true of the panel and not of the
+  node until round seven**: an identical comparison produces an empty patch, and
+  the node summarised the empty patch as `Empty`, so neither `Identical` nor the
+  correction to it ever reached a face. `diff`'s `output` is measured by
+  `changes` now, and both do.
 - `regex-tester` names it as a `warn`, because a BOM sits in front of position 0
   and is exactly why an anchored pattern finds nothing with no explanation.
 

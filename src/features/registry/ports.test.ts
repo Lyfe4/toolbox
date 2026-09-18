@@ -128,6 +128,93 @@ describe('naming conventions across the whole set', () => {
     }
   });
 
+  /* ------------------------------------------------------------------------ *
+   * `measuredBy`, judged as a set
+   * ------------------------------------------------------------------------ */
+
+  /*
+   * A PORT THAT NAMES ANOTHER PORT IS A STRING THAT CAN BE WRONG.
+   *
+   * `measuredBy` is what stops a node summarising a serialised document as its
+   * first line - `[`, `---`, `--- original`. It is a port ID rather than a
+   * reference, because the manifest is a literal that the tool implementations
+   * are checked against, and a typo in it would not fail to compile: the node
+   * would silently fall back to the first line, which is exactly the behaviour
+   * being fixed. Nothing else in the app reads the field, so nothing else
+   * would notice either.
+   */
+  it.each(ids)('%s points `measuredBy` at a port it actually has', (id) => {
+    const entry = getManifestEntry(id);
+    const available = new Set(entry.outputs.map((port) => port.id));
+
+    for (const port of entry.outputs) {
+      if (port.measuredBy === undefined) continue;
+      expect(available, `${id}.${port.id}`).toContain(port.measuredBy);
+      // And not at itself, which would be a rule with no effect written in a
+      // way that reads as though it had one.
+      expect(port.measuredBy, `${id}.${port.id}`).not.toBe(port.id);
+    }
+  });
+
+  /*
+   * ONLY A `text` PORT, and the reason is that the other types already measure
+   * themselves. A `bytes` value summarises as its size and its SNIFFED kind -
+   * `2.1 MB PNG image` - and `json` and `color` summarise as their shape and
+   * their notation. Pointing any of those at a sibling would replace a good
+   * summary with a worse one, and `base64`'s `output` is the port where it
+   * could actually happen: it carries text when encoding and bytes when
+   * decoding, from one declaration.
+   */
+  it.each(ids)('%s only measures a port that carries text alone', (id) => {
+    const entry = getManifestEntry(id);
+    for (const port of entry.outputs) {
+      if (port.measuredBy === undefined) continue;
+      expect(port.types, `${id}.${port.id}`).toEqual(['text']);
+    }
+  });
+
+  /*
+   * A CHAIN OF ONE. `summariseOutputs` resolves `measuredBy` once and
+   * summarises whatever it lands on, so a measure that measured something
+   * else would quietly report the third port - and the case is easy to write
+   * without noticing, because every port here is a plausible measure of the
+   * one before it.
+   */
+  it.each(ids)('%s measures with a port that is not itself measured by another', (id) => {
+    const entry = getManifestEntry(id);
+    const byId = new Map(entry.outputs.map((port) => [port.id, port]));
+
+    for (const port of entry.outputs) {
+      if (port.measuredBy === undefined) continue;
+      expect(byId.get(port.measuredBy)?.measuredBy, `${id}.${port.id}`).toBeUndefined();
+    }
+  });
+
+  /*
+   * AND WHERE IT IS DECLARED AT ALL, which is the positive half: the three
+   * assertions above are all satisfied by a manifest in which nobody uses the
+   * field. Only the FIRST output can matter, because that is the only one a
+   * node draws - a `measuredBy` further down the list would be a declaration
+   * with nothing reading it.
+   */
+  it('declares `measuredBy` only on a first output, and on exactly three', () => {
+    // Through the DECLARED type rather than the const literal: the literal's
+    // inferred type has no `measuredBy` on the ports that do not carry one, so
+    // the read below would not compile against it.
+    const entries: readonly ToolManifestEntry[] = TOOL_MANIFEST;
+    const declaring = entries.flatMap((entry) =>
+      entry.outputs.flatMap((port, index) =>
+        port.measuredBy === undefined ? [] : [`${entry.id}.${port.id}[${index.toString()}]`],
+      ),
+    );
+
+    expect(declaring).toEqual([
+      'structured-data.output[0]',
+      'diff.output[0]',
+      'regex-tester.output[0]',
+    ]);
+  });
+
   /*
    * Every input is required, and that is a finding rather than a coincidence:
    * no tool in the set does anything useful with a missing input. The

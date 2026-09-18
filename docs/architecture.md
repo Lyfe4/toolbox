@@ -2081,16 +2081,22 @@ audit](#the-port-set) that first port is called `output` on every tool, and
 `registry.test.ts` asserts it, so "the first output" and "the tool's answer"
 are the same thing by construction rather than by nine separate decisions.
 
-| Output                   | Summary                              | Why that and not something else                                                                                                                                                               |
-| ------------------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| regex report             | `47 matches`, `No matches`           | `count`, never `listed` — they differ exactly when the listing was truncated, and this tool has already once reported a count for a cut-short listing.                                        |
-| diff                     | `+12 −3`, `Identical`                | Additions and removals are what a diff is. `identical` gets its own word: `+0 −0` reads as the tool having failed to run.                                                                     |
-| decoded JWT              | `NOT VERIFIED · HS256`               | The one summary that is a warning rather than a measurement. A node mid-chain is where nobody opens the panel, and a decoded token that reads as ordinary makes a forgery look authoritative. |
-| conversion report        | its own `summary` line               | The report already carries a sentence written for a person. A second wording would be a second thing to keep in step.                                                                         |
-| bytes                    | `2.1 MB PNG image`                   | Size and the **sniffed** label, never the declared one — the same rule the rest of the app follows.                                                                                           |
-| text (and rendered HTML) | its first non-empty line, or `Empty` | Plain text is already the answer. An empty result drawn as an empty summary is indistinguishable from no summary, and it is usually the surprise.                                             |
-| bare JSON                | `12 keys`, `12 items`                | Nothing in an arbitrary JSON value can be relied on to be short, so nothing is quoted from it. Shape is what tells you the thing you expected came out.                                       |
-| colour                   | `#3366ff`, `#000000 at 50%`          | The notation everybody recognises. Alpha is named because the hex alone would not say it.                                                                                                     |
+For three tools the answer is a document written out as text, and those nodes
+print the **measurement** of the document rather than the first line of the
+serialisation — see [A summary that could not tell two results
+apart](#a-summary-that-could-not-tell-two-results-apart) below.
+
+| Output                       | Summary                               | Why that and not something else                                                                                                                                                               |
+| ---------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| regex report                 | `47 matches`, `No matches`            | `count`, never `listed` — they differ exactly when the listing was truncated, and this tool has already once reported a count for a cut-short listing.                                        |
+| diff                         | `+12 −3`, `Identical`                 | Additions and removals are what a diff is. `identical` gets its own word: `+0 −0` reads as the tool having failed to run.                                                                     |
+| decoded JWT                  | `NOT VERIFIED · HS256`                | The one summary that is a warning rather than a measurement. A node mid-chain is where nobody opens the panel, and a decoded token that reads as ordinary makes a forgery look authoritative. |
+| conversion report            | its own `summary` line                | The report already carries a sentence written for a person. A second wording would be a second thing to keep in step.                                                                         |
+| bytes                        | `2.1 MB PNG image`                    | Size and the **sniffed** label, never the declared one — the same rule the rest of the app follows.                                                                                           |
+| text (prose)                 | its first non-empty line, or `Empty`  | Plain text is already the answer. An empty result drawn as an empty summary is indistinguishable from no summary, and it is usually the surprise.                                             |
+| text (a serialised document) | the measurement of what it serialises | `text` is the data type of a string, not a promise a person wrote it. See [A summary that could not tell two results apart](#a-summary-that-could-not-tell-two-results-apart).                |
+| bare JSON                    | `12 keys`, `12 items`                 | Nothing in an arbitrary JSON value can be relied on to be short, so nothing is quoted from it. Shape is what tells you the thing you expected came out.                                       |
+| colour                       | `#3366ff`, `#000000 at 50%`           | The notation everybody recognises. Alpha is named because the hex alone would not say it.                                                                                                     |
 
 Every one is truncated to 60 characters, because the summary is also in the
 node's accessible name — a chain scannable by eye and not by ear is not a chain
@@ -2118,6 +2124,99 @@ promise about what a note means — `info` is "here is what happened", `warn` is
 a diagnostic: `regex-tester` carries `warn` notes about the PATTERN on a
 `regex`-presented port, and "your pattern has slashes around it" is advice. On a
 node's face it would be the note that cries wolf.
+
+### A summary that could not tell two results apart
+
+The rule above has one exception — text, summarised as its first non-empty
+line, "because plain text is already the answer". That is true of prose and
+false of every format with a syntax, and `text` is the data type of a string
+rather than a promise that a person wrote it. Three of the ten tools put a
+**serialised document** on that port, and each of them drew the same string for
+every document of its kind:
+
+| Node                              | Drew                              | For                                                  |
+| --------------------------------- | --------------------------------- | ---------------------------------------------------- |
+| Structured data → JSON            | `[` or `{`                        | every pretty-printed document                        |
+| Structured data → YAML (a stream) | `---`                             | every stream                                         |
+| Structured data → CSV or TSV      | its column names                  | every table with that schema, whatever the row count |
+| Diff                              | `--- original`                    | every patch there is                                 |
+| Diff, on two identical documents  | `Empty`                           | the most definite answer the tool has                |
+| Regex, replacing                  | the subject, handed straight back | every replacement that matched nothing               |
+
+**A summary that cannot tell two different results apart is carrying no
+information about the result.** That is the line between these and the ones
+left alone: a truncated digest and a base64 prefix are slices too, but they
+vary with the input, and they are the tool's whole answer on one line.
+
+The last row is the one that was not merely uninformative. A replacement that
+matches nothing returns the subject unchanged, so the node drew the first line
+of the text that went **in**, under the word `ok`, and a replacement that did
+nothing and one that worked were the same node.
+
+#### How it is fixed, and why not by sniffing
+
+A tool that serialises something still **has** the something. `structured-data`
+writes its document from the value on `data`; `diff` renders its patch from the
+rows on `changes`; `regex-tester` prints a listing of what is on `matches`. Each
+of those siblings already has a summary that is a measurement — `2 items`,
+`+12 −3`, `47 matches` — so the port names it:
+
+```ts
+{
+  id: 'output',
+  label: 'Converted',
+  types: ['text'],
+  measuredBy: 'data',
+}
+```
+
+`summariseOutputs` resolves that once and summarises what it lands on. **The
+answer does not move** — `output` is still the tool's answer, still the port a
+wire leaves from, still what the inspector shows first. Only what the node
+_prints_ changes.
+
+**The port declares it rather than this code guessing the format**, for two
+reasons. The format is an _option_ on two of the three tools, so nothing static
+could name it. And sniffing would be wrong the first time somebody converts a
+Markdown file with front matter, which opens `---` without being YAML — a
+summary that describes the result wrongly is worse than a bracket.
+
+`ports.test.ts` holds the field to the set: it may only name a port the same
+tool has, never itself, never one that is itself measured by a third, only a
+port carrying `text` alone (a `bytes` value already measures itself, and
+pointing one at a sibling would replace `2.1 MB PNG image` with something
+worse), and only on a first output, since that is the only one a node draws.
+
+#### What was left with its first line, and why
+
+- **`hash` and `color-convert`** produce one line and it _is_ the answer. A
+  digest clipped at 60 characters with an ellipsis is a slice, but of the
+  answer, and it differs for every input.
+- **`base64`** encoding is the same shape. Decoding puts `bytes` on the same
+  port, which measures itself.
+- **`text-convert`** serves Markdown, HTML and plain text from one port, so no
+  static declaration could separate them, and it has no parsed sibling to point
+  at. For Markdown and plain text the first line is the document's own title or
+  opening sentence, which is exactly what the rule was written for. For HTML it
+  is a real element — `<h1 id="…">Title</h1>` — except when the document opens
+  with a list, table or blockquote, where it is `<ul>` and says nothing. That
+  residue is a minority of documents rather than all of them, which is the
+  difference from the rows above, and every fix available costs the majority
+  case more than it gains.
+
+#### And two the count itself needed
+
+Promoting `regex-tester`'s count onto a node's face raised the stakes on what
+that number means, so two distinctions that had only ever been drawn in a panel
+are now drawn in three characters:
+
+- **`47 replaced`, not `47 matches`, when it was replacing.** The tool does two
+  things and only one of them is a search.
+- **`5000+ matches` when the scan did not finish.** `count` is a total when the
+  scan ran to the end and a **lower bound** when the two-second budget cut it
+  off. `truncated` is a different claim — the listing was shortened and the
+  count is still exact — and conflating the two is the shape of mistake this
+  summary was already fixed for once.
 
 ### One verdict per node, and a loss that follows a wire
 

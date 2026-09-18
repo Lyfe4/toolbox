@@ -115,11 +115,16 @@ export function buildReport(input: ReportInput): JsonValue {
   const losses = lossLine(notes);
 
   /*
-   * The summary is the line a node prints when there is NOTHING lost, and the
-   * first line of the panel otherwise. `JSON → YAML` is the whole answer to
-   * "what did it decide"; the losses are appended because a summary that omits
-   * them would be the second wording of the same fact going out of step with
-   * the first.
+   * The first line of the report panel, and the hint beside `Detected` in the
+   * inspector. `JSON → YAML` is the whole answer to "what did it decide"; the
+   * losses are appended because a summary that omits them would be the second
+   * wording of the same fact going out of step with the first.
+   *
+   * NOT WHAT THE NODE PRINTS, which this used to claim. A node summarises its
+   * FIRST output and this is the third, so the sentence never reached a face;
+   * what does reach one is a `warn` note's title, through `lossSummary`, and
+   * the measurement of the document through `measuredBy`. See
+   * `features/canvas/resultSummary.ts`.
    */
   const summary = `${chosen ? from : `${from} (detected)`} → ${to}${losses === null ? '' : ` · ${losses}`}`;
 

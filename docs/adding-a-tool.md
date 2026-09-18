@@ -131,6 +131,13 @@ each is in
 
 - **The first output is `output`.** A node summarises its first declared output
   as "the tool's answer", and that only means anything if the set agrees.
+- **If that answer is a serialised document, say what measures it.** A node
+  prints a measurement, and the rule for `text` — its first non-empty line — is
+  right for prose and is syntax for everything else: pretty-printed JSON
+  summarised as `[` and every unified patch as `--- original`. If your tool
+  writes its answer out from a value it also puts on another port, name that
+  port with `measuredBy` and the node prints its summary instead. See
+  [architecture.md](architecture.md#a-summary-that-could-not-tell-two-results-apart).
 - **One input is called `input`; several are each named.**
 - **Every port carries a description.** It is the only documentation of a port
   that reaches a person: an input's is its editor's placeholder — or, on a port

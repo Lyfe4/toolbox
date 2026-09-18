@@ -4256,7 +4256,13 @@ async function checkLossReports(browser, label) {
     await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
 
     await typeInto('[{"a": 1, "b": 2}, {"a": 3, "b": 4}]');
-    const cleanNode = await untilSummary((text) => text.includes('a,b'), 30_000);
+    /*
+     * `2 items`, not `a,b`. This waited on the CSV HEADER until round seven,
+     * because the header was what a node drew for every table it ever
+     * produced - and for the same reason two of these documents with different
+     * numbers of rows were the same node. See `checkSerialisedFaces`.
+     */
+    const cleanNode = await untilSummary((text) => text.includes('2 items'), 30_000);
     check(
       label,
       'a node whose conversion lost nothing says nothing about loss',
@@ -4278,6 +4284,224 @@ async function checkLossReports(browser, label) {
       'this engine agrees that rgb(50% 50% 50%) is 128, which is why the parser rounds',
       computed.replace(/\s/g, '') === 'rgb(128,128,128)',
       computed,
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * WHAT A NODE DRAWS WHEN ITS ANSWER IS A SERIALISED DOCUMENT.
+ *
+ * A node summarises its first output, and for three tools that output is a
+ * document written out as text. The summary rule for text is "the first
+ * non-empty line", which was written for prose and is syntax for everything
+ * else - so until round seven a node drew:
+ *
+ *   - `[` or `{` for every pretty-printed JSON document it ever produced;
+ *   - `---` for every YAML stream;
+ *   - `--- original` for every unified patch, and `Empty` for every identical
+ *     comparison, which is the word reserved for a run that produced nothing;
+ *   - the subject handed straight back, for a replacement that matched
+ *     nothing - indistinguishable from one that worked.
+ *
+ * Each of those is the SAME STRING for every document of its kind, so it
+ * carries no information about the result it names.
+ *
+ * WHY IT IS HERE AND NOT ONLY IN THE UNIT SUITE. `resultSummary.test.ts`
+ * asserts the strings the function returns, which is a claim about a function.
+ * The claim worth making is that a person standing in front of the canvas
+ * READS them, and jsdom has no layout engine: a node drawn at zero height
+ * behind the inspector satisfies `textContent` and satisfies nothing else. So
+ * every assertion below is paired - the measurement is drawn with a real box,
+ * and the string the old rule would have drawn is not on the node.
+ *
+ * The negative halves are the ones that fail if `measuredBy` stops being read.
+ */
+async function checkSerialisedFaces(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1600, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    const nodeLink = (tool, options) =>
+      `${ORIGIN}/?p=${shareParam({ v: 3, n: [['n1', tool, 0, 0, options]], e: [] })}`;
+
+    /** The face of `n1`, and whether it takes up any room on screen. */
+    const faceOf = () =>
+      page.evaluate(() => {
+        const box = document.querySelector('[data-testid="node-n1"] [class*="nodeSummary"]');
+        if (box === null) return null;
+        const rect = box.getBoundingClientRect();
+        return {
+          text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
+          drawn: rect.width > 0 && rect.height > 0,
+          spoken: (
+            document.querySelector('[data-testid="node-n1"]')?.getAttribute('aria-label') ?? ''
+          )
+            .replace(/\s+/g, ' ')
+            .trim(),
+        };
+      });
+
+    const untilFace = async (predicate) => {
+      const deadline = Date.now() + 30_000;
+      for (;;) {
+        const face = await faceOf();
+        if ((face !== null && predicate(face.text)) || Date.now() > deadline) return face;
+        await page.waitForTimeout(100);
+      }
+    };
+
+    /**
+     * Opens a node and fills one of its input boxes.
+     *
+     * By PORT ID rather than by position: `diff` has two, and "the first
+     * textarea in the panel" is a fact about the panel's layout rather than
+     * about which document is which.
+     */
+    const typeInto = async (portId, value) => {
+      await page.locator('[data-testid="node-n1"]').focus();
+      await page.keyboard.press('Enter');
+      const field = page.locator(`[data-inspector-input="${portId}"]`);
+      await field.waitFor({ timeout: 15_000 });
+      await field.fill(value);
+    };
+
+    const open = async (tool, options) => {
+      await page.goto(nodeLink(tool, options), { waitUntil: 'networkidle' });
+      await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+    };
+
+    /* -- 1: pretty-printed JSON, which is where this was reported ---------- */
+    const CONVERT = {
+      source: 'auto',
+      target: 'json',
+      indent: 2,
+      delimiter: 'comma',
+      sortKeys: false,
+    };
+    await open('structured-data', CONVERT);
+    await typeInto('input', '[{"a": 1}, {"a": 2}]');
+
+    const jsonFace = await untilFace((text) => text === '2 items');
+    check(
+      label,
+      'a node holding a pretty-printed JSON document draws what it amounts to',
+      jsonFace !== null && jsonFace.drawn && jsonFace.text === '2 items',
+      JSON.stringify(jsonFace?.text ?? null),
+    );
+    check(
+      label,
+      'and not the opening bracket, which every one of them starts with',
+      jsonFace !== null && jsonFace.text !== '[' && !jsonFace.text.startsWith('['),
+      JSON.stringify(jsonFace?.text ?? null),
+    );
+    check(
+      label,
+      'and its accessible name carries the same measurement',
+      jsonFace !== null && jsonFace.spoken.includes('2 items'),
+      (jsonFace?.spoken ?? '').slice(0, 160),
+    );
+
+    /* -- 2: a YAML stream, whose first line is the document marker --------- */
+    await open('structured-data', { ...CONVERT, target: 'yaml' });
+    await typeInto('input', '---\na: 1\n---\nb: 2\n');
+
+    const yamlFace = await untilFace((text) => text === '2 items');
+    check(
+      label,
+      'a node holding a two-document YAML stream draws two, not the marker',
+      yamlFace !== null && yamlFace.drawn && yamlFace.text === '2 items' && yamlFace.text !== '---',
+      JSON.stringify(yamlFace?.text ?? null),
+    );
+
+    /* -- 3: a unified patch, whose first line is a constant ---------------- */
+    const DIFF = {
+      ignoreWhitespace: 'none',
+      ignoreCase: false,
+      lineEndings: 'ignore',
+      refineWords: true,
+      context: 3,
+    };
+    await open('diff', DIFF);
+    await typeInto('original', 'one\ntwo\nthree\n');
+    await typeInto('changed', 'one\n2\nthree\n');
+
+    const patchFace = await untilFace((text) => text.includes('+1'));
+    check(
+      label,
+      'a node holding a unified patch draws what changed',
+      patchFace !== null && patchFace.drawn && patchFace.text === '+1 −1',
+      JSON.stringify(patchFace?.text ?? null),
+    );
+    check(
+      label,
+      'and not `--- original`, which is the first line of every patch there is',
+      patchFace !== null && !patchFace.text.includes('--- original'),
+      JSON.stringify(patchFace?.text ?? null),
+    );
+
+    /* -- 4: and the identical pair, which produces no patch at all --------- */
+    await open('diff', DIFF);
+    await typeInto('original', 'one\ntwo\n');
+    await typeInto('changed', 'one\ntwo\n');
+
+    const sameFace = await untilFace((text) => text === 'Identical');
+    check(
+      label,
+      'two identical documents draw `Identical` rather than `Empty`',
+      sameFace !== null && sameFace.drawn && sameFace.text === 'Identical',
+      JSON.stringify(sameFace?.text ?? null),
+    );
+
+    /*
+     * -- 5: the one that was not merely uninformative but misleading --------
+     *
+     * A replacement that matched nothing hands the subject back unchanged, so
+     * the node drew the first line of the text that went IN, under the word
+     * `ok`. Both halves are checked in one page each, because the point is
+     * that the two runs used to be indistinguishable.
+     */
+    const REPLACE = {
+      pattern: 'zzz',
+      mode: 'replace',
+      replacement: 'X',
+      global: true,
+      ignoreCase: false,
+      multiline: false,
+      dotAll: false,
+      unicode: 'none',
+      sticky: false,
+    };
+    await open('regex-tester', REPLACE);
+    await typeInto('input', 'alpha beta');
+
+    const missedFace = await untilFace((text) => text === 'Nothing replaced');
+    check(
+      label,
+      'a replacement that matched nothing says so on the node',
+      missedFace !== null && missedFace.drawn && missedFace.text === 'Nothing replaced',
+      JSON.stringify(missedFace?.text ?? null),
+    );
+    check(
+      label,
+      'and does not draw the subject it handed straight back',
+      missedFace !== null && !missedFace.text.includes('alpha'),
+      JSON.stringify(missedFace?.text ?? null),
+    );
+
+    await open('regex-tester', { ...REPLACE, pattern: 'a' });
+    await typeInto('input', 'alpha beta');
+
+    const didFace = await untilFace((text) => text === '3 replaced');
+    check(
+      label,
+      'and a replacement that worked draws a different sentence from one that did not',
+      didFace !== null &&
+        didFace.drawn &&
+        didFace.text === '3 replaced' &&
+        didFace.text !== missedFace?.text,
+      JSON.stringify([missedFace?.text ?? null, didFace?.text ?? null]),
     );
   } finally {
     await context.close().catch(() => {});
@@ -9997,6 +10221,7 @@ async function runChecks(engine, label) {
     await checkDeepLinks(browser, label);
     await checkStructuredData(browser, label);
     await checkLossReports(browser, label);
+    await checkSerialisedFaces(browser, label);
     await checkLossAlongWires(browser, label);
     await checkDiff(browser, label);
     await checkRegex(browser, label);

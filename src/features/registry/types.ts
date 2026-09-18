@@ -289,6 +289,33 @@ export interface OutputPort extends PortBase {
    * invites somebody to believe claims that nothing checked.
    */
   readonly presentation?: 'diff' | 'html' | 'jwt' | 'regex' | 'report';
+
+  /**
+   * THE SIBLING PORT THAT MEASURES THIS ONE, when this one is a SERIALISATION.
+   *
+   * A node's face is 224px and prints a MEASUREMENT of the result - "47
+   * matches", "2.1 MB PNG image". The one exception is text, where the first
+   * line is taken as the measurement because "plain text is already the
+   * answer"; see `resultSummary.ts`. That is true of prose and false of every
+   * format with a syntax, and the rule was inherited by ports that carry one:
+   * pretty-printed JSON summarised as `[`, a YAML stream as `---`, and every
+   * unified patch in the product as `--- original`. All three are the same
+   * string for every document of their kind, which is a summary carrying no
+   * information about the result it claims to describe.
+   *
+   * The fix is not to guess the format from the bytes - a Markdown file with
+   * front matter opens `---` too - but to notice that a tool which serialises
+   * something has the something. `structured-data` writes its `output` FROM
+   * the value on `data`; `diff` renders its patch from the rows on `changes`;
+   * `regex-tester` prints a listing of what is on `matches`. Naming that port
+   * here says "the answer is on this port, and what it amounts to is on that
+   * one", and the node prints the second.
+   *
+   * ONLY FOR A `text` PORT, which `ports.test.ts` asserts. A `bytes` value
+   * already measures itself - size and the sniffed kind - so pointing one at a
+   * sibling would replace a better summary with a worse one.
+   */
+  readonly measuredBy?: string;
 }
 
 /** True when an output port's declared types overlap an input port's. */

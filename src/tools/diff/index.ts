@@ -85,6 +85,13 @@ export const diffTool = defineTool({
       label: 'Unified patch',
       types: ['text'],
       description: 'Standard unified diff, ready to paste into a review or apply.',
+      /*
+       * A patch's first line is `--- original` whatever the two documents
+       * were, and an identical pair produces an empty patch, so a node said
+       * either one constant or `Empty` and never `+12 -3`. `changes` is the
+       * same comparison as a structure, and `diffSummary` already reads it.
+       */
+      measuredBy: 'changes',
     },
     {
       id: 'changes',

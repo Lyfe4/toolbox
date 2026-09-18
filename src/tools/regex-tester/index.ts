@@ -62,6 +62,14 @@ export const regexTesterTool = defineTool({
       label: 'Result',
       types: ['text'],
       description: 'The replaced text, or a list of matches with their offsets.',
+      /*
+       * The count, because the first line of this port cannot carry it. In
+       * match mode it is the first row of a listing that may have been cut
+       * short; in replace mode a pattern that matched NOTHING returns the
+       * subject unchanged, which on a node's face is indistinguishable from a
+       * replacement that worked.
+       */
+      measuredBy: 'matches',
     },
     {
       id: 'matches',

@@ -169,8 +169,10 @@ node and the inspector shows all three, using the same options panel and the
 same five output views the tool page uses — so a chain runs on the settings you
 chose and you can read what it produced, including the last node's. The node
 itself keeps a short summary of its result — `47 matches`, `2.1 MB PNG image`,
-`+12 −3` — so a pipeline can be scanned without opening anything. See
-[architecture.md](docs/architecture.md#the-node-inspector).
+`+12 −3`, `2 items` — so a pipeline can be scanned without opening anything.
+Every one of those is a **measurement** rather than a slice of the result, which
+is why a node holding a pretty-printed JSON document says `2 items` rather than
+`[`. See [architecture.md](docs/architecture.md#the-node-inspector).
 
 **And one word per node saying whether the answer is still the document you
 started with.** A node reads `ok`, `lossy` or `after loss`, and those three are
@@ -1553,6 +1555,78 @@ question it was written for:
   round four had to delete a stopwatch for, and it is a verdict rather than a
   duration: a YAML fault past the budget cannot be seen by a bounded parse and
   cannot be missed by an unbounded one.
+
+### The summary that was the same string every time
+
+A node is 224px wide with two clamped lines, and what it prints is a
+**measurement** of its result — `47 matches`, `2.1 MB PNG image`, `+12 −3`. One
+data type was exempt: `text`, summarised as its first non-empty line, on the
+grounds that plain text is already the answer.
+
+`text` is the data type of a string. It is not a promise that a person wrote it,
+and three tools put a **serialised document** on that port. Reported from a
+four-node chain, where the middle nodes each showed a single bracket:
+
+| Node                                  | Drew                              |
+| ------------------------------------- | --------------------------------- |
+| Structured data → JSON                | `[`, or `{`                       |
+| Structured data → YAML, a stream      | `---`                             |
+| Structured data → CSV or TSV          | its column names                  |
+| Diff                                  | `--- original`                    |
+| Diff, on two identical documents      | `Empty`                           |
+| Regex, replacing and matching nothing | the subject, handed straight back |
+
+The useful way to say what is wrong with those is not "uninformative": it is
+that **each of them is the same string for every result of its kind**, so the
+summary cannot tell two different results apart. That is also the line that
+decides what to leave alone. A SHA-256 clipped to 60 characters and a base64
+prefix are slices too, but they vary with the input and they are the tool's
+whole answer on one line, so they stay.
+
+The last row was not merely uninformative. A replacement that matches nothing
+returns the subject unchanged, so the node drew the first line of the text that
+went **in**, under the word `ok` — a replacement that did nothing and one that
+worked were the same node.
+
+**The fix is not to sniff the format.** A Markdown file with front matter opens
+`---` without being YAML, and the format is an option on two of the three tools,
+so nothing static could name it either. What is true of all three is that a tool
+which serialises something still has the something: `structured-data` writes its
+document from the value on `data`, `diff` renders its patch from the rows on
+`changes`, `regex-tester` prints a listing of what is on `matches`. Each sibling
+is already measured, so the port names it with `measuredBy` and the node prints
+that. The answer does not move — `output` is still what a wire carries.
+
+Three things fell out of it that were not the original report:
+
+- **Two of the summaries this repository documents had never been drawn.** The
+  architecture doc has listed `+12 −3` and `47 matches` as node summaries since
+  they were written, and both live on a second port, so neither had ever reached
+  a node's face. So did the conversion matrix's claim that "diff's node stops
+  saying `Identical`" when only a byte order mark differs — an identical
+  comparison produces an empty patch, and `Empty` is what the node said. All
+  three are true now, and each has a check in two engines.
+- **`47 replaced`, not `47 matches`, when the tool was replacing.** It does two
+  things and only one of them is a search.
+- **`5000+ matches` when the two-second budget stopped the scan.** `count` is a
+  total when the scan ran to the end and a lower bound when it did not, and
+  `complete` was already in the payload saying which. That is a different claim
+  from `truncated`, which means the listing was shortened and the count is
+  exact — and this summary has already been fixed once for conflating them.
+
+**What was left alone, and why.** `hash` and `color-convert` produce one line
+and it is the whole answer. `base64` encoding is the same, and decoding puts
+`bytes` on the same port, which measures itself. `text-convert` serves Markdown,
+HTML and plain text from one port, so no static declaration separates them and
+it has no parsed sibling to point at; for two of the three the first line is the
+document's own title or opening sentence, which is exactly what the rule was
+written for. Its HTML target keeps one residue — a document opening with a list
+draws `<ul>` — and that is a minority of documents rather than all of them,
+which is the difference from the table above.
+
+Every one of the nine new checks was run against a deliberate break before being
+trusted: the resolution removed, the declaration removed, `mode` ignored,
+`complete` ignored, and five malformed declarations. Each failed, named.
 
 ## Performance
 

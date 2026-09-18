@@ -99,6 +99,10 @@ export const TOOL_MANIFEST = [
         label: 'Converted',
         types: ['text'],
         description: 'The document serialised in the target format.',
+        // The node prints what the document AMOUNTS TO rather than its first
+        // line, which for pretty-printed JSON is `[` and for a YAML stream is
+        // `---`. See `OutputPort.measuredBy`.
+        measuredBy: 'data',
       },
       {
         id: 'data',
@@ -221,6 +225,9 @@ export const TOOL_MANIFEST = [
         label: 'Unified patch',
         types: ['text'],
         description: 'Standard unified diff, ready to paste into a review or apply.',
+        // Every unified patch in the product begins `--- original`, so the
+        // node's face was the same string whatever the two documents were.
+        measuredBy: 'changes',
       },
       {
         id: 'changes',
@@ -259,6 +266,10 @@ export const TOOL_MANIFEST = [
         label: 'Result',
         types: ['text'],
         description: 'The replaced text, or a list of matches with their offsets.',
+        // A replacement that matched nothing returns the subject unchanged, so
+        // the node read as an ordinary result. The count is the thing that
+        // tells those two apart.
+        measuredBy: 'matches',
       },
       {
         id: 'matches',
