@@ -2975,15 +2975,18 @@ fourth is deliberately not, for reasons the next section is about:
          < 1000px          1000..1439px                 >= 1440px
 
      +--------------+  +----------+--------+   +-------+-------+--------+
-  1  |    Input     |  |  Input   | Options|   | Input |Options| Output |  <- .layout
+  1  |    Input     |  |  Input   | Options|   | Input |Options| Output |
      +--------------+  +----------+  ....  |   | 440px |  300  |  rest  |
-  2  |   Options    |  |          | scroll |   |       | .... |         |
-     |     Run      |  |  Output  |  ....  |   |       |  Run |         |
+  2  |   Options    |  |          | scroll |   +-------+ ....  |        |
+     |     Run      |  |  Output  |  ....  |   | Ports |  Run  |        |
      +--------------+  |          |  Run   |   +-------+-------+--------+
-  3  |    Output    |  +----------+--------+
+  3  |    Output    |  +----------+        |
+     +--------------+  |  Ports   |        |
+  4  |    Ports     |  +----------+--------+
      +--------------+
-  4  |    Ports     |  |       Ports       |   |         Ports          |  <- page flow
-     +--------------+  +-------------------+   +------------------------+
+
+  Every box above is inside `.layout`. The rail is the middle column at every
+  width it has one, and NOTHING ELSE IS EVER IN THAT COLUMN - see below.
 ```
 
 **Options come before Output in the DOM.** This is the whole design, and it is
@@ -3095,6 +3098,64 @@ the side-by-side diff — wants about 600. 440 + 300 + 600 + 32 for the two gaps
 Everything above 1440 goes to the output, which is the same decision the single
 breakpoint made and the same place it sent it — this page now has somewhere to
 send it to. On `diff` at 1440×800 the Output panel's top is 191 rather than 811.
+
+### The footnote that was the tallest thing in the column
+
+Filling the content column with Ports and the Privacy panel closed one gap and
+opened another: at 922px the left column was now taller than a 302px options
+rail, so the rail looked stunted instead of the input looking stranded. Moving
+content between columns cannot fix that, because a three-column page only looks
+composed when the columns are of comparable length — what fixes it is having
+less to lay out.
+
+So the Ports footnote is a `<details>`, closed, and the Privacy panel is gone
+from tool pages. Measured on text-convert at 1920 with a result on screen:
+
+|                | Before | After |
+| -------------- | ------ | ----- |
+| Ports panel    | 389px  | 92px  |
+| Content column | 922px  | 444px |
+| Options rail   | 302px  | 302px |
+| Output column  | 621px  | 621px |
+| Page           | 1176px | 985px |
+
+**`<details>` rather than a button and a piece of state**, because the keyboard
+path, the screen-reader path and the open/closed semantics are all native — and
+this file has already learned once that a control rebuilt by hand is a control
+whose accessibility has to be rebuilt by hand too. The summary reads
+`1 INPUT · 4 OUTPUTS` rather than "Ports", because the panel's title bar already
+says that and this page fixed the same duplication on its output port labels.
+
+**The Privacy panel was identical boilerplate on all ten tool pages**, and the
+claim it makes is on the home page, in the README and in SECURITY.md. What it
+added to a tool page was 165px of prose that says the same thing every time.
+
+**Two things this cost, and both are asserted rather than assumed.** A closed
+disclosure measures zero, so every assertion about where a port's sentence sits
+relative to its name became `0 >= 0` — true of a correct layout and equally true
+of a broken one. `checkRunnerLayout` opens it before measuring and asserts the
+cells have real width first. And a disclosure is only a disclosure if the text
+is really there while it is shut: that is asserted on the sentences
+specifically, because the table's `textContent` survives `hidden` and
+`display: none` and would have counted the port names as proof about the
+descriptions.
+
+**And the footnotes fill the space the rail leaves.** A three-column layout
+whose middle column is the tall one reads worse than the two-column layout it
+replaced: measured on text-convert at 1920 with its notes shown, an 848px rail
+left 512px of nothing under a 336px Input panel and 782px under an empty Output,
+while 380px of Ports and Privacy sat below the whole grid. They are the same
+380px. Moving them into the content column takes it to 922px against that 848px
+rail — no gap on the left at all — and the page from 1531px to 1176.
+
+The grid detail that makes it work is the rail's row span. A grid row is shared
+across every column, so a rail confined to row one would set row one's height for
+the input as well and put the footnotes _below_ an 848px rail rather than beside
+it. Spanning both rows, its height is distributed across rows the content column
+sizes itself, and the left column is as tall as its own contents and no taller.
+
+What is left is one void, under an empty Output, at the edge of the page — and
+that one closes itself the moment there is a result.
 
 **The Output panel stops stretching, and the two breakpoints want opposite
 things for a structural reason.** At 1000px the panel is row two of a grid the
@@ -3239,13 +3300,27 @@ sidebar's containing block bottom _is_ the content column's bottom, and there is
 nothing inside the grid below it to reach. The tool page's grid had a third row,
 and that row was full-bleed, so it lay across the rail's whole travel range.
 
-**The fix is that `.layout` holds only the three regions the rail travels
-beside.** Ports is a sibling in the page's own flow. Nothing about z-index,
+**The first fix was that `.layout` held only the three regions the rail travels
+beside**, with Ports a sibling in the page's own flow. Nothing about z-index,
 margins or padding was involved, and none of them could have been: the rail was
-not escaping its bounds, it was inside them. The property that now holds is
-structural rather than measured — anything a future tool renders below the fold
-is outside the rail's containing block, because it is outside that grid, whatever
-its height and however tall the options panel is.
+not escaping its bounds, it was inside them.
+
+**That fix worked by removing the horizontal half of the overlap as a side
+effect, and the rule has since been narrowed to the half that does the work:
+nothing may occupy the rail's COLUMN.** Two boxes that never share a horizontal
+band cannot overlap however far either one travels, whatever their containing
+blocks are. Stated that way it costs nothing to keep the footnotes inside the
+grid — which is where the space is, because a tall options rail leaves several
+hundred pixels of nothing beside a short input.
+
+So Ports and the route's Privacy panel are one stack in the content column now,
+and the rule is asserted from both ends: `ToolRunner.layout.test.tsx` checks the
+stack is declared into column 1 and never into the rail's or across it, and
+`checkRunnerLayout` measures that the rail overlaps no section at rest, **with
+the page scrolled to its foot** — the state the 52px overlap appeared in and the
+one "at rest" cannot see — and beside a 2400px options panel at six scroll
+positions. Driven against a deliberately full-bleed stack, those report `Ports by
+6px` and `Ports by 145px`.
 
 One more thing fell out of the same span. **Two `auto` rows split the rail's
 surplus height between them**, which put 80px of nothing between the Input and
@@ -3369,6 +3444,153 @@ Two things that did _not_ depend on the reserved height, and are unchanged: row
 one is `min-content`, so the Output panel's top is the input's height alone, and
 `.optionsScroll` is a scroll container, so a tall options panel cannot size the
 grid's rows.
+
+### The first run that paid for the worker's import
+
+Converting `test` to JSON reported **2113ms** on a tool page and 7ms on the
+canvas. There is no debounce, no minimum display time and no artificial delay in
+that path - measured by grepping for all four and by running the same conversion
+three times in a row.
+
+|                   | Run 1 | Run 2 | Run 3 |
+| ----------------- | ----- | ----- | ----- |
+| Tool page, before | 63ms  | 7ms   | 6ms   |
+| Canvas            | 7ms   | 7ms   | 7ms   |
+| Tool page, after  | 8ms   | 9ms   | 5ms   |
+
+A worker has its own module registry. `ToolRunner` imports a tool into the PAGE
+for its option field descriptors, which does nothing for the thread the tool
+runs on, so the first press of Run paid for the worker's import of the tool
+chunk. The canvas never had the problem because `Canvas.tsx` calls
+`engine.prefetch` when a node is added; this page never called it at all. The
+2113ms is that same import under `pnpm dev`, where Vite serves an unbundled
+module graph - the same mechanism, thirty times larger.
+
+`engine.prefetch(toolId)` now sits in the effect that already loads the options.
+Two things about it are asserted rather than assumed:
+
+- **It warms nothing where nothing will run.** `/tools` lists ten tools and runs
+  none, and warming all ten from an index would be the hover-prefetch the
+  engine's own comment rules out. `checkWorkerWarmth` replaces `window.Worker`
+  before any application code runs and counts: **0 on the index, 1 on a tool
+  page**, before Run is ever pressed.
+- **It does not change what a run reports.** `durationMs` is measured in
+  `useToolExecution` around `execute` and that arithmetic is untouched. The
+  number got smaller because the work is smaller, not because something stopped
+  being counted.
+
+The cost is one worker and one chunk when somebody opens a tool page and leaves
+without running anything, which is the trade the canvas already makes on a node
+add - and opening `/tools/:id` is the same kind of deliberate act.
+
+### The input editor that was 200px in the build and 87px in dev
+
+Reported as "the editor sits at about three lines, where it used to be ten", and
+reproduced by refreshing the page. It is neither a regression nor a refresh: it
+is `pnpm dev` and the production build disagreeing about the cascade.
+
+`.editor` (200px, an input you paste into) and `.result` (48px, an output sized
+to its content) both have to beat `.textarea`'s own 80px floor. A CSS module is
+one class deep, so a bare `.editor` TIES with `.textarea` and the winner is
+whichever stylesheet the bundler put last. The build links the runner's chunk
+after the one holding TextInput and these won; the dev server injects them the
+other way round and they lost. Measured on `/tools/structured-data` at 1440:
+
+|                    | Fresh | After reload | After a second reload |
+| ------------------ | ----- | ------------ | --------------------- |
+| Production build   | 200px | 200px        | 200px                 |
+| `pnpm dev`, before | 87px  | 87px         | 87px                  |
+| `pnpm dev`, after  | 200px | 200px        | 200px                 |
+
+**Both selectors carry a `textarea` qualifier now**, which makes them (0,1,1)
+against (0,1,0) and takes stylesheet order out of it. `.source` in the HTML view
+got the same treatment for the same reason.
+
+This had already cost one wrong conclusion before it cost a bug report: read in
+the dev server alone, both rules look like dead code, and the note that used to
+sit here said so. A development environment that disagrees with the product
+about the size of its main input makes every judgement taken in it suspect —
+which is exactly what happened, twice, to two different people looking at the
+same page.
+
+### The progress bar that could not move
+
+Pressing Run shows a label and a 120x6 track, and the track renders correctly.
+The marker inside it never has.
+
+`.progressBar` is a `<span>` and nothing gave it a `display`, so it is a
+non-replaced inline box — and `inline-size`, `block-size` and `transform` do not
+apply to one. Its 33% width did nothing, its 100% height did nothing, and the
+indeterminate sweep animated a transform the box could not have. Measured on the
+shipped build over 40 frames of a real run:
+
+```
+40 frames, 1 distinct state:
+  track block 120x6 | bar inline 0x0 transform=matrix(1, 0, 0, 1, 0, 0)
+```
+
+`display: block` is the whole fix. The same 40 frames then give 40 distinct
+states, a 39x4 marker sweeping from -39 to +96.
+
+**The determinate path was dead in the same way**, and nobody could have noticed:
+`OutputPanel` writes `inlineSize` onto the marker's `style` when a fraction is
+known, which is a length on an inline box. No tool has ever reported a fraction,
+so the branch has never run — `reportProgress` is plumbed through the protocol,
+the worker, the engine and the hook, and the only callers in the repository are
+test stubs.
+
+**The shape it settled on, after three tries.** A block sweeping across left the
+track entirely for most of its cycle and read as a pulse. A looping fill fixed
+the containment and the direction and was still wrong: pressing Run once and
+watching the bar fill three times says three things happened. It fills **once**,
+from the left, and stops at 92% — the element is mounted only while the run is,
+so a fresh press mounts a fresh element and starts from zero by construction.
+
+**And it arrives.** Stopping short is right while the work continues and wrong
+the moment it ends, which is the one thing the bar genuinely knows. On success
+the row stays on screen with the marker at full width, beside the timing.
+
+That exposed the real problem with a fast tool: the fill is paced for slow runs,
+so on a 63ms one it reaches **three pixels** and then snaps to full — measured,
+frame 10 is 3px and frame 11 is 118. Nothing to watch. So a run shorter than the
+sweep plays the whole 0-to-100 on completion instead, over 260ms, _after_ the
+answer is on screen. `ToolRunner` chooses between arriving and sweeping on the
+run's own reported duration, because CSS cannot ask how long something took.
+
+**A failed run does not get a full bar**, and that is asserted rather than left
+to fall out of the success branch - restoring "the bar should always complete"
+would look like fixing a bug rather than causing one. A full bar means the work
+finished, and a run that failed did not. Driven against a build that fills it
+anyway, the check reports `118 of 118`.
+
+**And the bar starts where the button does.** `.actions` wraps in a 300px rail,
+so a long duration puts the readout on its own line under Run - and `.busy` is
+itself a flex row with a gap, so an empty label span was still a flex item and
+still took its gap, setting the finished bar 8px inside the edge every other
+control in the rail shares. The label is absent rather than empty now: `bar at
+485, button at 485`, against `493` with the span restored. The wrap itself is
+asserted first, because on a fast run the readout sits beside the button where
+being 64px to the right is correct and the comparison would mean nothing.
+
+**It delays nothing.** The Output panel renders off `state.status` and is drawn
+the instant the run settles. This is a minimum display time for the progress bar
+and for nothing else — the distinction that makes it acceptable at all. A long
+run never uses it: there the fill really did climb, and replaying it from zero
+would be the restart the single fill exists to avoid.
+
+**So a run is honestly indeterminate**, and the sweep is the right idiom for it:
+it says "working, duration unknown" rather than inventing a number. What it must
+not do is say nothing at all, which is what it did.
+
+**Why nothing else could catch it.** jsdom has no layout, so the marker is 0x0
+there whatever the CSS says. axe does not ask whether a `progressbar` moves. And
+every other geometric check in the harness measures boxes that are supposed to
+be a certain size — none of them asked whether this one had any size. The check
+now samples 40 frames of a deliberately long run and asserts two things: the
+marker has a size, and more than one transform appears across the run. The
+second is a movement test rather than a timing one — a slow machine takes fewer
+samples and each still has to differ — and the first is its positive partner,
+because a 0x0 box has exactly one transform too.
 
 ### A result is drawn the size of the result
 
@@ -4268,6 +4490,50 @@ the bundle loads, in the engine that has it, and runs the same PNG down both
 branches. It compares every decoded sample, and it reads the performance
 timeline to confirm the downgrade actually happened, so a fallback that quietly
 failed to engage cannot pass as agreement.
+
+### A known pre-existing fault: the JWT verdict that never arrives
+
+**This is not settled, and it is written down rather than left as folklore.**
+
+`checkOutputViews` drives the JWT tool through four published JWS examples,
+asserting a verdict for each. In WebKit, deep inside a full run, one of those
+runs produces no verdict: the harness waits 30 seconds for `[data-trust]` and
+gives up.
+
+What is known:
+
+|                              |                                                                                                       |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Occurrences                  | 3, across separate full runs                                                                          |
+| Engine                       | WebKit only. Gecko passes the same block every time                                                   |
+| Where                        | The RSA examples, at **varying depth** - once on the first RS256 assertion, once on the fourth        |
+| Check failures in those runs | **0.** It is an exception, not a verdict                                                              |
+| Reproduction in isolation    | None. 6 consecutive passes of `checkOutputViews` alone in WebKit, under 16 busy processes on 16 cores |
+| Present on `867f42a`         | **Yes**, identically - so it predates the round that found it                                         |
+
+**It reproduces on a commit that was already deployed**, which is what settles
+that it is not caused by the work around it. It is also not constant: earlier
+full runs of the same code passed, so it is intermittent rather than broken.
+
+**The untested hypothesis** is the tool's own deadline. `jwt-decode` runs in a
+worker with `timeoutMs: 10_000`; if an RSA verification overran that under
+whatever load a full run puts on JavaScriptCore, the tool would return an error,
+`JwtView` would not render, and `[data-trust]` would never appear - which is
+exactly the observed shape. Nothing has measured an RSA verification in that
+engine under those conditions, so this remains a story that fits rather than a
+cause.
+
+**What changed while it stayed unfixed** is that it no longer destroys the run.
+The wait was a bare `waitFor`, so a timeout threw an uncaught `TimeoutError` and
+took roughly 1,700 passing checks with it, leaving a stack trace whose only
+information was which line had been waiting. It now returns what was on screen,
+so the assertion fails by name and carries the reason - a tool that errored, a
+run still in flight, or a page where nothing happened at all. Those are three
+different bugs and the harness could not previously tell them apart.
+
+**So the next occurrence should name its own state**, which is the cheapest
+possible next step: no investigation is scheduled, because the instrument that
+would have made one productive did not exist until now.
 
 ## Build and deployment
 

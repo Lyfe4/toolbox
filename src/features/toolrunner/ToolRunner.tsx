@@ -4,11 +4,12 @@ import { Button } from '@/components/Button';
 import { Panel } from '@/components/Panel';
 import { TextArea } from '@/components/TextArea';
 import { useToast } from '@/components/Toast';
-import { useToolExecution, type ExecutionState } from '@/features/execution';
+import { useExecutionEngine, useToolExecution, type ExecutionState } from '@/features/execution';
 import { loadTool, type ToolId, type ToolManifestEntry } from '@/features/registry';
 import type { ErasedTool, InputPort, ToolInputs, ToolValue } from '@/features/registry/types';
 import { binaryHead } from '@/lib/binary';
 import type { LoadedFile } from '@/lib/fileInput';
+import { counted } from '@/lib/plural';
 import { formatBytes } from '@/lib/sniff';
 
 import { FileDrop } from './FileDrop';
@@ -112,6 +113,7 @@ export interface ToolRunnerProps {
 export function ToolRunner({ entry }: ToolRunnerProps) {
   const toolId = entry.id as ToolId;
   const { notify } = useToast();
+  const engine = useExecutionEngine();
   const { state, run, cancel, isBusy } = useToolExecution(toolId);
 
   const [tool, setTool] = useState<ErasedTool | null>(null);
@@ -138,12 +140,67 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
    * a thumbnail would be the one genuinely expensive way to do this.
    */
   const [comparison, setComparison] = useState<ImageComparison | null>(null);
+  /*
+   * THE BAR ARRIVES AND STAYS, RATHER THAN VANISHING PART WAY.
+   *
+   * The indeterminate fill stops short of the end on purpose - nothing reports
+   * a fraction, so arriving early would claim a completion it cannot know - and
+   * the effect was a bar that disappeared at three quarters, which is the one
+   * moment it DOES know something: the run is over.
+   *
+   * So success keeps the row on screen with the marker at full width, beside
+   * the timing. No timer and no minimum display time: the element simply has a
+   * second state, the transition carries it from wherever the fill had reached
+   * to the end, and the next press resets it to zero by unmounting the row.
+   *
+   * An ERROR does not get one. A full bar means the work finished, and a run
+   * that failed did not.
+   */
+  const finishing = state.status === 'success';
+  /*
+   * A run shorter than the sweep never showed the fill move at all - on 63ms it
+   * reaches three pixels - so completion plays the whole 0-to-100 rather than
+   * snapping those three pixels to full. A longer run already climbed, and
+   * replaying it from zero would be the restart the single fill exists to
+   * avoid, so that one simply arrives.
+   *
+   * The threshold is the sweep's own length: below it there was nothing to see,
+   * above it there was.
+   */
+  const sweepOnCompletion = state.status === 'success' && state.durationMs < 260;
+
+  /** The reported fraction, or null when the run is indeterminate or over. */
+  const fraction = state.status === 'running' ? state.progress : null;
   const announced = useRef<ExecutionState | null>(null);
 
   // The tool module is imported here for its options schema and field
   // descriptors. That is the same lazily-loaded chunk the worker uses, so
   // opening a tool page fetches exactly one tool's code and no others.
   useEffect(() => {
+    /*
+     * THE WORKER NEEDS ITS OWN COPY, AND ONLY THE CANVAS WAS ASKING FOR ONE.
+     *
+     * `loadTool` below imports the tool into THIS realm, for its option field
+     * descriptors. A worker has its own module registry, so that does nothing
+     * for the thread the tool actually runs on - and the first press of Run was
+     * paying for the worker's import. Measured on the production build,
+     * structured-data, the same input three times: 63ms, 7ms, 7ms. The canvas
+     * has none of that because it calls `prefetch` when a node is added; this
+     * page never called it at all.
+     *
+     * Opening `/tools/:id` is the same kind of deliberate act as adding a node,
+     * so it warms the same way. The cost when somebody opens a tool page and
+     * leaves without running anything is one worker and one chunk - which is
+     * the trade the canvas already makes, and the reason this is not done from
+     * a hover or from the index.
+     *
+     * IT DOES NOT TOUCH WHAT A RUN REPORTS. `durationMs` is measured in
+     * `useToolExecution` around `execute`, and that arithmetic is unchanged:
+     * the number gets smaller because the work really is smaller, not because
+     * anything stopped being counted.
+     */
+    engine.prefetch(toolId);
+
     let cancelled = false;
     void loadTool(toolId).then((loaded) => {
       if (cancelled) return;
@@ -153,7 +210,7 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
     return () => {
       cancelled = true;
     };
-  }, [toolId]);
+  }, [toolId, engine]);
 
   // Results are announced through the live region, not just drawn on screen.
   useEffect(() => {
@@ -396,31 +453,49 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
                 aria-busy lets assistive tech describe the region as in progress.
               */}
               <div className={styles.busy} role="status" aria-live="polite" aria-busy={isBusy}>
-                {state.status === 'running' ? (
+                {state.status === 'running' || finishing ? (
                   <>
-                    <span>{busyLabel(state)}</span>
+                    {/*
+                      Narrowed once, here: the row is now drawn once the run has
+                      settled as well as during it, so `state` is no longer
+                      known to be the running variant inside it.
+
+                      AND THE LABEL IS ABSENT RATHER THAN EMPTY once the run is
+                      over. `.busy` is a flex row with a gap, so an empty span
+                      is still a flex item and still takes its gap - which put
+                      the finished bar 8px right of the Run button above it,
+                      against a left edge every other control in the rail shares.
+                    */}
+                    {state.status === 'running' ? <span>{busyLabel(state)}</span> : null}
                     <span
                       className={styles.progressTrack}
                       role="progressbar"
                       aria-label="Progress"
-                      {...(state.progress === null
+                      {...(fraction === null
                         ? {}
                         : {
-                            'aria-valuenow': Math.round(state.progress * 100),
+                            'aria-valuenow': Math.round(fraction * 100),
                             'aria-valuemin': 0,
                             'aria-valuemax': 100,
                           })}
                     >
                       <span
-                        className={
-                          state.progress === null
-                            ? `${styles.progressBar ?? ''} ${styles.progressIndeterminate ?? ''}`
-                            : styles.progressBar
-                        }
+                        className={[
+                          styles.progressBar ?? '',
+                          fraction === null ? (styles.progressIndeterminate ?? '') : '',
+                          // Applied ALONGSIDE the indeterminate class rather
+                          // than instead of it: dropping that class would
+                          // revert the transform to its base for a frame, so
+                          // the bar would jump backwards on the way to full.
+                          finishing && !sweepOnCompletion ? (styles.progressComplete ?? '') : '',
+                          sweepOnCompletion ? (styles.progressSweep ?? '') : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
                         style={
-                          state.progress === null
+                          fraction === null
                             ? undefined
-                            : { inlineSize: `${(state.progress * 100).toString()}%` }
+                            : { inlineSize: `${(fraction * 100).toString()}%` }
                         }
                       />
                     </span>
@@ -549,10 +624,55 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
 
           {state.status === 'running' ? <p className={styles.hint}>Working…</p> : null}
         </Panel>
-      </div>
 
-      <Panel title="Ports" footer={`Runs in a ${entry.execution.strategy} context`}>
         {/*
+          THE PORTS FOOTNOTE, IN THE CONTENT COLUMN RATHER THAN UNDER THE PAGE.
+
+          It used to be a sibling of this grid, and the reason was a real
+          defect: a sticky box's travel is bounded by its containing block, and
+          for a grid item that block is the grid CONTAINER - so a full-bleed row
+          inside this grid lay across the rail's whole travel range, and at the
+          foot of a JWT page the rail covered 52px of this panel.
+
+          Taking it out of the grid fixed that by removing the overlap's
+          horizontal half by accident. The rule that actually prevents it is
+          narrower and is now stated directly: NOTHING MAY OCCUPY THE RAIL'S
+          COLUMN. This panel is in the content column at every width, the rail
+          is the one beside it, and two boxes that never share a horizontal band
+          cannot overlap however far either travels.
+
+          AND IT IS CLOSED BY DEFAULT. It is reference material - consulted
+          while wiring a pipeline, not while running a tool - and open it is the
+          tallest thing in the column: 389px against a 302px options rail, which
+          is what made the rail look stunted beside it. A `<details>` is the
+          native disclosure, so the keyboard and screen-reader paths come with
+          it rather than being rebuilt, and the summary line says what is inside
+          rather than "Ports" a second time.
+        */}
+        {/*
+          THE PRIVACY CLAIM LIVES ON THIS STRIP NOW.
+
+          It used to be a panel of its own on every tool page - the same four
+          lines of prose, ten times over, 165px each - and it went when the
+          content column needed to stop being the tallest thing on the page.
+          The claim itself is worth keeping on the page where somebody is about
+          to paste a token into a text box; the explanation is not, and it is
+          on the home page, in the README and in SECURITY.md.
+
+          This footer is where it costs nothing: the panel already draws the
+          strip for its execution context, and a second clause on it is free.
+          The wording is the old panel's own footer, verbatim.
+        */}
+        <Panel
+          className={styles.notes}
+          title="Ports"
+          footer={`Runs in a ${entry.execution.strategy} context · no network access is possible from this page`}
+        >
+          <details className={styles.portsDetails}>
+            <summary className={styles.portsSummary}>
+              {counted(entry.inputs.length, 'input')} · {counted(entry.outputs.length, 'output')}
+            </summary>
+            {/*
           AN OUTPUT PORT'S DESCRIPTION IS SHOWN HERE, AND IT USED TO BE SHOWN
           NOWHERE AT ALL.
 
@@ -575,7 +695,7 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
           image tool's "A PNG, JPEG, GIF or WebP file" would have appeared as
           an instruction and again as a footnote four regions below it.
         */}
-        {/*
+            {/*
           A TABLE RATHER THAN A COLUMN OF PROSE, and the cells are siblings
           rather than a wrapper per port. Two columns - the identity, then the
           sentence - need the two halves of a port to be grid items of the same
@@ -588,24 +708,26 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
           than left to auto-placement, because an input has one cell and an
           output has two - see the note on `.ports`.
         */}
-        <div className={styles.ports}>
-          {entry.inputs.map((input) => (
-            <p key={input.id} className={styles.portName}>
-              In · {input.label} · {input.types.join(' or ')}
-            </p>
-          ))}
-          {entry.outputs.map((output) => (
-            <Fragment key={output.id}>
-              <p className={styles.portName}>
-                Out · {output.label} · {output.types.join(' or ')}
-              </p>
-              {output.description === undefined ? null : (
-                <p className={styles.portNote}>{output.description}</p>
-              )}
-            </Fragment>
-          ))}
-        </div>
-      </Panel>
+            <div className={styles.ports}>
+              {entry.inputs.map((input) => (
+                <p key={input.id} className={styles.portName}>
+                  In · {input.label} · {input.types.join(' or ')}
+                </p>
+              ))}
+              {entry.outputs.map((output) => (
+                <Fragment key={output.id}>
+                  <p className={styles.portName}>
+                    Out · {output.label} · {output.types.join(' or ')}
+                  </p>
+                  {output.description === undefined ? null : (
+                    <p className={styles.portNote}>{output.description}</p>
+                  )}
+                </Fragment>
+              ))}
+            </div>
+          </details>
+        </Panel>
+      </div>
     </>
   );
 }

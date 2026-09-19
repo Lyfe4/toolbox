@@ -283,7 +283,7 @@ const headingOf = (element: Element): string =>
   element.querySelector('h2')?.textContent.trim() ?? '(untitled)';
 
 describe("the sticky rail's containing block", () => {
-  it('holds only the three regions the rail travels beside', async () => {
+  it('holds the three regions the rail travels beside, and the footnotes', async () => {
     const { container } = renderRunner(base64);
 
     await waitFor(() => {
@@ -299,10 +299,36 @@ describe("the sticky rail's containing block", () => {
       'Input',
       'Options',
       'Output',
+      // The footnote stack: a plain div whose first heading is the Ports
+      // panel's, followed by whatever the route passes beside it.
+      'Ports',
     ]);
   });
 
-  it('leaves the ports footnote outside it, where the rail cannot reach', async () => {
+  /*
+   * THE FOOTNOTE IS BACK INSIDE THE GRID, AND THE RULE THAT KEEPS IT SAFE IS A
+   * NARROWER ONE THAN THE RULE THAT PUT IT OUTSIDE.
+   *
+   * A sticky box's travel is bounded by its containing block, and for a grid
+   * item that block is the grid CONTAINER - so a full-bleed row inside this
+   * grid lies across the rail's entire travel range, which is how the rail once
+   * came to cover 52px of the Ports panel at the foot of a JWT page.
+   *
+   * Moving Ports out of the grid fixed that by removing the HORIZONTAL half of
+   * the overlap as a side effect. The rule that actually prevents it is that
+   * nothing may occupy the rail's COLUMN: two boxes that never share a
+   * horizontal band cannot overlap however far either one travels. That rule
+   * lets the footnotes sit in the content column, which is where the space is -
+   * a tall options rail leaves several hundred pixels of nothing beside a short
+   * input, and these are what fills it.
+   *
+   * So the assertion moves from "not in the grid" to "not in the rail's
+   * column", which is the thing that has to stay true. The geometry it implies
+   * is measured in `cross-browser-check.mjs`, which asserts the rail overlaps
+   * no section at rest AND at the foot of the page - the state the original
+   * defect appeared in.
+   */
+  it('keeps the ports footnote out of the column the rail occupies', async () => {
     const { container } = renderRunner(base64);
 
     await waitFor(() => {
@@ -310,11 +336,25 @@ describe("the sticky rail's containing block", () => {
     }, IMPORT_TIMEOUT);
 
     const ports = screen.getByRole('region', { name: 'Ports' });
-    expect(layoutRegion(container).contains(ports)).toBe(false);
-    // Still after the output in the DOM: moving it out of the grid must not
+    expect(layoutRegion(container).contains(ports)).toBe(true);
+
+    // Still after the output in the DOM: bringing it into the grid must not
     // move it in the source, which is what the reading order depends on.
     const output = screen.getByRole('region', { name: 'Output' });
     expect(output.compareDocumentPosition(ports) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  /*
+   * And the column is declared rather than left to auto-placement, in both
+   * layouts. `grid-column: 2` is the rail's, and a full-bleed `1 / -1` crosses
+   * it - either one on this stack is the overlap coming back.
+   */
+  it('declares the footnote stack into the content column at every width', () => {
+    const notes = rulesFor('notes');
+    expect(notes).toMatch(/grid-column:\s*1\s*;/);
+    expect(notes).not.toMatch(/grid-column:\s*2/);
+    expect(notes).not.toMatch(/grid-column:\s*1\s*\/\s*-1/);
+    expect(rulesFor('controls')).toMatch(/grid-column:\s*2/);
   });
 
   /*
@@ -405,9 +445,10 @@ describe('a tool whose options are taller than the rail', () => {
         'Input',
         'Options',
         'Output',
+        'Ports',
       ]);
       expect(layoutRegion(container).contains(screen.getByRole('region', { name: 'Ports' }))).toBe(
-        false,
+        true,
       );
 
       const run = screen.getByRole('button', { name: 'Run' });
@@ -557,6 +598,38 @@ describe('the input column above the second breakpoint', () => {
     expect(rulesFor('input')).toMatch(/grid-column:\s*1/);
     expect(rulesFor('controls')).toMatch(/grid-column:\s*2/);
     expect(rulesFor('output')).toMatch(/grid-column:\s*3/);
+  });
+});
+
+/*
+ * THE TWO TEXTAREA FLOORS WIN BY SPECIFICITY, NOT BY DOCUMENT ORDER.
+ *
+ * `.editor` (200px, an input you paste into) and `.result` (48px, an output
+ * sized to its content) both have to beat `.textarea`'s own 80px floor. A CSS
+ * module is one class deep, so a bare `.editor` TIES with `.textarea` and the
+ * winner is whichever stylesheet the bundler put last - which differs between
+ * `pnpm dev` and the build.
+ *
+ * Measured on `/tools/structured-data` at 1440 before this: the input editor is
+ * 200px in the production build and 87px under `pnpm dev`. A development
+ * environment that disagrees with the product about the size of its main input
+ * is worse than a wrong size, because every judgement made in it is suspect -
+ * and it had already cost this repository one wrong conclusion, since these
+ * rules read as dead code in dev and were mistaken for exactly that.
+ *
+ * An element qualifier makes each selector (0,1,1) against (0,1,0), so the
+ * cascade decides it the same way in both. The heights themselves are measured
+ * against the build in `checkRunnerLayout`; this guards the mechanism, because
+ * dropping the qualifier looks like tidying a redundant selector.
+ */
+describe('the textarea floors', () => {
+  it('beat the shared floor by specificity rather than by stylesheet order', () => {
+    const declarations = runnerCss.replaceAll(/\/\*[\s\S]*?\*\//g, '');
+    expect(declarations).toMatch(/textarea\.editor\s*\{/);
+    expect(declarations).toMatch(/textarea\.result\s*\{/);
+    // The bare forms are what the cascade cannot decide on its own.
+    expect(declarations).not.toMatch(/(^|[\s,}])\.editor\s*\{/);
+    expect(declarations).not.toMatch(/(^|[\s,}])\.result\s*\{/);
   });
 });
 

@@ -18,9 +18,36 @@
   color: var(--pb-ink-muted);
 }
 
-.source {
+/*
+ * A RESULT, NOT AN EDITOR, AND IT HAD THE EDITOR'S FLOOR.
+ *
+ * 200px is `.editor`'s floor and it is written for a box you type INTO - a
+ * place to put something that is not there yet, which sized to its emptiness
+ * would be a box you have to grow before you can use it. This is an output: it
+ * already knows how much of it there is.
+ *
+ * The rest of the page had this fixed when `.result` was introduced, and this
+ * one was missed because it lives in its own stylesheet. Measured in the
+ * production build on text-convert with `h` as the input: `<p>h</p>` - eight
+ * characters - in a 200px box, beside a `Converted` box holding the identical
+ * string at 48.
+ *
+ * The `textarea` qualifier is the same defence `.result` and `.editor` carry:
+ * a bare class ties with `.textarea`'s own floor and the winner is whichever
+ * stylesheet the bundler happened to put last, which differs between `pnpm dev`
+ * and the build.
+ *
+ * Same three declarations as `.result`, for the same reasons written there:
+ * `field-sizing` measures the WRAPPED height where it is supported, the floor
+ * is a control and a half so a one-line result reads as a readout rather than a
+ * slot, and 520px is the cap the diff scroller uses - past it a result is
+ * something you copy or download rather than read through a window.
+ */
+textarea.source {
   inline-size: 100%;
-  min-block-size: 200px;
+  field-sizing: content;
+  min-block-size: calc(var(--pb-control-height-md) * 1.5);
+  max-block-size: 520px;
   resize: vertical;
 }
 

@@ -1396,6 +1396,9 @@ const RUNNER_PROBE = () => {
   );
   const scroller = document.querySelector('[class*="optionsScroll"]');
   const rail = document.querySelector('[class*="controls"]');
+  // The footnote stack - Ports plus whatever the route puts beside it. It is
+  // the tail of the CONTENT column, so the column's height runs to its bottom.
+  const notes = document.querySelector('[class*="notes"]');
 
   /*
    * EVERY SECTION THE RAIL COULD LAND ON, in viewport coordinates.
@@ -1503,6 +1506,7 @@ const RUNNER_PROBE = () => {
       }
       return rows;
     })(),
+    notes: notes ? box(notes) : null,
     layoutHeight: Math.round(layout.getBoundingClientRect().height),
     innerHeight: window.innerHeight,
     innerWidth: window.innerWidth,
@@ -1688,6 +1692,24 @@ async function checkRunnerLayout(browser, label) {
       });
       await page.waitForTimeout(150);
 
+      /*
+       * THE PORTS FOOTNOTE IS A CLOSED DISCLOSURE, AND A CLOSED ONE MEASURES
+       * ZERO. Every assertion below about where a port's sentence sits relative
+       * to its name is `0 >= 0` and `0 <= 0` against a shut `<details>` - true
+       * of a correct layout and equally true of a broken one, which is the
+       * exact shape this file spent a round removing. It is opened here, and
+       * the cells are asserted to have real width before their positions are
+       * trusted. Whether it is CLOSED to begin with is its own check below.
+       */
+      const opened = await page.evaluate(() => {
+        const details = document.querySelector('details');
+        if (!details) return false;
+        details.open = true;
+        return true;
+      });
+      check(label, `the ports disclosure can be opened at ${at}`, opened, '');
+      await page.waitForTimeout(100);
+
       const probe = await page.evaluate(RUNNER_PROBE);
       check(label, `the tool runner has a measurable layout at ${at}`, probe !== null, '');
       if (!probe) continue;
@@ -1744,6 +1766,22 @@ async function checkRunnerLayout(browser, label) {
         `every port with a sentence has one at ${at}`,
         noted.length > 0,
         `${String(noted.length)} of ${String(probe.ports.length)} rows`,
+      );
+      /*
+       * THE POSITIVE PARTNER. Each comparison below is between two coordinates,
+       * and a pair of zero-sized boxes satisfies all of them. This is what says
+       * the boxes are really on screen, so the relationships mean something.
+       */
+      check(
+        label,
+        `the ports table is drawn rather than collapsed to nothing at ${at}`,
+        noted.every((row) => row.name.right > row.name.left && row.note.right > row.note.left),
+        noted
+          .map(
+            (row) =>
+              `${String(row.name.right - row.name.left)}x${String(row.note.right - row.note.left)}`,
+          )
+          .join(' '),
       );
       if (width >= 720) {
         check(
@@ -1941,13 +1979,29 @@ async function checkRunnerLayout(browser, label) {
             )}, rail ends ${String(options.bottom)}`,
           );
         }
+        /*
+         * THE FOOTNOTE IS IN THE CONTENT COLUMN, NEVER THE RAIL'S.
+         *
+         * It used to span both columns, below the grid, and the reason it was
+         * below the grid was a real defect: a sticky box's travel is bounded by
+         * its containing block, which for a grid item is the grid CONTAINER, so
+         * a full-bleed row inside this grid lay across the rail's whole travel
+         * range and the rail covered 52px of it at the foot of a JWT page.
+         *
+         * Taking it out of the grid removed the horizontal half of that overlap
+         * by accident. The rule now stated directly is the narrower one -
+         * nothing may occupy the rail's column - which lets the footnote sit in
+         * the content column where a tall rail leaves the space. So what is
+         * asserted is the horizontal separation the safety rests on, and the
+         * overlap check below is what proves the consequence.
+         */
         check(
           label,
-          `the ports footnote spans both columns at ${at}`,
-          ports.left === input.left && ports.right >= options.right - 1 && ports.top >= output.top,
-          `ports ${String(ports.left)}..${String(ports.right)} against ${String(
+          `the ports footnote is in the content column, clear of the rail, at ${at}`,
+          ports.left === input.left && ports.right <= options.left && ports.top >= input.bottom,
+          `ports ${String(ports.left)}..${String(ports.right)} against input at ${String(
             input.left,
-          )}..${String(options.right)}`,
+          )} and a rail starting ${String(options.left)}`,
         );
 
         /* -- THE HEIGHT NOBODY ASKED FOR -------------------------------- */
@@ -1975,18 +2029,24 @@ async function checkRunnerLayout(browser, label) {
          * question is simply which of the three is tallest.
          */
         const railHeight = probe.rail?.height ?? 0;
-        const column = width >= 1440 ? output.bottom - output.top : output.bottom - input.top;
+        /*
+         * THE CONTENT COLUMN RUNS TO THE FOOT OF THE FOOTNOTES, which is what
+         * changed when they moved into the grid. With two columns it is Input,
+         * Output and then the footnotes stacked; with three it is Input and the
+         * footnotes, and the result is a column of its own.
+         */
+        const contentColumn = (probe.notes?.bottom ?? output.bottom) - input.top;
         const tallest =
           width >= 1440
-            ? Math.max(input.bottom - input.top, railHeight, column)
-            : Math.max(column, railHeight);
+            ? Math.max(contentColumn, railHeight, output.bottom - output.top)
+            : Math.max(contentColumn, railHeight);
         check(
           label,
           `the grid is as tall as its tallest column and no taller at ${at}`,
           Math.abs(probe.layoutHeight - tallest) <= 2,
-          `grid ${String(probe.layoutHeight)}, input ${String(
-            input.bottom - input.top,
-          )}, rail ${String(railHeight)}, output ${String(column)}`,
+          `grid ${String(probe.layoutHeight)}, content column ${String(
+            contentColumn,
+          )}, rail ${String(railHeight)}, output ${String(output.bottom - output.top)}`,
         );
 
         /*
@@ -2116,6 +2176,34 @@ async function checkRunnerLayout(browser, label) {
         after.rail.documentTop > before.rail.documentTop + 50,
       `${String(before?.rail?.documentTop)} -> ${String(after?.rail?.documentTop)}`,
     );
+    /*
+     * -- THE OVERLAP, AT THE FOOT OF THE PAGE ------------------------------
+     *
+     * This is the state the original defect appeared in, and it is the one that
+     * matters now that the Ports and Privacy panels are back INSIDE the grid.
+     * The rail travels until its bottom reaches the bottom of its containing
+     * block, which is the grid container - so it passes beside both of them on
+     * the way down. What stops it reaching them is that they are in the content
+     * column and it is in the column beside: two boxes that never share a
+     * horizontal band cannot overlap however far either travels.
+     *
+     * Asserted at rest further up and again here, scrolled, because "at rest"
+     * is exactly the state the 52px overlap did NOT show up in.
+     */
+    await page.evaluate(() => {
+      window.scrollTo(0, document.documentElement.scrollHeight);
+    });
+    await page.waitForTimeout(300);
+    const bottom = await page.evaluate(RUNNER_PROBE);
+    check(
+      label,
+      'the rail overlaps nothing with the page scrolled to its foot',
+      bottom !== null && bottom.overlaps.length === 0,
+      bottom === null
+        ? 'no layout'
+        : bottom.overlaps.map((entry) => `${entry.name} by ${String(entry.overlap)}px`).join(', '),
+    );
+
     check(
       label,
       'Run is still on screen with the output scrolled under it',
@@ -2272,6 +2360,118 @@ async function checkRunnerLayout(browser, label) {
     );
   } finally {
     await emptyContext.close().catch(() => {});
+  }
+
+  /* -- 7. THE PORTS DISCLOSURE, AND THE KEYBOARD PATH INTO IT ------------ */
+  /*
+   * The footnote is closed by default, because open it is the tallest thing in
+   * the content column - 389px against a 302px options rail, which is what made
+   * the rail look stunted beside it. Collapsed it is 92px and the column is
+   * 444px against that rail rather than 922.
+   *
+   * WHAT HAS TO SURVIVE BEING HIDDEN is the same pair the option notes are held
+   * to: it must be reachable without a pointer, and the text must still be in
+   * the document rather than conjured on demand. A `<details>` gives both
+   * natively, which is why it is one rather than a button and a piece of state -
+   * but "natively" is a claim about two engines, so it is measured in both.
+   */
+  const portsContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const portsPage = await portsContext.newPage();
+
+  try {
+    await portsPage.goto(`${ORIGIN}/tools/text-convert`, { waitUntil: 'networkidle' });
+    await portsPage
+      .getByRole('heading', { level: 1, name: 'Text convert' })
+      .waitFor({ timeout: 15_000 });
+    await portsPage.waitForTimeout(250);
+
+    const shut = await portsPage.evaluate(() => {
+      const details = document.querySelector('details');
+      const table = document.querySelector('[class*="ports"]');
+      const panel = [...document.querySelectorAll('section')].find(
+        (el) => (el.querySelector('h2')?.textContent ?? '').trim() === 'Ports',
+      );
+      return {
+        open: details?.open ?? null,
+        panelHeight: panel === undefined ? 0 : Math.round(panel.getBoundingClientRect().height),
+        /*
+         * THE SENTENCES SPECIFICALLY, not the table's whole text. A port's
+         * description is the thing that would be worth conjuring on demand and
+         * therefore the thing worth asserting is not - and the first version of
+         * this measured `textContent` of the whole table, which survives
+         * `hidden`, `display: none` and anything else short of real removal. It
+         * counted the port NAMES and called it proof about the sentences.
+         */
+        notes: document.querySelectorAll('[class*="portNote"]').length,
+        text: [...document.querySelectorAll('[class*="portNote"]')]
+          .map((note) => (note.textContent ?? '').trim())
+          .join('').length,
+      };
+    });
+
+    check(
+      label,
+      'the ports footnote starts closed',
+      shut.open === false,
+      `open=${String(shut.open)}, panel ${String(shut.panelHeight)}px`,
+    );
+    check(
+      label,
+      'and is a footnote rather than the tallest thing in the column when it is',
+      shut.panelHeight > 0 && shut.panelHeight < 140,
+      `${String(shut.panelHeight)}px`,
+    );
+    check(
+      label,
+      'its sentences are in the document while it is shut, not conjured on opening',
+      shut.notes >= 3 && shut.text > 100,
+      `${String(shut.notes)} sentences, ${String(shut.text)} characters`,
+    );
+
+    /* -- Opened from the keyboard alone ---------------------------------- */
+    /*
+     * Tab to the summary and press Enter. A disclosure a pointer can open and a
+     * keyboard cannot would be the same defect as a hover-only control, in a
+     * place nobody would look for it.
+     */
+    await portsPage.locator('h1').first().click();
+    let reached = false;
+    for (let step = 0; step < 40 && !reached; step += 1) {
+      await portsPage.keyboard.press('Tab');
+      reached = await portsPage.evaluate(
+        () => document.activeElement?.tagName.toLowerCase() === 'summary',
+      );
+    }
+    check(label, 'the ports summary is reachable by Tab', reached, '');
+
+    await portsPage.keyboard.press('Enter');
+    await portsPage.waitForTimeout(200);
+
+    const afterKey = await portsPage.evaluate(() => {
+      const details = document.querySelector('details');
+      const panel = [...document.querySelectorAll('section')].find(
+        (el) => (el.querySelector('h2')?.textContent ?? '').trim() === 'Ports',
+      );
+      const note = document.querySelector('[class*="portNote"]');
+      return {
+        open: details?.open ?? null,
+        panelHeight: panel === undefined ? 0 : Math.round(panel.getBoundingClientRect().height),
+        noteHeight: note === null ? 0 : Math.round(note.getBoundingClientRect().height),
+      };
+    });
+
+    check(
+      label,
+      'Enter on it opens the footnote and paints the table',
+      afterKey.open === true &&
+        afterKey.noteHeight > 0 &&
+        afterKey.panelHeight > shut.panelHeight + 100,
+      `${String(shut.panelHeight)} -> ${String(afterKey.panelHeight)}px, a sentence is ${String(
+        afterKey.noteHeight,
+      )}px`,
+    );
+  } finally {
+    await portsContext.close().catch(() => {});
   }
 
   /* -- 4. A rail taller than a short window scrolls itself --------------- */
@@ -6335,6 +6535,21 @@ const MOBILE_PROBE = () => {
       // The visually-hidden recipe: a 1px box clipped away but still in the
       // accessibility tree.
       if (style.clipPath !== 'none' && style.position === 'absolute') return false;
+      /*
+       * A CLOSED `<details>` PAINTS NONE OF ITS CONTENT, and both engines still
+       * LAY THAT CONTENT OUT: measured on `/tools/base64` at 390px, a 17px
+       * closed disclosure reporting a 133px table inside it, in Gecko and in
+       * JavaScriptCore alike. Nothing is drawn - a screenshot of the panel is
+       * the summary and the footer and nothing else - so every box in there is
+       * a box this sweep must not reason about.
+       *
+       * It cost 52 checks to find that out, all of them "a child escaping its
+       * parent" against content nobody can see. The first guess was that
+       * `display: grid` on the direct child was overriding the UA rule that
+       * hides it; removing the declaration entirely still reported 125px, so
+       * the override was never the cause and the app needed no change at all.
+       */
+      if (node.tagName === 'DETAILS' && !node.open) return false;
       if (node.dataset?.testid === 'route-progress') return false;
     }
     const box = el.getBoundingClientRect();
@@ -7856,6 +8071,432 @@ async function checkRichTextClipboard(browser, label) {
 }
 
 /**
+ * THE PROGRESS MARKER, WHICH HAD NEVER BEEN PAINTED.
+ *
+ * `.progressBar` is a `<span>`, and on a non-replaced INLINE box `inline-size`,
+ * `block-size` and `transform` do not apply. So its 33% width did nothing, its
+ * 100% height did nothing, and the sweep animated a transform the box could not
+ * have. Measured on the shipped build over 40 frames of a real run: one state,
+ * `bar inline 0x0 transform=matrix(1, 0, 0, 1, 0, 0)`. The TRACK around it
+ * rendered perfectly at 120x6, which is why this read as "the bar is just
+ * empty" rather than as a missing element.
+ *
+ * Nothing else could have caught it. jsdom has no layout, so the box is zero
+ * there whatever the CSS says; axe does not care whether a `progressbar` moves;
+ * and no assertion anywhere asked whether the marker had a size. A progress bar
+ * that cannot move is the affordance-without-behaviour rule CONTRIBUTING names,
+ * in its quietest form - the control was not wired to nothing, it was wired to
+ * something that could not be drawn.
+ *
+ * WHAT IS ASSERTED IS MOVEMENT, NOT A DURATION. The sweep is a CSS animation, so
+ * sampling frames measures this machine only in how MANY samples it gets; a slow
+ * one takes fewer and each one still has to differ. Two distinct transforms over
+ * a run is the floor, and a stalled bar produces exactly one however long the
+ * run lasts. The size is asserted beside it, because a 0x0 box has one transform
+ * too and would satisfy a movement test that forgot to look.
+ */
+async function checkRunProgress(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${ORIGIN}/tools/text-convert`, { waitUntil: 'networkidle' });
+    await page
+      .getByRole('heading', { level: 1, name: 'Text convert' })
+      .waitFor({ timeout: 15_000 });
+    await page.getByRole('combobox', { name: 'Target format' }).waitFor({ timeout: 15_000 });
+
+    /*
+     * A document big enough that the run outlives a handful of frames. Every
+     * other tool page in this file runs in single-digit milliseconds, which is
+     * correct and is exactly why the marker's absence was invisible: there was
+     * never anything on screen long enough to notice was not moving.
+     */
+    const document_ = Array.from(
+      { length: 4_000 },
+      (_, index) =>
+        `## Heading ${String(index)}\n\nSome **bold** and _italic_ prose with a [link](https://example.com/${String(index)}).\n`,
+    ).join('\n');
+    /*
+     * SET THROUGH THE VALUE SETTER RATHER THAN `fill`.
+     *
+     * Playwright's `fill` on a few hundred kilobytes takes 30 seconds in
+     * JavaScriptCore and then throws - and the failure prints the document it
+     * was handed, which turned one crash into a fifty-thousand-line log twice.
+     * The native setter plus a bubbling `input` is what React listens for, and
+     * it is instant whatever the size.
+     */
+    await page.evaluate((text) => {
+      const field = document.querySelector('textarea:not([readonly])');
+      if (!field) return;
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(field, text);
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    }, document_);
+
+    const sampled = await page.evaluate(async () => {
+      const run = [...document.querySelectorAll('button')].find(
+        (button) => (button.textContent ?? '').trim() === 'Run',
+      );
+      if (!run) return null;
+      run.click();
+
+      /*
+       * SAMPLED FOR LONG ENOUGH TO SEE A LOOP, which is the point of the
+       * no-reset assertion below. Forty frames is about two thirds of a second
+       * and the shape this replaced looped every 1.2s, so a window that short
+       * could not observe the very thing it was meant to refuse - driven
+       * against a deliberately looping bar it reported no resets at all.
+       *
+       * Four hundred frames, because a headless engine runs well past 60fps:
+       * 200 covered only 1469ms here, which is inside the 1.2s loop it has to
+       * be able to see twice.
+       *
+       * The window is bounded by frames rather than by a clock, and the elapsed
+       * time is reported rather than asserted: a slow machine takes fewer
+       * samples over the same span, which weakens the evidence without ever
+       * inventing a reset.
+       */
+      const frames = [];
+      const startedAt = performance.now();
+      for (let frame = 0; frame < 400; frame += 1) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const track = document.querySelector('[role="progressbar"]');
+        if (!track) break;
+        const marker = track.firstElementChild;
+        if (!marker) continue;
+        const box = marker.getBoundingClientRect();
+        frames.push({
+          /*
+           * The PAINTED width, which a `scaleX` animation legitimately takes
+           * to zero at the start of every cycle, and the LAYOUT width, which
+           * a transform never changes. The first is what moves; the second is
+           * what says there is a box to move.
+           */
+          width: Math.round(box.width),
+          layoutWidth: marker.offsetWidth,
+          height: Math.round(box.height),
+          transform: getComputedStyle(marker).transform,
+        });
+      }
+      return { frames, elapsed: Math.round(performance.now() - startedAt) };
+    });
+
+    const frames = sampled?.frames ?? [];
+    /*
+     * The window has to outlast a plausible loop, or the no-reset assertion is
+     * about nothing. 1.5s clears the 1.2s the looping version used.
+     */
+    check(
+      label,
+      'a run long enough to watch really does show the progress bar',
+      sampled !== null && frames.length >= 4 && sampled.elapsed > 1500,
+      `${String(frames.length)} frames over ${String(sampled?.elapsed ?? 0)}ms with a progressbar on screen`,
+    );
+    if (sampled === null || frames.length < 4 || sampled.elapsed <= 1500) return;
+
+    /*
+     * THE POSITIVE PARTNER. A marker that is not drawn has one transform for
+     * the same reason a stalled one does, so "it moved" has to be paired with
+     * "there is something to move".
+     *
+     * Against the LAYOUT width, not the painted one: the fill scales from zero
+     * at the start of each cycle, so individual frames are legitimately 0px
+     * wide and an every-frame assertion on the painted width would fail on a
+     * correct bar. A transform never changes `offsetWidth`, so that is the box
+     * itself - which was 0 when this element was an inline span.
+     */
+    check(
+      label,
+      'the progress marker is drawn rather than collapsed to nothing',
+      frames.every((frame) => frame.layoutWidth > 2 && frame.height > 1),
+      `${String(frames[0]?.layoutWidth)}x${String(frames[0]?.height)} laid out on the first sampled frame`,
+    );
+    /*
+     * ONE FILL PER RUN, WHICH IS A MONOTONIC SEQUENCE.
+     *
+     * The shape before this looped, and pressing Run once and watching the bar
+     * fill three times says three things happened. A loop is visible in the
+     * samples as a DROP - the frame where it restarts is narrower than the one
+     * before it - so "never narrower than the frame before" is the whole
+     * assertion, and it is a property of the sequence rather than a duration
+     * this harness would be measuring the machine with.
+     *
+     * One pixel of tolerance because the widths are rounded off a scaled box.
+     */
+    const widths = frames.map((frame) => frame.width);
+    const resets = widths.filter((width, index) => index > 0 && width < widths[index - 1] - 1);
+    check(
+      label,
+      'and it fills once rather than restarting while the run is still going',
+      resets.length === 0,
+      `${String(resets.length)} reset(s) across ${String(widths.length)} frames${
+        resets.length === 0 ? '' : `, narrowing to ${resets.join(', ')}`
+      }`,
+    );
+    /*
+     * AND IT GROWS BY SOMETHING WORTH SEEING. A sequence that never goes
+     * backwards is also satisfied by one that never goes anywhere.
+     */
+    check(
+      label,
+      'and the fill grows visibly over the run',
+      widths[widths.length - 1] - widths[0] > 8,
+      `${String(widths[0])} to ${String(widths[widths.length - 1])} of ${String(
+        frames[0].layoutWidth,
+      )}`,
+    );
+
+    /*
+     * AGAINST THE PAINTED WIDTH, NOT THE COMPUTED TRANSFORM.
+     *
+     * The first version counted distinct `getComputedStyle().transform` values,
+     * and a transform animates on an element that cannot render one: driven
+     * against the inline `<span>` this whole check exists for, the property
+     * swept through forty values while the box stayed 0x0 and nothing was ever
+     * drawn. It reported movement on a bar that had none.
+     *
+     * The rendered width is the thing a person sees, it is zero when the
+     * element cannot paint, and it is constant when the animation is dead - so
+     * one distinct value means "not moving" for either reason.
+     */
+    const distinct = new Set(frames.map((frame) => frame.width));
+    check(
+      label,
+      'and it fills rather than sitting still for the whole run',
+      distinct.size > 1,
+      `${String(distinct.size)} distinct painted width(s) over ${String(frames.length)} frames`,
+    );
+    /* -- ALIGNED WITH THE BUTTON IT BELONGS TO -------------------------- */
+    /*
+     * `.actions` is a wrapping flex row - Run on the left, the readout on the
+     * right - and in a 300px rail a long duration pushes the readout onto its
+     * own line UNDER the button. That is the state a person sees on any run
+     * worth watching, and it is the one where the bar's left edge is compared
+     * against something: every other control in the rail starts on that edge.
+     *
+     * `.busy` is itself a flex row with a gap, so an empty label span was still
+     * a flex item and still took its gap, putting the finished bar 8px inside
+     * that edge. The label is absent rather than empty now.
+     *
+     * The wrap is asserted first, because on a fast run the readout is short
+     * enough to sit BESIDE the button - where it is supposed to be 64px to the
+     * right and the comparison would mean nothing.
+     */
+    await page.waitForFunction(() => /Done in/.test(document.body.textContent ?? ''), undefined, {
+      timeout: 60_000,
+    });
+    await page.waitForTimeout(400);
+
+    const aligned = await page.evaluate(() => {
+      const track = document.querySelector('[role="progressbar"]');
+      const run = [...document.querySelectorAll('button')].find(
+        (button) => (button.textContent ?? '').trim() === 'Run',
+      );
+      if (!track || !run) return null;
+      const trackBox = track.getBoundingClientRect();
+      const runBox = run.getBoundingClientRect();
+      return {
+        track: Math.round(trackBox.left),
+        run: Math.round(runBox.left),
+        wrapped: trackBox.top > runBox.top,
+      };
+    });
+
+    check(
+      label,
+      'a long run pushes the readout onto its own line, which is what makes the edge comparable',
+      aligned?.wrapped === true,
+      `wrapped=${String(aligned?.wrapped)}`,
+    );
+    check(
+      label,
+      'and the finished bar starts on the same edge as the Run button',
+      aligned !== null && aligned.wrapped && Math.abs(aligned.track - aligned.run) <= 1,
+      aligned === null
+        ? 'no bar or no button'
+        : `bar at ${String(aligned.track)}, button at ${String(aligned.run)}`,
+    );
+
+    /* -- AND A SHORT RUN STILL SHOWS THE WHOLE JOURNEY ------------------- */
+    /*
+     * Everything above is measured on a deliberately long run, because that is
+     * the only way to watch the indeterminate fill at all. The COMMON run here
+     * is tens of milliseconds, and on one of those the fill reaches three
+     * pixels before the answer arrives - so what a person actually sees is
+     * nothing, and then a result.
+     *
+     * A run shorter than the sweep therefore plays the whole 0-to-100 on
+     * completion, after the answer is already on screen. What is asserted is
+     * the three things that makes: the bar outlives the result, it ARRIVES at
+     * the end of the track, and it gets there through intermediate widths
+     * rather than snapping - which is the difference between watching a bar
+     * complete and being shown a full one.
+     */
+    await page.goto(`${ORIGIN}/tools/structured-data`, { waitUntil: 'networkidle' });
+    await page
+      .getByRole('heading', { level: 1, name: 'Structured data' })
+      .waitFor({ timeout: 15_000 });
+    await page.locator('textarea:not([readonly])').first().fill('test');
+
+    const quick = await page.evaluate(async () => {
+      const run = [...document.querySelectorAll('button')].find(
+        (button) => (button.textContent ?? '').trim() === 'Run',
+      );
+      if (!run) return null;
+      run.click();
+
+      const frames = [];
+      for (let frame = 0; frame < 90; frame += 1) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const track = document.querySelector('[role="progressbar"]');
+        const marker = track?.firstElementChild ?? null;
+        frames.push({
+          width: marker === null ? null : Math.round(marker.getBoundingClientRect().width),
+          layoutWidth: marker === null ? null : marker.offsetWidth,
+          done: /Done in/.test(document.body.textContent ?? ''),
+        });
+      }
+      return frames;
+    });
+
+    const settled = quick?.findIndex((frame) => frame.done) ?? -1;
+    check(
+      label,
+      'a short run really does settle inside the sampled window',
+      settled > 0,
+      `first "Done in" at frame ${String(settled)} of ${String(quick?.length ?? 0)}`,
+    );
+    if (quick === null || settled <= 0) return;
+
+    const afterwards = quick.slice(settled).filter((frame) => frame.width !== null);
+    check(
+      label,
+      'the bar is still on screen once the result is',
+      afterwards.length > 10,
+      `${String(afterwards.length)} frames with a bar after the result appeared`,
+    );
+    const full = afterwards.at(-1);
+    check(
+      label,
+      'and it arrives at the end of the track rather than disappearing part way',
+      full !== undefined && full.width === full.layoutWidth && full.width > 2,
+      `${String(full?.width)} of ${String(full?.layoutWidth)} at the last sampled frame`,
+    );
+    /*
+     * THROUGH the track, not straight to the end. A snap satisfies "arrives"
+     * perfectly, and a snap is what this whole section exists to replace.
+     */
+    const steps = new Set(afterwards.map((frame) => frame.width));
+    check(
+      label,
+      'and it travels there rather than snapping to full in one frame',
+      steps.size > 5,
+      `${String(steps.size)} distinct widths between the result and the full bar`,
+    );
+    /* -- A FAILED RUN DOES NOT GET A FULL BAR --------------------------- */
+    /*
+     * A full bar means the work finished, and a run that failed did not. This
+     * is asserted rather than left as a consequence of the success branch,
+     * because the branch reads like an oversight: somebody restoring "the bar
+     * should always complete" would be fixing a bug that is not one.
+     */
+    await page.goto(`${ORIGIN}/tools/jwt-decode`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'JWT' }).waitFor({ timeout: 15_000 });
+    await page.getByLabel('JWT input').fill('this is not a token');
+    await page.getByRole('button', { name: 'Run' }).click();
+    await page.waitForTimeout(600);
+
+    const failed = await page.evaluate(() => {
+      const track = document.querySelector('[role="progressbar"]');
+      const marker = track?.firstElementChild ?? null;
+      return {
+        errored: /failed|invalid|not a|cannot/i.test(document.body.textContent ?? ''),
+        present: track !== null,
+        width: marker === null ? null : Math.round(marker.getBoundingClientRect().width),
+        layoutWidth: marker === null ? null : marker.offsetWidth,
+      };
+    });
+
+    check(
+      label,
+      'the run really did fail, so the bar has something to refuse to complete for',
+      failed.errored,
+      `errored=${String(failed.errored)}`,
+    );
+    check(
+      label,
+      'a failed run leaves the bar short of full rather than completing it',
+      failed.present === false || (failed.width !== null && failed.width < failed.layoutWidth),
+      failed.present === false
+        ? 'no bar at all'
+        : `${String(failed.width)} of ${String(failed.layoutWidth)}`,
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * THE TOOL PAGE WARMS THE WORKER, AND ONLY WHERE A TOOL WILL RUN.
+ *
+ * A worker has its own module registry, so importing a tool into the page for
+ * its option fields does nothing for the thread the tool runs on - and the
+ * first press of Run was paying for the worker's import. Measured on the
+ * production build, structured-data, the same input three times: 63ms, 7ms, 7ms
+ * before, and 8ms, 9ms, 5ms after. The canvas never had the problem because it
+ * calls `prefetch` when a node is added; this page never called it at all.
+ *
+ * THE COST IS A WORKER, so it must be paid only where a tool is actually going
+ * to run. `/tools` lists ten of them and runs none, and warming all ten from an
+ * index would be the hover-prefetch this engine's comment already rules out.
+ * The count is taken by replacing the constructor before any application code
+ * runs, because "did a worker start" is not otherwise observable from a page.
+ */
+async function checkWorkerWarmth(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    await page.addInitScript(() => {
+      window.__workers = 0;
+      const Real = window.Worker;
+      window.Worker = class extends Real {
+        constructor(...args) {
+          window.__workers += 1;
+          super(...args);
+        }
+      };
+    });
+
+    await page.goto(`${ORIGIN}/tools`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Every tool' }).waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(600);
+    const onIndex = await page.evaluate(() => window.__workers);
+    check(
+      label,
+      'listing the tools starts no worker, because none of them is going to run',
+      onIndex === 0,
+      `${String(onIndex)} worker(s)`,
+    );
+
+    await page.goto(`${ORIGIN}/tools/base64`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Base64' }).waitFor({ timeout: 15_000 });
+    await page.getByRole('combobox', { name: 'Mode' }).waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(600);
+    const onTool = await page.evaluate(() => window.__workers);
+    check(
+      label,
+      'and opening one tool warms exactly one, before Run is ever pressed',
+      onTool === 1,
+      `${String(onTool)} worker(s)`,
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
  * THE OPTION NOTES TOGGLE, IN BOTH PANELS THAT HAVE ONE.
  *
  * Every option field may declare a sentence explaining it, and every one of
@@ -9066,7 +9707,42 @@ async function checkOutputViews(browser, label) {
         .click();
       await page.getByLabel('JWT input').fill(token);
       await page.getByRole('button', { name: 'Run' }).click();
-      await page.locator('[data-trust]').waitFor({ timeout: 30_000 });
+
+      /*
+       * A VERDICT THAT NEVER ARRIVES IS A FINDING, NOT A CRASH.
+       *
+       * This used to be a bare `waitFor`, and when it timed out the whole run
+       * died on an uncaught TimeoutError - roughly 1,700 passing checks
+       * discarded, and a stack trace that says only which line was waiting. It
+       * happens: measured three times in WebKit deep inside a full run, at
+       * varying depth through the RSA examples, and it reproduces on the
+       * previous commit too, so it is neither new nor caused by whatever is
+       * being changed around it.
+       *
+       * The waiting is the same. What is different is that giving up returns
+       * what was ON SCREEN instead of throwing, so the check that follows fails
+       * by name, carrying the reason, and the other 1,700 still report. A tool
+       * that reported an error, a run still spinning, and a page that never
+       * started are three different bugs and this could not previously tell
+       * them apart.
+       */
+      try {
+        await page.locator('[data-trust]').waitFor({ timeout: 30_000 });
+      } catch {
+        return page.evaluate(() => {
+          const busy = document.querySelector('[role="status"][aria-busy="true"]');
+          const error = [...document.querySelectorAll('[class*="error"]')]
+            .map((node) => (node.textContent ?? '').trim())
+            .filter(Boolean)[0];
+          return `no verdict after 30s - ${
+            error !== undefined
+              ? `the tool reported: ${error.slice(0, 160)}`
+              : busy === null
+                ? 'nothing is running and nothing errored'
+                : 'the run is still in flight'
+          }`;
+        });
+      }
       return page.locator('[data-trust]').getAttribute('data-trust');
     };
 
@@ -11152,6 +11828,8 @@ async function runChecks(engine, label) {
     await checkRichTextClipboard(browser, label);
     await checkTruncation(browser, label);
     await checkOptionNotes(browser, label);
+    await checkRunProgress(browser, label);
+    await checkWorkerWarmth(browser, label);
     await checkToolIndex(browser, label);
     await checkNodeSummaryBox(browser, label);
     await checkPreviewSandbox(browser, label);

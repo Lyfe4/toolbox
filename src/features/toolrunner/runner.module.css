@@ -138,7 +138,13 @@
    */
   .layout {
     grid-template-columns: minmax(0, 1fr) 300px;
-    grid-template-rows: min-content minmax(0, 1fr);
+    /*
+     * A THIRD ROW, FOR THE FOOTNOTES. They are in the content column, never in
+     * the rail's - see `.notes` - so the rail cannot reach them however far it
+     * travels, which is the property that used to be bought by keeping them
+     * out of this grid altogether.
+     */
+    grid-template-rows: min-content minmax(0, 1fr) auto;
   }
 
   .input {
@@ -252,6 +258,11 @@
     grid-template-rows: minmax(0, 1fr) auto;
   }
 
+  .notes {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
   .optionsScroll {
     min-block-size: 0;
     overflow-y: auto;
@@ -314,7 +325,21 @@
 @media (min-width: 1440px) {
   .layout {
     grid-template-columns: 440px 300px minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr);
+    /*
+     * TWO ROWS, AND THE RAIL SPANS BOTH. The span is what makes the content
+     * column independent of it: a grid row is shared across every column, so a
+     * rail confined to row one would set row one's height for the input too and
+     * push the footnote below an 848px rail instead of up beside it. Spanning,
+     * its height is distributed across rows this column sizes itself, and the
+     * left column is as tall as Input plus its footnote and no taller.
+     *
+     * `min-content` ON ROW ONE, for the reason the two-column layout already
+     * gives: with two `auto` rows the surplus from the spanning items is split
+     * between them, which floated the Ports panel 105px clear of the input on a
+     * page whose output was the tallest thing. Row one is exactly the input's
+     * height now, and row two absorbs whatever the spanning columns have over.
+     */
+    grid-template-rows: min-content minmax(0, 1fr);
   }
 
   .input {
@@ -322,9 +347,14 @@
     grid-row: 1;
   }
 
+  .notes {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
   .controls {
     grid-column: 2;
-    grid-row: 1;
+    grid-row: 1 / -1;
   }
 
   /*
@@ -353,9 +383,66 @@
    */
   .output {
     grid-column: 3;
-    grid-row: 1;
+    grid-row: 1 / -1;
     align-self: start;
   }
+}
+
+/*
+ * THE PORTS DISCLOSURE.
+ *
+ * `<details>` rather than a button and a piece of state, because the keyboard
+ * path, the screen-reader path and the open/closed semantics are all native -
+ * and this file has already learned once that a control rebuilt by hand is a
+ * control whose accessibility has to be rebuilt by hand too.
+ *
+ * The summary carries the marker and reads as a value rather than a heading:
+ * the panel's title bar already says PORTS, so saying it twice would be the
+ * duplication the output port labels were fixed for.
+ */
+.portsSummary {
+  cursor: pointer;
+  font-family: var(--pb-font-ui);
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  text-transform: var(--pb-label-transform);
+  color: var(--pb-ink-secondary);
+}
+
+.portsSummary:focus-visible {
+  outline: var(--pb-focus-width) solid var(--pb-focus-ring);
+  outline-offset: var(--pb-focus-offset);
+}
+
+/* The table only needs its top gap once it is showing. */
+.portsDetails[open] > .ports {
+  padding-block-start: var(--pb-space-md);
+}
+
+/*
+ * A FINGER NEEDS 44px, and a summary is a one-line target by default. The rule
+ * is 2.5.5 and `pointer: coarse` is the finger rather than the screen size, the
+ * same split every other control in this file uses.
+ */
+@media (pointer: coarse) {
+  .portsSummary {
+    display: flex;
+    align-items: center;
+    min-block-size: 44px;
+  }
+}
+
+/*
+ * THE FOOTNOTE, IN THE CONTENT COLUMN.
+ *
+ * Its own grid item, in the column the rail does not occupy, so the content
+ * column is sized by its own contents: a grid row is shared across every
+ * column, so this sitting in a row of its own would put it BELOW the rail
+ * rather than beside it, and the rail is the tall one.
+ */
+.notes {
+  align-self: start;
+  min-inline-size: 0;
 }
 
 .stack {
@@ -596,7 +683,7 @@
  * something that is not there yet - a box sized to its emptiness would be a
  * box you have to grow before you can use it.
  */
-.editor {
+textarea.editor {
   inline-size: 100%;
   min-block-size: 200px;
   resize: vertical;
@@ -627,17 +714,28 @@
  * 520px is the cap the diff scroller already uses: past that a result is
  * something you copy or download rather than read through a window.
  *
- * BOTH FLOORS BEAT `.textarea`'s BY DOCUMENT ORDER RATHER THAN BY SPECIFICITY,
- * and `pnpm dev` disagrees with the build about which order that is. A CSS
- * module is one class deep, so `.result` and `.textarea` tie; the build links
- * the runner's chunk after the one holding TextInput and this wins, while the
- * dev server injects them the other way round and it loses. Read in the dev
- * server alone, this rule and `.editor`'s 200px both look like dead code -
- * which is what they were mistaken for. `checkRunnerLayout` measures both
- * against the BUILD, so a chunk order that flipped would fail a gate rather
- * than quietly resize every box on the page.
+ * BOTH FLOORS BEAT `.textarea`'s BY SPECIFICITY NOW, AND USED TO BEAT IT BY
+ * DOCUMENT ORDER - which is why both selectors carry a `textarea` qualifier
+ * they do not otherwise need.
+ *
+ * A CSS module is one class deep, so `.result` and `.textarea` tied, and the
+ * winner was whichever stylesheet came last. The build links the runner's chunk
+ * after the one holding TextInput and these won; the DEV SERVER injects them
+ * the other way round and they lost. Measured on `/tools/structured-data` at
+ * 1440: the input editor is 200px in the build and 87px under `pnpm dev`,
+ * against `.textarea`'s own 80px floor.
+ *
+ * That is a development environment that lies about the product, and it had
+ * already cost this repository one wrong conclusion - these rules "look like
+ * dead code" read in dev alone, and were mistaken for exactly that. An element
+ * qualifier makes the selector (0,1,1) against (0,1,0) and the cascade decides
+ * it the same way everywhere, whatever order the sheets arrive in.
+ *
+ * `checkRunnerLayout` still measures both against the BUILD, because
+ * specificity is a claim about the cascade and the heights are the claim that
+ * matters.
  */
-.result {
+textarea.result {
   inline-size: 100%;
   field-sizing: content;
   min-block-size: calc(var(--pb-control-height-md) * 1.5);
@@ -715,36 +813,198 @@
   color: var(--pb-ink-secondary);
 }
 
+/*
+ * `overflow: hidden` IS THE CONTAINMENT, AND IT WAS MISSING.
+ *
+ * The indeterminate marker used to be a 33%-wide block translated from -100%
+ * to +300%, which is a box that spends most of its cycle OUTSIDE this track:
+ * it ran across the "Running" label to the left of the bar and off the right
+ * end. Nothing clipped it, because nothing here was a scrollport or had a
+ * clip of its own.
+ *
+ * The animation no longer travels - see `.progressIndeterminate` - so this is
+ * belt and braces rather than the fix. It stays because a marker is now scaled
+ * rather than translated, and a `transform` is not clipped by its parent's box
+ * unless the parent says so.
+ *
+ * `display: block` for the same reason the marker needs it: this is a `<span>`,
+ * and `inline-size` and `block-size` do not apply to a non-replaced inline box.
+ * It computed to block anyway through the flex parent; saying so removes the
+ * dependency on that.
+ */
 .progressTrack {
+  display: block;
+  overflow: hidden;
   inline-size: 120px;
   block-size: 6px;
   background-color: var(--pb-surface-inset);
   border: var(--pb-border-width) solid var(--pb-border-hairline);
 }
 
+/*
+ * `display: block`, AND WITHOUT IT THIS ELEMENT HAS NEVER BEEN PAINTED.
+ *
+ * It is a `<span>`, and on a non-replaced INLINE box `inline-size`,
+ * `block-size` and `transform` do not apply - none of them. So the 33% width
+ * below did nothing, the 100% height did nothing, and the sweep animated a
+ * transform the box could not have. Measured on the shipped build over 40
+ * frames of a real run: one state, `bar inline 0x0 transform=matrix(1, 0, 0,
+ * 1, 0, 0)`. A progress bar that cannot move, inside a track that renders
+ * perfectly, which is why it read as "the bar is just empty".
+ *
+ * The determinate path was dead in the same way and for the same reason: the
+ * `inlineSize` written onto `style` by OutputPanel is a length on an inline
+ * box. Nothing reported progress to it, so nothing ever noticed.
+ *
+ * This is the affordance-without-behaviour rule CONTRIBUTING names, in its
+ * quietest form - the control was not wired to nothing, it was wired to
+ * something that could not be drawn.
+ */
 .progressBar {
+  display: block;
   block-size: 100%;
   background-color: var(--pb-accent);
   transition: inline-size var(--pb-motion-fast) var(--pb-ease);
 }
 
 /*
- * An indeterminate run has no fraction to show, so the marker sweeps instead.
- * Under prefers-reduced-motion the shared override collapses this to 1ms, so
- * the bar simply sits still rather than pulsing.
+ * ONE FILL PER RUN, AND IT NEVER ARRIVES.
+ *
+ * Three shapes have been tried here and the differences are worth keeping.
+ *
+ * A BLOCK SWEEPING ACROSS was the original. It left the track entirely for most
+ * of its cycle - see `.progressTrack` - and read as a pulse rather than as
+ * progress. A LOOPING FILL fixed the containment and the direction, and was
+ * still wrong for a different reason: pressing Run once and watching the bar
+ * fill three times says three things happened.
+ *
+ * So it fills ONCE. The element is mounted only while `status === 'running'`,
+ * so a fresh run mounts a fresh element and the animation starts from zero
+ * again - one press, one fill, by construction rather than by bookkeeping.
+ *
+ * AND IT STOPS AT 92%, WHICH IS THE HONEST PART. Nothing in this application
+ * reports a fraction: `reportProgress` is plumbed through the protocol, the
+ * worker, the engine and the hook, and every caller in the repository is a test
+ * stub. A bar that reached the end while the work continued would be claiming a
+ * completion it cannot know about, which is the affordance-for-behaviour-that-
+ * does-not-exist rule. Stopping short claims only "still going"; the run's
+ * actual end is the bar being replaced by `Done in N ms`.
+ *
+ * THE CURVE IS FRONT-LOADED ON PURPOSE. Most runs here finish in single-digit
+ * milliseconds, so the useful part of the animation is its first fraction of a
+ * second: a third of the track in the first 800ms, then a long creep. 8s to
+ * reach 92% is chosen against the slow cases rather than the fast ones - a big
+ * document, or a dev server paying an unbundled import - and past it the bar
+ * holds rather than restarting.
+ *
+ * `scaleX` rather than `inline-size`, because a transform is composited and a
+ * width is a layout change on every frame. `transform-origin` anchors the
+ * growth to the left edge; without it a scale grows from the middle outwards.
  */
 .progressIndeterminate {
-  inline-size: 33%;
-  animation: sweep 1s var(--pb-ease) infinite;
+  inline-size: 100%;
+  transform-origin: left center;
+  /*
+   * THE BASE STYLE IS THE REDUCED-MOTION STATE. The shared override collapses
+   * every animation to 1ms, so under the preference the element is whatever is
+   * written here a moment after it mounts. A third of a bar, held still, reads
+   * as "in progress, length unknown"; the 92% that `forwards` would otherwise
+   * leave behind reads as nearly finished.
+   */
+  transform: scaleX(0.33);
+  animation: fill 8s var(--pb-ease) forwards;
 }
 
-@keyframes sweep {
+@media (prefers-reduced-motion: reduce) {
+  .progressIndeterminate {
+    animation-name: none;
+  }
+}
+
+/*
+ * THE COMPLETION BEAT: THE BAR REACHES 100% BEFORE IT GOES.
+ *
+ * The indeterminate fill deliberately stops short of the end - it cannot know
+ * when the work finishes, so arriving would be a claim it has no basis for. The
+ * consequence is that a run ending at three quarters made the bar simply
+ * vanish, which is the one moment where the bar DOES know something: it has
+ * just been told the run is over.
+ *
+ * So the last thing it does is arrive. The row stays mounted for one beat after
+ * the result lands, with the marker at full width, and then goes.
+ *
+ * THIS COSTS THE RESULT NOTHING. The Output panel renders off `state.status`
+ * and is on screen the instant the run settles; only this row waits. It is a
+ * minimum display time for the progress bar, not for the answer - which is the
+ * distinction that makes it acceptable at all.
+ *
+ * `animation: none` is load-bearing. Removing `.progressIndeterminate` would
+ * revert the element to that class's base `scaleX(0.33)` for a frame before
+ * anything else applied - a bar that jumps BACKWARDS on its way to full. This
+ * class is applied ALONGSIDE it and overrides the animation instead, so the
+ * transform transitions from wherever the fill had reached to the end.
+ */
+.progressComplete {
+  animation: none;
+  transform: scaleX(1);
+  transition: transform var(--pb-motion-base) var(--pb-ease);
+}
+
+/*
+ * A RUN TOO SHORT TO HAVE SHOWN ANYTHING PLAYS THE WHOLE SWEEP INSTEAD.
+ *
+ * Most runs here finish in tens of milliseconds, and the indeterminate fill is
+ * paced for the slow ones - so on a 63ms run it reaches three pixels and the
+ * completion above snaps those three pixels to full. Measured: frame 10 is 3px
+ * wide and frame 11 is 118. Nothing to watch, which is the whole complaint.
+ *
+ * So a short run gets the journey rather than the destination: 0 to 100% over
+ * 260ms, after the answer is already on screen. `ToolRunner` picks between the
+ * two on the run's own reported duration, because that is the only place the
+ * number exists - CSS cannot ask how long something took.
+ *
+ * IT DELAYS NOTHING. The Output panel renders off `state.status` and is drawn
+ * the instant the run settles; this is a minimum display time for the bar, and
+ * for the bar only. A long run never uses it - there the fill really did climb,
+ * and replaying it from zero would be the restart this shape exists to avoid.
+ */
+.progressSweep {
+  /*
+   * 260ms is a literal rather than a token, and deliberately so: the motion
+   * scale tops out at 180ms because it describes UI transitions, and this is
+   * not one - it is a deliberate minimum time to WATCH something, chosen so a
+   * sweep registers as a sweep. A token here would be a fifth entry on that
+   * scale that nothing else could sensibly use, and `token-layering.test.ts`
+   * refuses an invented name with a fallback, which is how this was caught.
+   */
+  animation: complete 260ms var(--pb-ease) forwards;
+}
+
+@keyframes complete {
   from {
-    transform: translateX(-100%);
+    transform: scaleX(0);
   }
 
   to {
-    transform: translateX(300%);
+    transform: scaleX(1);
+  }
+}
+
+@keyframes fill {
+  from {
+    transform: scaleX(0);
+  }
+
+  10% {
+    transform: scaleX(0.35);
+  }
+
+  40% {
+    transform: scaleX(0.7);
+  }
+
+  to {
+    transform: scaleX(0.92);
   }
 }
 

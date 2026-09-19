@@ -1628,6 +1628,28 @@ Every one of the nine new checks was run against a deliberate break before being
 trusted: the resolution removed, the declaration removed, `mode` ignored,
 `complete` ignored, and five malformed declarations. Each failed, named.
 
+### One known pre-existing fault, written down rather than argued about
+
+`check:browsers` has an intermittent failure in WebKit: the JWT tool produces no
+verdict for one of the RSA examples, deep inside a full run, and the harness
+waits 30s and gives up. Three occurrences, at varying depth through the RSA
+block, zero check failures in those runs - it is an exception rather than a
+verdict. It does not reproduce in isolation: six consecutive passes of that
+check alone in WebKit under 16 busy processes, all green.
+
+**It reproduces on `867f42a`, which is already deployed**, so it predates the
+work that found it, and blocking otherwise-green work on it helps nobody. The
+untested hypothesis is the tool's own 10s worker deadline: an RSA verification
+overrunning it would produce an error, no `JwtView`, and no verdict - the shape
+that is seen. Nothing has measured that, so it is a story that fits.
+
+What did change is that it no longer destroys the run. The wait was a bare
+`waitFor`, so a timeout threw and took ~1,700 passing checks with it. It returns
+what was on screen now, so the check fails by name with the reason - the tool
+errored, the run is still in flight, or nothing happened at all - which are
+three different bugs the harness could not previously distinguish. The next
+occurrence should therefore say which one it is.
+
 ### The layout that was built for the widest case
 
 Five complaints, reported together after looking at the app properly for the
@@ -1659,6 +1681,102 @@ both times, `text-convert` set to HTML drew a 302px panel and set to Markdown
 drew a 624px one. That is the "416px Output panel around one sentence" the
 reserved-height round deleted, reached by a different route. A result is drawn
 the size of the result: 66px on every tool, at every width.
+
+A second one came from the same screenshot. Three columns whose middle one is
+the tall one read worse than the two columns they replaced: on text-convert at
+1920 with its option notes shown, an 848px rail left 512px of nothing under the
+Input and 782px under an empty Output — a void on each side of a tall middle.
+Meanwhile 380px of Ports and Privacy sat below the whole grid. They are the same
+380px, so they moved into the content column: it is 922px against that 848px
+rail, the left void is gone, and the page went from 1531px to 1176.
+
+That put the Ports footnote back inside the grid it had been deliberately taken
+out of, so the rule that kept it safe had to be narrowed rather than dropped. A
+sticky box's travel is bounded by its containing block, which for a grid item is
+the grid container — so a full-bleed row inside the grid once let the rail cover
+52px of the Ports panel. Moving Ports out fixed that by removing the _horizontal_
+half of the overlap as a side effect. The rule now stated is that half:
+**nothing may occupy the rail's column.** Two boxes that never share a
+horizontal band cannot overlap however far either travels. It is asserted with
+the page scrolled to its foot — the state the original overlap appeared in, which
+"at rest" cannot see — and driven against a deliberately full-bleed stack it
+reports `Ports by 6px` there and `Ports by 145px` beside a 2400px options panel.
+
+Filling that column then made the _rail_ look stunted — 922px of content beside
+a 302px options panel — which is the same complaint one column to the left. A
+three-column page only looks composed when its columns are of comparable length,
+and moving content between them cannot produce that; having less to lay out can.
+So the Ports footnote is a closed `<details>` summarised as `1 INPUT · 4 OUTPUTS`
+(389px → 92px), and the Privacy panel is gone from tool pages: it was identical
+boilerplate on all ten, and the claim it makes is on the home page, in this file
+and in SECURITY.md. The columns are 444 / 302 / 621 against 922 / 302 / 621, and
+the page is 985px against the 1531 it started at.
+
+**A closed disclosure measures zero, which quietly disarmed six assertions.**
+Every check about where a port's sentence sits relative to its name became
+`0 >= 0` and `0 <= 0` — true of a correct layout and equally true of a broken
+one, and all six went green the moment the footnote collapsed. They open it
+before measuring now and assert the cells have real width first. The companion
+claim — that the sentences are in the document while it is shut, which is what
+separates a disclosure from a removal — was being made against the table's whole
+`textContent`, which survives `hidden` and `display: none`; it counted the port
+NAMES as evidence about the descriptions. It counts the descriptions now, and
+against a build that renders them only on opening it reports `0 sentences`.
+
+**A first run that paid for the worker's import.** `test` to JSON reported
+2113ms on a tool page and 7ms on the canvas. No debounce, no minimum display
+time, no artificial delay - measured, not reasoned about: 63ms, 7ms, 7ms for
+three runs in the production build. A worker has its own module registry, so
+importing the tool into the PAGE for its option fields does nothing for the
+thread it runs on, and the canvas only escaped because it prefetches when a node
+is added. The tool page does too now: **8ms, 9ms, 5ms**. Both halves are
+asserted - the index warms 0 workers and a tool page warms exactly 1 before Run
+is pressed, counted by replacing `window.Worker` before any app code runs - and
+`durationMs` is measured exactly as before, so the number is smaller because the
+work is, not because something stopped being counted.
+
+**An input editor that was 200px in the build and 87px in dev.** Reported as
+"about three lines where it used to be ten", and reproduced by refreshing. The
+refresh was a red herring and so was the regression: `.editor`'s 200px floor and
+`.result`'s 48px one both have to beat `.textarea`'s own 80px, a CSS module is
+one class deep, so they TIE — and the winner is whichever stylesheet the bundler
+put last. The build links the runner's chunk after TextInput's and they win; the
+dev server injects them the other way round and they lose. Both selectors carry a
+`textarea` qualifier now, which makes them (0,1,1) against (0,1,0) and settles it
+identically everywhere: dev goes 87px → 200px, the build stays 200px.
+
+The repository already knew about the tie — the note explaining it said these
+rules "look like dead code" read in dev alone, which is what they had once been
+mistaken for. Knowing about a footgun is not the same as removing it, and in the
+meantime it cost a second person the same afternoon.
+
+**A progress bar that could not move.** Reported as "the bar is just empty and
+then suddenly it's done". The track renders at 120x6; the marker inside it is a
+`<span>` with no `display`, and `inline-size`, `block-size` and `transform` do
+not apply to a non-replaced inline box — so its width did nothing, its height did
+nothing, and the indeterminate sweep animated a transform the box could not
+have. Measured over 40 frames of a real run: **one state, `bar inline 0x0`**.
+`display: block` is the whole fix, and the same 40 frames then give 40 distinct
+states with a 39x4 marker sweeping across the track.
+
+It took three shapes to settle: a block sweeping across left the track for most
+of its cycle, a looping fill said "three things happened" for one press, and the
+one that stayed fills **once** and then **arrives** — success keeps the bar on
+screen at full width beside the timing. That last part exposed the real problem
+on a fast tool: the fill is paced for slow runs, so a 63ms one reached three
+pixels and snapped to full, which is nothing to watch. A run shorter than the
+sweep now plays the whole 0-to-100 on completion, over 260ms, after the answer
+is already drawn — a minimum display time for the bar and for nothing else.
+
+The determinate branch was dead the same way — the fraction is written as an
+`inlineSize` on that inline box — and nothing noticed because no tool has ever
+reported one: `reportProgress` is plumbed through the protocol, the worker, the
+engine and the hook, and every caller in the repository is a test stub. So a run
+is honestly indeterminate and the sweep is the right idiom; what it may not do is
+show nothing. jsdom could not catch this (no layout), axe does not ask whether a
+`progressbar` moves, and no geometric check had ever asked whether this box had a
+size. One does now, over 40 frames, with the size asserted beside the movement
+because a 0x0 box has exactly one transform too.
 
 **A twelve-word sentence set across 1,888px.** The Ports footnote is a
 direction, a name, a type and a sentence — four fields, which is a row — drawn

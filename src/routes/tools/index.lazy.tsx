@@ -2,6 +2,7 @@ import { createLazyFileRoute, Link } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
 
 import { Field } from '@/components/Field';
+import { Panel } from '@/components/Panel';
 import { Select } from '@/components/Select';
 import { TextInput } from '@/components/TextInput';
 import { VisuallyHidden } from '@/components/VisuallyHidden';
@@ -42,10 +43,16 @@ export function ToolsIndexPage() {
       <header className={styles.head}>
         <p className={styles.eyebrow}>Tools</p>
         <h1 className={styles.title}>Every tool</h1>
+        {/*
+          THE PRIVACY CLAUSE CAME OFF THIS LINE when the Privacy panel landed at
+          the foot of the page. It said "everything here runs in this tab -
+          nothing you paste is uploaded anywhere", which is the panel's sentence
+          in weaker words, on the same screen. Once is better than twice, and
+          the panel is the one that can say WHY it is true.
+        */}
         <p className={styles.lede}>
           The plain, keyboard-first way to run any tool on its own. This view stays available
-          alongside the canvas, and everything here runs in this tab &mdash; nothing you paste is
-          uploaded anywhere.
+          alongside the canvas rather than replacing it.
         </p>
       </header>
 
@@ -132,6 +139,28 @@ export function ToolsIndexPage() {
           ))}
         </ul>
       )}
+
+      {/*
+        THE PRIVACY CLAIM, ONCE, ON THE PAGE THAT LISTS EVERY TOOL.
+
+        It used to be a panel on each of the ten tool pages - the same four
+        lines of prose, ten times over - and it went from there when the tool
+        page's content column needed to stop being the tallest thing on it.
+        This is the page it belongs on: the claim is about the application
+        rather than about any one tool, and said here it is said once.
+
+        Each tool page keeps the claim as a clause on its Ports footer, at the
+        point where somebody is about to paste a token into a text box. The
+        SENTENCE is here; the reminder is there.
+      */}
+      <Panel title="Privacy" footer="No network access is possible from any page here">
+        <p className={styles.lede}>
+          Every tool on this list runs entirely in your browser. The page&rsquo;s
+          Content-Security-Policy sets <code>connect-src &apos;none&apos;</code>, so the browser
+          itself refuses any attempt to send your input anywhere &mdash; it is enforced, not merely
+          promised.
+        </p>
+      </Panel>
     </div>
   );
 }

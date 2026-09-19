@@ -1,6 +1,5 @@
 import { createLazyFileRoute, Link } from '@tanstack/react-router';
 
-import { Panel } from '@/components/Panel';
 import { getManifestEntry, isToolId } from '@/features/registry';
 import { ToolRunner } from '@/features/toolrunner';
 
@@ -46,14 +45,6 @@ export function ToolPage() {
       </header>
 
       <ToolRunner entry={entry} />
-
-      <Panel title="Privacy" footer="No network access is possible from this page">
-        <p className={styles.lede}>
-          This tool runs entirely in your browser. The page&rsquo;s Content-Security-Policy sets{' '}
-          <code>connect-src &apos;none&apos;</code>, so the browser itself refuses any attempt to
-          send your input anywhere &mdash; it is enforced, not merely promised.
-        </p>
-      </Panel>
     </div>
   );
 }
