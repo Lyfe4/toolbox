@@ -473,7 +473,7 @@ about.
 
 ## Testing
 
-4,646 tests across 121 files. The count is not the interesting part; what the
+5,012 tests across 125 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Every conversion, with a verdict and the evidence behind it
@@ -1627,6 +1627,134 @@ which is the difference from the table above.
 Every one of the nine new checks was run against a deliberate break before being
 trusted: the resolution removed, the declaration removed, `mode` ignored,
 `complete` ignored, and five malformed declarations. Each failed, named.
+
+### The layout that was built for the widest case
+
+Five complaints, reported together after looking at the app properly for the
+first time in a while, and four of them turned out to be one cause: **nothing on
+these pages had a maximum.** Measured in the production build rather than
+described.
+
+**A paste target sized by the monitor.** Above 1000px the tool page was a main
+column and a rail, and the main column was whatever was left of the window — so
+`/tools/base64`'s input editor was 906px wide at 1280 and 1546px at 1920, for a
+string you pasted. Because the result was a row below the input rather than
+beside it, the two halves of the loop the page exists for were never on screen
+together. On `diff`, whose Input panel holds two editors, that was not a matter
+of taste: at 1280×800 its Output panel started at **811** in an 800px window.
+There is a second breakpoint at 1440 now — the input capped at a 440px measure,
+the rail, then the result taking everything above — and the same page is 926px
+tall instead of 1240, with `diff`'s result at 191 instead of 811. The arithmetic
+and what did not change are in
+[architecture.md](docs/architecture.md#the-third-column-and-the-input-that-had-no-measure).
+
+That change had a defect of its own, reported from a screenshot and fixed in the
+same round. The Output panel carries `align-self: stretch`, which is right in
+the two-column layout - there the panel is row two of a grid the rail spans, so
+the rail's surplus is enclosed between the result and the ports footnote and
+stretching is what hides it. In three columns nothing encloses it, so all the
+stretch did was size the result panel by **how many option fields are on
+screen**: measured at 1920, idle, with the same sentence "No output yet" in it
+both times, `text-convert` set to HTML drew a 302px panel and set to Markdown
+drew a 624px one. That is the "416px Output panel around one sentence" the
+reserved-height round deleted, reached by a different route. A result is drawn
+the size of the result: 66px on every tool, at every width.
+
+**A twelve-word sentence set across 1,888px.** The Ports footnote is a
+direction, a name, a type and a sentence — four fields, which is a row — drawn
+as a paragraph under a heading, full bleed. It is a two-column table now with
+the sentence on a measure: 189px of panel down to 145, and the sentence column
+from 1,859px wide to 490. The columns are declared rather than auto-placed,
+because an input carries no sentence and auto-placement would put the next
+port's _name_ in the sentence column and knock every row below it out by one.
+
+**An explanation that was permanent.** Every option field's `description` was
+painted on every visit — 96px of a 490px Options panel on regex, and worse in a
+320px inspector rail where the same sentences wrap further. It is a preference
+now, off by default, remembered, with one `Notes` toggle in the panel's title
+bar where it costs no height. **Nothing is hidden from a screen reader in either
+state**: the element stays in the DOM and stays the target of the control's
+`aria-describedby`, so the sentence is announced when the control takes focus
+whichever way the toggle is set. What the preference decides is whether it is
+painted. Panel height 490 → 386.
+
+**Cards that were the same height and not the same shape.** The tools index
+already stretched every card in a row to the same height; what was ragged was
+what was _inside_ them. At 1280 one row of four had its port metadata at 86, 86,
+102 and 102 inside four identical boxes, because the metadata was a chip per
+port in a wrapping row — five chips on `text-convert` — and where a row wraps is
+a function of the column width, so no two cards broke in the same place. It is
+one line per direction now, deduplicated, at most two lines whatever a tool
+declares, in plain muted label text rather than the outlined badge the category
+wears. Every card is 133px at every width, and every metadata line in a row
+shares a baseline.
+
+**And one that was deliberate, with a measurement and a mechanism.** A node's
+summary box reserves two lines and most results are one, so a base64 node
+showing `aGk=` ended its text 32px above its first port row. The box is 8px
+shorter and centres its content now, which halves that to 19 — and that is all
+that could be taken. `SUMMARY_HEIGHT` is a term in `portOffsetY`, the one place
+a port and the wire landing on it agree where they meet, so a content-sized box
+would move every wire on the node; and it would move them _while somebody types_,
+because `NodeRunState` clears `outputs` when a node starts and the node falls
+back to its tool's two-line description for the frame it spends `running` — one
+line, two lines, one line, per keystroke, down the whole chain. What is asserted
+instead is the property that rules it out: a node is the same height blocked,
+with a short result and with a long one. Driven against a deliberately
+content-sized box, that check reads 174/161/161.
+
+**And one defect this round introduced, caught by a check that was already
+there.** Hiding a description needs it out of the flow, which means
+`position: absolute`, which invites a `position: relative` on the field around
+it so the box is clipped by its own field. That puts the whole field in the
+positioned paint layer - and the inspector's resize divider is an in-flow
+element whose 44px grab area is a `::after` that deliberately **overhangs the
+panel by 18px**. A positioned field inside the panel paints over the overhang:
+measured in both engines, a field's `<label>` took 6px off the divider and
+`checkInspectorTouch` reported a 38px touch target against WCAG 2.5.5's 44. It
+was 44 at the previous commit and 38 after the change, which is how it was
+attributed rather than argued about. The fix is that nothing new is positioned
+at all: the hidden box has no insets, so it renders at its static position, and
+the one place it could land inside a scroller is the options rail - which has
+been `position: relative` for exactly this since a comment there predicted it,
+down to the words "no option field has one today".
+
+**And one check that was still measuring the machine, found the same way.** The
+first full harness run after the fix above failed on "reduced motion ends the
+slide rather than merely shortening it", in Firefox, once. That check was
+rewritten a round ago out of exactly this category, and its premise was written
+down: a slow machine removes frame samples, "it cannot invent one between 0 and
+the resting width, because nothing ever draws the panel there". The app draws it
+there. The shared reduced-motion override collapses the animation to **1ms**
+rather than removing it, deliberately, so that `animationend` still fires - so a
+panel really is part way across for one millisecond, and a
+`requestAnimationFrame` callback can land inside it.
+
+Measured rather than re-run: ten passes of that one check on an idle machine
+failed twice, at 25px, 134px, 252px and 258px across runs - arbitrary points in
+the slide, which is what a frame landing in a window looks like and not what a
+panel stopping somewhere looks like. **The identical ten passes against the
+previous commit failed twice as well**, so it was neither new nor caused by this
+round. It asserts at most ONE intermediate sample now, which is a bound rather
+than a tolerance - frames are at least ~4ms apart and the animation is 1ms, so
+two would mean the animation outlived a frame interval, which is the defect the
+check is for. Twelve passes green afterwards, one of them with a single
+intermediate sample in it; with the override deliberately set back to 180ms, four
+of four fail.
+
+**Fifteen deliberate breaks, every one watched failing.** Five against the unit
+suite and ten against the harness, and four of them exposed a check rather than
+a defect — which is the reason for the exercise. "Every card in a row is the
+same height" was already true before the change. The metadata alignment check
+passed against three `auto` rows, because `align-content: stretch` distributes
+the spare height equally and today's ten tools all have two-line metadata; it
+takes a tall-summary fixture, in the style of the tall-options one, to ask the
+question the rule actually answers. "Neither type list wraps" compared a type
+list to the flex row holding it — which _grows with it_ — so it was true of
+nothing, and passed against a card narrowed until every list wrapped. And "a
+one-line result is centred in its box" was satisfied by a box with no slack in
+it at all, which is precisely the change it exists to refuse: it asks for slack
+now as well as for symmetry.
 
 ## Performance
 

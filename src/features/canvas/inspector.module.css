@@ -170,6 +170,32 @@
   color: var(--pb-ink-secondary);
 }
 
+/*
+ * A SECTION'S HEADING ROW, when the section carries a control of its own.
+ *
+ * Only Options does today - the notes toggle - and it is on the rule rather
+ * than above it for the same reason it is in `Panel`'s title bar on the tool
+ * page: the heading occupies a row whether or not anything sits beside it, so
+ * a control there costs the panel no height. On a 320px rail that matters more
+ * than it does on a tool page.
+ *
+ * The rule moves to this row, because the heading's own border would otherwise
+ * be drawn under the text alone and stop short of the control.
+ */
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pb-space-sm);
+  padding-block-end: var(--pb-space-2xs);
+  border-block-end: var(--pb-border-width) solid var(--pb-border-subtle);
+}
+
+.sectionHead .sectionTitle {
+  padding-block-end: 0;
+  border-block-end: 0;
+}
+
 .stack {
   display: grid;
   gap: var(--pb-space-sm);

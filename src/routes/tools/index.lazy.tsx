@@ -19,6 +19,18 @@ const CATEGORY_CHOICES = [
   })),
 ];
 
+/**
+ * Every data type a direction can carry, once each, in declaration order.
+ *
+ * Deduplicated because the card names a DIRECTION rather than a port: base64
+ * declares `text` on one output and `text` again through another, and a reader
+ * scanning for "what can I wire this to" wants the set, not the multiset. The
+ * separator is the one the node faces and the ports footnote already use.
+ */
+function portTypes(ports: readonly { readonly types: readonly string[] }[]): string {
+  return [...new Set(ports.flatMap((port) => port.types))].join(' · ');
+}
+
 export function ToolsIndexPage() {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<ToolCategory | 'all'>('all');
@@ -87,19 +99,33 @@ export function ToolsIndexPage() {
                   <span className={styles.badge}>{entry.category}</span>
                 </span>
                 <span className={styles.cardSummary}>{entry.summary}</span>
+                {/*
+                  ONE LINE PER DIRECTION, not one chip per port. A chip per port
+                  is five of them on text-convert, in a wrapping row whose break
+                  point is a function of the column width - so `out: json` fell
+                  onto a line of its own on some cards and not others, and no
+                  two cards in a row broke in the same place. The card is an
+                  index entry; which particular port carries which type is the
+                  tool page's Ports footnote, where there is room to say it.
+
+                  The word is spoken rather than drawn, because `In` on its own
+                  is a direction to the eye and an ambiguity to an ear.
+                */}
                 <span className={styles.cardPorts}>
-                  <VisuallyHidden>Accepts</VisuallyHidden>
-                  {entry.inputs.map((input) => (
-                    <span key={input.id} className={styles.badge}>
-                      in: {input.types.join('/')}
+                  <span className={styles.cardPortLine}>
+                    <span className={styles.cardPortDirection} aria-hidden="true">
+                      In
                     </span>
-                  ))}
-                  <VisuallyHidden>Produces</VisuallyHidden>
-                  {entry.outputs.map((output) => (
-                    <span key={output.id} className={styles.badge}>
-                      out: {output.types.join('/')}
+                    <VisuallyHidden>Accepts</VisuallyHidden>
+                    <span className={styles.cardPortTypes}>{portTypes(entry.inputs)}</span>
+                  </span>
+                  <span className={styles.cardPortLine}>
+                    <span className={styles.cardPortDirection} aria-hidden="true">
+                      Out
                     </span>
-                  ))}
+                    <VisuallyHidden>Produces</VisuallyHidden>
+                    <span className={styles.cardPortTypes}>{portTypes(entry.outputs)}</span>
+                  </span>
                 </span>
               </Link>
             </li>

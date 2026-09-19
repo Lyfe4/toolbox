@@ -61,6 +61,44 @@ describe('/tools index', () => {
     expect(link).toHaveFocus();
   });
 
+  /*
+   * ONE LINE PER DIRECTION, NOT ONE CHIP PER PORT.
+   *
+   * A chip per port is five of them on `text-convert`, in a wrapping row whose
+   * break point is a function of the column width - so `out: json` fell onto a
+   * line of its own on some cards and not others, and no two cards in a row
+   * broke in the same place. jsdom sees the markup that makes at most two lines
+   * possible; `checkToolIndex` measures that they really do not wrap, at four
+   * widths, in two engines.
+   */
+  it('states what a tool accepts and produces once each, deduplicated', async () => {
+    await renderRoute('/tools');
+
+    expect(screen.getByRole('link', { name: /Base64/ })).toHaveTextContent('text · bytes');
+
+    /*
+     * Structured data is the one that proves the deduplication rather than
+     * merely surviving it: it declares json on TWO of its three outputs, so the
+     * multiset is `text · json · json` and the set - which is what a reader
+     * scanning for "what can I wire this to" wants - is `text · json`.
+     */
+    const structured = screen.getByRole('link', { name: /Structured data/ });
+    expect(structured).toHaveTextContent('text · json');
+    expect(structured).not.toHaveTextContent('json · json');
+  });
+
+  /*
+   * The direction is SPOKEN and DRAWN separately: `In` on its own is a
+   * direction to the eye and an ambiguity to an ear.
+   */
+  it('names the direction for a screen reader rather than leaving it to the glyph', async () => {
+    await renderRoute('/tools');
+
+    const card = screen.getByRole('link', { name: /Base64/ });
+    expect(card).toHaveTextContent('Accepts');
+    expect(card).toHaveTextContent('Produces');
+  });
+
   it('has no axe violations', async () => {
     const { container } = await renderRoute('/tools');
     await expectNoAxeViolations(container);

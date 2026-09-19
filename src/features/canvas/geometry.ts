@@ -28,14 +28,30 @@ export const HEADER_HEIGHT = 24;
 export const PORT_ROW_HEIGHT = 24;
 export const BODY_PADDING = 8;
 /*
- * Two full lines of summary or guidance, plus its padding.
+ * Two full lines of summary or guidance.
  *
- * Was 32, which is 24px of content against a 13px line box - 1.85 lines. Every
- * two-line tool summary was already being shaved, and the blocked-node
- * guidance was cut mid-sentence. 40 is 2 lines (26px) with room, and stays on
- * the 8px baseline.
+ * WAS 40, AND BEFORE THAT 32. The first 32 was 24px of content against a 13px
+ * line box - 1.85 lines, because it charged 4px of padding to each end - so
+ * every two-line tool summary was shaved and the blocked-node guidance was cut
+ * mid-sentence. 40 fixed that by buying a whole 8px step for 2px of need.
+ *
+ * It is 32 again, and the padding is what changed rather than the arithmetic:
+ * the box has no block padding now and centres its line box instead, so 26px of
+ * two lines sits in 32px with 3px clear at each end. The clamp is what makes
+ * that safe - the inner span is `-webkit-line-clamp: 2`, so there is no third
+ * line to peek out from under the second, which was not true when this was last
+ * 32.
+ *
+ * WHAT IT BUYS is 8px off every node on the plane, and it is the only part of
+ * the empty space under a short result that can be taken. The rest cannot: this
+ * constant feeds `portOffsetY`, which is the one place a wire and a port agree
+ * about where they meet, so a height that varied with what the box happened to
+ * hold would move every wire on the node. It would do it while somebody types,
+ * too - a node with a result falls back to its tool's description for the frame
+ * it spends `running`, so a content-sized box flips between one line and two on
+ * every keystroke that reaches the debounce. See `.nodeSummary`.
  */
-export const SUMMARY_HEIGHT = 40;
+export const SUMMARY_HEIGHT = 32;
 
 /** Lines the summary box is sized for. Asserted against the real box. */
 export const SUMMARY_LINES = 2;

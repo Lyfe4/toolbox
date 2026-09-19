@@ -72,8 +72,24 @@
   list-style: none;
 }
 
+/*
+ * THREE ROWS, AND THE MIDDLE ONE TAKES THE SLACK.
+ *
+ * The cards in a row are already the same height - the `<li>` stretches and
+ * this fills it - but their CONTENTS were not aligned, because the rows all
+ * sized to their content and the surplus collected at the bottom. A card whose
+ * summary wraps to two lines put its port metadata 16px higher than the card
+ * beside it whose summary wrapped to three: measured at 1280 on the shipped
+ * build, one row of four cards had its metadata at 86, 86, 102 and 102 inside
+ * four boxes of identical height. That is what reads as ragged.
+ *
+ * `auto 1fr auto` gives the summary the slack and pins the metadata to the
+ * bottom edge, so the last line of every card in a row shares a baseline and
+ * the eye can scan down it.
+ */
 .card {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: var(--pb-space-xs);
   block-size: 100%;
 
@@ -127,14 +143,56 @@
   color: var(--pb-ink-secondary);
 }
 
+/*
+ * TWO LINES OF METADATA, AND THEY USED TO BE A BAG OF BORDERED CHIPS.
+ *
+ * One chip per PORT, each in the same outlined badge the category uses, laid
+ * out as a wrapping flex row. Two things were wrong with that and both were
+ * measurable. A chip per port is up to five of them on `text-convert`, so the
+ * row wrapped - at 1280 the Base64 card put `out: json` on a line of its own
+ * while the two chips before it shared one, and the Diff card ran to three
+ * lines - and where a row wraps is a function of the column width, so no two
+ * cards broke in the same place. And a badge is an outlined, padded object:
+ * the same weight as the category taxonomy, for something that is a footnote.
+ *
+ * It is one line per DIRECTION now - the deduplicated type list a wire could
+ * carry - which is at most two lines whatever a tool declares, and it is plain
+ * muted label text with the direction picked out. The category keeps its badge:
+ * it is one value from a closed set, it sits in the title row, and it is the
+ * only thing on the card a reader might filter by.
+ */
 .cardPorts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--pb-space-xs);
+  display: grid;
+  gap: var(--pb-space-2xs);
+  align-content: end;
   font-size: var(--pb-label-size);
   letter-spacing: var(--pb-label-tracking);
   text-transform: var(--pb-label-transform);
   color: var(--pb-ink-muted);
+}
+
+/*
+ * `240px` is the narrowest the grid ever makes a card's content box - a 300px
+ * track less two 12px paddings and the scrollbar's share - and the longest
+ * direction line in the set (`out  text · json · color`) fits it. There is
+ * nothing to wrap, which is the point, but a tool declaring six types would
+ * wrap rather than push the card sideways.
+ */
+.cardPortLine {
+  display: flex;
+  gap: var(--pb-space-sm);
+  min-inline-size: 0;
+}
+
+.cardPortDirection {
+  flex: none;
+  inline-size: 3ch;
+  color: var(--pb-ink-secondary);
+}
+
+.cardPortTypes {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
 }
 
 .empty {

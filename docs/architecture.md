@@ -2125,6 +2125,47 @@ a diagnostic: `regex-tester` carries `warn` notes about the PATTERN on a
 `regex`-presented port, and "your pattern has slashes around it" is advice. On a
 node's face it would be the note that cries wolf.
 
+#### The box that reserved two lines for a one-line answer
+
+The box reserves two lines because two lines is what the tool's description, the
+blocked guidance and an error message each need. Most **results** are one line —
+`aGk=`, `47 matches`, `2.1 MB PNG image` — and with the text at the top of the
+box the second line's worth of reserved height collected underneath it, above
+the first port row. Measured on the shipped build, on a base64 node showing
+`aGk=`:
+
+|                                                          | Before | After |
+| -------------------------------------------------------- | ------ | ----- |
+| Node height                                              | 186px  | 178px |
+| Summary box                                              | 40px   | 32px  |
+| Clear space under a 1-line result, to the first port row | 32px   | 19px  |
+| Clear space under a 2-line summary                       | 19px   | 12px  |
+
+Two changes, and neither is the obvious one. The box is 32px rather than 40 —
+the clamp means no third line can exist, so it needs the two lines and no margin
+for a fourth, which is what made 32 wrong the last time it was tried — and it
+centres its content, so what is left reads as the box's own padding rather than
+as something missing.
+
+**What is deliberately NOT done is sizing the box to its content**, which is the
+obvious fix and is wrong here for two independent reasons.
+
+`SUMMARY_HEIGHT` is a term in `portOffsetY`, which is the single place a port's
+position and the wire that lands on it are agreed. A box that grew and shrank
+would move every wire attached to the node.
+
+And it would move them _while somebody types_. `NodeRunState` clears `outputs`
+the moment a node starts, so a node with a result falls back to its tool's
+two-line description for the frame it spends `running` — and every keystroke
+that reaches the pipeline's 300 ms debounce is one of those frames. One line,
+two lines, one line, per keypress, on the node being edited and on every node
+downstream of it. There is no content-driven rule available that does not do
+this: the run status flips on every edit, and so does the text.
+
+So the property `checkNodeSummaryBox` holds is the one that matters: a node is
+the same height blocked, with a one-line result and with a longer one. Driven
+against a deliberately content-sized box it reads 174/161/161.
+
 ### A summary that could not tell two results apart
 
 The rule above has one exception — text, summarised as its first non-empty
@@ -2931,18 +2972,18 @@ The source order is the reading order. Three of the four are in a grid; the
 fourth is deliberately not, for reasons the next section is about:
 
 ```
-                        < 1000px                  >= 1000px
+         < 1000px          1000..1439px                 >= 1440px
 
-                     +--------------+      +-------------+--------+
-                  1  |    Input     |      |    Input    | Options|  <- .layout
-                     +--------------+      +-------------+  ....  |
-                  2  |   Options    |      |             | scroll |
-                     |     Run      |      |   Output    |  ....  |
-                     +--------------+      |             |  Run   |
-                  3  |    Output    |      +-------------+--------+
-                     +--------------+
-                  4  |    Ports     |      |         Ports        |  <- page flow
-                     +--------------+      +----------------------+
+     +--------------+  +----------+--------+   +-------+-------+--------+
+  1  |    Input     |  |  Input   | Options|   | Input |Options| Output |  <- .layout
+     +--------------+  +----------+  ....  |   | 440px |  300  |  rest  |
+  2  |   Options    |  |          | scroll |   |       | .... |         |
+     |     Run      |  |  Output  |  ....  |   |       |  Run |         |
+     +--------------+  |          |  Run   |   +-------+-------+--------+
+  3  |    Output    |  +----------+--------+
+     +--------------+
+  4  |    Ports     |  |       Ports       |   |         Ports          |  <- page flow
+     +--------------+  +-------------------+   +------------------------+
 ```
 
 **Options come before Output in the DOM.** This is the whole design, and it is
@@ -3012,6 +3053,167 @@ is taller than a 460px window. Below the breakpoint it is neither sticky nor a
 scroller: a pinned rail on a phone spends viewport the result needs, and a
 nested scrollbar inside a document that already scrolls is a defect this
 project has already fixed once.
+
+### The third column, and the input that had no measure
+
+Above 1000px the page was a main column and a rail, and the main column was
+whatever was left of the window. That is right up to a point and wrong past it.
+Measured in the production build on `/tools/base64`:
+
+| Window | Input editor | Output editor | The result's top |
+| ------ | ------------ | ------------- | ---------------- |
+| 1280   | 906px        | 906px         | 608              |
+| 1920   | 1546px       | 1546px        | 608              |
+
+A paste target sized by the monitor is not a measure — 1,546px is about 200
+monospace characters of a base64 string — and because the result was a row
+below the input rather than beside it, the two halves of the one loop the page
+exists for were never on screen together at any width.
+
+`diff` is where that bites hardest, because its Input panel holds two editors.
+At 1280×800 its Input panel ran 191..795 and its Output panel started at **811**
+— eleven pixels below the fold, on the tool whose whole job is a comparison.
+
+**So the third column is the result, and the input is capped rather than the
+output starved.** Above 1440px the page is Input, the rail, then Output: left to
+right in the order they are written in, which is the same rule the stacked and
+two-column layouts already follow and the reason this is a column change rather
+than an `order` one. Sorting the three by (top, left) still reproduces their DOM
+order, because they now share a top and differ only in left.
+
+**The number is arithmetic, like the 1000 above it.** The input column is 440px,
+the rail is 300, and the widest thing the output draws — the regex match table,
+the side-by-side diff — wants about 600. 440 + 300 + 600 + 32 for the two gaps +
+32 for the page's gutters = 1404, and 1440 is the next round number clear of it.
+
+| Window | Input | Rail | Output | Page height |
+| ------ | ----- | ---- | ------ | ----------- |
+| 1439   | 1091  | 300  | 1091   | 1196        |
+| 1440   | 440   | 300  | 636    | 926         |
+| 1920   | 440   | 300  | 1116   | 926         |
+
+Everything above 1440 goes to the output, which is the same decision the single
+breakpoint made and the same place it sent it — this page now has somewhere to
+send it to. On `diff` at 1440×800 the Output panel's top is 191 rather than 811.
+
+**The Output panel stops stretching, and the two breakpoints want opposite
+things for a structural reason.** At 1000px the panel is row two of a grid the
+rail spans, so any surplus the rail creates is ENCLOSED - it sits between the
+result and the ports footnote, and without `align-self: stretch` it is a hole in
+the middle of the page. In three columns nothing encloses it: the panels are
+siblings in one row and the surplus is simply the end of a shorter column, with
+the full-width Ports panel below all three.
+
+So stretching buys nothing there and costs the rule the reserved viewport height
+was deleted for - the result panel would be sized by how many option fields are
+on screen. Measured at 1920, idle, with the same sentence "No output yet" in it
+both times: on `text-convert` set to HTML the rail is 302px and the panel was
+302; set to Markdown the rail is 624 and the panel was 624. One page, one empty
+result, two heights, neither of them a fact about a result.
+
+It is `align-self: start` above 1440 now, and 66px on every tool. The check that
+holds it switches one tool between two targets rather than comparing two tools,
+because that holds every other variable still; the control is that the rail
+really did move.
+
+**What did not change.** The rail is still sticky, still capped at the viewport,
+still the only thing on the page that pins, and its containing block is still
+the grid it was already in — one row instead of two, so its travel is unchanged.
+Ports is still a sibling of that grid. `.output` keeps `align-self: stretch`, so
+a short result fills the row rather than leaving a gap inside the grid under it.
+
+`checkRunnerLayout` measures nine widths now — 320, 390, 768, 999, 1000, 1280,
+1439, 1440 and 1920 — and the two new sides of the breakpoint assert the three
+columns, the 440px cap and, on `diff` at 1440×800, that the result is beside the
+input rather than under it. That last one carries a control: the input has to
+end within one gap of the fold, or "the result is above the fold" would be a
+fact about there being little on the page rather than about the arrangement.
+
+### The ports footnote is a table
+
+A port entry is a direction, a name, a type and a sentence — four fields, which
+is a row — and it was drawn as a name line with a paragraph under it running the
+full width of the page. At 1920 that is a twelve-word sentence set across
+1,888px: neither readable as prose nor scannable as data, and every line in the
+panel starting at the same x whatever kind of line it was.
+
+The identity is one column now and the sentence the other, with the sentence on
+a measure. Below 720px there is no room for two columns and it falls back to the
+stacked pair it always was.
+
+**The columns are declared rather than auto-placed, and that is load-bearing.**
+An input deliberately carries no sentence here — its prose is already on the
+page, in the panel where it is acted on — so an input contributes one cell and
+an output contributes two. Under auto-placement the next port's _name_ would
+flow into the empty second column and every row below it would be off by one.
+The cells are therefore siblings rather than a wrapper per port: a `<div>` per
+port would make each port one grid item and put its two lines back under each
+other, and `display: contents` would do it at the cost of something to reason
+about.
+
+Measured on `/tools/base64` at 1920, the Ports panel went from 189px to 145px,
+and the sentence column from 1,859px wide to 490.
+
+### An option's sentence is a preference
+
+Every option field may declare a `description`, and until now every one of them
+was painted under its label on every visit. Measured: on `/tools/regex-tester`
+at 1280 the two descriptions are 32px and 64px of a 490px Options panel — a
+fifth of it — and in the canvas inspector, where the rail is 320px at its
+narrowest, the same sentences wrap further and push the Output section that far
+down.
+
+The problem is not that they are useless, it is that they are permanent. A
+sentence explaining what the `v` flag does is worth reading once and is noise on
+every visit after that. So it is a preference, remembered, **off by default**,
+with one control — `Notes`, `aria-pressed` — in the panel's own title bar.
+
+**Nothing is hidden from a screen reader in either state, and that is what makes
+hiding them acceptable at all.** The `<p>` stays in the DOM and stays the target
+of the control's `aria-describedby`, clipped by the same recipe `VisuallyHidden`
+uses — so the description is announced when the control takes focus whether the
+preference is on or off, which is both the right moment and better than reading
+it off the page. What the preference decides is whether it is _painted_.
+
+Three decisions worth stating:
+
+- **One control for the whole panel, not a disclosure per field.** Forty fields
+  would otherwise be forty extra tab stops for a density setting, and the
+  tall-panel fixture in `ToolRunner.layout.test.tsx` declares exactly forty.
+- **In the title bar, because a row of its own costs more than it saves.** A
+  24px control and a 12px gap on every tool is more than the descriptions it
+  hides on a tool that declares one short one. The title bar is 24px tall
+  whether or not anything sits in it.
+- **Off by default rather than on-and-remembered.** On-and-remembered would mean
+  nothing changes until somebody presses it, which is the behaviour being
+  complained about. A screen reader loses nothing either way.
+
+The state is a module rather than a prop, because the toggle and the fields it
+governs are rendered by two different hosts — the tool page's `Panel` title bar
+and the inspector's own heading row — and threading a boolean and a setter
+through both is two copies of the same wiring, the first of which to be
+forgotten is a toggle that moves nothing.
+
+**Hiding it cost one defect, and the check that caught it was already there.**
+Out of the flow means `position: absolute`, which invites a
+`position: relative` on the field around it so the box is clipped by its own
+field rather than measured against the document. That puts the whole field in
+the positioned paint layer, and the inspector's resize divider is an in-flow
+element whose 44px grab area is a `::after` deliberately overhanging the panel
+by 18px - so a positioned field inside the panel paints over the overhang.
+Measured in both engines: a field's `<label>` took 6px, and
+`checkInspectorTouch` reported 38px against WCAG 2.5.5's 44. Nothing new is
+positioned now. The hidden box has no insets, so it renders at its static
+position; it is 1px square and `clip-path`-clipped, so it takes no hits of its
+own; and the one place it could land inside a scroller is `.optionsScroll`,
+which has been `position: relative` for this since its comment predicted it.
+
+The half jsdom can see is asserted in `optionNotes.test.tsx`: the element
+survives, the association survives, one press reaches every control kind, the
+answer is remembered, and a `localStorage` that throws lands on the default. The
+half it cannot — that the hidden element occupies no height and the panel is
+therefore 104px shorter — is `checkOptionNotes`, in two engines, with the toggle
+driven from the keyboard.
 
 ### The rail's containing block, and the thing it was allowed to paint over
 

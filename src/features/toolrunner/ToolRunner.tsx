@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/Button';
 import { Panel } from '@/components/Panel';
@@ -14,7 +14,7 @@ import { formatBytes } from '@/lib/sniff';
 import { FileDrop } from './FileDrop';
 import { copyRichText } from './HtmlView';
 import { previewAspectRatio, type ImageComparison } from './ImageView';
-import { OptionsPanel } from './OptionsPanel';
+import { OptionNotesToggle, OptionsPanel } from './OptionsPanel';
 import { ErrorReport, OutputView } from './OutputPanel';
 import { richTextDocument, richTextPlain } from './richText';
 import styles from './runner.module.css';
@@ -322,7 +322,15 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
 
         <div className={styles.controls}>
           <div className={styles.optionsScroll}>
-            <Panel title="Options">
+            {/*
+              THE NOTES TOGGLE GOES IN THE TITLE BAR, WHICH COSTS NO HEIGHT.
+              Every option field may carry a sentence explaining it, and until
+              now every one of them was painted on every visit. They are
+              announced to a screen reader in both states - the element never
+              leaves the DOM or `aria-describedby` - so this decides whether
+              they are drawn, not whether they exist. See `optionNotes.ts`.
+            */}
+            <Panel title="Options" actions={<OptionNotesToggle />}>
               {tool ? (
                 <OptionsPanel
                   fields={tool.optionFields}
@@ -567,21 +575,34 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
           image tool's "A PNG, JPEG, GIF or WebP file" would have appeared as
           an instruction and again as a footnote four regions below it.
         */}
-        <div className={styles.stack}>
+        {/*
+          A TABLE RATHER THAN A COLUMN OF PROSE, and the cells are siblings
+          rather than a wrapper per port. Two columns - the identity, then the
+          sentence - need the two halves of a port to be grid items of the same
+          grid, and a `<div>` per port would make each port one item and put its
+          two lines back under each other. `display: contents` on that wrapper
+          would do it and is not worth the exposure: a Fragment produces the
+          same DOM with nothing to reason about.
+
+          The column each cell lands in is declared in the stylesheet rather
+          than left to auto-placement, because an input has one cell and an
+          output has two - see the note on `.ports`.
+        */}
+        <div className={styles.ports}>
           {entry.inputs.map((input) => (
-            <p key={input.id} className={styles.hint}>
+            <p key={input.id} className={styles.portName}>
               In · {input.label} · {input.types.join(' or ')}
             </p>
           ))}
           {entry.outputs.map((output) => (
-            <div key={output.id} className={styles.port}>
-              <p className={styles.hint}>
+            <Fragment key={output.id}>
+              <p className={styles.portName}>
                 Out · {output.label} · {output.types.join(' or ')}
               </p>
               {output.description === undefined ? null : (
                 <p className={styles.portNote}>{output.description}</p>
               )}
-            </div>
+            </Fragment>
           ))}
         </div>
       </Panel>

@@ -21,6 +21,32 @@ describe('Field', () => {
     expect(screen.getByLabelText('Input text')).toHaveAccessibleDescription('UTF-8 only');
   });
 
+  /*
+   * THE DESCRIPTION IS NEVER REMOVED, ONLY UNPAINTED.
+   *
+   * The tool options panel hides descriptions by default now - see
+   * `features/toolrunner/optionNotes.ts` - and the whole reason that is
+   * acceptable is that hiding is a decision about paint. `display: none` would
+   * take the sentence out of the accessibility tree, and a control that used to
+   * be described and silently stopped being is the failure this asserts against.
+   *
+   * jsdom can see the element and the association and cannot see that the box
+   * is 1px square; `checkOptionNotes` in cross-browser-check.mjs measures that
+   * half in two real engines.
+   */
+  it('still describes the control when its description is not painted', () => {
+    render(
+      <Field label="Input text" description="UTF-8 only" descriptionVisible={false}>
+        {(control) => <TextInput {...control} />}
+      </Field>,
+    );
+
+    expect(screen.getByLabelText('Input text')).toHaveAccessibleDescription('UTF-8 only');
+    const description = screen.getByText('UTF-8 only');
+    expect(description).toBeInTheDocument();
+    expect(description.className).toMatch(/descriptionQuiet/);
+  });
+
   it('marks the control invalid and announces the error', () => {
     render(
       <Field label="Input text" error="Not valid base64">

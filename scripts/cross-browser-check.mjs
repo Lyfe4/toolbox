@@ -1472,6 +1472,37 @@ const RUNNER_PROBE = () => {
           bottom: Math.round(scroller.getBoundingClientRect().bottom + window.scrollY),
         }
       : null,
+    /*
+     * THE PORTS FOOTNOTE, AS A TABLE.
+     *
+     * Each entry is a direction, a name, a type and a sentence, and it used to
+     * be drawn as a name line with a paragraph under it running the full width
+     * of the page - twelve words set across 1,888px on a wide monitor. The
+     * identity and the sentence are two columns now, and the question that
+     * distinguishes the two layouts is geometric: is the sentence BESIDE its
+     * name or UNDER it.
+     *
+     * Paired by document order rather than by a shared wrapper, because the
+     * cells are siblings: an output contributes a name and a note, and an
+     * input contributes a name alone. That is the arrangement that would break
+     * under grid auto-placement, so it is also the thing worth measuring.
+     */
+    ports: (() => {
+      const cells = [...document.querySelectorAll('[class*="portName"], [class*="portNote"]')];
+      const rows = [];
+      for (let index = 0; index < cells.length; index += 1) {
+        const name = cells[index];
+        if (!name.className.includes('portName')) continue;
+        const next = cells[index + 1];
+        const note = next && next.className.includes('portNote') ? next : null;
+        rows.push({
+          name: box(name),
+          note: note ? box(note) : null,
+          text: (name.textContent ?? '').trim().slice(0, 40),
+        });
+      }
+      return rows;
+    })(),
     layoutHeight: Math.round(layout.getBoundingClientRect().height),
     innerHeight: window.innerHeight,
     innerWidth: window.innerWidth,
@@ -1600,7 +1631,16 @@ async function checkRunnerLayout(browser, label) {
    * about 600px, which is what the regex match table and the side-by-side diff
    * want - and a breakpoint nobody asserts is a breakpoint that drifts.
    */
-  const widths = [320, 390, 768, 999, 1000, 1280, 1920];
+  /*
+   * 1439 and 1440 pin the SECOND breakpoint the same way, and its number is
+   * arithmetic too: the input column is capped at 440px so a paste target stops
+   * being sized by the monitor, the rail is 300, and the widest thing the
+   * output draws wants about 600. 440 + 300 + 600 + 32 for the two gaps + 32
+   * for the page's gutters = 1404, and 1440 is the next round number clear of
+   * it. Above it the input, the rail and the result are three columns and the
+   * two halves of the loop this page exists for are on screen together.
+   */
+  const widths = [320, 390, 768, 999, 1000, 1280, 1439, 1440, 1920];
 
   for (const width of widths) {
     // A fresh context per width rather than a resize, for the reason
@@ -1681,6 +1721,65 @@ async function checkRunnerLayout(browser, label) {
         probe.docScrollWidth <= probe.docClientWidth,
         `${String(probe.docScrollWidth)} in ${String(probe.docClientWidth)}`,
       );
+
+      /* -- THE PORTS FOOTNOTE IS A TABLE ABOVE 720px -------------------- */
+      /*
+       * A port is a direction, a name, a type and a sentence. Drawn as a name
+       * with a paragraph under it, that is a column of prose running the full
+       * width of the page - and the wider the monitor the less it reads as
+       * either prose or data. Two columns, with the sentence on a measure.
+       *
+       * The check is stated as a relationship rather than as a number, because
+       * the number is the breakpoint and the breakpoint is already asserted by
+       * the two sides of it below. What must be true is that the sentence is
+       * BESIDE its own name above 720 and UNDER it below - and that it belongs
+       * to that name, which is what the pairing by document order tests: under
+       * grid auto-placement an input (which has a name and no sentence) would
+       * push the next port's NAME into the second column and every row after
+       * it would be off by one.
+       */
+      const noted = probe.ports.filter((row) => row.note !== null);
+      check(
+        label,
+        `every port with a sentence has one at ${at}`,
+        noted.length > 0,
+        `${String(noted.length)} of ${String(probe.ports.length)} rows`,
+      );
+      if (width >= 720) {
+        check(
+          label,
+          `a port's sentence sits beside its name rather than under it at ${at}`,
+          noted.every((row) => row.note.left >= row.name.right && row.note.top <= row.name.bottom),
+          noted
+            .map(
+              (row) =>
+                `${row.text}: name ${String(row.name.left)}..${String(row.name.right)}@${String(
+                  row.name.top,
+                )}, note ${String(row.note.left)}@${String(row.note.top)}`,
+            )
+            .join(' | '),
+        );
+        /*
+         * AND THE SENTENCE HAS A MEASURE. Without this the second column is
+         * simply the rest of the window and the only thing that changed is
+         * where the line starts - 1,140px of sentence instead of 1,888.
+         */
+        check(
+          label,
+          `a port's sentence is bounded rather than page-width at ${at}`,
+          noted.every((row) => row.note.right - row.note.left <= 720),
+          noted.map((row) => String(row.note.right - row.note.left)).join('/'),
+        );
+      } else {
+        check(
+          label,
+          `a port's sentence stacks under its name at ${at}`,
+          noted.every((row) => row.note.top >= row.name.bottom && row.note.left === row.name.left),
+          noted
+            .map((row) => `name@${String(row.name.bottom)} note@${String(row.note.top)}`)
+            .join('/'),
+        );
+      }
 
       /* -- 2. Run sits after the options, inside the rail ---------------- */
       /*
@@ -1786,19 +1885,62 @@ async function checkRunnerLayout(browser, label) {
             options.top,
           )} against ${String(input.top)}`,
         );
-        /*
-         * THE ROW HEIGHTS ARE NOT COUPLED, which is what the rail spanning
-         * both content rows buys. The regex options panel is taller than the
-         * input, and a plain two-row auto-flow grid would have pushed the
-         * output down to clear it - leaving a few hundred pixels of nothing
-         * under the input on the busiest tool in the set.
-         */
-        check(
-          label,
-          `the output starts under the input rather than under the rail at ${at}`,
-          output.top < options.bottom,
-          `output starts ${String(output.top)}, rail ends ${String(options.bottom)}`,
-        );
+
+        if (width >= 1440) {
+          /* -- THREE COLUMNS, AND THE RESULT IS ONE OF THEM ---------------- */
+          /*
+           * The defect this replaces was not a bug in any one rule, it was a
+           * layout with no ceiling: above 1000 the main column is whatever is
+           * left of the window, so on `/tools/base64` the input editor was
+           * 906px wide at 1280 and 1546px at 1920 for a string you pasted, and
+           * the result it produced was a row further down. Measured on the
+           * shipped build at 1920, the output box's top was at y=608; here it
+           * is at 256, and the page is 926px tall against 1240.
+           *
+           * Asserted as three facts rather than as a set of numbers: the three
+           * regions share a top, they are ordered left to right in DOM order,
+           * and the input has stopped growing.
+           */
+          check(
+            label,
+            `the input, the rail and the result are three columns at ${at}`,
+            Math.abs(output.top - input.top) <= 2 &&
+              output.left >= options.right &&
+              options.left >= input.right,
+            `tops ${[input.top, options.top, output.top].join('/')}, lefts ${[
+              input.left,
+              options.left,
+              output.left,
+            ].join('/')}`,
+          );
+          /*
+           * THE MEASURE, which is the whole reason for the third column. A
+           * cap nobody asserts is a cap that drifts back to `1fr` the first
+           * time somebody simplifies the template.
+           */
+          check(
+            label,
+            `the input column is a measure rather than a share of the window at ${at}`,
+            input.right - input.left === 440,
+            `${String(input.right - input.left)}px`,
+          );
+        } else {
+          /*
+           * THE ROW HEIGHTS ARE NOT COUPLED, which is what the rail spanning
+           * both content rows buys. The regex options panel is taller than the
+           * input, and a plain two-row auto-flow grid would have pushed the
+           * output down to clear it - leaving a few hundred pixels of nothing
+           * under the input on the busiest tool in the set.
+           */
+          check(
+            label,
+            `the output starts under the input rather than under the rail at ${at}`,
+            output.top < options.bottom && output.top >= input.bottom,
+            `output starts ${String(output.top)}, input ends ${String(
+              input.bottom,
+            )}, rail ends ${String(options.bottom)}`,
+          );
+        }
         check(
           label,
           `the ports footnote spans both columns at ${at}`,
@@ -1825,15 +1967,26 @@ async function checkRunnerLayout(browser, label) {
          * so `ToolRunner.layout.test.tsx` guards the source text and this
          * guards the result.
          */
-        const column = output.bottom - input.top;
+        /*
+         * THE TALLEST COLUMN IS SPELLED DIFFERENTLY IN THE TWO LAYOUTS. With
+         * two columns the content column is Input stacked on Output, so its
+         * height is the distance from one top to the other bottom. With three
+         * it is three siblings in one row, and none of them stretches - so the
+         * question is simply which of the three is tallest.
+         */
         const railHeight = probe.rail?.height ?? 0;
+        const column = width >= 1440 ? output.bottom - output.top : output.bottom - input.top;
+        const tallest =
+          width >= 1440
+            ? Math.max(input.bottom - input.top, railHeight, column)
+            : Math.max(column, railHeight);
         check(
           label,
           `the grid is as tall as its tallest column and no taller at ${at}`,
-          Math.abs(probe.layoutHeight - Math.max(column, railHeight)) <= 2,
-          `grid ${String(probe.layoutHeight)}, content column ${String(column)}, rail ${String(
-            railHeight,
-          )}`,
+          Math.abs(probe.layoutHeight - tallest) <= 2,
+          `grid ${String(probe.layoutHeight)}, input ${String(
+            input.bottom - input.top,
+          )}, rail ${String(railHeight)}, output ${String(column)}`,
         );
 
         /*
@@ -1973,6 +2126,152 @@ async function checkRunnerLayout(browser, label) {
     );
   } finally {
     await context.close().catch(() => {});
+  }
+
+  /* -- 5. THE RESULT IS ON SCREEN WITH THE INPUT, ON THE TALLEST INPUT --- */
+  /*
+   * THE COMPLAINT THIS ROUND EXISTS FOR, MADE MEASURABLE.
+   *
+   * "Paste something, read the result" was a scroll on a wide monitor, and
+   * base64 is the wrong tool to prove it with: its Input panel is 336px, so its
+   * Output panel clears an 800px fold in the stacked layout as well and any
+   * assertion about the fold passes either way. `diff` is the tool where it
+   * bites - two editors, 604px of Input panel - and measured on the shipped
+   * build at 1280x800 its Output panel's top was at 811 in an 800px window.
+   * Eleven pixels, which is the whole result.
+   *
+   * At 1440 the two are columns: the Output panel's top is the Input panel's
+   * top, and both are on screen. The control below is what stops this being a
+   * check that a short page satisfies - the input really is taller than the
+   * space under the page heading, so "the result is above the fold" is a fact
+   * about the arrangement rather than about there being little to arrange.
+   */
+  const wideContext = await browser.newContext({ viewport: { width: 1440, height: 800 } });
+  const widePage = await wideContext.newPage();
+
+  try {
+    await widePage.goto(`${ORIGIN}/tools/diff`, { waitUntil: 'networkidle' });
+    await widePage.getByRole('heading', { level: 1, name: 'Diff' }).waitFor({ timeout: 15_000 });
+    await widePage.waitForTimeout(250);
+
+    const probe = await widePage.evaluate(RUNNER_PROBE);
+    const [input, , output] = probe?.regions ?? [];
+
+    /*
+     * THE CONTROL. Without it, "the result is above the fold" is satisfied by a
+     * page with nothing much on it. What has to be true is that STACKING would
+     * not have been enough: the input ends one gap short of the fold or past
+     * it, so the Output panel that used to follow it could not have been on
+     * screen. Measured on the shipped build at 1280x800, it was at 811.
+     */
+    const gap = 16;
+    check(
+      label,
+      'stacking the result under this input would have put it below the fold',
+      input !== undefined && input.bottom + gap >= probe.innerHeight,
+      input === undefined
+        ? 'no input region'
+        : `input ends at ${String(input.bottom)}, fold at ${String(probe.innerHeight)}`,
+    );
+    check(
+      label,
+      'the result of the tallest input in the set is on screen beside it, not under it',
+      input !== undefined &&
+        output !== undefined &&
+        Math.abs(output.top - input.top) <= 2 &&
+        output.top < probe.innerHeight &&
+        output.left >= input.right,
+      input === undefined || output === undefined
+        ? 'no regions'
+        : `input ${String(input.top)}..${String(input.bottom)} ending at x=${String(
+            input.right,
+          )}, output at ${String(output.top)} x=${String(output.left)}, fold ${String(
+            probe.innerHeight,
+          )}`,
+    );
+  } finally {
+    await wideContext.close().catch(() => {});
+  }
+
+  /* -- 6. AN EMPTY RESULT IS THE SIZE OF THE SENTENCE IN IT -------------- */
+  /*
+   * REPORTED FROM A SCREENSHOT, AND IT IS THE THREE-COLUMN LAYOUT'S OWN
+   * VERSION OF A DEFECT THIS PAGE HAD ALREADY DELETED ONCE.
+   *
+   * `.output` carries `align-self: stretch` in the two-column layout, and it
+   * has to: there the panel is row two of a grid the rail spans, so the rail's
+   * surplus is ENCLOSED - a hole between the result and the ports footnote -
+   * and stretching the panel into it is what makes it invisible.
+   *
+   * In three columns nothing encloses it. The surplus is the end of a shorter
+   * column with a full-width Ports panel under all three, so stretching buys
+   * nothing and costs the rule the reserved viewport height was deleted for:
+   * the Output panel gets sized by HOW MANY OPTION FIELDS ARE ON SCREEN.
+   *
+   * ONE TOOL AND TWO TARGETS RATHER THAN TWO TOOLS, which is what makes this a
+   * property and not a coincidence. `text-convert` reveals and hides fields as
+   * its target format changes - four on HTML, eight on Markdown - so the same
+   * page, with the same empty Output panel showing the same sentence, is
+   * measured against two different rails. Every other variable is held still by
+   * construction. Measured on the build this replaces: the panel followed the
+   * rail from 302px to 624px while the sentence in it never changed.
+   *
+   * The control is that the rail really did move. Without it, "the panel did
+   * not change" is satisfied by a target switch that changed nothing at all.
+   */
+  const emptyContext = await browser.newContext({ viewport: { width: 1920, height: 900 } });
+  const emptyPage = await emptyContext.newPage();
+
+  try {
+    await emptyPage.goto(`${ORIGIN}/tools/text-convert`, { waitUntil: 'networkidle' });
+    await emptyPage
+      .getByRole('heading', { level: 1, name: 'Text convert' })
+      .waitFor({ timeout: 15_000 });
+    await emptyPage.getByRole('combobox', { name: 'Target format' }).waitFor({ timeout: 15_000 });
+
+    const idleWith = async (target) => {
+      await emptyPage.getByRole('combobox', { name: 'Target format' }).click();
+      await emptyPage.getByRole('option', { name: target, exact: true }).click();
+      await emptyPage.evaluate(() => {
+        window.scrollTo(0, 0);
+      });
+      await emptyPage.waitForTimeout(250);
+      const probe = await emptyPage.evaluate(RUNNER_PROBE);
+      const output = probe?.regions[2];
+      return {
+        rail: probe?.rail?.height ?? 0,
+        output: output === undefined ? 0 : output.bottom - output.top,
+      };
+    };
+
+    const short = await idleWith('HTML (normalised)');
+    const tall = await idleWith('Markdown');
+
+    check(
+      label,
+      'switching the target really does change the height of the rail',
+      tall.rail - short.rail > 100,
+      `rail ${String(short.rail)} on HTML against ${String(tall.rail)} on Markdown`,
+    );
+    check(
+      label,
+      'an empty result is the same size whatever the rail beside it is doing',
+      Math.abs(tall.output - short.output) <= 2,
+      `output ${String(short.output)} on HTML against ${String(tall.output)} on Markdown`,
+    );
+    /*
+     * And it is the size of the sentence rather than of anything beside it.
+     * Two panels that both stretched to the same wrong height would satisfy the
+     * line above perfectly.
+     */
+    check(
+      label,
+      'and it is the size of what is in it, not of the rail beside it',
+      tall.output > 0 && tall.output < tall.rail,
+      `output ${String(tall.output)} against a ${String(tall.rail)}px rail`,
+    );
+  } finally {
+    await emptyContext.close().catch(() => {});
   }
 
   /* -- 4. A rail taller than a short window scrolls itself --------------- */
@@ -2793,12 +3092,18 @@ async function checkInspectorMotion(browser, label) {
      * the rule out loud: "a timing assertion in this harness would be flaky".
      *
      * So the question becomes one a late frame cannot answer wrongly. Sample
-     * every frame and look for an INTERMEDIATE width - a panel caught part way
-     * across. A slow machine removes samples; it cannot invent one between 0
-     * and the resting width, because nothing ever draws the panel there. The
-     * control is the same measurement WITHOUT the preference, which must find
-     * one, so "no intermediate width" is a fact about reduced motion rather
-     * than about this measurement being unable to see a slide at all.
+     * every frame and count the INTERMEDIATE widths - the panel caught part way
+     * across. A slow machine can only REMOVE samples, so the count is an
+     * under-report and never an over-report, and the two measurements are
+     * compared with each other: the control is the same code WITHOUT the
+     * preference, and it has to find several.
+     *
+     * THE BOUND IS ONE RATHER THAN ZERO, AND THAT WAS THIS CHECK'S OWN BUG.
+     * It asserted zero, on the premise that "nothing ever draws the panel
+     * there". The app draws it there: the shared override collapses the
+     * animation to 1ms rather than removing it, deliberately, so
+     * `animationend` still fires - and a frame can land inside 1ms. See the
+     * note on the assertion itself for the measurement.
      */
     const traceOpen = async (page) =>
       page.evaluate(async () => {
@@ -2841,10 +3146,38 @@ async function checkInspectorMotion(browser, label) {
       const instant = await traceOpen(reducedPage);
       const midway = partWayAcross(instant);
 
+      /*
+       * AT MOST ONE SAMPLE PART WAY ACROSS, NOT NONE - AND THE DIFFERENCE IS A
+       * BUG IN THIS CHECK RATHER THAN IN THE APP.
+       *
+       * The version this replaces asserted `midway.length === 0`, on the stated
+       * premise that "a slow machine removes samples; it cannot invent one
+       * between 0 and the resting width, because nothing ever draws the panel
+       * there". That premise is false, and the app is the reason it is false:
+       * the shared reduced-motion override collapses the animation to **1ms**
+       * rather than removing it, deliberately, so that `animationend` still
+       * fires. A panel animating from 0 to 340 over 1ms really is drawn part
+       * way across, for one millisecond, and a `requestAnimationFrame` callback
+       * can land inside it.
+       *
+       * Measured, because "flaky" is not a diagnosis: ten passes of this check
+       * on an idle machine failed twice, at 25px, 134px, 252px and 258px across
+       * runs - arbitrary points in the slide, which is the signature of a frame
+       * landing inside the window rather than of a panel stopping anywhere. The
+       * identical ten passes against the previous commit failed twice as well,
+       * so it is neither new nor caused by whatever is being changed around it.
+       *
+       * ONE IS A BOUND RATHER THAN A TOLERANCE. Frames are at least ~4ms apart
+       * in any engine this drives, and the animation is 1ms, so at most one
+       * sample can ever fall inside it. Two would mean the animation is longer
+       * than a frame interval, which is the defect this check is for. The
+       * control below still has to find several, so "hardly any" cannot be
+       * satisfied by a measurement that can see nothing.
+       */
       check(
         label,
         'reduced motion ends the slide rather than merely shortening it',
-        instant.duration === '0.001s' && instant.resting >= 335 && midway.length === 0,
+        instant.duration === '0.001s' && instant.resting >= 335 && midway.length <= 1,
         `duration ${String(instant.duration)}, ${String(instant.resting)}px at rest, widths ${instant.widths.join(',')}`,
       );
     } finally {
@@ -7522,6 +7855,590 @@ async function checkRichTextClipboard(browser, label) {
   }
 }
 
+/**
+ * THE OPTION NOTES TOGGLE, IN BOTH PANELS THAT HAVE ONE.
+ *
+ * Every option field may declare a sentence explaining it, and every one of
+ * them used to be painted on every visit. Measured on the shipped build: the
+ * two descriptions on `/tools/regex-tester` were 32px and 64px of a 490px
+ * Options panel, and in the canvas inspector - where the rail is 320px at its
+ * narrowest - the same sentences wrap further and push the Output section that
+ * far down.
+ *
+ * They are a preference now, off by default, remembered, with one control in
+ * the panel's own title bar. THE PART THAT NEEDS A REAL BROWSER is that hiding
+ * them is a decision about PAINT and not about the accessibility tree: the
+ * `<p>` stays in the DOM, stays the target of the control's
+ * `aria-describedby`, and is clipped by the recipe `VisuallyHidden` uses. jsdom
+ * can see the element and the attribute and cannot see that it occupies no
+ * height, and axe cannot see it either way - so the pair of facts that make
+ * this acceptable are asserted here, together.
+ *
+ * AND THE TOGGLE IS OPERATED FROM THE KEYBOARD, not clicked. A density control
+ * reachable only by pointer would be the same defect in a different place.
+ */
+async function checkOptionNotes(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+
+  /** The Options panel, its notes button, and what the descriptions measure. */
+  const NOTES_PROBE = () => {
+    const panel = [...document.querySelectorAll('section')].find(
+      (el) => (el.querySelector('h2, h3')?.textContent ?? '').trim() === 'Options',
+    );
+    if (!panel) return null;
+
+    const toggle = [...panel.querySelectorAll('button')].find(
+      (el) => (el.textContent ?? '').trim() === 'Notes',
+    );
+    const heading = panel.querySelector('h2, h3');
+    const descriptions = [...panel.querySelectorAll('[class*="description"]')].map((el) => ({
+      text: (el.textContent ?? '').trim().slice(0, 40),
+      height: Math.round(el.getBoundingClientRect().height),
+      /*
+       * THE TWO PROPERTIES THAT WOULD TAKE IT OUT OF THE ACCESSIBILITY TREE,
+       * read rather than assumed. Everything else about the recipe is
+       * cosmetic; these two are what would turn a density preference into a
+       * removal.
+       */
+      display: getComputedStyle(el).display,
+      visibility: getComputedStyle(el).visibility,
+      /** Whether any control in this panel actually points at it. */
+      describes: [...panel.querySelectorAll('[aria-describedby]')].some((control) =>
+        (control.getAttribute('aria-describedby') ?? '').split(/\s+/u).includes(el.id),
+      ),
+    }));
+
+    return {
+      panelHeight: Math.round(panel.getBoundingClientRect().height),
+      pressed: toggle?.getAttribute('aria-pressed') ?? null,
+      /*
+       * On the heading's own row, which is what makes it cost no height: the
+       * title bar is there whether or not anything sits beside it.
+       */
+      onHeadingRow:
+        toggle !== undefined &&
+        heading !== null &&
+        Math.abs(
+          toggle.getBoundingClientRect().top +
+            toggle.getBoundingClientRect().height / 2 -
+            (heading.getBoundingClientRect().top + heading.getBoundingClientRect().height / 2),
+        ) <= 4,
+      descriptions,
+    };
+  };
+
+  /** Tab until the Notes button has focus, or give up after a bounded walk. */
+  const focusNotes = async (target) => {
+    for (let step = 0; step < 60; step += 1) {
+      const there = await target.evaluate(
+        () => (document.activeElement?.textContent ?? '').trim() === 'Notes',
+      );
+      if (there) return true;
+      await target.keyboard.press('Tab');
+    }
+    return false;
+  };
+
+  try {
+    await page.goto(`${ORIGIN}/tools/regex-tester`, { waitUntil: 'networkidle' });
+    await page
+      .getByLabel(/pattern/i)
+      .first()
+      .waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(150);
+
+    const off = await page.evaluate(NOTES_PROBE);
+    check(
+      label,
+      'the options panel carries a notes toggle on its heading row',
+      off !== null && off.pressed === 'false' && off.onHeadingRow,
+      off === null
+        ? 'no options panel'
+        : `pressed=${String(off.pressed)}, onRow=${String(off.onHeadingRow)}`,
+    );
+
+    /*
+     * The subject exists before anything is asserted about its absence. A
+     * description that had stopped being rendered at all would satisfy every
+     * "takes no height" assertion below perfectly well.
+     */
+    check(
+      label,
+      'the descriptions are still in the document with the notes off',
+      off !== null && off.descriptions.length > 0 && off.descriptions.every((d) => d.text !== ''),
+      off === null ? 'no panel' : `${String(off.descriptions.length)} descriptions`,
+    );
+    check(
+      label,
+      'a hidden description costs the panel no height',
+      off !== null && off.descriptions.every((d) => d.height <= 1),
+      off === null ? 'no panel' : off.descriptions.map((d) => String(d.height)).join('/'),
+    );
+    check(
+      label,
+      'a hidden description is still in the accessibility tree and still describes its control',
+      off !== null &&
+        off.descriptions.every(
+          (d) => d.display !== 'none' && d.visibility !== 'hidden' && d.describes,
+        ),
+      off === null
+        ? 'no panel'
+        : off.descriptions
+            .map((d) => `${d.display}/${d.visibility}/describes=${String(d.describes)}`)
+            .join(' | '),
+    );
+
+    /* -- Operated from the keyboard, and it changes the height ----------- */
+    await page.locator('h1').first().click();
+    const reached = await focusNotes(page);
+    check(label, 'the notes toggle is reachable by Tab', reached, '');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+
+    const on = await page.evaluate(NOTES_PROBE);
+    check(
+      label,
+      'pressing Enter on it paints the descriptions and grows the panel',
+      on !== null &&
+        off !== null &&
+        on.pressed === 'true' &&
+        on.descriptions.every((d) => d.height > 1) &&
+        on.panelHeight > off.panelHeight,
+      on === null || off === null
+        ? 'no panel'
+        : `${String(off.panelHeight)} -> ${String(on.panelHeight)}, heights ${on.descriptions
+            .map((d) => String(d.height))
+            .join('/')}`,
+    );
+
+    /* -- And it is remembered, which is what makes "the first time" work -- */
+    await page.reload({ waitUntil: 'networkidle' });
+    await page
+      .getByLabel(/pattern/i)
+      .first()
+      .waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(150);
+    const reloaded = await page.evaluate(NOTES_PROBE);
+    check(
+      label,
+      'the answer survives a reload',
+      reloaded !== null &&
+        reloaded.pressed === 'true' &&
+        reloaded.descriptions.every((d) => d.height > 1),
+      reloaded === null ? 'no panel' : `pressed=${String(reloaded.pressed)}`,
+    );
+
+    /*
+     * -- THE SAME CONTROL AND THE SAME ANSWER IN THE INSPECTOR ------------
+     *
+     * One preference, two hosts. The reason to check the second is not that
+     * the state might differ - it is a module - but that the inspector draws
+     * its own heading row rather than using `Panel`'s title bar, so "the
+     * toggle is on the rule and costs no height" is a separate claim about a
+     * separate stylesheet.
+     */
+    await page.goto(
+      `${ORIGIN}/?p=${shareParam({ v: 3, n: [['n1', 'regex-tester', 200, 200, {}]], e: [] })}`,
+      { waitUntil: 'networkidle' },
+    );
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(600);
+
+    const inspector = await page.evaluate(NOTES_PROBE);
+    check(
+      label,
+      'the inspector carries the same toggle, on its own heading rule',
+      inspector !== null && inspector.pressed === 'true' && inspector.onHeadingRow,
+      inspector === null
+        ? 'no options section'
+        : `pressed=${String(inspector.pressed)}, onRow=${String(inspector.onHeadingRow)}`,
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * THE TOOLS INDEX, WHERE THE CARDS IN A ROW HAVE TO READ AS A ROW.
+ *
+ * Two defects, and the first is the subtle one: the cards were already the same
+ * HEIGHT - the `<li>` stretches - and their CONTENTS were not aligned, because
+ * each card's rows sized to their content and the surplus collected at the
+ * bottom. Measured on the shipped build at 1280, one row of four cards had its
+ * port metadata at 86, 86, 102 and 102 inside four boxes of identical height,
+ * because two summaries wrapped to two lines and two to three.
+ *
+ * The second is the wrap. A chip per PORT is five of them on `text-convert`, in
+ * a wrapping flex row whose break point is a function of the column width - so
+ * `out: json` fell onto a line of its own on some cards and not others, and the
+ * Diff card ran to three lines. It is one line per DIRECTION now, which is at
+ * most two lines whatever a tool declares.
+ *
+ * Asserted at four widths because the number of columns decides which cards
+ * share a row, and a rule that aligns a row of four can still leave a row of
+ * two ragged.
+ */
+async function checkToolIndex(browser, label) {
+  for (const width of [390, 768, 1440, 1920]) {
+    const context = await browser.newContext({ viewport: { width, height: 900 } });
+    const page = await context.newPage();
+    const at = `${String(width)}px`;
+
+    try {
+      await page.goto(`${ORIGIN}/tools`, { waitUntil: 'networkidle' });
+      await page
+        .getByRole('heading', { level: 1, name: 'Every tool' })
+        .waitFor({ timeout: 15_000 });
+      await page.waitForTimeout(200);
+
+      const probe = await page.evaluate(() => {
+        const cards = [...document.querySelectorAll('ul li > a')].map((card) => {
+          const rect = card.getBoundingClientRect();
+          const ports = card.querySelector('[class*="cardPorts"]');
+          const lines = [...card.querySelectorAll('[class*="cardPortLine"]')].map((line) => {
+            const lineRect = line.getBoundingClientRect();
+            const types = line.querySelector('[class*="cardPortTypes"]');
+            return {
+              height: Math.round(lineRect.height),
+              /*
+               * AGAINST ITS OWN LINE BOX, NOT AGAINST ITS PARENT. The first
+               * version of this compared the type list to the row holding it -
+               * which is a flex container that GROWS with it, so a list that
+               * wrapped to three lines took its row with it and the comparison
+               * was true of nothing. It passed against a deliberately narrowed
+               * card at every width.
+               */
+              wrapped:
+                types !== null &&
+                types.getBoundingClientRect().height >
+                  parseFloat(getComputedStyle(types).lineHeight) + 1,
+            };
+          });
+          return {
+            name: (card.querySelector('[class*="cardName"]')?.textContent ?? '').trim(),
+            top: Math.round(rect.top + window.scrollY),
+            height: Math.round(rect.height),
+            portsTop:
+              ports === null
+                ? null
+                : Math.round(ports.getBoundingClientRect().top + window.scrollY),
+            lines,
+            /*
+             * A bordered, padded chip is what the metadata used to be, and it
+             * is the weight the category badge is meant to carry alone.
+             */
+            badges: card.querySelectorAll('[class*="badge"]').length,
+          };
+        });
+        return {
+          cards,
+          scrollWidth: document.documentElement.scrollWidth,
+          clientWidth: document.documentElement.clientWidth,
+        };
+      });
+
+      check(
+        label,
+        `the tools index does not scroll sideways at ${at}`,
+        probe.scrollWidth <= probe.clientWidth,
+        `${String(probe.scrollWidth)} in ${String(probe.clientWidth)}`,
+      );
+
+      /*
+       * The subject, before anything is asserted about its shape. An empty
+       * list satisfies "every row is aligned" perfectly, and a route that
+       * rendered nothing is exactly what a broken lazy chunk produces.
+       */
+      check(
+        label,
+        `every tool drew a card with both directions on it at ${at}`,
+        probe.cards.length >= 10 && probe.cards.every((card) => card.lines.length === 2),
+        `${String(probe.cards.length)} cards, lines ${probe.cards
+          .map((card) => String(card.lines.length))
+          .join('')}`,
+      );
+
+      /* -- Grouped into rows by their own top edge ----------------------- */
+      const rows = new Map();
+      for (const card of probe.cards) {
+        const row = rows.get(card.top) ?? [];
+        row.push(card);
+        rows.set(card.top, row);
+      }
+      const ragged = [...rows.values()].filter(
+        (row) => new Set(row.map((card) => card.height)).size > 1,
+      );
+      check(
+        label,
+        `every card in a row is the same height at ${at}`,
+        ragged.length === 0,
+        ragged
+          .map((row) => row.map((card) => `${card.name} ${String(card.height)}`).join(', '))
+          .join(' | '),
+      );
+
+      /*
+       * AND THEIR METADATA SHARES A BASELINE, which is the assertion the old
+       * layout would have failed while passing the one above it.
+       */
+      const misaligned = [...rows.values()].filter(
+        (row) => new Set(row.map((card) => card.portsTop)).size > 1,
+      );
+      check(
+        label,
+        `the metadata of every card in a row sits on one line at ${at}`,
+        misaligned.length === 0,
+        misaligned
+          .map((row) => row.map((card) => `${card.name}@${String(card.portsTop)}`).join(', '))
+          .join(' | '),
+      );
+
+      const wrapping = probe.cards.filter((card) => card.lines.some((line) => line.wrapped));
+      check(
+        label,
+        `neither direction's type list wraps at ${at}`,
+        wrapping.length === 0,
+        wrapping.map((card) => card.name).join(', '),
+      );
+
+      /* -- AND IT HOLDS FOR A TOOL NOBODY HAS WRITTEN YET --------------- */
+      /*
+       * THE FIRST VERSION OF THE ALIGNMENT CHECK ABOVE PASSED AGAINST THE
+       * BROKEN LAYOUT, and that is worth writing down rather than quietly
+       * fixing. With `auto auto auto` instead of `auto minmax(0, 1fr) auto`,
+       * `align-content: stretch` distributes the card's spare height equally
+       * between its three rows - so as long as every card in a row has the same
+       * title height and the same metadata height, they all land in the same
+       * place anyway, and the rule that actually pins the metadata to the
+       * bottom edge is doing nothing that today's content can see.
+       *
+       * Today's content cannot see it because the metadata is now two lines on
+       * every card. That is a fact about the ten tools in the registry, not
+       * about the layout, and the eleventh tool is exactly the case the rule
+       * exists for.
+       *
+       * So one card's summary is made taller than its neighbours' - through
+       * `element.style`, which the CSP does not govern, the same fixture
+       * mechanism `TALL_OPTIONS_FIXTURE` uses on the tool runner - and the
+       * question is asked again. With the row template the metadata stays on
+       * the shared baseline; with three `auto` rows it drops about 12px.
+       */
+      const grown = await page.evaluate(() => {
+        const summary = document.querySelector('ul li > a [class*="cardSummary"]');
+        if (!summary) return false;
+        summary.style.minBlockSize = '80px';
+        return true;
+      });
+      check(label, `a card's summary can be made taller than its neighbours at ${at}`, grown, '');
+      await page.waitForTimeout(150);
+
+      const stretched = await page.evaluate(() => {
+        const rows = new Map();
+        for (const card of document.querySelectorAll('ul li > a')) {
+          const top = Math.round(card.getBoundingClientRect().top + window.scrollY);
+          const ports = card.querySelector('[class*="cardPorts"]');
+          const row = rows.get(top) ?? [];
+          row.push({
+            name: (card.querySelector('[class*="cardName"]')?.textContent ?? '').trim(),
+            height: Math.round(card.getBoundingClientRect().height),
+            portsTop: Math.round(ports.getBoundingClientRect().top + window.scrollY),
+          });
+          rows.set(top, row);
+        }
+        return [...rows.values()];
+      });
+
+      /*
+       * THE CONTROL IS THE ROW'S HEIGHT, NOT THE SUMMARY'S. Every card in a row
+       * stretches to the row, and the summary is the row that absorbs the
+       * slack - so making ONE summary taller makes every summary in that row
+       * taller, correctly, and comparing them to each other proves nothing. The
+       * fixture worked if the row is taller than it was.
+       */
+      const before = probe.cards[0]?.height ?? 0;
+      const firstRow = stretched[0] ?? [];
+      check(
+        label,
+        `the fixture really made the first row taller at ${at}`,
+        firstRow.length > 0 && firstRow[0].height > before,
+        `${String(before)} -> ${String(firstRow[0]?.height)}`,
+      );
+      const stillMisaligned = stretched.filter(
+        (row) => new Set(row.map((card) => card.portsTop)).size > 1,
+      );
+      check(
+        label,
+        `an unusually tall summary does not drag its card's metadata off the line at ${at}`,
+        stillMisaligned.length === 0,
+        stillMisaligned
+          .map((row) => row.map((card) => `${card.name}@${String(card.portsTop)}`).join(', '))
+          .join(' | '),
+      );
+
+      /*
+       * ONE BADGE PER CARD, AND IT IS THE CATEGORY. The port metadata used to
+       * wear the same outlined chip, so a tool declaring five ports carried
+       * six of them - the taxonomy's weight, for a footnote.
+       */
+      const overBadged = probe.cards.filter((card) => card.badges !== 1);
+      check(
+        label,
+        `a card wears exactly one badge, and it is the category, at ${at}`,
+        overBadged.length === 0,
+        overBadged.map((card) => `${card.name} ${String(card.badges)}`).join(', '),
+      );
+    } finally {
+      await context.close().catch(() => {});
+    }
+  }
+}
+
+/**
+ * A NODE'S SUMMARY BOX, AND THE ONE THING IT MUST NOT DO.
+ *
+ * The box reserves two lines, because two lines is what the tool's own
+ * description, the blocked guidance and an error message each need. Most
+ * RESULTS are one line, and with the text at the top of the box the second
+ * line's reserved height collected underneath it: measured on the shipped
+ * build, a base64 node showing `aGk=` ended its text 42px down a 186px node
+ * with the first port row at 74 - 32px of nothing between the answer and the
+ * ports.
+ *
+ * Two changes. The box is 32px rather than 40 - the clamp means no third line
+ * can exist, so it needs the two lines and no margin for a fourth - and it
+ * centres its content, so what is left reads as the box's own padding rather
+ * than as something missing.
+ *
+ * WHAT IS NOT DONE IS SIZING IT TO ITS CONTENT, and holding that line is most
+ * of why this check exists. `SUMMARY_HEIGHT` is a term in `portOffsetY`, the
+ * single place a port's position and the wire landing on it are agreed, so a
+ * box that grew and shrank would move every wire on the node - and it would
+ * move them WHILE SOMEBODY TYPES, because `NodeRunState` clears `outputs` when
+ * a node starts and the node falls back to its tool's two-line description for
+ * the frame it spends `running`. So the property is: a node is the same height
+ * blocked, with a one-line result, and with a longer one. jsdom cannot see any
+ * of it; every box there is zero by zero.
+ */
+async function checkNodeSummaryBox(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+
+  const SUMMARY_PROBE = () => {
+    const node = document.querySelector('[data-node-id]');
+    if (!node) return null;
+    const box = node.querySelector('[class*="nodeSummary"]');
+    const inner = node.querySelector('[class*="nodeSummaryText"]');
+    const port = node.querySelector('button[class*="port"]');
+    if (!box || !inner || !port) return null;
+
+    const boxRect = box.getBoundingClientRect();
+    const innerRect = inner.getBoundingClientRect();
+    return {
+      status: node.dataset.status,
+      height: Math.round(node.getBoundingClientRect().height),
+      text: (inner.textContent ?? '').trim().slice(0, 30),
+      lines: Math.round(innerRect.height / parseFloat(getComputedStyle(inner).lineHeight)),
+      above: Math.round(innerRect.top - boxRect.top),
+      below: Math.round(boxRect.bottom - innerRect.bottom),
+      /*
+       * From the last line of the summary to the first port row: the gap a
+       * person reads as the node being mostly empty.
+       */
+      toFirstPort: Math.round(port.getBoundingClientRect().top - innerRect.bottom),
+    };
+  };
+
+  try {
+    await page.goto(
+      `${ORIGIN}/?p=${shareParam({ v: 3, n: [['n1', 'base64', 200, 200, {}]], e: [] })}`,
+      { waitUntil: 'networkidle' },
+    );
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(400);
+
+    const blocked = await page.evaluate(SUMMARY_PROBE);
+    check(
+      label,
+      'a blocked node fills its summary box with two lines of guidance',
+      blocked !== null && blocked.status === 'blocked' && blocked.lines === 2,
+      JSON.stringify(blocked),
+    );
+
+    const editor = page.locator('textarea:not([readonly])').first();
+    await editor.waitFor({ timeout: 15_000 });
+    await editor.fill('hi');
+    await page.waitForTimeout(1200);
+    const short = await page.evaluate(SUMMARY_PROBE);
+
+    await editor.fill('a much longer piece of text than that one was, by some way');
+    await page.waitForTimeout(1200);
+    const long = await page.evaluate(SUMMARY_PROBE);
+
+    /*
+     * The subject, before the equality below is trusted: three reads of one
+     * unchanged node agree about its height perfectly.
+     */
+    check(
+      label,
+      'the node really ran and produced two different answers',
+      short !== null &&
+        long !== null &&
+        short.status === 'ok' &&
+        long.status === 'ok' &&
+        short.text !== long.text,
+      `${String(short?.text)} then ${String(long?.text)}`,
+    );
+
+    /* -- THE PROPERTY: the node does not resize as the value changes ----- */
+    check(
+      label,
+      'a node is the same height blocked, with a short result and with a long one',
+      blocked !== null &&
+        short !== null &&
+        long !== null &&
+        blocked.height === short.height &&
+        short.height === long.height,
+      `${String(blocked?.height)}/${String(short?.height)}/${String(long?.height)}`,
+    );
+
+    /* -- AND A SHORT ANSWER IS NOT STRANDED ABOVE A VOID ----------------- */
+    /*
+     * Centred, so the slack is split rather than collected under the text.
+     * Stated as a comparison rather than as a pixel count, because the
+     * clearance depends on the line height and the font; what must hold is
+     * that the two ends of the box agree.
+     *
+     * AND THAT THERE IS SLACK TO SPLIT. "Above equals below" is satisfied
+     * perfectly by a box sized to its content, which has neither - and a box
+     * sized to its content is precisely the change the check above exists to
+     * refuse. The first version of this check passed against it.
+     */
+    check(
+      label,
+      'a one-line result is centred in the box rather than sitting on its top edge',
+      short !== null &&
+        short.lines === 1 &&
+        short.above > 0 &&
+        Math.abs(short.above - short.below) <= 1,
+      short === null ? 'no node' : `${String(short.above)} above, ${String(short.below)} below`,
+    );
+    /*
+     * The gap this section is about, held to a number so it cannot drift back.
+     * It was 32px on the shipped build; the box is 8px shorter and the slack
+     * is halved, which puts it at 19.
+     */
+    check(
+      label,
+      'a short result is within twenty pixels of the first port row',
+      short !== null && short.toFirstPort <= 20,
+      short === null ? 'no node' : `${String(short.toFirstPort)}px`,
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 async function checkTruncation(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
@@ -10234,6 +11151,9 @@ async function runChecks(engine, label) {
     await checkTwoTabs(browser, label);
     await checkRichTextClipboard(browser, label);
     await checkTruncation(browser, label);
+    await checkOptionNotes(browser, label);
+    await checkToolIndex(browser, label);
+    await checkNodeSummaryBox(browser, label);
     await checkPreviewSandbox(browser, label);
     await checkPipeline(browser, label);
     await checkWireFidelity(browser, label);

@@ -1,3 +1,27 @@
+/*
+ * NOT POSITIONED, AND THAT IS A DECISION WITH A MEASUREMENT BEHIND IT.
+ *
+ * `.descriptionQuiet` below is absolutely positioned, and the instinct is to
+ * make this its containing block so it is clipped by its own field - which is
+ * what this rule said for about an hour. `position: relative` puts the whole
+ * field in the positioned paint layer, above every in-flow box, and the
+ * inspector's resize divider is an in-flow element whose 44px grab area is a
+ * `::after` that deliberately OVERHANGS the panel by 18px. A positioned field
+ * inside that panel paints over the overhang: measured in both engines, a
+ * field's `<label>` took 6px off the divider, which
+ * `checkInspectorTouch` reports as a 38px touch target against WCAG 2.5.5's 44.
+ *
+ * It costs nothing to leave off. The hidden box has no insets, so it renders at
+ * its STATIC position - where it would have been - rather than flying to the
+ * document origin; it is 1px square and `clip-path`-clipped, so it takes no
+ * hits of its own. That is the same recipe `VisuallyHidden` has used all over
+ * this application, inside this very panel, without a positioned parent.
+ *
+ * The one place it could be inside a scroller is the tool runner's options
+ * rail, and `.optionsScroll` is already `position: relative` for exactly this -
+ * its comment predicted it, down to the words "no option field has one today".
+ * One does now.
+ */
 .field {
   display: flex;
   flex-direction: column;
@@ -30,6 +54,30 @@
   font-size: var(--pb-label-size);
   letter-spacing: var(--pb-label-tracking);
   color: var(--pb-ink-muted);
+}
+
+/*
+ * UNPAINTED, NOT REMOVED. The same recipe `VisuallyHidden` uses, and the same
+ * reason: `display: none` and `visibility: hidden` would take the sentence out
+ * of the accessibility tree, and this description is the target of the
+ * control's `aria-describedby`. Clipped, it is still announced on focus - which
+ * is the moment it is actually wanted - while costing the panel no height.
+ *
+ * `position: absolute` rather than a zero-height in-flow box, because `.field`
+ * is a flex column with a gap: a zero-height item still costs a gap, and three
+ * hidden sentences would be 12px of nothing. Out of flow it costs exactly zero.
+ * See the note on `.field` for why nothing above it is positioned.
+ */
+.descriptionQuiet {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .error {

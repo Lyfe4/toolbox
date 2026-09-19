@@ -527,6 +527,39 @@ describe('the run control', () => {
  * like a tidy-up. The heights themselves are measured in
  * `scripts/cross-browser-check.mjs`.
  */
+/*
+ * THE THIRD COLUMN, AND THE CAP THAT IS THE POINT OF IT.
+ *
+ * Above 1000 the page was a main column and a rail, and the main column was
+ * whatever was left of the window - so on `/tools/base64` the input editor
+ * measured 906px at 1280 and 1546px at 1920, for a string somebody pasted, and
+ * the result it produced was a row further down the page. Above 1440 the input
+ * is a measure, the rail is beside it and the result is the third column.
+ *
+ * Text assertions, for the same reason the reordering guard is one: the thing
+ * that brings the defect back is `minmax(0, 1fr)` where `440px` is, which reads
+ * as a simplification. The geometry it produces is measured at nine widths in
+ * `scripts/cross-browser-check.mjs`.
+ */
+describe('the input column above the second breakpoint', () => {
+  it('is a fixed measure rather than a share of the window', () => {
+    expect(runnerCss).toMatch(/@media \(min-width: 1440px\)/);
+    expect(rulesFor('layout')).toMatch(/grid-template-columns:\s*440px 300px minmax\(0, 1fr\)/);
+  });
+
+  /*
+   * And the three regions are placed left to right in the order they are
+   * written in. This is the same claim the reordering guard makes from the
+   * other side: nothing here may use `order`, so the columns are the only
+   * thing deciding where a region lands, and they must agree with the source.
+   */
+  it('places input, rail and output in source order across the columns', () => {
+    expect(rulesFor('input')).toMatch(/grid-column:\s*1/);
+    expect(rulesFor('controls')).toMatch(/grid-column:\s*2/);
+    expect(rulesFor('output')).toMatch(/grid-column:\s*3/);
+  });
+});
+
 describe('the reserved viewport height', () => {
   it('is not given to the grid, at any width', () => {
     expect(rulesFor('layout')).not.toMatch(/min-block-size/);
@@ -554,6 +587,34 @@ describe('the reserved viewport height', () => {
    */
   it('leaves the output stretching into whatever surplus the rail creates', () => {
     expect(rulesFor('output')).toMatch(/align-self:\s*stretch/);
+  });
+
+  /*
+   * AND STOPS STRETCHING IT WHERE THERE IS NOTHING TO FILL.
+   *
+   * `rulesFor` joins every block written for a class, so the assertion above is
+   * satisfied by either breakpoint and says nothing about which. The two want
+   * opposite things and the reason is structural: at 1000px the Output panel is
+   * row two of a grid the rail spans, so the rail's surplus is enclosed between
+   * the result and the ports footnote and stretching is what hides it; at
+   * 1440px the three panels are siblings in one row, so the surplus is the end
+   * of a shorter column and stretching would size the result panel by the
+   * tool's option count instead. Measured on the shipped build at 1920, both
+   * idle and both drawing the one sentence "No output yet": text-convert's
+   * panel was 624px and structured-data's 399px.
+   *
+   * So each block is asserted where it lives. Collapsing them back to one
+   * declaration is the change that reads like tidying up.
+   */
+  it('stops stretching it once the columns are siblings rather than rows', () => {
+    const [twoColumn, threeColumn] = runnerCss
+      .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+      .split('@media (min-width: 1440px)');
+
+    expect(twoColumn).toMatch(/align-self:\s*stretch/);
+    expect(twoColumn).not.toMatch(/align-self:\s*start/);
+    expect(threeColumn).toMatch(/align-self:\s*start/);
+    expect(threeColumn).not.toMatch(/align-self:\s*stretch/);
   });
 
   /*

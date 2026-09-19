@@ -341,10 +341,39 @@
 /*
  * Sized from SUMMARY_HEIGHT so the box and `nodeHeight` cannot disagree, and
  * tall enough for the two lines it is meant to hold.
+ *
+ * CENTRED, AND THAT IS THE WHOLE OF WHAT COULD BE DONE ABOUT THE GAP.
+ *
+ * The box reserves two lines because two lines is what the tool's own
+ * description, the blocked guidance and an error message each need. Most
+ * RESULTS are one line - `aGk=`, `47 matches`, `2.1 MB PNG image` - and with
+ * the text at the top of the box the second line's worth of reserved height
+ * collected underneath it, above the first port row. Measured on the shipped
+ * build: the result's last line ended 42px down a 186px node and the first port
+ * started at 74, so a short answer sat above 32px of nothing.
+ *
+ * `align-content: center` halves it and puts the rest where it reads as the
+ * box's own padding rather than as something missing. The box is 8px shorter
+ * as well - see SUMMARY_HEIGHT - so the remaining clearance is 9px.
+ *
+ * WHY THE BOX IS NOT SIMPLY SIZED TO ITS CONTENT, which is the obvious fix and
+ * is wrong here. `SUMMARY_HEIGHT` is a term in `portOffsetY`, which is the
+ * single place a port's position and the wire that lands on it are agreed - so
+ * a box that grew and shrank would move every wire attached to the node. And it
+ * would move them WHILE SOMEBODY TYPES: `NodeRunState` clears `outputs` the
+ * moment a node starts, so a node with a result falls back to its tool's
+ * two-line description for the frame it spends `running`, and every keystroke
+ * that reaches the pipeline's debounce is one of those frames. One line, two
+ * lines, one line, per keypress, on every node downstream as well.
+ *
+ * A grid rather than a flex row, because a flex item shrinks to fit and this
+ * one has to be the full width of the box before it can decide where to wrap.
  */
 .nodeSummary {
-  block-size: 40px;
-  padding: var(--pb-space-xs);
+  display: grid;
+  align-content: center;
+  block-size: 32px;
+  padding-inline: var(--pb-space-xs);
   font-family: var(--pb-font-ui);
   font-size: var(--pb-label-size);
   line-height: 13px;
@@ -367,9 +396,10 @@
  * no amount of padding hides them. Measured in Chrome, and it is why the
  * obvious one-liner on `.nodeSummary` did not work.
  *
- * So the outer element keeps the 40px the node geometry reserves, and this
- * inner one is auto-height and does the clamping. Its 26px sits inside that
- * 40px with the same room the box always had.
+ * So the outer element keeps the 32px the node geometry reserves, and this
+ * inner one is auto-height and does the clamping. Its 26px is centred in that
+ * 32px, which is also what lets the reserved height be 32 rather than 40: with
+ * no third line able to exist, the box needs the two lines and nothing else.
  *
  * The -webkit- prefixed form rather than the plain `line-clamp` property: the
  * unprefixed one needs Chrome 130, Safari 18.2 and Firefox 132, and this

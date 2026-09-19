@@ -7,7 +7,13 @@ import { useToast } from '@/components/Toast';
 import type { NodeRunState } from '@/features/execution/graph';
 import { getManifestEntry, loadTool } from '@/features/registry';
 import type { ErasedTool, InputPort } from '@/features/registry/types';
-import { ErrorReport, FileDrop, OptionsPanel, OutputView } from '@/features/toolrunner';
+import {
+  ErrorReport,
+  FileDrop,
+  OptionNotesToggle,
+  OptionsPanel,
+  OutputView,
+} from '@/features/toolrunner';
 import type { LoadedFile } from '@/lib/fileInput';
 import { counted } from '@/lib/plural';
 import { formatBytes } from '@/lib/sniff';
@@ -352,7 +358,15 @@ export function NodeInspector({
               />
             </Section>
 
-            <Section title="Options">
+            {/*
+              THE SAME NOTES TOGGLE THE TOOL PAGE CARRIES, and the same
+              preference behind it. This is the panel the descriptions cost
+              most: the rail is 320px at its narrowest, where a sentence
+              written for a full-width field wraps to three or four lines and
+              pushes the Output section that far down. The sentence is still
+              announced when its control takes focus in either state.
+            */}
+            <Section title="Options" actions={<OptionNotesToggle />}>
               {tool === null ? (
                 <p className={styles.hint}>Loading options…</p>
               ) : (
@@ -421,13 +435,33 @@ export function NodeInspector({
  * Here it is a single column at every width, so there is no CSS that could
  * disagree with the markup in the first place.
  */
-function Section({ title, children }: { readonly title: string; readonly children: ReactNode }) {
+function Section({
+  title,
+  actions,
+  children,
+}: {
+  readonly title: string;
+  /** A control belonging to the section, drawn on its heading rule. */
+  readonly actions?: ReactNode;
+  readonly children: ReactNode;
+}) {
   const id = useId();
+  const heading = (
+    <h3 className={styles.sectionTitle} id={id}>
+      {title}
+    </h3>
+  );
+
   return (
     <section className={styles.section} aria-labelledby={id}>
-      <h3 className={styles.sectionTitle} id={id}>
-        {title}
-      </h3>
+      {actions === undefined ? (
+        heading
+      ) : (
+        <div className={styles.sectionHead}>
+          {heading}
+          {actions}
+        </div>
+      )}
       {children}
     </section>
   );

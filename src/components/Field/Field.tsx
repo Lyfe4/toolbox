@@ -23,6 +23,17 @@ export interface FieldControlProps {
 export interface FieldProps {
   readonly label: string;
   readonly description?: string;
+  /**
+   * Whether the description is PAINTED. It is announced either way.
+   *
+   * The element is never removed and never leaves `aria-describedby`, so a
+   * screen reader hears the same sentence at the same moment - when the control
+   * takes focus - in both states. What this decides is whether the sentence
+   * also occupies two lines of a 300px rail forever. Only the tool options
+   * panel sets it; see `features/toolrunner/optionNotes.ts` for why that is a
+   * preference and why it defaults to off.
+   */
+  readonly descriptionVisible?: boolean;
   /** When present the field is in an error state and this text is announced. */
   readonly error?: string;
   readonly required?: boolean;
@@ -39,6 +50,7 @@ export interface FieldProps {
 export function Field({
   label,
   description,
+  descriptionVisible = true,
   error,
   required = false,
   className,
@@ -75,7 +87,10 @@ export function Field({
       </div>
 
       {description !== undefined ? (
-        <p className={styles.description} id={descriptionId}>
+        <p
+          className={cx(styles.description, !descriptionVisible && styles.descriptionQuiet)}
+          id={descriptionId}
+        >
           {description}
         </p>
       ) : null}

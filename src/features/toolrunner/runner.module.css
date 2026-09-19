@@ -279,6 +279,85 @@
   }
 }
 
+/*
+ * 1440px, AND THE INPUT STOPS GROWING.
+ *
+ * Above 1000 this page is a main column and a rail, and the main column is
+ * whatever is left of the window. That is right up to a point and wrong past
+ * it: measured in the production build on `/tools/base64`, the input editor is
+ * 906px wide at 1280 and 1546px at 1920, and what is in it is a string you
+ * pasted. A paste target sized by the monitor is not a measure, and the result
+ * it produced was a row further down the page - so the two halves of the one
+ * loop this page exists for could not be looked at together.
+ *
+ * SO THE THIRD COLUMN IS THE OUTPUT, and the input is capped rather than the
+ * output being starved. Input, then the rail, then the result, left to right in
+ * the order they are written in - which is the same rule the stacked and
+ * two-column layouts already follow, and the reason this is a column change
+ * rather than an `order` one. Sorting the three by (top, left) still reproduces
+ * their DOM order, because they now share a top and differ only in left.
+ *
+ * THE ARITHMETIC, like the 1000 above it. The input column is 440px - about 62
+ * monospace characters at the value size, which is a measure rather than a
+ * window - the rail is 300, and the widest thing the output draws is the regex
+ * match table and the side-by-side diff at about 600. 440 + 300 + 600 + 32 for
+ * the two gaps + 32 for the page's own gutters = 1404, and 1440 is the next
+ * round number clear of it. Everything above 1440 goes to the output, which is
+ * the same decision the single breakpoint made and the same place it sends it.
+ *
+ * ONE ROW, so the rail's containing block is the grid it already was and its
+ * travel is unchanged. `align-items: start` on `.layout` still gives the input
+ * and the rail their content heights; `.output` keeps `align-self: stretch` so
+ * a short result fills the row rather than leaving a gap under it inside the
+ * grid.
+ */
+@media (min-width: 1440px) {
+  .layout {
+    grid-template-columns: 440px 300px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .input {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .controls {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  /*
+   * AND IT DOES NOT STRETCH HERE, WHICH IS THE OPPOSITE OF THE RULE ABOVE.
+   *
+   * At 1000px the Output panel is row two of a two-column grid and the rail
+   * spans both rows, so any surplus the rail creates is ENCLOSED - it sits
+   * between the result and the ports footnote, inside the grid, and without
+   * `align-self: stretch` it is a hole in the middle of the page. Stretching
+   * the panel into it is what makes that surplus invisible.
+   *
+   * In three columns there is no enclosed surplus. The panels are siblings in
+   * one row and whatever is left is simply the end of a shorter column, with
+   * the full-width Ports panel below all three. So stretching here buys
+   * nothing and costs the thing this page already decided once: the Output
+   * panel would be sized by HOW MANY OPTIONS THE TOOL DECLARES. Measured on
+   * the shipped build at 1920, idle: text-convert draws eight fields, so its
+   * rail is 624px and the Output panel was 624px of bordered nothing around
+   * "No output yet"; structured-data draws four, so the same empty panel was
+   * 399px. Two tools, one empty sentence, two panel heights, neither of them a
+   * fact about a result.
+   *
+   * That is the defect `.layout`'s reserved viewport height was deleted for -
+   * "a 416px Output panel around one sentence" - reached by a different route.
+   * A result is drawn the size of the result, at every width.
+   */
+  .output {
+    grid-column: 3;
+    grid-row: 1;
+    align-self: start;
+  }
+}
+
 .stack {
   display: grid;
   gap: var(--pb-space-md);
@@ -308,28 +387,80 @@
 }
 
 /*
- * One port in the footnote panel: its name and types, then what it carries.
+ * THE PORTS FOOTNOTE IS A TABLE, AND IT USED TO BE A COLUMN OF PROSE.
  *
- * `gap: 2xs` rather than the stack's `md`, so the two lines read as one entry
- * and the entries read as a list. Without it a six-port tool is twelve
- * evenly-spaced lines with no telling which sentence belongs to which port.
+ * Each entry is a direction, a name, a type and a sentence - four fields, which
+ * is a row - and it was drawn as a name line with a paragraph under it running
+ * the full width of the page. On a wide monitor that is a sentence of about
+ * twelve words set across 1,888px, which is neither readable as prose nor
+ * scannable as data: measured on `/tools/base64` at 1920, the panel was 189px
+ * tall and every line in it started at x=29 whatever kind of line it was.
+ *
+ * So the identity goes in one column and the sentence in the other, and the
+ * sentence gets a measure. Below 720px there is no room for two columns and it
+ * falls back to the stacked pair it always was - `.portName` still reads as the
+ * heading of the sentence under it because of the row gap, which is why the
+ * gaps differ by axis.
+ *
+ * THE COLUMNS ARE EXPLICIT RATHER THAN AUTO-PLACED, and that is load-bearing.
+ * An input deliberately carries no sentence here - its prose is already on this
+ * page, in the panel where it is acted on - so an input contributes one cell
+ * and not two. Under auto-placement the next port's NAME would then flow into
+ * the empty second column and every row below it would be off by one.
  */
-.port {
+.ports {
   display: grid;
-  gap: var(--pb-space-2xs);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--pb-space-2xs) var(--pb-space-lg);
   min-inline-size: 0;
 }
 
+@media (min-width: 720px) {
+  .ports {
+    /*
+     * 240px holds `Out · Rendered HTML · text` - the longest identity in the
+     * set - without wrapping, and the sentence column is capped so it stays a
+     * measure rather than growing with the window. 68ch is the same cap the
+     * page's own lede uses.
+     */
+    grid-template-columns: minmax(0, 240px) minmax(0, 68ch);
+    gap: var(--pb-space-sm) var(--pb-space-lg);
+  }
+}
+
+.portName {
+  grid-column: 1;
+  margin: 0;
+  min-inline-size: 0;
+  font-size: var(--pb-label-size);
+  letter-spacing: var(--pb-label-tracking);
+  color: var(--pb-ink-muted);
+}
+
 /*
- * Sentence case and not a label: this is prose, where the line above it is a
+ * Sentence case and not a label: this is prose, where the cell beside it is a
  * name. Uppercase 10px with label tracking is unreadable at sentence length,
  * which is the whole reason it is a separate class rather than another `hint`.
  */
 .portNote {
+  grid-column: 2;
   margin: 0;
+  min-inline-size: 0;
   font-size: var(--pb-value-size);
   color: var(--pb-ink-muted);
   text-wrap: pretty;
+}
+
+/*
+ * Below the two-column width there is one column, and `grid-column: 2` on a
+ * one-column grid creates an implicit second track - which would put every
+ * sentence in a column of its own off the right-hand edge. Both cells go back
+ * to column one there.
+ */
+@media (max-width: 719px) {
+  .portNote {
+    grid-column: 1;
+  }
 }
 
 .mono {
