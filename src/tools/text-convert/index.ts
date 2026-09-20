@@ -242,7 +242,8 @@ export const textConvertTool = defineTool({
             sanitiseHtml(text, { headingIds: options.headingIds });
 
       /*
-       * TWO HTML TARGETS, AND THE DIFFERENCE IS THE MARKDOWN TRIP.
+       * TWO HTML TARGETS, AND THE DIFFERENCE IS THE MARKDOWN TRIP - WHICH A
+       * THIRD TARGET MAKES TOO.
        *
        * `html-sanitised` is `html` (the hub) as it stands: parsed, sanitised,
        * written back. Nothing is invented because nothing else ran.
@@ -252,20 +253,43 @@ export const textConvertTool = defineTool({
        * Markdown can express. From a MARKDOWN source the two are the same
        * string, and must be: HTML produced from Markdown has already been
        * through Markdown, so there is no round trip left to make.
+       *
+       * `normalised` is the RESULT of that trip, and it is the third document
+       * the change report compares. For a MARKDOWN target it is the string
+       * `rendered` was already carrying: `markdownToHtml(output)` is exactly
+       * `markdownToHtml(htmlToMarkdown(html))`, which is what the `html`
+       * target calls normalising. So the Markdown target gets the same census
+       * the HTML targets have for no extra conversion - it was silent because
+       * nothing passed the value along, not because the value was expensive.
+       * Computed once and given to both, so the port and the report cannot
+       * disagree about what the output renders to.
+       *
+       * Null for a Markdown SOURCE, where the trip has already happened on the
+       * way in and there is no third document, and for plain text, which has
+       * no markup to take a census of.
+       *
+       * A branch rather than nested conditionals because three values fall out
+       * of one question and two of them are shared between arms.
        */
-      const normalised =
-        options.target === 'html' && source === 'html'
-          ? markdownToHtml(htmlToMarkdown(html, toMarkdownOptions), toHtmlOptions)
-          : null;
+      let output: string;
+      let normalised: string | null = null;
+      // The `rendered` port's value when it is not the sanitised hub, which is
+      // the Markdown target alone.
+      let renderedHtml: string | null = null;
 
-      const output =
-        options.target === 'html'
-          ? (normalised ?? html)
-          : options.target === 'html-sanitised'
-            ? html
-            : options.target === 'markdown'
-              ? htmlToMarkdown(html, toMarkdownOptions)
-              : htmlToText(html, toTextOptions);
+      if (options.target === 'markdown') {
+        output = htmlToMarkdown(html, toMarkdownOptions);
+        renderedHtml = markdownToHtml(output, toHtmlOptions);
+        normalised = source === 'html' ? renderedHtml : null;
+      } else if (options.target === 'html') {
+        normalised =
+          source === 'html'
+            ? markdownToHtml(htmlToMarkdown(html, toMarkdownOptions), toHtmlOptions)
+            : null;
+        output = normalised ?? html;
+      } else {
+        output = options.target === 'html-sanitised' ? html : htmlToText(html, toTextOptions);
+      }
 
       const notes: ToolNote[] = [
         ...inputNotes,
@@ -306,10 +330,13 @@ export const textConvertTool = defineTool({
         output: { type: 'text', text: output } as const,
         rendered: {
           type: 'text',
-          // For a Markdown target this re-renders what was produced, which is
-          // the semantic-stability invariant made visible: if the Markdown is
-          // faithful, this looks like the HTML that went in.
-          text: options.target === 'markdown' ? markdownToHtml(output, toHtmlOptions) : html,
+          // For a Markdown target this is the output re-rendered, which is the
+          // semantic-stability invariant made visible: if the Markdown is
+          // faithful, this looks like the HTML that went in. It is computed
+          // above rather than here because the change report needs the same
+          // string, and rendering it twice would be two answers to one
+          // question.
+          text: renderedHtml ?? html,
         } as const,
         detected: { type: 'text', text: note } as const,
         report: {

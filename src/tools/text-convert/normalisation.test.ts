@@ -58,6 +58,9 @@ async function convert(
   };
 }
 
+/** Named so an expectation about a table row reads as text rather than as an escape. */
+const LF = String.fromCharCode(10);
+
 const titles = (notes: readonly Note[]): string[] => notes.map((note) => note.title);
 const losses = (notes: readonly Note[]): string[] =>
   notes.filter((note) => note.level === 'warn').map((note) => note.title);
@@ -124,7 +127,38 @@ describe('decision 6: HTML sanitised against HTML normalised', () => {
 
     expect(output).toContain('<thead>');
     expect(losses(notes).join(' ')).toContain('invented by the round trip');
-    expect(notes.find((note) => note.title.includes('invented'))?.body).toContain('<thead>');
+    /*
+     * `<tr>` and `<th>`, NOT `<thead>`, and that is a correction round ten
+     * made rather than a detail. `<thead>` is inserted by the HTML serialiser
+     * on its own account, so it appeared in this note for every table whose
+     * header row was written as a plain `<tr>` of `<th>` - a document where
+     * nothing was invented at all. The two elements left are the ones a reader
+     * can point at: an extra row, of empty header cells. See
+     * `SERIALISER_WRAPPERS`.
+     */
+    const body = notes.find((note) => note.title.includes('invented'))?.body ?? '';
+    expect(body).toContain('<tr>');
+    expect(body).toContain('<th>');
+    expect(body).not.toContain('<thead>');
+  });
+
+  it('invents nothing for a table whose header row is a plain <tr> of <th>', async () => {
+    /*
+     * THE NEGATIVE CONTROL FOR THE CORRECTION ABOVE, and the document that
+     * found it. `<table><tr><th>` parses with the row inside an implied
+     * `<tbody>` and no `<thead>`, and every table this tool writes has a
+     * `<thead>` - so the census sees an element appear on the commonest shape
+     * of hand-written table there is. Nothing visible was invented: the header
+     * row was in the input and is in the output.
+     */
+    const { output, notes } = await convert(
+      '<table><tr><th>Region</th></tr><tr><td>North</td></tr></table>',
+      { source: 'html', target: 'html' },
+    );
+
+    expect(output).toContain('<thead>');
+    expect(output).toContain('<th>Region</th>');
+    expect(notes).toEqual([]);
   });
 
   it('invents nothing at all with the sanitised target', async () => {
@@ -570,5 +604,234 @@ describe('an id the author wrote, under a prefix they did not', () => {
 
     expect(output).not.toContain('user-content');
     expect(notes.filter((entry) => entry.title.includes('namespaced'))).toEqual([]);
+  });
+});
+
+/* ========================================================================== *
+ * The census the Markdown target never had
+ * ========================================================================== */
+
+/**
+ * TC-1, TC-5 AND TC-13 WERE ONE SILENCE, AND THIS IS IT.
+ *
+ * For an HTML source with a Markdown target, nothing compared the input with
+ * the result. The reason recorded in `normalisation.ts` - "for Markdown there
+ * is nothing to compare" - is true of a Markdown SOURCE and was applied to the
+ * target: here there are three documents, and the third was already being
+ * computed for the `rendered` port. `markdownToHtml(output)` IS what the `html`
+ * target calls normalising, so this costs no conversion at all.
+ *
+ * EVERY CASE HERE HAS A CONTROL, and the controls are the point rather than the
+ * ceremony: these notes are new on this target, and a note that fires on an
+ * ordinary HTML table is one that trains people to ignore the channel. One of
+ * them found a false report that had been shipped on the HTML target since
+ * round four - see `SERIALISER_WRAPPERS`.
+ */
+describe('the census on the Markdown target', () => {
+  const MARKDOWN = { source: 'html', target: 'markdown' } as const;
+
+  it('reports a table caption, which Markdown has nowhere to put', async () => {
+    // TC-5, confirmed on this target and reported on the other.
+    const { output, notes } = await convert(
+      '<table><caption>Quarterly sales</caption><tr><th>Region</th></tr><tr><td>North</td></tr></table>',
+      MARKDOWN,
+    );
+
+    expect(output).not.toContain('Quarterly sales');
+    const note = notes.find((entry) => entry.title.includes('could not carry'));
+    expect(note?.level).toBe('warn');
+    expect(note?.body).toContain('<caption>');
+  });
+
+  it('reports the list structure a table cell loses', async () => {
+    /*
+     * TC-1's other half. The cell no longer emits a newline - see
+     * constructs.test.ts - and the bullets are what that costs, so this is the
+     * note that says the cell used to be a list.
+     */
+    const { output, notes } = await convert(
+      '<table><tr><th>Region</th></tr><tr><td><ul><li>North</li><li>South</li></ul></td></tr></table>',
+      MARKDOWN,
+    );
+
+    expect(output).toContain('| North South |');
+    const note = notes.find((entry) => entry.title.includes('could not carry'));
+    expect(note?.level).toBe('warn');
+    expect(note?.body).toContain('<ul>');
+    expect(note?.body).toContain('<li>');
+  });
+
+  it('reports the empty header row a headerless table gains', async () => {
+    // TC-13, which was reported on `HTML → HTML (normalised)` and silent here.
+    const { output, notes } = await convert(
+      '<table><tr><td>North</td><td>3</td></tr></table>',
+      MARKDOWN,
+    );
+
+    // The header cells are empty; the columns are padded to their content.
+    expect(output.split(LF)[0]).toBe('|       |   |');
+    const note = notes.find((entry) => entry.title.includes('invented'));
+    expect(note?.level).toBe('warn');
+    expect(note?.body).toContain('<th>');
+    expect(note?.body).toContain('header row');
+  });
+
+  it('reports what the sanitiser removed, on the way to Markdown too', async () => {
+    const { notes } = await convert('<p class="lead" data-id="7">hello</p>', MARKDOWN);
+
+    const note = notes.find((entry) => entry.title.includes('removed by the sanitiser'));
+    expect(note?.level).toBe('warn');
+    expect(note?.body).toContain('class');
+    expect(note?.body).toContain('data-*');
+    // The sentence used to say "every HTML this tool produces", which is not
+    // what the reader of a Markdown output is holding.
+    expect(note?.body).not.toContain('every HTML this tool produces');
+  });
+
+  it('explains a header row only when a header row is what was invented', async () => {
+    /*
+     * THE SECOND FALSE SENTENCE THIS ROUND FOUND, and it surfaced only because
+     * the census now runs on a target where inventions are common. `<mark>`
+     * becoming `_…_` invents an `<em>`, and the note explained the invention by
+     * saying that a Markdown table always has a header row. The count was
+     * right; the reason under it was about somebody else's document.
+     */
+    const substituted = await convert(
+      '<p><mark>highlighted</mark> and <kbd>Esc</kbd></p>',
+      MARKDOWN,
+    );
+    const invention = substituted.notes.find((entry) => entry.title.includes('invented'));
+
+    expect(substituted.output).toBe('_highlighted_ and `Esc`\n');
+    expect(invention?.body).toContain('<em>');
+    expect(invention?.body).not.toContain('header row');
+
+    // And the positive half, so this is not a test that the sentence is gone.
+    const headerless = await convert('<table><tr><td>North</td></tr></table>', MARKDOWN);
+    expect(headerless.notes.find((entry) => entry.title.includes('invented'))?.body).toContain(
+      'header row',
+    );
+  });
+
+  it('does not offer a table caption as an explanation for every element it lost', async () => {
+    // The same defect in the other note, and milder: the clause was
+    // illustrative rather than a claim, and it was still an illustration of
+    // the wrong document.
+    const { notes } = await convert('<p><mark>highlighted</mark></p>', MARKDOWN);
+    const note = notes.find((entry) => entry.title.includes('could not carry'));
+
+    expect(note?.body).toContain('<mark>');
+    expect(note?.body).not.toContain('caption');
+  });
+
+  it('says which document an element was counted in', async () => {
+    /*
+     * An element is only countable as an element in HTML, and the reader of a
+     * Markdown output is not holding that document. Saying so is the
+     * difference between a measurement and a claim about their file.
+     */
+    const { notes } = await convert(
+      '<table><caption>c</caption><tr><td>x</td></tr></table>',
+      MARKDOWN,
+    );
+
+    expect(notes.some((entry) => entry.body.includes('rendering this Markdown back to HTML'))).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    [
+      'a paragraph with a link and emphasis',
+      '<p>Hello <strong>world</strong>, <a href="/x">x</a>.</p>',
+    ],
+    ['a heading and a list', '<h2>Title</h2><ul><li>one</li><li>two</li></ul>'],
+    ['a fenced code block', '<pre><code class="language-js">const a = 1;\n</code></pre>'],
+    ['a blockquote', '<blockquote><p>quoted</p></blockquote>'],
+    ['a nested list', '<ul><li>one<ul><li>a</li></ul></li><li>two</li></ul>'],
+    ['a task list', '<ul><li><input type="checkbox" checked> done</li></ul>'],
+    [
+      'a table with a thead',
+      '<table><thead><tr><th>h</th></tr></thead><tbody><tr><td>x</td></tr></tbody></table>',
+    ],
+    [
+      'a table whose header row is a plain tr of th',
+      '<table><tr><th>h</th></tr><tr><td>x</td></tr></table>',
+    ],
+    [
+      'a table cell of inline content',
+      '<table><tr><th>h</th></tr><tr><td>a <em>b</em></td></tr></table>',
+    ],
+  ])('says nothing about a Markdown target that lost nothing: %s', async (_what, source) => {
+    /*
+     * THE CONTROLS, AND THE ONE THAT CHANGED THE CODE. The last three are
+     * tables, because tables are what these notes are mostly about and a
+     * report that fires on every table is no report. The eighth is the
+     * document that found the `<thead>` false positive: its header row is
+     * written as a plain `<tr>` of `<th>`, which is the commonest shape there
+     * is, and the census saw a `<thead>` appear because the HTML serialiser
+     * writes one.
+     */
+    const { notes } = await convert(source, MARKDOWN);
+    expect(notes).toEqual([]);
+  });
+
+  it('takes no census of a plain-text target, which has no markup to count', async () => {
+    /*
+     * THE BOUNDARY, STATED AS A TEST. Plain text has no third document - the
+     * same absence a Markdown SOURCE has, and the one place the reasoning this
+     * change overturned still applies. A census of a document with no elements
+     * in it would report every element as dropped.
+     */
+    const { notes } = await convert(
+      '<table><caption>c</caption><tr><th>h</th></tr><tr><td><ul><li>a</li></ul></td></tr></table>',
+      { source: 'html', target: 'text' },
+    );
+
+    expect(notes).toEqual([]);
+  });
+
+  it('leaves a Markdown source with a Markdown target on its own instrument', async () => {
+    // The other side of the same boundary: md to md still reports the named
+    // constructs and the reformatting note, and gains no census.
+    const { notes } = await convert('# Title\n\nSome *text*.\n', {
+      source: 'markdown',
+      target: 'markdown',
+    });
+
+    expect(titles(notes)).toEqual(['The document was reformatted']);
+  });
+
+  it('names both the ports a Markdown target loses in', async () => {
+    /*
+     * `output` AND `rendered`. For this target `rendered` is the output
+     * re-rendered, so it lost exactly what the output lost - which is the
+     * opposite of the HTML-normalised case, where `rendered` is the hub and
+     * still has what the round trip dropped.
+     */
+    const result = await textConvertTool.run({
+      inputs: {
+        input: {
+          type: 'text',
+          text: '<table><caption>c</caption><tr><td>x</td></tr></table>',
+        },
+      },
+      options: MARKDOWN,
+      context,
+    });
+    if (!result.ok) throw new Error(result.error.message);
+
+    const report = result.value.report;
+    if (report?.type !== 'json' || !isJsonObject(report.data)) throw new Error('no report');
+    const raw = report.data.notes;
+    if (raw === undefined || !isJsonArray(raw)) throw new Error('no notes');
+
+    const reaches = raw
+      .filter(isJsonObject)
+      .filter((note) => note.level === 'warn')
+      .map((note) => note.reaches);
+
+    expect(reaches.length).toBeGreaterThan(0);
+    for (const entry of reaches) expect(entry).toEqual(['output', 'rendered']);
   });
 });

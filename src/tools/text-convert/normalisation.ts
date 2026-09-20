@@ -99,11 +99,38 @@ function attributeLabel(name: string): string {
   return name.startsWith('data-') ? 'data-*' : name;
 }
 
+/**
+ * THE TWO ELEMENTS A CENSUS SEES MOVE THAT NOBODY WROTE.
+ *
+ * `<thead>` and `<tbody>` are inserted by the HTML parser and by the HTML
+ * serialiser on their own account: `<table><tr><th>h</th></tr>` parses with
+ * the row inside an implied `<tbody>` and no `<thead>` at all, and every
+ * table `markdownToHtml` writes has a `<thead>`. So the commonest shape of
+ * hand-written table there is - a header row written as a plain `<tr>` of
+ * `<th>` - reported `1 element was invented by the round trip` on a document
+ * where nothing visible was invented, under a body that said the table had
+ * gained an empty header row. It had not.
+ *
+ * Found by extending the census to the Markdown target, where the note is new
+ * and a false one would be the first thing anybody saw. It was already wrong
+ * on `HTML → HTML (normalised)`, where it has been shipped since round four;
+ * the count there drops by one and TC-13's three invented elements become the
+ * two a reader can point at, `<tr>` and `<th>`.
+ *
+ * FILTERED HERE AND NOT IN `changes.ts`, on purpose. The census is a question
+ * with one answer and these elements really are in one document and not the
+ * other; what is wrong is SAYING SO to a person. This module is where the
+ * sentence is written, so this is where the decision belongs - and
+ * `compareMarkup`'s own tests still assert the unfiltered truth.
+ */
+const SERIALISER_WRAPPERS: ReadonlySet<string> = new Set(['thead', 'tbody']);
+
 function named(changes: readonly MarkupChange[], kind: MarkupChange['kind']): string[] {
   return [
     ...new Set(
       changes
         .filter((change) => change.kind === kind)
+        .filter((change) => kind === 'attribute-dropped' || !SERIALISER_WRAPPERS.has(change.name))
         .map((change) =>
           kind === 'attribute-dropped' ? attributeLabel(change.name) : `<${change.name}>`,
         ),
@@ -154,7 +181,25 @@ export function normalisationNotes(input: NormalisationInput): readonly ToolNote
   const identifiers =
     input.target === 'html' || input.target === 'html-sanitised' ? identifierNotes(input) : [];
 
-  if (input.source === 'html' && (input.target === 'html' || input.target === 'html-sanitised')) {
+  /*
+   * THE CENSUS THE MARKDOWN TARGET NEVER HAD.
+   *
+   * `markdown` is in this branch now, and the reasoning below - "for Markdown
+   * there is nothing to compare" - is why it was not. That reasoning is sound
+   * for a Markdown SOURCE and does not hold for an HTML one: here there are
+   * three documents, exactly as there are for an HTML target. The third is the
+   * output rendered back to HTML, which index.ts was already computing for the
+   * `rendered` port and which is the same string the `html` target calls
+   * `normalised`. So TC-5's `<caption>`, TC-1's flattened cell and TC-13's
+   * invented header row are reported by the instrument that was already there,
+   * at no extra conversion.
+   *
+   * `text` STAYS OUT, and that is the boundary rather than an omission. Plain
+   * text has no markup in it, so there is no third document to take a census
+   * of - which is the same absence the Markdown SOURCE has, and the one place
+   * the comment above still applies.
+   */
+  if (input.source === 'html' && input.target !== 'text') {
     return [...identifiers, ...htmlNotes(input)];
   }
   if (input.source === 'markdown' && input.target === 'markdown') return markdownNotes(input);
@@ -317,7 +362,7 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
     notes.push(
       lost(
         `${sanitisedAttributes.length.toString()} ${plural(sanitisedAttributes.length, 'attribute was', 'attributes were')} removed by the sanitiser`,
-        `${sanitisedAttributes.join(', ')} ${plural(sanitisedAttributes.length, 'is', 'are')} not on the allowed list, so ${plural(sanitisedAttributes.length, 'it is', 'they are')} removed from every HTML this tool produces. That list is what stops an event handler or a javascript: URL surviving a paste, and it is deliberately narrow - styling hooks go with it.`,
+        `${sanitisedAttributes.join(', ')} ${plural(sanitisedAttributes.length, 'is', 'are')} not on the allowed list, so ${plural(sanitisedAttributes.length, 'it is', 'they are')} removed from every document this tool produces. That list is what stops an event handler or a javascript: URL surviving a paste, and it is deliberately narrow - styling hooks go with it.`,
         // The sanitiser IS the hub, so `rendered` lost it too.
         HUB_AND_OUTPUT,
       ),
@@ -328,17 +373,49 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
     notes.push(
       lost(
         `${sanitisedElements.length.toString()} ${plural(sanitisedElements.length, 'element was', 'elements were')} removed by the sanitiser`,
-        `${sanitisedElements.join(', ')} ${plural(sanitisedElements.length, 'is', 'are')} not on the allowed list. Scripts, styles and embedded frames are removed outright rather than escaped, because an HTML output is something people paste into a page.`,
+        `${sanitisedElements.join(', ')} ${plural(sanitisedElements.length, 'is', 'are')} not on the allowed list. Scripts, styles and embedded frames are removed outright rather than escaped, because what this tool produces is meant to be safe to paste into a page.`,
         HUB_AND_OUTPUT,
       ),
     );
   }
 
   /*
-   * AND THE ROUND TRIP'S, which only the normalised target has. This is the
-   * half that INVENTS, and inventing is the part nothing reported at all.
+   * AND THE ROUND TRIP'S, which two targets have. This is the half that
+   * INVENTS, and inventing is the part nothing reported at all.
+   *
+   * `normalised` is the document the trip produced. For the `html` target that
+   * IS the output; for the `markdown` target it is the output rendered back to
+   * HTML, because an element is only countable as an element there. The
+   * sentences say which, since a reader holding Markdown is not holding the
+   * document these three notes were measured on.
    */
   if (input.normalised === null) return notes;
+
+  const measured =
+    input.target === 'markdown'
+      ? ' Measured by rendering this Markdown back to HTML, which is the only form an element can be counted in.'
+      : '';
+  const trip =
+    input.target === 'markdown'
+      ? 'Converting to Markdown bounds the document by what Markdown can express, and'
+      : 'Normalising takes the document out to Markdown and back, and';
+
+  /*
+   * THE HEADER-ROW SENTENCE, ONLY WHEN IT IS ABOUT THIS DOCUMENT.
+   *
+   * It used to be appended to every invention, and extending the census to the
+   * Markdown target is what made that a false sentence rather than an
+   * irrelevant one: a `<mark>` becoming `_…_` invents an `<em>`, and the note
+   * explained it by saying a Markdown table always has a header row. The count
+   * was right and the reason underneath it was about a different document.
+   *
+   * Asked of `<tr>` and `<th>`, which is what an invented header row IS - the
+   * `<thead>` around it is filtered out above as the serialiser's own.
+   */
+  const tableRow = (elements: readonly string[]): string =>
+    elements.includes('<tr>') || elements.includes('<th>')
+      ? ' A Markdown table always has a header row, so a <table> written without one gains an empty header row that nobody wrote.'
+      : '';
 
   const byRoundTrip = compareMarkup(input.sanitised, input.normalised);
   const droppedAttributes = named(byRoundTrip, 'attribute-dropped');
@@ -349,7 +426,7 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
     notes.push(
       lost(
         `${droppedAttributes.length.toString()} ${plural(droppedAttributes.length, 'attribute the round trip could not carry', 'attributes the round trip could not carry')}`,
-        `Normalising takes the document out to Markdown and back, and Markdown has no spelling for ${droppedAttributes.join(', ')}. Choose HTML (sanitised) to keep ${plural(droppedAttributes.length, 'it', 'them')}: it runs the sanitiser and nothing else.`,
+        `${trip} Markdown has no spelling for ${droppedAttributes.join(', ')}.${measured} Choose HTML (sanitised) to keep ${plural(droppedAttributes.length, 'it', 'them')}: it runs the sanitiser and nothing else.`,
         // The round trip happens AFTER the hub, so `rendered` still has it.
         afterHub(input),
       ),
@@ -360,7 +437,7 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
     notes.push(
       lost(
         `${droppedElements.length.toString()} ${plural(droppedElements.length, 'element the round trip could not carry', 'elements the round trip could not carry')}`,
-        `Markdown has no spelling for ${droppedElements.join(', ')}, so ${plural(droppedElements.length, 'it was', 'they were')} unwrapped or dropped. Choose HTML (sanitised) to keep the markup as it is, or set "Markup Markdown cannot express" to Keep as inline HTML.`,
+        `Markdown has no spelling for ${droppedElements.join(', ')}, so ${plural(droppedElements.length, 'it was', 'they were')} unwrapped or dropped.${measured} Choose HTML (sanitised) to keep the markup as it is, or set "Markup Markdown cannot express" to Keep as inline HTML for the elements that option covers.`,
         afterHub(input),
       ),
     );
@@ -370,7 +447,7 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
     notes.push(
       lost(
         `${added.length.toString()} ${plural(added.length, 'element was', 'elements were')} invented by the round trip`,
-        `${added.join(', ')} ${plural(added.length, 'is', 'are')} in the output and was not in the input. A Markdown table always has a header row, so a <table> written without one gains an empty one on the way back. Choose HTML (sanitised) for a pass that invents nothing.`,
+        `${added.join(', ')} ${plural(added.length, 'is', 'are')} in the result and ${plural(added.length, 'was', 'were')} not in the input.${tableRow(added)}${measured} Choose HTML (sanitised) for a pass that invents nothing.`,
         afterHub(input),
       ),
     );

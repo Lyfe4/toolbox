@@ -228,9 +228,10 @@
       "input": "<table><caption>Quarterly sales</caption><tr><th>Region</th></tr><tr><td>North</td></tr></table>",
       "clean": "<table><tr><th>Region</th></tr><tr><td>North</td></tr></table>",
       "expect": {
-        "titleContains": "caption",
-        "mentions": ["Quarterly sales"]
-      }
+        "titleContains": "could not carry",
+        "mentions": ["<caption>"]
+      },
+      "whyThisExpectation": "Round nine wrote `mentions: [\"Quarterly sales\"]` - the caption's TEXT. The instrument round ten was asked to use is `compareMarkup`, a census of NAMES, so it can say that a <caption> went in and did not come out and cannot say what was inside it. Naming the content needs a text dimension on the census, which is the same instrument change row 16 is excluded for. Re-specified to what the census can prove, and the gap recorded in docs/test-findings.md rather than closed quietly."
     },
     {
       "row": 14,
@@ -245,8 +246,8 @@
       "input": "<table><tr><th>Region</th></tr><tr><td><ul><li>North</li><li>South</li></ul></td></tr></table>",
       "clean": "<table><tr><th>Region</th></tr><tr><td>North</td></tr></table>",
       "expect": {
-        "titleContains": "list",
-        "mentions": []
+        "titleContains": "could not carry",
+        "mentions": ["<ul>", "<li>"]
       }
     },
     {
@@ -262,8 +263,8 @@
       "input": "<table><tr><td>North</td><td>3</td></tr></table>",
       "clean": "<table><tr><th>Region</th><th>Sales</th></tr><tr><td>North</td><td>3</td></tr></table>",
       "expect": {
-        "titleContains": "header",
-        "mentions": []
+        "titleContains": "invented",
+        "mentions": ["<th>", "header row"]
       }
     },
     {

@@ -73,6 +73,16 @@ interface CorpusCase {
   readonly clean: string | null;
   readonly expect: Expectation;
   readonly whyNoCase?: string;
+  /**
+   * Why this row's `expect` is not the one the round that WROTE the row asked
+   * for.
+   *
+   * Declared rather than left as an unread key, because a re-specified
+   * expectation is the one edit to this file that can quietly turn a row
+   * green. Row 13 is the case: round nine's expectation asked a census of
+   * NAMES for a fact about content.
+   */
+  readonly whyThisExpectation?: string;
 }
 
 interface ZeroReport {

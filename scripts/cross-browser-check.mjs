@@ -5074,6 +5074,214 @@ async function checkColourReports(browser, label) {
 }
 
 /**
+ * THE CENSUS ON THE MARKDOWN TARGET, DRAWN.
+ *
+ * `HTML → Markdown` reported nothing at all until round ten: three findings -
+ * a dropped `<caption>`, a table cell's list flattened, an empty header row
+ * invented - were one silence, because nothing compared the input with the
+ * result. The unit suite asserts the notes exist; this asserts a person
+ * READS them, which is a different claim and the one jsdom cannot make. A
+ * report drawn at zero height, or behind the options panel, satisfies
+ * `textContent` and satisfies nobody.
+ *
+ * AND THE CORRECTNESS HALF IN A REAL ENGINE. A cell containing a list used to
+ * emit a literal newline, which ends a GFM row - so the output text box held a
+ * table that renders wrongly. The output is read back here and asserted to be
+ * three lines, every one a row, because that is the property the fix has and
+ * the broken version did not.
+ *
+ * EVERY ASSERTION IS PAIRED. The last run on the tool page and the last node
+ * are an ordinary HTML table whose header row is a plain `<tr>` of `<th>` -
+ * the commonest shape there is, and the document that found a false `<thead>`
+ * report shipped since round four. Nothing may be drawn for it.
+ */
+async function checkMarkdownCensus(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  const CAPTION =
+    '<table><caption>Quarterly sales</caption><tr><th>Region</th></tr><tr><td>North</td></tr></table>';
+  const CELL_LIST =
+    '<table><tr><th>Region</th></tr><tr><td><ul><li>North</li><li>South</li></ul></td></tr></table>';
+  const HEADERLESS = '<table><tr><td>North</td><td>3</td></tr></table>';
+  // The control, and it is a control on SUBJECT rather than on wording: it is
+  // a table, converted by the same pass, that loses nothing.
+  const CLEAN = '<table><tr><th>Region</th></tr><tr><td>North</td></tr></table>';
+
+  const notesOn = async () => {
+    const list = page.getByRole('list', { name: 'Text convert Report notes' });
+    if ((await list.count()) === 0) return { drawn: false, text: '' };
+    const box = await list.first().boundingBox();
+    return {
+      drawn: box !== null && box.width > 0 && box.height > 0,
+      text: ((await list.first().innerText()) ?? '').replace(/\s+/g, ' ').trim(),
+    };
+  };
+
+  /**
+   * Runs one document and waits for the ANSWER rather than for the click.
+   *
+   * The previous result stays on screen while the next run is in flight, so
+   * waiting on the button would read the old panel - and this check is
+   * entirely about which panel is on screen. The predicate is on the output
+   * text, because that is the one thing that is different per document.
+   */
+  const convert = async (text, settled) => {
+    await page.getByLabel('Text convert input').fill(text);
+    await page.getByRole('button', { name: 'Run' }).click();
+    const output = page.getByLabel('Text convert Converted');
+    await output.waitFor({ timeout: 30_000 });
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const value = await output.inputValue();
+      if (settled(value)) return value;
+      await page.waitForTimeout(100);
+    }
+    return null;
+  };
+
+  try {
+    /* -- 1: the tool page ------------------------------------------------- */
+    await page.goto(`${ORIGIN}/tools/text-convert`, { waitUntil: 'networkidle' });
+    await page
+      .getByRole('heading', { level: 1, name: 'Text convert' })
+      .waitFor({ timeout: 15_000 });
+
+    await page.getByRole('combobox', { name: 'Source format' }).click();
+    await page.getByRole('option', { name: 'HTML', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Target format' }).click();
+    await page.getByRole('option', { name: 'Markdown', exact: true }).click();
+
+    const captionOut = await convert(CAPTION, (value) => value.includes('Region'));
+    const caption = await notesOn();
+    check(
+      label,
+      'a dropped table caption is drawn on the tool page without opening anything',
+      captionOut !== null &&
+        !captionOut.includes('Quarterly sales') &&
+        caption.drawn &&
+        caption.text.includes('could not carry') &&
+        caption.text.includes('<caption>'),
+      caption.text.slice(0, 200),
+    );
+
+    const listOut = await convert(CELL_LIST, (value) => value.includes('South'));
+    const list = await notesOn();
+    check(
+      label,
+      'a table cell that was a list is reported, and names the elements that went',
+      list.drawn && list.text.includes('<ul>') && list.text.includes('<li>'),
+      list.text.slice(0, 200),
+    );
+
+    /* -- 2: TC-1, in a real engine ---------------------------------------- */
+    const rows = (listOut ?? '').split('\n').filter((line) => line !== '');
+    check(
+      label,
+      'and the table it produced is three lines, every one of them a row',
+      rows.length === 3 && rows.every((line) => line.startsWith('|') && line.endsWith('|')),
+      JSON.stringify(rows),
+    );
+
+    const headerlessOut = await convert(HEADERLESS, (value) => value.includes('North'));
+    const headerless = await notesOn();
+    check(
+      label,
+      'an invented header row is reported, and says it is a header row',
+      headerlessOut !== null &&
+        headerless.drawn &&
+        headerless.text.includes('invented') &&
+        headerless.text.includes('header row'),
+      headerless.text.slice(0, 200),
+    );
+
+    /* -- 3: the negative control, on the same page ------------------------ */
+    const cleanOut = await convert(CLEAN, (value) => value.includes('Region'));
+    const clean = await notesOn();
+    check(
+      label,
+      'an ordinary table draws no note at all on the way to Markdown',
+      cleanOut !== null && !clean.drawn && clean.text === '',
+      clean.text.slice(0, 200),
+    );
+
+    /* -- 4: a canvas node ------------------------------------------------- */
+    const nodeLink = () =>
+      `${ORIGIN}/?p=${shareParam({
+        v: 3,
+        n: [['n1', 'text-convert', 0, 0, { source: 'html', target: 'markdown' }]],
+        e: [],
+      })}`;
+
+    const summaryOf = () =>
+      page.evaluate(() => {
+        const box = document.querySelector('[data-testid="node-n1"] [class*="nodeSummary"]');
+        if (box === null) return null;
+        const rect = box.getBoundingClientRect();
+        return {
+          text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
+          drawn: rect.width > 0 && rect.height > 0,
+        };
+      });
+
+    const typeInto = async (value) => {
+      await page.locator('[data-testid="node-n1"]').focus();
+      await page.keyboard.press('Enter');
+      const field = page.locator('[data-inspector-input]').first();
+      await field.waitFor({ timeout: 15_000 });
+      await field.fill(value);
+    };
+
+    const untilSummary = async (predicate, timeout) => {
+      const deadline = Date.now() + timeout;
+      for (;;) {
+        const summary = await summaryOf();
+        if ((summary !== null && predicate(summary.text)) || Date.now() > deadline) return summary;
+        await page.waitForTimeout(100);
+      }
+    };
+
+    await page.goto(nodeLink(), { waitUntil: 'networkidle' });
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+
+    await typeInto(CAPTION);
+    const lossyNode = await untilSummary((text) => text.startsWith('Lossy'), 30_000);
+    check(
+      label,
+      'a canvas node prints what the Markdown conversion could not carry on its own face',
+      lossyNode !== null &&
+        lossyNode.drawn &&
+        lossyNode.text.startsWith('Lossy ·') &&
+        lossyNode.text.includes('could not carry'),
+      JSON.stringify(lossyNode),
+    );
+
+    const spoken = await page.evaluate(
+      () => document.querySelector('[data-testid="node-n1"]')?.getAttribute('aria-label') ?? '',
+    );
+    check(
+      label,
+      'and the accessible name of the text node carries it too',
+      spoken.includes('lossy:'),
+      spoken.replace(/\s+/g, ' ').slice(0, 200),
+    );
+
+    await page.goto(nodeLink(), { waitUntil: 'networkidle' });
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+
+    await typeInto(CLEAN);
+    const cleanNode = await untilSummary((text) => text.includes('Region'), 30_000);
+    check(
+      label,
+      'a text node whose table lost nothing says nothing about loss',
+      cleanNode !== null && cleanNode.drawn && !cleanNode.text.includes('Lossy'),
+      JSON.stringify(cleanNode),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
  * WHAT A NODE DRAWS WHEN ITS ANSWER IS A SERIALISED DOCUMENT.
  *
  * A node summarises its first output, and for three tools that output is a
@@ -12065,6 +12273,7 @@ async function runChecks(engine, label) {
     await checkStructuredData(browser, label);
     await checkLossReports(browser, label);
     await checkColourReports(browser, label);
+    await checkMarkdownCensus(browser, label);
     await checkSerialisedFaces(browser, label);
     await checkLossAlongWires(browser, label);
     await checkDiff(browser, label);

@@ -188,6 +188,24 @@ const LOSSY_RUNS: readonly {
     inputs: { input: { type: 'text', text: '<p class="lead" data-x="1">Hello</p>' } },
     options: { source: 'html', target: 'html-sanitised' },
   },
+  {
+    /*
+     * The Markdown target, whose census is new in round ten. Listed because
+     * this is where `reaches` is easiest to get wrong: for every other target
+     * `rendered` is the sanitised hub and still HAS what the round trip
+     * dropped, and for this one `rendered` is the output re-rendered and lost
+     * exactly what the output lost.
+     */
+    toolId: 'text-convert',
+    what: 'a table caption Markdown has nowhere to put',
+    inputs: {
+      input: {
+        type: 'text',
+        text: '<table><caption>Quarterly sales</caption><tr><th>Region</th></tr><tr><td>North</td></tr></table>',
+      },
+    },
+    options: { source: 'html', target: 'markdown' },
+  },
 ];
 
 describe('every warn note names the ports its loss is actually in', () => {

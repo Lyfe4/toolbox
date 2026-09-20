@@ -18,6 +18,15 @@ Round eight, 2026-09-20, against `592b3b2`.
 > what round nine measured is only interesting next to what round eight
 > predicted: **the plan says four, and the corpus measures three.** Round nine
 > says why under [What the framing got wrong](#what-the-framing-got-wrong).
+>
+> **Round ten, 2026-09-20, against `17349a3`, is after it** —
+> [Round ten, done](#round-ten-done). It builds the second item of the plan —
+> the census the Markdown target never had — and fixes TC-1's newline, which
+> is the one open item in this document that produces a wrongly rendered
+> document. **The ratio goes from 3 of 17 to 6 of 17.** It also found two
+> sentences the tool was printing that were false, one of them since round
+> four, and both were found by a negative control rather than by reading
+> anything.
 
 **The four-line summary of the reply.** Of the 40 numbered findings, 15
 reproduce exactly as described, 11 reproduce with a different cause or scope,
@@ -1820,3 +1829,315 @@ Rounds ten to thirteen exactly as the plan above sets them out. The one line
 worth repeating: **fourteen of the seventeen are red, and the ratio is the
 point.** A denominator somebody can add to is the thing the previous two counts
 did not have.
+
+## Round ten, done
+
+2026-09-20, against `17349a3`. Two pieces of work, and they are two jobs rather
+than one: the census the Markdown target never had, and TC-1's newline, which
+is a correctness bug and not a reporting gap. The plan above says to keep them
+apart and it is right — one of them stops a document rendering wrongly, the
+other says what the conversion cost. It also found two sentences that were
+false, one of them shipped since round four, and both were found by a negative
+control rather than by reading anything.
+
+### Part one — the census the Markdown target never had
+
+| Built                                                                   | Where                                     |
+| ----------------------------------------------------------------------- | ----------------------------------------- |
+| The Markdown target routed into the three-document comparison           | `src/tools/text-convert/normalisation.ts` |
+| The third document passed along rather than recomputed                  | `src/tools/text-convert/index.ts`         |
+| Target-aware wording, because the reader is not holding that document   | the three round-trip notes                |
+| `<thead>` and `<tbody>` filtered out of the reported names              | `SERIALISER_WRAPPERS`, `normalisation.ts` |
+| The header-row explanation made conditional on a header row             | `tableRow`, `normalisation.ts`            |
+| A `text-convert` Markdown run in `notePorts.test.ts`'s `LOSSY_RUNS`     | the caption case                          |
+| `checkMarkdownCensus` — `/tools` and a canvas node face, in two engines | `scripts/cross-browser-check.mjs`         |
+| Corpus rows 13, 14 and 15                                               | `spec/loss-corpus.json`                   |
+
+**It cost no conversion at all, which is worth stating because the plan
+predicted one.** The plan says `HTML → HTML (normalised)` is "one further
+`markdownToHtml` call away from what the Markdown target already computes". It
+is not one call away — it is the call the Markdown target was **already
+making**, for the `rendered` port: `rendered` is `markdownToHtml(output)` and
+`normalised` is `markdownToHtml(htmlToMarkdown(sanitised))`, and for this
+target those are the same expression. The change is that the value is now
+handed to `normalisationNotes` instead of being computed, used once and
+dropped. `index.ts` computes it once in a branch and gives it to both
+consumers, so there is no way for the port and the report to disagree about
+what the output renders to.
+
+**The boundary the plan asks for is held, and is now two tests.** A plain-text
+target gets no census — it has no markup to take one of, which is the same
+absence a Markdown SOURCE has and the one place the reasoning recorded in
+`normalisation.ts` still applies. `takes no census of a plain-text target` and
+`leaves a Markdown source with a Markdown target on its own instrument` are
+what stop the next round reading this change as "compare everything".
+
+**Three of the five note bodies had to be branched on the target**, because
+they named a document the reader of a Markdown output is not holding:
+
+| Note                                        | What it used to say, and why that was wrong here                                          |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| N attributes removed by the sanitiser       | "removed from every HTML this tool produces" — the output is not HTML                     |
+| N elements removed by the sanitiser         | "because an HTML output is something people paste into a page" — same                     |
+| N attributes the round trip could not carry | "Normalising takes the document out to Markdown and back" — the conversion IS to Markdown |
+| N elements the round trip could not carry   | nothing; it gained the sentence saying where the count was taken                          |
+| N elements were invented                    | the same, plus the header-row correction below                                            |
+
+The two sanitiser sentences were made target-neutral rather than branched,
+because the fact is the same on every target and only the noun was wrong.
+
+### Part two — TC-1, the newline
+
+`<td><ul><li>one</li><li>two</li></ul></td>` emitted a literal U+000A inside
+the row. A newline ends a GFM row, so the table stopped at that cell and
+everything after it re-parsed as prose — a document that renders wrongly, with
+nothing to say so, under all three policy values.
+
+**The fix is the one the cell path already made for `<br>`, and the finding is
+what bounded it.** A hard break in a cell comes out as a space because
+mdast-util-to-markdown's break handler asks `patternInScope` whether a newline
+is legal in the construct it is in and substitutes one when it is not. The
+block handlers never ask. Rather than teaching each of them to, the cell is
+flattened to real phrasing before any of them is reached — so there is no
+newline left to guard, the content survives joined by a space, and the
+STRUCTURE is what goes. See `cellPhrasing` in `pipelines.ts`.
+
+**The root cause is a cast, and it is upstream's, stated in upstream's own
+comment.** `hast-util-to-mdast`'s cell handler is `state.all(node)` cast to
+`PhrasingContent[]`, with the comment _"Allow potentially 'invalid' nodes, they
+might be unknown."_ So a `<td>` containing a `<ul>` really does produce a
+`tableCell` with a `list` inside it, and the serialiser writes a list the only
+way it can. Registering a `tableCell` handler on the serialiser would not have
+worked and it is worth writing down why: mdast-util-gfm-table's table handler
+calls its own `handleTableCell` directly rather than through `state.handle`, so
+an override is consulted for a stray `tableCell` and never for a cell in a
+table.
+
+**Measured, before and after**, on a two-row table with one cell:
+
+| Cell content                        | Was                                                         | Is          |
+| ----------------------------------- | ----------------------------------------------------------- | ----------- |
+| `<ul><li>one</li><li>two</li></ul>` | `- one` ⏎ `- two` — the row ends at the newline             | `one two`   |
+| `<ol><li>one</li><li>two</li></ol>` | `1. one` ⏎ `2. two` — the same                              | `one two`   |
+| `<pre>a` ⏎ `b</pre>`                | a fence — **three** extra rows and a code block tagged `\|` | `` `a b` `` |
+| `<p>one</p><p>two</p>`              | `onetwo` — one word                                         | `one two`   |
+| `<blockquote>q</blockquote>`        | `> q` — a block marker inside a cell                        | `q`         |
+| `a<hr>b`                            | `a---b` — three characters the document never had           | `a b`       |
+| `a<br>b`                            | `a b`                                                       | `a b`       |
+
+The last row is the control on the fix rather than a result: it was already
+right, it is what said the answer is a space, and a fix that moved it would
+have replaced one wrong cell with another.
+
+**The bullets are what the flattening costs, and that is the census's job.**
+`<ul>` and `<li>` are in the sanitised document and in neither the Markdown nor
+the HTML it re-renders to, so `compareMarkup` reports them. That sentence is
+the only join between the two halves of this round, and it is why they are
+still two halves.
+
+**What the fix does NOT do is consult `unsupported`.** TC-1 names that as a
+second fault and this round leaves it, deliberately rather than by omission:
+`unsupported` governs elements with **no Markdown spelling at all**, and a list
+has one — it is just not one that fits in a cell. Making `keep` mean raw `<ul>`
+markup inside a cell is a product decision about a construct GFM does not
+define and only some renderers accept. Recorded in `pipelines.ts` and in the
+matrix rather than taken quietly. The sharper form of the finding — that all
+three policy values produce byte-identical output — is now an assertion, so the
+day somebody does take that decision, the test that says the option is ignored
+is the one that falls due.
+
+### The two false sentences this round found
+
+Neither was on the list, both were found by a control, and one had been shipped
+for six rounds.
+
+**1. `1 element was invented` on a table where nothing was invented.**
+
+`<table><tr><th>h</th></tr><tr><td>x</td></tr></table>` parses with the row
+inside an implied `<tbody>` and no `<thead>` at all, and every table
+`markdownToHtml` writes has a `<thead>`. So the census saw one element appear
+and the note said:
+
+> 1 element was invented by the round trip — `<thead>` is in the output and was
+> not in the input. A Markdown table always has a header row, so a `<table>`
+> written without one gains an empty one on the way back.
+
+The document had a header row. Nothing was invented. The note was a fact about
+the HTML serialiser presented as a fact about the reader's table, on the
+commonest shape of hand-written table there is, and it has been on
+`HTML → HTML (normalised)` since round four.
+
+`<thead>` and `<tbody>` are filtered out of the reported element names now, in
+`normalisation.ts` where the sentence is written rather than in `changes.ts`
+where the census is taken. The census is a question with one answer and those
+elements really are in one document and not the other; what is wrong is saying
+so to a person. `compareMarkup`'s own tests still assert the unfiltered truth.
+
+**It changes a shipped sentence on the other target**, which is worth saying
+plainly: TC-13's report on `HTML → HTML (normalised)` was `3 elements were
+invented` and is now `2 elements were invented: <tr>, <th>` — the two a reader
+can point at, which are an extra row of empty header cells. That is the only
+existing assertion in the repository this round had to rewrite.
+
+**2. The header-row explanation attached to every invention there is.**
+
+The body of the invention note recited the table explanation whatever had been
+invented. That was merely irrelevant while the only target with inventions was
+`HTML → HTML`; on the Markdown target it is false and common. `<mark>hi</mark>`
+becomes `_hi_`, which invents an `<em>`, and the note read:
+
+> 2 elements were invented by the round trip — `<em>`, `<code>` are in the
+> result and were not in the input. A Markdown table always has a header row,
+> so a `<table>` written without one gains an empty header row that nobody
+> wrote.
+
+The count is right and the reason under it is about somebody else's document.
+The sentence is now conditional on `<tr>` or `<th>` being among the invented
+elements, which is what an invented header row IS. The same clause in the
+dropped-elements note — an illustration naming a caption and a cell's list —
+was removed rather than made conditional: a note that names what went does not
+need an example of something else that goes the same way.
+
+### Proving test and negative control, per item
+
+| Fix                          | Proving test                                                                     | Negative control                                                                    | Watched failing against                                                             |
+| ---------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| The cell newline             | `constructs.test.ts` — the list case, the `<pre>` case, and a 156-document sweep | a cell of ordinary inline content must come out unchanged; `a<br>b` must stay `a b` | the `td`/`th` handlers removed: **5 red**. The code-span squash removed: **2 red**. |
+| The block separator          | two paragraphs in a cell are `one two`                                           | the inline-content case, which must not gain a space                                | `if (false && …)` on the separator: **3 red**, and the newline sweep stays green    |
+| Flattening only what is flow | the inline-content case keeps `**b**`, `[c](/x)` and `` `d` ``                   | is itself the control                                                               | `link` and `strong` dropped from the phrasing set: **1 red**                        |
+| The census, caption          | `normalisation.test.ts` — the note names `<caption>`                             | nine clean documents, four of them tables, must produce **no note at all**          | the Markdown target excluded from the branch: **6 red**                             |
+| The census, cell list        | the note names `<ul>` and `<li>`                                                 | the same nine                                                                       | the same                                                                            |
+| The census, invented header  | the note names `<th>` and says "header row"                                      | a table whose header row is a plain `<tr>` of `<th>` must say nothing               | the same                                                                            |
+| The wrapper filter           | the invention note must **not** contain `<thead>`                                | the plain-`<tr>` table must produce no note                                         | `SERIALISER_WRAPPERS` emptied: **4 red**, two of them controls                      |
+| The conditional explanation  | a `<mark>` substitution must not mention a header row                            | the headerless table must still mention one                                         | made unconditional: **1 red**. Made never to fire: **2 red**.                       |
+| `reaches`                    | every warn note on this target is `['output', 'rendered']`                       | `notePorts.test.ts` holds it to the manifest                                        | —                                                                                   |
+| Drawn, in two engines        | `checkMarkdownCensus` — `/tools` and a node face, boxes of non-zero size         | an ordinary table draws no note, and its node says nothing about loss               | the log: eight assertions, Firefox and WebKit                                       |
+
+**The controls match on subject, not on wording.** Each is a table converted by
+the same pass that loses nothing, and the assertion is that the notes list is
+**not drawn at all** — so a note that fired on every table would fail it
+whatever that note said. That is last round's lesson applied, and it is the
+lesson that paid twice: both false sentences named the clean document's own
+elements, which a wording match would have missed exactly the way round nine's
+clamp control missed a note that cried wolf.
+
+### The ratio, before and after
+
+|                  |             |
+| ---------------- | ----------- |
+| Before round ten | **3 of 17** |
+| After round ten  | **6 of 17** |
+
+Rows 13, 14 and 15 — the three the brief named. All three turned.
+
+**Shown failing.** Excluding the Markdown target from the census branch drops
+the ratio back to **3 of 17** and turns two gates red at once:
+`lossCorpus.test.ts`, whose generated block no longer matches the document, and
+`normalisation.test.ts`. The diff vitest prints names the three rows that
+stopped being told.
+
+### Where the plan was wrong, and three rows re-specified
+
+**Row 13's expectation asked a census of names for a fact about content, and
+cannot be met as written.** Round nine specified
+`mentions: ["Quarterly sales"]` — the caption's TEXT. `compareMarkup` is a
+census of NAMES: it can say that a `<caption>` went in and did not come out,
+and it cannot say what was inside it. Naming the content needs a text dimension
+on the census, which is **the same instrument change row 16 is excluded for**,
+for the same reason, in the same sentence of the plan. So the row is
+re-specified to `mentions: ["<caption>"]` and the corpus carries a
+`whyThisExpectation` field saying so at the point somebody would look. The
+field is declared in `lossCorpus.test.ts` rather than left as an unread key,
+because a re-specified expectation is the one edit to that file that can
+quietly turn a row green.
+
+**This is a weakening, and it is recorded as one.** A reader learns that a
+`<caption>` was dropped and that Markdown has nowhere to put one. They are not
+told the three words that were in it.
+
+**Rows 14 and 15 needed the same kind of change for a smaller reason, and it
+matters more than it looks.** Their `titleContains` values were `list` and
+`header` — the subject as a person writes it. The census's titles are generic
+(`N elements the round trip could not carry`, `N elements were invented by the
+round trip`) with the element names in the body. A `titleContains` that matches
+**no note the tool can ever write** does not merely fail the positive
+assertion: it makes that row's NEGATIVE CONTROL vacuous, because the control
+asks whether the clean document produced a note with that title and the answer
+is trivially no. Both were changed to a string the title really contains, and
+row 15's clean document was changed too — it was a table whose header row is a
+plain `<tr>` of `<th>`, which is the document that fired the false `<thead>`
+note, so the control it was meant to be was the thing that found the bug.
+
+### What was looked for and not found
+
+- **A fourth Markdown-target row among the seventeen.** Row 17 — `<mark>` and
+  `<kbd>` given formatting they never had — is on this target and does **not**
+  turn, and the reason is not that the census is silent there. It is not
+  silent: the document now produces two notes, `2 elements the round trip could
+not carry: <mark>, <kbd>` and `2 elements were invented: <em>, <code>`. What
+  no single note says is the row's own claim — that one was SUBSTITUTED for the
+  other. The census reports a departure and an arrival; joining them into a
+  substitution is a sentence neither note makes, and `matchingNote` looks for
+  one note. So the row is correctly red, and it is red about a narrower thing
+  than round nine's measurement implies. That is TC-4 and it wants a report of
+  a different kind.
+- **A row round nine said nothing could collide with.** Round nine recorded
+  that "each of the fourteen silent rows was run and produces no `warn` note at
+  all, so there is nothing for a title match to collide with today". After this
+  round that is no longer true of row 17, whose document produces two notes.
+  Nothing collides yet — neither title contains `mark` — but the sentence has
+  stopped being a fact about the file and become a fact about two strings, and
+  the next round should not inherit it as a guarantee.
+- **Whether row 16 rides along after all.** It does not, and this round is the
+  evidence rather than an assertion of it: the census was added to the target
+  row 16's finding was first reported on, and row 16 stayed silent. Measured:
+  on the **Markdown** target `class` IS reported, because the attribute is gone
+  from the round-tripped HTML entirely; on `HTML → HTML (sanitised)`, which is
+  the target row 16 is pinned to, `class=""` is present on both sides and a
+  census of names cannot tell it from `class="btn"`. Exactly the reason the
+  plan gives, now with a run behind it.
+- **A cry-wolf note on ordinary input.** Nine documents were put through the
+  new census — a paragraph with a link and emphasis, a heading and a list, a
+  fenced code block, a blockquote, a nested list, a task list, a table with a
+  `<thead>`, a table whose header row is a plain `<tr>` of `<th>`, and a table
+  cell of inline content — and all nine produce nothing. The eighth is the one
+  that did not, and it is why `SERIALISER_WRAPPERS` exists.
+- **A second false invention of the same shape.** `<img src width alt>` at the
+  top level reports `<p>` as invented, on both targets, because a bare inline
+  element becomes a paragraph. That one is TRUE — a block-level paragraph
+  really is created — and it is left alone. Looked at because it is the same
+  shape as the `<thead>` case and it turned out not to be the same fact.
+- **A newline the flattening still lets through.** Swept: 156 cell documents —
+  twelve fragments and every ordered pair of them — and none produces a line
+  inside a row, a table with the wrong number of rows, or more than one table.
+  The three places a value is written out verbatim rather than through
+  `state.safe()` are each squashed: a code span, a raw `html` node, and the
+  code block this round turns into a span. A `text` node is deliberately NOT,
+  because `safe()` already consults the same unsafe patterns the break handler
+  does and encodes a newline in a cell as `&#xa;`.
+- **A place the fix could change a document with no table in it.** Every
+  non-cell case measured before and after is byte-identical: a paragraph, a
+  heading and a list, a fenced block, a blockquote, an image, a nested list, an
+  `<hr>`, a task list, `<del>`, a `class` attribute, `<img width>`, a `<div>`
+  wrapper. The handlers are registered for `td` and `th` and reach nothing
+  else.
+
+### Still open, and unchanged by this round
+
+Rounds eleven to thirteen as the plan sets them out, with three items sharpened:
+
+- **TC-9 / corpus row 16 stays out**, and round eleven's instrument question
+  now has a second customer: row 13's caption CONTENTS want the same third
+  dimension that row 16's attribute VALUE wants. One change serving two rows is
+  a better-shaped round than either alone, and it has a name — a census of
+  names, plus the values this app rewrites, plus the TEXT that went in and came
+  out nowhere.
+- **TC-3 is not in the group the plan puts it in.** The plan groups it with
+  TC-1, TC-5 and TC-13 as one silence. It is not: `<ol reversed>` loses the
+  `reversed` attribute and that IS reported, on every target, by the sanitiser
+  half — `reversed` is not on the allow-list, and the note names it. What is
+  silent is that the numbers emitted ascend where a reversed list displays
+  descending, which is wrong CONTENT and not a missing name. No census can see
+  it. It belongs with round thirteen's one-line decisions.
+- **The `unsupported` half of TC-1**, as set out above, with the test that
+  falls due when somebody takes it.

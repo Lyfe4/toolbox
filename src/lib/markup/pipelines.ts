@@ -20,7 +20,12 @@ import { SANITISE_SCHEMA } from './sanitise';
 
 import type { Element as HastElement, ElementContent, Nodes as HastNodes, RootContent } from 'hast';
 import type { Handle, Options as ToMdastOptions, State } from 'hast-util-to-mdast';
-import type { Root as MdastRoot, RootContent as MdastContent } from 'mdast';
+import type {
+  PhrasingContent,
+  Root as MdastRoot,
+  RootContent as MdastContent,
+  TableCell,
+} from 'mdast';
 import type { VFile } from 'vfile';
 
 /**
@@ -832,6 +837,156 @@ const listItem: Handle = (state, node) => {
 };
 
 /**
+ * A TABLE CELL'S CONTENT, WHICH MUST BE PHRASING AND IS NOT.
+ *
+ * hast-util-to-mdast's own cell handler is `state.all(node)` cast to
+ * `PhrasingContent[]`, and its comment says why: "Allow potentially 'invalid'
+ * nodes, they might be unknown." So a `<td>` containing a `<ul>` produces a
+ * `tableCell` with a `list` inside it, and mdast-util-gfm-table serialises a
+ * list the only way it can - with a NEWLINE between the items. A newline ends
+ * a GFM row.
+ *
+ * Measured, on `<table><tr><th>h</th></tr><tr><td><ul><li>one</li><li>two</li>
+ * </ul></td></tr></table>`:
+ *
+ *     | h           |
+ *     | ----------- |
+ *     | - one
+ *     - two |
+ *
+ * which re-parses as a one-row table, a stray `<ul>` and a lost `|`. A `<pre>`
+ * in a cell is worse - the fence's newlines produce three extra rows and an
+ * empty code block tagged `|`. Byte-identical under all three `unsupported`
+ * values, because `unsupported` is about elements with NO Markdown spelling
+ * and a list has one; it is just not one that fits in a cell.
+ *
+ * THE FIX IS THE ONE THE CELL PATH ALREADY MAKES FOR `<br>`, WHICH IS WHY IT
+ * IS THIS SHAPE. A hard break inside a cell comes out as a space, because
+ * mdast-util-to-markdown's break handler asks `patternInScope` whether a
+ * newline is legal in the current construct and substitutes one when it is
+ * not. `<td>a<br>b</td>` has always been `| a b |`. The block handlers never
+ * ask - so rather than teaching each of them to, the cell is flattened to real
+ * phrasing before any of them is reached. The content survives, joined by a
+ * space; the STRUCTURE is what goes, which is the same trade `<br>` makes.
+ *
+ * AND THE STRUCTURE GOING IS NOT SILENT. `<ul>` and `<li>` are in the
+ * sanitised document and in neither the Markdown nor the HTML it re-renders
+ * to, so `compareMarkup` reports them - see `normalisation.ts`. The two halves
+ * are deliberately separate: this one stops the document rendering wrongly,
+ * that one says what it cost.
+ *
+ * WHAT IT DOES NOT DO is consult `unsupported`. The finding calls that a
+ * second fault; it is a product decision, because `keep` would have to mean
+ * raw `<ul>` markup inside a cell - which GFM does not define and only some
+ * renderers accept. Recorded in docs/test-findings.md rather than decided
+ * here.
+ */
+const MDAST_PHRASING: ReadonlySet<string> = new Set([
+  'break',
+  'delete',
+  'emphasis',
+  'footnoteReference',
+  'html',
+  'image',
+  'imageReference',
+  'inlineCode',
+  'link',
+  'linkReference',
+  'strong',
+  'text',
+]);
+
+function isPhrasing(node: MdastContent): node is PhrasingContent {
+  return MDAST_PHRASING.has(node.type);
+}
+
+/**
+ * A newline, where the serialiser writes a value out verbatim.
+ *
+ * `text` is NOT in that category and is deliberately left alone: it goes
+ * through `state.safe()`, which consults the same unsafe patterns the break
+ * handler does and encodes a newline in a cell as `&#xa;`. A code span and a
+ * raw HTML node are written as they stand, so a newline in one of those would
+ * end the row just as surely as a list's would.
+ */
+function withoutNewlines(value: string): string {
+  return value.replace(/\r?\n|\r/gu, ' ');
+}
+
+/** One child of a cell, as phrasing: itself, its content, or nothing. */
+function flattenCellChild(child: MdastContent): readonly PhrasingContent[] {
+  if (isPhrasing(child)) {
+    return [child.type === 'html' ? { ...child, value: withoutNewlines(child.value) } : child];
+  }
+
+  /*
+   * A fenced or indented block becomes a code SPAN - the same substitution the
+   * `inlineCode` handler above makes for a `<code>` whose text has a line in
+   * it, and CommonMark's own rule for a span: a code span cannot contain a
+   * line break, so there is no spelling of `a\nb` to write.
+   */
+  if (child.type === 'code') return [{ type: 'inlineCode', value: withoutNewlines(child.value) }];
+
+  /*
+   * Everything else flow is a WRAPPER - a paragraph, a list, a list item, a
+   * blockquote, a heading, a nested table. Its content is what the cell had;
+   * the wrapper is the part a cell cannot hold.
+   */
+  if ('children' in child) return cellPhrasing(child.children);
+
+  /*
+   * Which leaves a `thematicBreak`: a rule, with no content to keep. `a<hr>b`
+   * used to come out `a---b` - three characters the document never had, and
+   * the reason the boundary below is still counted for a child that produced
+   * nothing.
+   */
+  return [];
+}
+
+function cellPhrasing(children: readonly MdastContent[]): PhrasingContent[] {
+  const flat: PhrasingContent[] = [];
+  let boundary = false;
+
+  for (const child of children) {
+    const flow = !isPhrasing(child);
+    const produced = flattenCellChild(child);
+
+    if (produced.length === 0) {
+      boundary = boundary || flow;
+      continue;
+    }
+
+    /*
+     * ONE SPACE WHERE A LINE BREAK USED TO BE, and only there. Two paragraphs
+     * in a cell came out `onetwo`, which is a second way the same cast loses
+     * content - the blocks were joined by a newline and the newline is gone.
+     * Not written before the first group, so a cell does not gain a leading
+     * space, and not between two phrasing siblings, which were never apart.
+     */
+    if (flat.length > 0 && (boundary || flow)) flat.push({ type: 'text', value: ' ' });
+    flat.push(...produced);
+    boundary = flow;
+  }
+
+  return flat;
+}
+
+/**
+ * `<td>` and `<th>`, with the cell's children flattened. See above.
+ *
+ * The default handler is called and its answer corrected, the same bargain
+ * `orderedList` and `listItem` make: `state.patch` and the colspan/rowspan
+ * data it writes onto the cell are what the table handler reads to straddle
+ * cells, and reimplementing that to change the children would be trading one
+ * upstream cast for a large local one.
+ */
+const tableCell: Handle = (state, node) => {
+  const result: TableCell = defaultHandlers.td(state, node);
+  result.children = cellPhrasing(result.children);
+  return result;
+};
+
+/**
  * Undoes Google Docs' habit of wrapping a whole paste in a bold that is not.
  *
  * A copy out of Google Docs arrives inside
@@ -1058,6 +1213,10 @@ export function htmlToMarkdown(html: string, options: HtmlToMarkdownOptions): st
           ol: orderedList,
           pre: codeBlock(verbatim),
           code: inlineCode(verbatim),
+          // Both spellings of a cell; upstream registers one handler for the
+          // two and so does this.
+          td: tableCell,
+          th: tableCell,
         },
       })
       .use(remarkGfm)

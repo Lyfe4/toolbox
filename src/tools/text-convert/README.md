@@ -200,6 +200,62 @@ truthiness, so zero — the one falsy number — was the one value it dropped; t
 default handler is now called and its answer corrected. Delete `orderedList`
 in `pipelines.ts` when upstream reads the property rather than testing it.
 
+### A table cell cannot contain a line
+
+A GFM row ends at the first newline, so nothing a cell holds may serialise to
+more than one line. `<td><ul><li>one</li><li>two</li></ul></td>` used to
+produce exactly that:
+
+```
+| h           |
+| ----------- |
+| - one
+- two |
+```
+
+which re-parses as a one-row table, a stray `<ul>` and a lost `|`. A `<pre>` in
+a cell was worse: the fence's newlines produced three extra rows and an empty
+code block tagged `|`.
+
+The cause is upstream and upstream says so. `hast-util-to-mdast`'s cell handler
+is `state.all(node)` cast to `PhrasingContent[]`, with the comment _"Allow
+potentially 'invalid' nodes, they might be unknown"_ — so a `<td>` containing a
+`<ul>` really does produce a `tableCell` with a `list` inside it, and the
+serialiser writes a list the only way it can.
+
+**The answer was already in the cell path, for `<br>`.** A hard break in a cell
+comes out as a SPACE, because `mdast-util-to-markdown`'s break handler asks
+whether a newline is legal in the construct it is in and substitutes one when
+it is not. The block handlers never ask. So the cell's children are flattened
+to real phrasing before any of them is reached: the content survives, joined by
+a space where a line break used to be, and the structure is what goes.
+
+| Cell content                        | Now         |
+| ----------------------------------- | ----------- |
+| `<ul><li>one</li><li>two</li></ul>` | `one two`   |
+| `<p>one</p><p>two</p>`              | `one two`   |
+| `<pre>a⏎b</pre>`                    | `` `a b` `` |
+| `<blockquote>q</blockquote>`        | `q`         |
+| `a<hr>b`                            | `a b`       |
+| `a<br>b`                            | `a b`       |
+
+A block becomes a code span where it was code, because that is CommonMark's own
+rule for a span and what this tool already does for a `<code>` whose text has a
+line in it. A `thematicBreak` has no content to keep, and the boundary it
+marked still becomes a space.
+
+**What the cell loses is reported.** The `<ul>` and `<li>` are in the sanitised
+document and in neither the Markdown nor the HTML it re-renders to, so the
+change report names them. The fix stops the document rendering wrongly; the
+report says what it cost.
+
+**It does not consult the `unsupported` option, and that is a decision.** All
+three values produce byte-identical output here, which is asserted — because
+`unsupported` governs elements with no Markdown spelling at all, and a list has
+one. It is just not one that fits in a cell. Making `keep` mean raw `<ul>`
+markup inside a cell is a question about a construct GFM does not define and
+only some renderers accept, and it is open rather than answered.
+
 ### One thing was fixed rather than documented
 
 Links are now always written in resource form — `[text](url)`, never the
@@ -636,7 +692,14 @@ Unchanged by the merge, and written up where they live:
 the rich-text copy off a fact rather than a guess. `rendered` is **always**
 HTML: for a Markdown target it re-renders what was produced, which makes the
 semantic-stability invariant visible — if the Markdown is faithful, it looks
-like the HTML that went in. For an HTML source it is the sanitised source, and
+like the HTML that went in.
+
+**That value is also the change report's third document**, which is why it is
+computed once and handed to both. Comparing an HTML source with the HTML its
+Markdown renders back to is exactly what `HTML → HTML (normalised)` compares,
+so the Markdown target gets the same measured report for no extra conversion —
+and the port and the report cannot disagree about what the output renders to,
+because there is one string. For an HTML source it is the sanitised source, and
 [for a while it was not](#the-four-outputs-and-the-input-that-was-too-narrow).
 
 ## The four outputs, and the input that was too narrow

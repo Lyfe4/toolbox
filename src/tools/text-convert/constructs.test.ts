@@ -555,3 +555,135 @@ describe('defaults', () => {
     expect(textConvertDefaultOptions.linkify).toBe(true);
   });
 });
+
+/* ========================================================================== *
+ * TC-1: block content in a table cell
+ * ========================================================================== */
+
+/**
+ * A NEWLINE INSIDE A GFM ROW, WHICH ENDS THE ROW.
+ *
+ * `<td><ul><li>one</li><li>two</li></ul></td>` produced a cell containing a
+ * literal U+000A, so the table stopped at that cell and the rest of the row
+ * re-parsed as prose. Byte-identical under all three `unsupported` values,
+ * because the cell path never consulted it - `unsupported` is about elements
+ * with no Markdown spelling, and a list has one; it is just not one that fits
+ * in a cell.
+ *
+ * The bound on the fix came from the finding itself: `<td>a<br>b</td>` has
+ * always been `| a b |`, because the serialiser's break handler asks whether a
+ * newline is legal in the construct it is in. The block handlers never ask, so
+ * the cell is flattened to phrasing before any of them is reached. See
+ * `cellPhrasing` in pipelines.ts.
+ */
+describe('TC-1: a table cell cannot contain a line', () => {
+  const row = (body: string): string =>
+    `<table><tr><th>h</th></tr><tr><td>${body}</td></tr></table>`;
+
+  /** Every line of a GFM table, with the blank trailing one dropped. */
+  const lines = (markdown: string): string[] => markdown.split(LF).filter((line) => line !== '');
+
+  it('writes a list in a cell as one row, not as a broken one', () => {
+    const out = md(row('<ul><li>one</li><li>two</li></ul>'));
+
+    expect(out).not.toContain(`one${LF}`);
+    expect(lines(out)).toEqual(['| h       |', '| ------- |', '| one two |']);
+  });
+
+  it('produces the same output under all three unsupported policies', () => {
+    /*
+     * The finding says "both policy settings"; there are three, and the
+     * sharper claim is that all three agree - which is what says the cell path
+     * does not consult the option at all. It still does not, and that is now a
+     * recorded decision rather than an oversight: see pipelines.ts.
+     */
+    const outputs = (['keep', 'text', 'drop'] as const).map((unsupported) =>
+      htmlToMarkdown(row('<ul><li>one</li><li>two</li></ul>'), { ...TO_MD, unsupported }),
+    );
+
+    expect(new Set(outputs).size).toBe(1);
+    expect(outputs[0]).toContain('| one two |');
+  });
+
+  it('writes a preformatted block in a cell as a code span', () => {
+    /*
+     * The worse case, and the one the finding does not name. A fence has a
+     * newline before AND after its content, so this cell produced three extra
+     * rows and an empty code block tagged `|`.
+     */
+    const out = md(row('<pre>a\nb</pre>'));
+
+    expect(lines(out)).toEqual(['| h     |', '| ----- |', '| `a b` |']);
+  });
+
+  it('separates two blocks in one cell with a space, rather than with nothing', () => {
+    // The same cast loses content a second way: the blocks were joined by a
+    // newline, and with the newline gone `onetwo` was one word.
+    expect(md(row('<p>one</p><p>two</p>'))).toContain('| one two |');
+  });
+
+  it('still writes a hard break in a cell as a space', () => {
+    /*
+     * THE PRECEDENT, AND THE CONTROL ON THE FIX. This case was already right
+     * and is what said the answer is a space rather than an escape. A fix that
+     * moved it would have replaced one wrong cell with another.
+     */
+    expect(md(row('a<br>b'))).toContain('| a b |');
+  });
+
+  it('leaves a cell of ordinary inline content exactly as it was', () => {
+    /*
+     * THE NEGATIVE CONTROL THAT MATTERS MOST: flattening must be invisible to
+     * a cell that had nothing to flatten. A spurious space, a lost link or a
+     * dropped emphasis here would be the fix costing more than the defect.
+     */
+    const out = md(row('a <strong>b</strong> <a href="/x">c</a> <code>d</code>'));
+
+    expect(out).toContain('| a **b** [c](/x) `d` |');
+  });
+
+  it('never writes a line into a cell, for any block construct in any pairing', () => {
+    /*
+     * SWEPT RATHER THAN SAMPLED. The input space is a pool of fragments and
+     * their pairs - 156 documents - which is small enough to enumerate, so
+     * this test either passes for everybody or fails for everybody rather than
+     * depending on a seed.
+     *
+     * The invariant is structural and not a value anybody wrote down: a
+     * two-row table must serialise to three lines, every one of them a row,
+     * and must re-render to one table with two rows. A cell that emits a
+     * newline fails all three at once.
+     */
+    const fragments = [
+      'plain',
+      '<ul><li>one</li><li>two</li></ul>',
+      '<ol><li>one</li><li>two</li></ol>',
+      '<ul><li>one<ul><li>deep</li></ul></li></ul>',
+      '<p>para</p>',
+      '<pre>a\nb</pre>',
+      '<pre><code>x=1\ny=2</code></pre>',
+      '<blockquote><p>quoted</p></blockquote>',
+      '<h3>heading</h3>',
+      '<hr>',
+      '<table><tr><td>inner</td></tr></table>',
+      'a<br>b',
+    ];
+
+    const bodies = [...fragments, ...fragments.flatMap((a) => fragments.map((b) => a + b))];
+    expect(bodies).toHaveLength(156);
+
+    for (const body of bodies) {
+      const out = md(row(body));
+      const rows = lines(out);
+
+      expect(rows, body).toHaveLength(3);
+      for (const line of rows) {
+        expect(line.startsWith('|') && line.endsWith('|'), `${body} :: ${line}`).toBe(true);
+      }
+
+      const back = html(out);
+      expect(back.match(/<table>/gu) ?? [], body).toHaveLength(1);
+      expect(back.match(/<tr>/gu) ?? [], body).toHaveLength(2);
+    }
+  });
+});
