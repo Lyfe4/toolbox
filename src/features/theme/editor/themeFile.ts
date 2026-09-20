@@ -183,7 +183,7 @@ export function importTheme(text: string, existing: readonly CustomTheme[]): Imp
     // alternative to checking is a cast, and a cast is a promise the compiler
     // cannot keep.
     if (!colour.ok) return refuse('That file contains a colour that cannot be read.', token);
-    overrides[token] = formatColor(colour.value, 'hex', 3);
+    overrides[token] = formatColor(colour.value.color, 'hex', 3);
   }
 
   return {

@@ -23,6 +23,35 @@ export function relativeLuminance(r: number, g: number, b: number): number {
 }
 
 /**
+ * A TRANSLUCENT COLOUR OVER AN OPAQUE ONE, IN THE SPACE A BROWSER PAINTS IN.
+ *
+ * `#aabbccdd` and `#aabbcc` used to give byte-identical ratios - 10.69:1 and
+ * 1.96:1 for both - because `relativeLuminance` has no alpha parameter and
+ * nothing composited before calling it. That is wrong for exactly the colour
+ * somebody would open a contrast checker to ask about, and it is not a
+ * question that needs a guess: every row of the table names its own
+ * background, so the composite is determined.
+ *
+ * SOURCE-OVER, ON THE GAMMA-ENCODED CHANNELS, which is what the platform's
+ * own compositor does - `globalCompositeOperation` defaults to `source-over`
+ * and a 2D canvas composites in sRGB rather than in linear light. So this is
+ * not a formula chosen for tidiness: `checkColourReports` in
+ * `scripts/cross-browser-check.mjs` paints the same colour over the same
+ * backdrop in Firefox and WebKit, reads the pixel back, and holds this
+ * function to it.
+ *
+ * The backdrop is opaque, which is why there is no alpha in the result: every
+ * background in the table is `#000000` or `#ffffff`.
+ */
+export function compositeOver(
+  color: { readonly r: number; readonly g: number; readonly b: number; readonly a: number },
+  backdrop: readonly [number, number, number],
+): readonly [number, number, number] {
+  const mix = (channel: number, under: number): number => channel * color.a + under * (1 - color.a);
+  return [mix(color.r, backdrop[0]), mix(color.g, backdrop[1]), mix(color.b, backdrop[2])];
+}
+
+/**
  * Contrast ratio between two luminances, from 1 (identical) to 21 (black on
  * white). The 0.05 offsets model viewing flare, which is why pure black on
  * pure white is 21 and not infinity.

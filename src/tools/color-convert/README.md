@@ -24,10 +24,13 @@ Two details worth naming:
 - **A neutral colour has no meaningful hue.** Below a chroma of 1e-7 the hue is
   reported as 0 rather than whatever `atan2` makes of floating-point noise, so
   grey round-trips exactly.
-- **Out-of-gamut is reported, not silently corrected.** Most OKLCH values have no
-  sRGB equivalent. `oklchToRgb` returns `inGamut: false` alongside the clipped
-  colour, because "that colour cannot be shown, here is the nearest one" is
-  information the user needs.
+- **Out-of-gamut is reported, not silently corrected — since round nine.** Most
+  OKLCH values have no sRGB equivalent. `oklchToRgb` has returned
+  `inGamut: false` alongside the clipped colour since the tool was written, and
+  for five rounds `parseColor` destructured it away and no caller ever saw it:
+  the sentence above was in this file, and in the conversion matrix, describing
+  a feature that did not exist. `parseColor` now returns it, along with every
+  component it had to clamp, and the `report` port carries both.
 
 ## Named colours are deliberately absent
 
@@ -51,6 +54,15 @@ The swatch sits on a chequerboard so a translucent colour reads as translucent
 rather than as a slightly different opaque colour, and carries `role="img"` with
 an accessible name so it is not merely decorative.
 
+**Alpha is composited before the ratio, since round nine.** `#aabbccdd` used to
+report ratios byte-identical to opaque `#aabbcc`, which is wrong for exactly the
+colour somebody opens a contrast checker to ask about. Each row already names
+its background, so the composite is determined rather than guessed:
+source-over on the gamma-encoded channels, which is what a browser's own
+compositor does and is asserted against one in `check:browsers`. Because it
+moves numbers people may have written down, the table says so — the caption
+names the compositing and the line beneath it names both composited colours.
+
 ## Outputs
 
 | Port     | Label     | Type  | For                                                       |
@@ -58,6 +70,7 @@ an accessible name so it is not merely decorative.
 | `output` | Converted | text  | The converted string in the chosen notation.              |
 | `swatch` | Swatch    | color | The parsed colour — the preview, and what a wire carries. |
 | `all`    | Notations | json  | All four notations at once, for a downstream tool.        |
+| `report` | Report    | json  | What the parser had to change: a clip, a clamp, or none.  |
 
 Two of those labels were changed by the [port
 audit](../../../docs/architecture.md#the-port-set). `swatch` was labelled

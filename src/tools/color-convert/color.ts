@@ -254,13 +254,69 @@ function parseHex(digits: string): ColorPayload | null {
 }
 
 /**
+ * WHAT THE PARSER HAD TO CHANGE ABOUT THE COLOUR TO ANSWER AT ALL.
+ *
+ * Both fields are facts the parser has always known and never returned.
+ * `inGamut` was computed by `oklchToRgb` and destructured away at the one call
+ * site that could have used it; the clamps were applied by `clamp01` with
+ * nothing anywhere recording that they had fired. A colour is the one kind of
+ * answer nobody checks digit by digit, so an adjustment nobody is told about
+ * is an adjustment nobody finds.
+ *
+ * NAMED AS WRITTEN, not as parsed. `clamped` holds `saturation 110%` rather
+ * than `saturation 1`, because the sentence the user needs is about what they
+ * typed - the parsed value is, by construction, the one that is in range.
+ */
+export interface ParsedColor {
+  readonly color: ColorPayload;
+  /** Components that were outside their range, spelled as the user wrote them. */
+  readonly clamped: readonly string[];
+  /**
+   * True when an `oklch()` input names a colour sRGB cannot show.
+   *
+   * Only `oklch()` can produce it: it is the one notation here whose
+   * coordinate space is larger than the gamut. hex, `rgb()` and `hsl()` are
+   * defined inside sRGB, so an out-of-range component there is a clamp and not
+   * a gamut question.
+   */
+  readonly outOfGamut: boolean;
+}
+
+/**
+ * A component that was outside the range its notation allows, or null.
+ *
+ * A HUE IS NEVER ONE. `hslToRgb` wraps with `% 360`, which is what CSS does
+ * and what the circle means - `hsl(361 …)` is `hsl(1 …)` exactly, nothing is
+ * lost, and reporting it would be the note that cries wolf.
+ */
+function outOfRange(
+  name: string,
+  written: string | undefined,
+  value: number,
+  min: number,
+  max: number,
+): string | null {
+  if (written === undefined) return null;
+  return value < min || value > max ? `${name} ${written.trim()}` : null;
+}
+
+/** Drops the nulls from a list of range checks. */
+function clampedList(...checks: readonly (string | null)[]): readonly string[] {
+  return checks.filter((entry): entry is string => entry !== null);
+}
+
+/**
  * Parses any of the four notations.
  *
  * Deliberately does NOT accept named colours. Resolving them would mean
  * shipping the 148-entry CSS list, and the tool is about conversion between
  * notations rather than about being a colour dictionary.
+ *
+ * RETURNS WHAT IT HAD TO CHANGE, as well as the colour. See `ParsedColor`:
+ * every caller that only wants the colour reads `.value.color`, and the one
+ * caller that can say something says it.
  */
-export function parseColor(input: string): ToolResult<ColorPayload> {
+export function parseColor(input: string): ToolResult<ParsedColor> {
   const text = input.trim();
   if (text === '') return fail('invalid-input', 'Enter a colour to convert.');
 
@@ -272,7 +328,9 @@ export function parseColor(input: string): ToolResult<ColorPayload> {
         detail: `Got ${hex[1].length.toString()}.`,
       });
     }
-    return ok(parsed);
+    // Nothing in hex can be out of range: three to eight digits is the whole
+    // grammar, and every one of them names a byte.
+    return ok({ color: parsed, clamped: [], outOfGamut: false });
   }
 
   const call = FUNCTION_PATTERN.exec(text);
@@ -285,6 +343,14 @@ export function parseColor(input: string): ToolResult<ColorPayload> {
   const name = (call[1] ?? '').toLowerCase();
   const { parts, alpha } = splitArguments(call[2] ?? '');
   const a = parseAlpha(alpha);
+  // Shared by all three function notations: `/ 2` and `/ -1` are both clamped.
+  const alphaClamped = outOfRange(
+    'alpha',
+    alpha ?? undefined,
+    parseNumber(alpha ?? undefined, 1) ?? 1,
+    0,
+    1,
+  );
 
   if (name === 'rgb' || name === 'rgba') {
     const channels = [0, 1, 2].map((index) => parseNumber(parts[index], 255));
@@ -317,7 +383,18 @@ export function parseColor(input: string): ToolResult<ColorPayload> {
      * everywhere"; it is "rgb() means what a browser says it means".
      */
     const step = (value: number): number => clamp01(Math.round(value) / 255);
-    return ok({ r: step(r), g: step(g), b: step(b), a });
+    return ok({
+      color: { r: step(r), g: step(g), b: step(b), a },
+      // Against 0-255 rather than 0-1: the scale `parseNumber` was given is
+      // what `150%` and `300` both arrive on.
+      clamped: clampedList(
+        outOfRange('red', parts[0], r, 0, 255),
+        outOfRange('green', parts[1], g, 0, 255),
+        outOfRange('blue', parts[2], b, 0, 255),
+        alphaClamped,
+      ),
+      outOfGamut: false,
+    });
   }
 
   if (name === 'hsl' || name === 'hsla') {
@@ -328,7 +405,16 @@ export function parseColor(input: string): ToolResult<ColorPayload> {
       return fail('parse-error', 'hsl() needs a hue, a saturation and a lightness.');
     }
     const [r, g, b] = hslToRgb(h, clamp01(s), clamp01(l));
-    return ok({ r, g, b, a });
+    return ok({
+      color: { r, g, b, a },
+      // The hue is absent on purpose - see `outOfRange`. 361 is 1, exactly.
+      clamped: clampedList(
+        outOfRange('saturation', parts[1], s, 0, 1),
+        outOfRange('lightness', parts[2], l, 0, 1),
+        alphaClamped,
+      ),
+      outOfGamut: false,
+    });
   }
 
   if (name === 'oklch') {
@@ -338,8 +424,26 @@ export function parseColor(input: string): ToolResult<ColorPayload> {
     if (l === null || c === null || h === null) {
       return fail('parse-error', 'oklch() needs a lightness, a chroma and a hue.');
     }
-    const { rgb } = oklchToRgb(clamp01(l), Math.max(0, c), h);
-    return ok({ r: rgb[0], g: rgb[1], b: rgb[2], a });
+    /*
+     * `inGamut` IS READ HERE, AND THAT IS THE WHOLE OF CC-1.
+     *
+     * It has been computed correctly since `e56bd2f` and destructured away at
+     * this one line ever since - `git log -S inGamut` over the whole history
+     * returns that single commit, so nothing drifted: the feature was never
+     * wired. The conversion matrix recorded it as reported anyway.
+     */
+    const { rgb, inGamut } = oklchToRgb(clamp01(l), Math.max(0, c), h);
+    return ok({
+      color: { r: rgb[0], g: rgb[1], b: rgb[2], a },
+      clamped: clampedList(
+        outOfRange('lightness', parts[0], l, 0, 1),
+        // Chroma has no upper bound in OKLCH; only a negative one is a clamp,
+        // and a chroma too large for sRGB is the gamut question below.
+        outOfRange('chroma', parts[1], c, 0, Number.POSITIVE_INFINITY),
+        alphaClamped,
+      ),
+      outOfGamut: !inGamut,
+    });
   }
 
   return fail('parse-error', `${name}() is not a colour notation this tool supports.`, {

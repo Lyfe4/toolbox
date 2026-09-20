@@ -323,6 +323,13 @@ export const TOOL_MANIFEST = [
         types: ['json'],
         description: 'The same colour as hex, rgb(), hsl() and oklch() at once.',
       },
+      {
+        id: 'report',
+        label: 'Report',
+        types: ['json'],
+        description: 'What the parser had to change about the colour to answer.',
+        presentation: 'report',
+      },
     ],
     execution: {
       strategy: 'main',

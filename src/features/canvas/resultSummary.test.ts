@@ -658,11 +658,17 @@ describe('the loss a node prints on its own face', () => {
    * Every assertion above builds its own payload, so all of them would pass
    * against a tool that never produces a `report` port. This asks the manifest.
    */
-  it('is a channel six tools actually have', () => {
+  it('is a channel seven tools actually have', () => {
     /*
      * Two of these had a `report` port before round three - the two binary
      * tools, which is where the shape was invented. Four gained one, and they
      * are exactly the four whose losses the matrix recorded as silent.
+     *
+     * `color-convert` is the seventh, added in round nine. It was the only
+     * shipped tool that changes values and had nowhere to say so, which is why
+     * four findings in `docs/test-findings.md` are one absence, and why the
+     * matrix cell recording its clipping as `lossy, told` could not be made
+     * true by rewording it.
      */
     // Read through the DECLARED type rather than off the const literal: the
     // literal's inferred type has no `presentation` on the ports that do not
@@ -676,6 +682,7 @@ describe('the loss a node prints on its own face', () => {
       'base64',
       'structured-data',
       'jwt-decode',
+      'color-convert',
       'image-convert',
       'video-remux',
       'text-convert',

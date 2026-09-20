@@ -11,6 +11,14 @@ original stays as written.
 
 Round eight, 2026-09-20, against `592b3b2`.
 
+> **Round nine, 2026-09-20, against `8a5f8ae`, is at the end of this
+> document** — [Round nine, done](#round-nine-done). It builds the first item
+> of the plan below and the instrument the count section asks for. The plan
+> and the count section are left exactly as round eight wrote them, because
+> what round nine measured is only interesting next to what round eight
+> predicted: **the plan says four, and the corpus measures three.** Round nine
+> says why under [What the framing got wrong](#what-the-framing-got-wrong).
+
 **The four-line summary of the reply.** Of the 40 numbered findings, 15
 reproduce exactly as described, 11 reproduce with a different cause or scope,
 3 are worse than reported, 6 do not reproduce, and 5 are behaviour with the
@@ -1202,6 +1210,14 @@ reading the code.
 | 16  | `class="btn"` emptied to `class=""`                      | No                               | No     |
 | 17  | `<mark>` and `<kbd>` given formatting they never had     | No                               | No     |
 
+**This table is now a fixture.** Every row of it is a document in
+[`spec/loss-corpus.json`](../src/features/registry/spec/loss-corpus.json), with
+the note that row must produce, and the `Told?` column above is frozen at what
+round eight measured by hand. The live answer is derived by running the tools:
+see [the corpus and the ratio](conversion-matrix.md#the-corpus-the-ratio-and-why-it-is-not-a-number-any-more)
+in the conversion matrix, which is generated and compared by a gate. Rows 1 to
+3 are told as of round nine; the other fourteen are not.
+
 Seventeen, of which **five are cells the matrix already carries as
 `lossy, told`** — one in Colour and four inside one row of Structured data.
 That is the finding, and it is not the one the brief expected: the problem is
@@ -1630,3 +1646,177 @@ round did not settle and did not pretend to:
 - **Whether crash B occurs at `825d50a`.** Not run. The structural answer
   makes it a much less interesting question than it looked, and the run budget
   it needs is stated rather than spent.
+
+---
+
+## Round nine, done
+
+2026-09-20, against `8a5f8ae`. Two pieces of work: the first item of the plan
+above, and the instrument the count section above recommends. They are one
+round on purpose — the second is what stops the first from being a verdict
+somebody typed.
+
+### Part one — the tool that can speak
+
+| Built                                                          | Where                                             |
+| -------------------------------------------------------------- | ------------------------------------------------- |
+| A `report` output, `presentation: 'report'`, additive          | `src/tools/color-convert/index.ts`                |
+| `inGamut` carried out of `parseColor` rather than destructured | `src/tools/color-convert/color.ts`, `ParsedColor` |
+| The same for the `hsl()`, `rgb()`, `oklch()` and alpha clamps  | the same, `outOfRange`                            |
+| `color-convert` in `notePorts.test.ts`'s `LOSSY_RUNS`          | two entries: the gamut case and a clamp case      |
+| The contrast table composites alpha, and says so               | `src/lib/wcag.ts`, `ColorView.tsx`                |
+| The matrix cells, corrected after the port existed             | `docs/conversion-matrix.md`                       |
+
+**The note names the input and the nearest sRGB colour**, which is the sentence
+a node prints on its own face: `oklch(0.7 0.4 150) is outside sRGB; the nearest
+is #00d600`, and `hsl(361 110% -5%) was clamped to #000000` with the body naming
+`saturation 110%` and `lightness -5%`.
+
+**The hue is deliberately not on that list.** `hsl(361 …)` is `hsl(1 …)` exactly
+— CSS wraps a hue and `hslToRgb` wraps it the same way — so naming it would be
+a note about a loss that did not happen, which is the one failure mode a
+reporting channel cannot afford. Three inputs assert the wrap is not reported.
+
+**Two clamps the plan did not name are reported too**, because they are the same
+sentence with different numbers and leaving them out would have been a decision
+rather than a scope: an `oklch()` lightness outside 0–1 or a negative chroma,
+and an alpha outside 0–1 in any of the three function notations. A chroma too
+LARGE is not a clamp — OKLCH has no upper bound on it — it is the gamut
+question, and it is reported as that.
+
+**`parseColor` returns the adjustments to every caller rather than to a second
+function.** The five call sites in the theme editor read `.value.color` and
+discard them, which is right for a theme token, but there is now no
+lower-fidelity entry point for a future caller to pick by accident. That is the
+whole of the change that closes CC-1: the value was always computed.
+
+#### The decision inside it, taken
+
+**The contrast table composites alpha.** `#aabbccdd` reported 10.69:1 and
+1.96:1, byte-identical to opaque `#aabbcc`; it now reports the ratios for
+`#93a2b1` on black and `#b5c4d3` on white. Source-over on the gamma-encoded
+channels, because that is what the platform's compositor does and the platform
+is available to ask: `check:browsers` paints the same colour over the same
+backdrop on a real 2D canvas in Firefox and WebKit and reads the pixel back, so
+the formula rests on an oracle rather than on being the obvious one.
+
+**It is said on screen rather than improved quietly**, which is what the brief
+asked for and is the right call for a number people write into a ticket: the
+caption becomes _Contrast, WCAG 2.1, composited onto each background_ and the
+line under the table names both composited colours and says that ratios here
+used to ignore alpha. Opaque colours are untouched — at `a === 1` the composite
+is the identity — so no number anybody recorded for an opaque colour has moved,
+and that is asserted in both directions.
+
+#### Proving test and negative control, per item
+
+| Fix                    | Proving test                                                                   | Negative control                                                       | Watched failing against                                                      |
+| ---------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Out-of-gamut note      | `color.test.ts` — the parser, and the note naming input and `#00d600`          | four in-gamut colours, plus five notations that produce no note at all | `if (false && outOfGamut)`: ratio 3→2, `lossCorpus` and `notePorts` both red |
+| Clamp note             | `color.test.ts` — five inputs, each component named                            | six colours that clamp nothing, including `rgb(50% 50% 50%)`           | the note made unconditional: the corpus control caught it, once strengthened |
+| The hue is not a clamp | three wrapping hues assert `clamped` is empty                                  | is itself the control                                                  | naming the hue in `outOfRange`                                               |
+| `reaches`              | `color.test.ts` asserts `['output', 'swatch', 'all']`                          | `notePorts.test.ts` holds it to the manifest                           | the list emptied                                                             |
+| A wired-in colour      | `color.test.ts` — a `color`-port input reports nothing                         | is itself the control                                                  | —                                                                            |
+| Composited contrast    | `ColorView.test.tsx` — translucent ratios must differ from the opaque twin     | black, white and the opaque twin must be exactly where they were       | the composite removed, and separately its weights swapped                    |
+| Drawn, in two engines  | `checkColourReports` — `/tools` and a canvas node face, boxes of non-zero size | `#aabbcc` draws no note and its node says nothing about loss           | see below                                                                    |
+
+**The negative control was wrong on its first run, and that is the finding
+inside the finding.** The corpus's control matched a note by title AND by the
+strings the note had to name — so when the clamp note was made unconditional
+to test the control, it passed: the note it wrote on the clean document named
+the CLEAN colour, and the control was looking for the dirty one. A note that
+cries wolf is a note about the right subject on the wrong document, so the
+control now matches on the subject alone. It was found by breaking the code
+rather than by reading the test, which is the only way it could have been.
+
+### Part two — the count is an instrument
+
+`spec/loss-corpus.json`, `lossCorpus.test.ts`, and a generated block in the
+conversion matrix.
+
+1. **One document per row of the seventeen**, each with the note it must
+   produce and a second document of the same shape that must produce nothing.
+   For the fourteen silent rows the expectation is a SPECIFICATION rather than
+   a description — it says what the note has to name when somebody writes it,
+   so rounds ten to twelve have a target rather than a sentence.
+2. **`lossy, told` is derived.** Every case is run, its `report` ports are read
+   the way the canvas reads them, and the verdict falls out. A row with no
+   runnable case reads `not verified`; the shape supports it and no row needs
+   it yet.
+3. **The matrix prints the ratio and the block is generated.** The test builds
+   the table and compares it with what is between the `loss-corpus` markers,
+   normalised for Prettier's column padding. The failure message IS the
+   replacement text, so the document is updated by pasting rather than by
+   counting — which is the step both wrong counts came from.
+4. **Extending it is appending an object.** Nothing else changes: the row
+   count, the ratio, the table and the sentence are all derived.
+
+**The ratio before and after.** Before: there was no ratio, and the last
+absolute this document carried was zero, from round seven. After:
+
+|                                                |             |
+| ---------------------------------------------- | ----------- |
+| Before round nine, measured by the same corpus | **0 of 17** |
+| After round nine                               | **3 of 17** |
+
+**Shown failing.** Removing the out-of-gamut note with `if (false && …)` drops
+the ratio to **2 of 17** and turns two gates red at once — `lossCorpus.test.ts`,
+whose generated block no longer matches the document, and
+`notePorts.test.ts`, whose `toBeGreaterThan(0)` guard catches the same run. The
+diff vitest prints names the row that stopped being told.
+
+### What the framing got wrong
+
+**The brief expects four of seventeen. It is three.** The number four comes
+from the plan above, which says round nine closes _"CC-1, CC-2, CC-3 and
+CC-5a"_ — four FINDINGS, not four rows of the seventeen-row table. Mapping
+them:
+
+| Finding | Corpus row                                  |
+| ------- | ------------------------------------------- |
+| CC-1    | row 1, out-of-gamut OKLCH                   |
+| CC-3    | rows 2 AND 3 — `hsl()` and `rgb()`          |
+| CC-2    | **not a row.** Contrast is not a conversion |
+| CC-5a   | **not a row, and not done** — see below     |
+
+CC-2 is fixed this round and is not in the corpus because the corpus measures
+documented LOSSES that are told, and a ratio computed from the wrong luminance
+is not a loss — it is an answer that was wrong and is now right. Putting it in
+would inflate the denominator with a row that can never go red for the reason
+the file exists.
+
+CC-5a is not done, and the plan is right that it should not be: 359.98 is a
+different number from 360 and no formatter can tell a hue that drifted from a
+hue somebody meant, so snapping it needs a tolerance and a tolerance is a
+decision. It stays in round thirteen.
+
+So **three is the true number**, and it is exactly the kind of number this
+round exists to produce rather than argue about. The corpus says three because
+three cases proved it.
+
+### What was looked for and not found
+
+- **A fourth colour loss among the seventeen.** There is none: rows 4 to 17 are
+  `structured-data` and `text-convert`, and they are rounds ten to twelve.
+- **A row that was already told and recorded as silent.** Every one of the
+  fourteen was run and every one is silent, so round eight's hand measurement
+  reproduces exactly. Row 16 needed its input corrected first: `class="btn"` is
+  emptied rather than removed only on the elements whose schema entry allows
+  `className` with a value filter, so `<p class="btn">` reports a removal and
+  `<a class="btn">` reports nothing. The corpus carries the `<a>` case.
+- **An existing note that the corpus could match by accident**, which would
+  make a row read told for the wrong reason. Each of the fourteen silent rows
+  was run and produces no `warn` note at all, so there is nothing for a title
+  match to collide with today; the mentions list is what keeps that true as
+  notes are added.
+- **A place the seventeen-row table and the corpus could disagree.** The
+  `Told?` column in that table is now frozen at round eight's hand measurement
+  and says so, because two live answers to one question is how a count goes
+  wrong a third time.
+
+### Still open, and unchanged by this round
+
+Rounds ten to thirteen exactly as the plan above sets them out. The one line
+worth repeating: **fourteen of the seventeen are red, and the ratio is the
+point.** A denominator somebody can add to is the thing the previous two counts
+did not have.

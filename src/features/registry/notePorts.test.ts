@@ -156,6 +156,27 @@ const LOSSY_RUNS: readonly {
     options: { mode: 'decode' },
   },
   {
+    /*
+     * THE ENTRY THIS LIST COULD NOT HOLD UNTIL ROUND NINE.
+     *
+     * `color-convert` is the tool the wrong matrix cell escaped through, and
+     * it escaped by belonging to the one tool this list's own subject line -
+     * "one input per runnable REPORTING tool" - defined away: with no report
+     * port it would have failed the `notes.length > 0` guard below rather than
+     * being covered by it. The port exists now, so the cell is enforceable.
+     */
+    toolId: 'color-convert',
+    what: 'an OKLCH colour outside sRGB, clipped per channel',
+    inputs: { input: { type: 'text', text: 'oklch(0.7 0.4 150)' } },
+    options: { target: 'hex' },
+  },
+  {
+    toolId: 'color-convert',
+    what: 'components outside the range hsl() allows, clamped',
+    inputs: { input: { type: 'text', text: 'hsl(361 110% -5%)' } },
+    options: { target: 'hex' },
+  },
+  {
     toolId: 'text-convert',
     what: 'markup the allow-list does not permit',
     inputs: { input: { type: 'text', text: 'Text\n\n<marquee onclick="x()">hi</marquee>\n' } },

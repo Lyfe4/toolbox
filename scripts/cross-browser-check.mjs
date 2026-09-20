@@ -4824,6 +4824,256 @@ async function checkLossReports(browser, label) {
 }
 
 /**
+ * THE TOOL THAT COULD NOT SPEAK, AND THE TABLE THAT IGNORED ALPHA.
+ *
+ * `color-convert` was the only shipped tool that changes values and had no
+ * `report` port, so no loss it had could reach the conversion matrix's own
+ * definition of `lossy, told` - "on the panel on /tools AND on the canvas
+ * node". Round nine gave it the port. That makes the claim testable for the
+ * first time, and this is where it is tested, because both halves of the
+ * definition are about DRAWING and jsdom draws nothing.
+ *
+ * Five questions:
+ *
+ *   1. ON `/tools`, is the note drawn, with a box of non-zero size, with no
+ *      click anywhere, naming the colour typed and the colour returned?
+ *   2. ON A CANVAS NODE, does the node's own face carry it? The report is the
+ *      fourth port of four, so without `lossSummary` reading it the sentence
+ *      would exist only in a panel nobody opens.
+ *   3. THE NEGATIVE CONTROL for both: an ordinary colour draws nothing.
+ *   4. DOES THE CONTRAST TABLE STILL IGNORE ALPHA? `#aabbccdd` used to report
+ *      ratios byte-identical to `#aabbcc`. The two are read off the rendered
+ *      table and must differ, and the table must say that it composites.
+ *   5. AND THE ORACLE FOR THE FORMULA. `compositeOver` claims to do what the
+ *      platform's own compositor does, so the platform is asked: the same
+ *      colour is painted over the same backdrop on a real 2D canvas and the
+ *      pixel is read back. A formula chosen for tidiness would disagree here.
+ */
+async function checkColourReports(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  const notesOn = async (name) => {
+    const list = page.getByRole('list', { name });
+    if ((await list.count()) === 0) return { drawn: false, text: '' };
+    const box = await list.first().boundingBox();
+    return {
+      drawn: box !== null && box.width > 0 && box.height > 0,
+      text: ((await list.first().innerText()) ?? '').replace(/\s+/g, ' ').trim(),
+    };
+  };
+
+  /** Every ratio the contrast table is showing, in row order. */
+  const ratiosOn = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('td')]
+        .map((cell) => (cell.textContent ?? '').trim())
+        .filter((text) => text.endsWith(':1')),
+    );
+
+  /**
+   * Runs one colour and waits for the answer rather than for the click.
+   *
+   * The previous result stays on screen while the next run is in flight, so
+   * waiting on the button would read the old panel - and this check is
+   * entirely about which panel is on screen.
+   */
+  const convert = async (text, expected) => {
+    // `Colour input`, not `Colour Colour`: the port name is only folded into
+    // the accessible name when a tool has more than one input, and this has one.
+    await page.getByLabel('Colour input').fill(text);
+    await page.getByRole('button', { name: 'Run' }).click();
+    const output = page.getByLabel('Colour Converted');
+    await output.waitFor({ timeout: 30_000 });
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if ((await output.inputValue()) === expected) return true;
+      await page.waitForTimeout(100);
+    }
+    return false;
+  };
+
+  try {
+    /* -- 1: the tool page ------------------------------------------------- */
+    await page.goto(`${ORIGIN}/tools/color-convert`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Colour' }).waitFor({ timeout: 15_000 });
+
+    const gamutRan = await convert('oklch(0.7 0.4 150)', '#00d600');
+    const gamut = await notesOn('Colour Report notes');
+    check(
+      label,
+      'an out-of-gamut colour is drawn on the tool page without opening anything',
+      gamutRan &&
+        gamut.drawn &&
+        gamut.text.includes('oklch(0.7 0.4 150)') &&
+        gamut.text.includes('#00d600'),
+      gamut.text.slice(0, 160),
+    );
+
+    const clampRan = await convert('hsl(361 110% -5%)', '#000000');
+    const clamp = await notesOn('Colour Report notes');
+    check(
+      label,
+      'a clamped hsl() names the components it clamped and the colour it produced',
+      clampRan &&
+        clamp.drawn &&
+        clamp.text.includes('saturation 110%') &&
+        clamp.text.includes('lightness -5%') &&
+        clamp.text.includes('#000000'),
+      clamp.text.slice(0, 160),
+    );
+
+    /* -- 3: the negative control, on the same page ------------------------ */
+    const cleanRan = await convert('#aabbcc', '#aabbcc');
+    const clean = await notesOn('Colour Report notes');
+    check(
+      label,
+      'an ordinary colour draws no note at all',
+      cleanRan && !clean.drawn && clean.text === '',
+      clean.text.slice(0, 120),
+    );
+
+    /* -- 4: the contrast table -------------------------------------------- */
+    const opaqueRatios = await ratiosOn();
+    const alphaRan = await convert('#aabbccdd', '#aabbccdd');
+    const alphaRatios = await ratiosOn();
+    check(
+      label,
+      'a translucent colour no longer reports the opaque twin ratios',
+      alphaRan &&
+        opaqueRatios.length === 2 &&
+        alphaRatios.length === 2 &&
+        opaqueRatios.join() !== alphaRatios.join(),
+      `${opaqueRatios.join(' ')} vs ${alphaRatios.join(' ')}`,
+    );
+
+    const disclosure = await page.evaluate(() => {
+      const caption = document.querySelector('table caption');
+      const element = [...document.querySelectorAll('p')].find((node) =>
+        (node.textContent ?? '').includes('compositing'),
+      );
+      const rect = element?.getBoundingClientRect() ?? { width: 0, height: 0 };
+      return {
+        caption: caption?.textContent ?? '',
+        note: (element?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+        drawn: rect.width > 0 && rect.height > 0,
+      };
+    });
+    check(
+      label,
+      'and the table says on screen that it composites, and against what',
+      disclosure.caption.includes('composited onto each background') &&
+        disclosure.drawn &&
+        disclosure.note.includes('#93a2b1 on black') &&
+        disclosure.note.includes('#b5c4d3 on white'),
+      `${disclosure.caption} | ${disclosure.note.slice(0, 120)}`,
+    );
+
+    /* -- 5: the engine own compositor as the oracle ----------------------- */
+    const painted = await page.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 2;
+      canvas.height = 1;
+      const ctx = canvas.getContext('2d');
+      if (ctx === null) return null;
+      const read = (under) => {
+        ctx.clearRect(0, 0, 2, 1);
+        ctx.fillStyle = under;
+        ctx.fillRect(0, 0, 2, 1);
+        // source-over is the default, which is the claim being checked.
+        ctx.fillStyle = 'rgba(170, 187, 204, 0.8666666666666667)';
+        ctx.fillRect(0, 0, 2, 1);
+        const pixel = ctx.getImageData(0, 0, 1, 1).data;
+        return `#${[pixel[0], pixel[1], pixel[2]]
+          .map((value) => value.toString(16).padStart(2, '0'))
+          .join('')}`;
+      };
+      return { onBlack: read('#000000'), onWhite: read('#ffffff') };
+    });
+    check(
+      label,
+      'this engine composites #aabbccdd to the same two colours the table names',
+      painted !== null && painted.onBlack === '#93a2b1' && painted.onWhite === '#b5c4d3',
+      JSON.stringify(painted),
+    );
+
+    /* -- 2 and 3: a canvas node ------------------------------------------- */
+    const nodeLink = (options) =>
+      `${ORIGIN}/?p=${shareParam({
+        v: 3,
+        n: [['n1', 'color-convert', 0, 0, options]],
+        e: [],
+      })}`;
+
+    const summaryOf = () =>
+      page.evaluate(() => {
+        const box = document.querySelector('[data-testid="node-n1"] [class*="nodeSummary"]');
+        if (box === null) return null;
+        const rect = box.getBoundingClientRect();
+        return {
+          text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
+          drawn: rect.width > 0 && rect.height > 0,
+        };
+      });
+
+    const typeInto = async (value) => {
+      await page.locator('[data-testid="node-n1"]').focus();
+      await page.keyboard.press('Enter');
+      const field = page.locator('[data-inspector-input]').first();
+      await field.waitFor({ timeout: 15_000 });
+      await field.fill(value);
+    };
+
+    const untilSummary = async (predicate, timeout) => {
+      const deadline = Date.now() + timeout;
+      for (;;) {
+        const summary = await summaryOf();
+        if ((summary !== null && predicate(summary.text)) || Date.now() > deadline) return summary;
+        await page.waitForTimeout(100);
+      }
+    };
+
+    await page.goto(nodeLink({ target: 'hex', precision: 5 }), { waitUntil: 'networkidle' });
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+
+    await typeInto('oklch(0.7 0.4 150)');
+    const lossyNode = await untilSummary((text) => text.startsWith('Lossy'), 30_000);
+    check(
+      label,
+      'a canvas node prints what the colour conversion changed on its own face',
+      lossyNode !== null &&
+        lossyNode.drawn &&
+        lossyNode.text.startsWith('Lossy ·') &&
+        lossyNode.text.includes('outside sRGB'),
+      JSON.stringify(lossyNode),
+    );
+
+    const spoken = await page.evaluate(
+      () => document.querySelector('[data-testid="node-n1"]')?.getAttribute('aria-label') ?? '',
+    );
+    check(
+      label,
+      'and the accessible name of the colour node carries it too',
+      spoken.includes('lossy:'),
+      spoken.replace(/\s+/g, ' ').slice(0, 160),
+    );
+
+    await page.goto(nodeLink({ target: 'hex', precision: 5 }), { waitUntil: 'networkidle' });
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+
+    await typeInto('#aabbcc');
+    const cleanNode = await untilSummary((text) => text.includes('#aabbcc'), 30_000);
+    check(
+      label,
+      'a colour node that changed nothing says nothing about loss',
+      cleanNode !== null && cleanNode.drawn && !cleanNode.text.includes('Lossy'),
+      JSON.stringify(cleanNode),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
  * WHAT A NODE DRAWS WHEN ITS ANSWER IS A SERIALISED DOCUMENT.
  *
  * A node summarises its first output, and for three tools that output is a
@@ -11814,6 +12064,7 @@ async function runChecks(engine, label) {
     await checkDeepLinks(browser, label);
     await checkStructuredData(browser, label);
     await checkLossReports(browser, label);
+    await checkColourReports(browser, label);
     await checkSerialisedFaces(browser, label);
     await checkLossAlongWires(browser, label);
     await checkDiff(browser, label);

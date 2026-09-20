@@ -17,7 +17,7 @@ import type { TokenDescriptor } from '../tokenGroups';
  */
 export function canonicalColour(input: string): string | null {
   const parsed = parseColor(input);
-  return parsed.ok ? formatColor(parsed.value, 'hex', 3) : null;
+  return parsed.ok ? formatColor(parsed.value.color, 'hex', 3) : null;
 }
 
 /**
@@ -31,7 +31,7 @@ function pickerValue(colour: string | null): string {
   if (colour === null) return '#000000';
   const parsed = parseColor(colour);
   if (!parsed.ok) return '#000000';
-  return formatColor({ ...parsed.value, a: 1 }, 'hex', 3);
+  return formatColor({ ...parsed.value.color, a: 1 }, 'hex', 3);
 }
 
 export interface TokenFieldProps {

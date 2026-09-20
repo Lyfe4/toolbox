@@ -24,7 +24,7 @@ const context: ToolRunContext = {
 function parse(input: string): ColorPayload {
   const result = parseColor(input);
   if (!result.ok) throw new Error(result.error.message);
-  return result.value;
+  return result.value.color;
 }
 
 /** 8-bit channel comparison: colours are only ever displayed at that depth. */
@@ -510,5 +510,174 @@ describe('a percentage channel in rgb()', () => {
   it('still reads bare numbers in rgb() as 0-255', () => {
     // The other spelling, unaffected: `rgb(59 130 246)` is already integral.
     expect(formatColor(parse('rgb(59 130 246)'), 'hex', 3)).toBe('#3b82f6');
+  });
+});
+
+/* ========================================================================== *
+ * What the parser had to change, and whether anybody is told
+ * ========================================================================== */
+
+/**
+ * CC-1, CC-2 AND CC-3: THE TOOL THAT COULD NOT SPEAK.
+ *
+ * `inGamut` has been computed correctly since `e56bd2f` and discarded at its
+ * one call site ever since, and the clamps were never recorded at all. The
+ * conversion matrix carried the out-of-gamut cell as `lossy, told` throughout.
+ *
+ * These are the assertions that hold the wiring rather than the maths: the
+ * maths already had its own tests and they passed honestly, because the
+ * function was right and nothing read it. Every one of them has a negative
+ * control beside it, because a note that fires on an ordinary colour is worse
+ * than no note - it is the one people learn to scroll past.
+ */
+describe('the parser says what it had to change', () => {
+  function adjustments(input: string) {
+    const result = parseColor(input);
+    if (!result.ok) throw new Error(result.error.message);
+    return { clamped: result.value.clamped, outOfGamut: result.value.outOfGamut };
+  }
+
+  it('carries the out-of-gamut verdict out of oklchToRgb instead of dropping it', () => {
+    expect(adjustments('oklch(0.7 0.4 150)').outOfGamut).toBe(true);
+  });
+
+  it.each([
+    ['an in-gamut oklch()', 'oklch(0.7 0.1 150)'],
+    ['a hex colour', '#00d600'],
+    ['an rgb() colour', 'rgb(0 214 0)'],
+    ['an hsl() colour', 'hsl(217 91% 60%)'],
+  ])('does not call %s out of gamut', (_name, input) => {
+    expect(adjustments(input).outOfGamut).toBe(false);
+  });
+
+  it.each([
+    ['hsl(361 110% -5%)', ['saturation 110%', 'lightness -5%']],
+    ['rgb(300 -20 50)', ['red 300', 'green -20']],
+    ['rgb(0 0 0 / 2)', ['alpha 2']],
+    ['oklch(1.5 0.1 150)', ['lightness 1.5']],
+    ['oklch(0.5 -0.1 150)', ['chroma -0.1']],
+  ])('names every component it clamped in %s', (input, expected) => {
+    expect(adjustments(input).clamped).toEqual(expected);
+  });
+
+  /*
+   * THE HUE IS NOT ON THAT LIST, and it is the case that decides whether the
+   * note is worth reading. `hsl(361 …)` is `hsl(1 …)` exactly - CSS wraps a
+   * hue and so does `hslToRgb` - so a clamp note naming it would be a note
+   * about a loss that did not happen.
+   */
+  it.each([
+    ['a hue past 360', 'hsl(361 50% 50%)'],
+    ['a negative hue', 'hsl(-20 50% 50%)'],
+    ['a hue past 360 in oklch()', 'oklch(0.5 0.1 400)'],
+  ])('treats %s as a wrap rather than a clamp', (_name, input) => {
+    expect(adjustments(input).clamped).toEqual([]);
+  });
+
+  it.each([
+    ['#aabbcc', '#aabbcc'],
+    ['#aabbccdd', '#aabbccdd'],
+    ['rgb(59 130 246)', 'rgb(59 130 246)'],
+    ['hsl(217 91% 60%)', 'hsl(217 91% 60%)'],
+    ['oklch(0.62 0.19 259)', 'oklch(0.62 0.19 259)'],
+    // 50% is 127.5, rounded to 128 by a decision recorded in round three. A
+    // rounding is not a clamp and must not be reported as one.
+    ['rgb(50% 50% 50%)', 'rgb(50% 50% 50%)'],
+  ])('clamps nothing in %s', (_name, input) => {
+    expect(adjustments(input).clamped).toEqual([]);
+  });
+});
+
+describe('the report port', () => {
+  async function report(text: string) {
+    const result = await colorTool.run({
+      inputs: { input: { type: 'text', text } },
+      options: { ...colorDefaultOptions, target: 'hex' },
+      context,
+    });
+    if (!result.ok) throw new Error(result.error.message);
+    const port = result.value.report;
+    if (port?.type !== 'json' || port.data === null || typeof port.data !== 'object') {
+      throw new Error('no report');
+    }
+    const data = port.data as { summary?: unknown; notes?: unknown };
+    const notes = Array.isArray(data.notes) ? data.notes : [];
+    return {
+      summary: typeof data.summary === 'string' ? data.summary : '',
+      notes: notes as { level: string; title: string; body: string; reaches: string[] }[],
+    };
+  }
+
+  it('names the input and the nearest sRGB colour when a colour is out of gamut', async () => {
+    const { notes } = await report('oklch(0.7 0.4 150)');
+    const warn = notes.filter((note) => note.level === 'warn');
+
+    expect(warn).toHaveLength(1);
+    expect(warn[0]?.title).toContain('oklch(0.7 0.4 150)');
+    // #00d600 is the measured answer, and it is the colour the contrast table
+    // is really describing - which is the half of CC-1 that matters.
+    expect(warn[0]?.title).toContain('#00d600');
+  });
+
+  it.each([
+    ['hsl(361 110% -5%)', '#000000', ['saturation 110%', 'lightness -5%']],
+    ['rgb(300 -20 50)', '#ff0032', ['red 300', 'green -20']],
+  ])(
+    'names the input and the nearest sRGB colour when %s is clamped',
+    async (input, hex, named) => {
+      const { notes } = await report(input);
+      const warn = notes.filter((note) => note.level === 'warn');
+
+      expect(warn).toHaveLength(1);
+      expect(warn[0]?.title).toContain(input);
+      expect(warn[0]?.title).toContain(hex);
+      for (const component of named) {
+        expect(`${warn[0]?.title ?? ''} ${warn[0]?.body ?? ''}`).toContain(component);
+      }
+    },
+  );
+
+  /*
+   * THE NEGATIVE CONTROL, and it covers the new port as well as the new notes:
+   * an ordinary colour produces a report with nothing in it.
+   */
+  it.each(['#aabbcc', '#aabbccdd', 'rgb(59 130 246)', 'hsl(217 91% 60%)', 'oklch(0.62 0.19 259)'])(
+    '%s produces no note at all',
+    async (input) => {
+      const { notes } = await report(input);
+      expect(notes).toEqual([]);
+    },
+  );
+
+  /*
+   * A colour arriving on the `color` port has already been parsed into sRGB,
+   * so there is no text to have been out of range and nothing to report. It is
+   * the one path that reaches the note builder without an input string.
+   */
+  it('says nothing about a colour wired in from another node', async () => {
+    const result = await colorTool.run({
+      inputs: { input: { type: 'color', color: { r: 1, g: 0, b: 0, a: 1 } } },
+      options: { ...colorDefaultOptions, target: 'hex' },
+      context,
+    });
+    if (!result.ok) throw new Error('refused');
+    const port = result.value.report;
+    const data = port?.type === 'json' ? (port.data as { notes?: unknown }) : {};
+    expect(data.notes).toEqual([]);
+  });
+
+  it('summarises the run even when nothing was adjusted', async () => {
+    expect((await report('#aabbcc')).summary).toBe('#aabbcc as hex');
+  });
+
+  /*
+   * WHICH PORTS THE LOSS IS IN. All three data ports, because the adjustment
+   * happened in the READ half - there is no `data`-shaped escape hatch here
+   * the way there is in `structured-data`. `notePorts.test.ts` holds this to
+   * the manifest; this holds it to the intent.
+   */
+  it('marks the loss as reaching every port that carries the colour', async () => {
+    const { notes } = await report('oklch(0.7 0.4 150)');
+    expect(notes[0]?.reaches).toEqual(['output', 'swatch', 'all']);
   });
 });

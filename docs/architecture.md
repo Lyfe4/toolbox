@@ -122,14 +122,22 @@ tool.
 | `jwt-decode`      | `input` Token · text                                       | `output` Decoded · json — `report` Report · json                                                                  |
 | `diff`            | `original` Original, `changed` Changed · text, json, bytes | `output` Unified patch · text — `changes` Changes · json                                                          |
 | `regex-tester`    | `input` Subject · text, bytes                              | `output` Result · text — `matches` Matches · json                                                                 |
-| `color-convert`   | `input` Colour · text, color                               | `output` Converted · text — `swatch` Swatch · color — `all` Notations · json                                      |
+| `color-convert`   | `input` Colour · text, color                               | `output` Converted · text — `swatch` Swatch · color — `all` Notations · json — `report` Report · json             |
 | `image-convert`   | `input` Image · bytes                                      | `output` Converted · bytes — `report` Report · json                                                               |
 | `text-convert`    | `input` Document · text, bytes                             | `output` Converted · text — `rendered` Rendered HTML · text — `detected` Detected · text — `report` Report · json |
 | `video-remux`     | `input` Video · bytes                                      | `output` Repackaged · bytes — `report` Report · json                                                              |
 
-Four `report` ports were added in round three, and they are one idea rather
-than four: a tool that loses something needs somewhere to say so, and a
-`ToolResult` is a value or an error. `image-convert` and `video-remux`
+Four `report` ports were added in round three and a fifth in round nine, and
+they are one idea rather than five: a tool that loses something needs somewhere
+to say so, and a `ToolResult` is a value or an error.
+
+**The fifth is the one worth reading about.** `color-convert` was the only
+shipped tool that changes values and had no such port at all, so there was
+nowhere for "that OKLCH has no sRGB equivalent" to go — and the conversion
+matrix carried the cell as `lossy, told` for five rounds regardless, because
+its definition of that verdict requires a canvas node to say it and a canvas
+node reads `warn` notes off a `report` port. A missing port is not a missing
+sentence; it is a claim that cannot be true however the sentence is worded. `image-convert` and `video-remux`
 invented the shape; `ReportView` already drew it. See
 [docs/conversion-matrix.md](conversion-matrix.md#where-a-loss-is-said) for why
 a port on its own is not enough, and

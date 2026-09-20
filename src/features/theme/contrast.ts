@@ -375,12 +375,12 @@ export function contrastBetween(
    * a colour one. Reporting "cannot say" is honest; compositing it against the
    * nominal background would produce a number that is right only sometimes.
    */
-  if (fg.value.a < 1 || bg.value.a < 1) return { ratio: null, problem: 'translucent' };
+  if (fg.value.color.a < 1 || bg.value.color.a < 1) return { ratio: null, problem: 'translucent' };
 
   return {
     ratio: contrastRatio(
-      relativeLuminance(fg.value.r, fg.value.g, fg.value.b),
-      relativeLuminance(bg.value.r, bg.value.g, bg.value.b),
+      relativeLuminance(fg.value.color.r, fg.value.color.g, fg.value.color.b),
+      relativeLuminance(bg.value.color.r, bg.value.color.g, bg.value.color.b),
     ),
     problem: null,
   };

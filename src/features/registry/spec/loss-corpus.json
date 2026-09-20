@@ -1,0 +1,304 @@
+{
+  "$schema-note": "One document per row of the silent-loss table in docs/test-findings.md, with the note that row must produce. Read by src/features/registry/lossCorpus.test.ts, which runs every case and DERIVES the verdict rather than reading one. A case whose note fires is `lossy, told`; a case whose note does not fire is `lossy, silent`; a row with `input: null` is `not verified`. Most of this file is red on the day it lands, and that is the point: a ratio has a denominator, and a denominator is a thing somebody can add to.",
+  "howToAddACase": "Append an object with the next `row` number, a unique `id`, the `tool` and `options` that reproduce it, an `input` that loses something, a `clean` input of the same shape that does not, and the `expect` the note must satisfy. Nothing else has to change: the test derives the table and the ratio, and the doc block it writes into docs/conversion-matrix.md is compared rather than maintained.",
+  "roundsThatReportedZero": [
+    {
+      "reported": "round three",
+      "foundBy": "round four",
+      "found": 2
+    },
+    {
+      "reported": "rounds four to seven",
+      "foundBy": "round eight",
+      "found": 17
+    }
+  ],
+  "cases": [
+    {
+      "row": 1,
+      "id": "colour-oklch-out-of-gamut",
+      "loss": "Out-of-gamut OKLCH clipped",
+      "cell": "Colour · Out-of-gamut OKLCH",
+      "tool": "color-convert",
+      "options": {
+        "target": "hex"
+      },
+      "input": "oklch(0.7 0.4 150)",
+      "clean": "oklch(0.7 0.1 150)",
+      "expect": {
+        "titleContains": "outside sRGB",
+        "mentions": ["oklch(0.7 0.4 150)", "#00d600"]
+      }
+    },
+    {
+      "row": 2,
+      "id": "colour-hsl-clamped",
+      "loss": "Out-of-range hsl() clamped",
+      "cell": "Colour · Out-of-range hsl()",
+      "tool": "color-convert",
+      "options": {
+        "target": "hex"
+      },
+      "input": "hsl(361 110% -5%)",
+      "clean": "hsl(217 91% 60%)",
+      "expect": {
+        "titleContains": "clamped",
+        "mentions": ["hsl(361 110% -5%)", "saturation 110%", "lightness -5%", "#000000"]
+      }
+    },
+    {
+      "row": 3,
+      "id": "colour-rgb-clamped",
+      "loss": "Out-of-range rgb() clamped",
+      "cell": "Colour · Out-of-range rgb()",
+      "tool": "color-convert",
+      "options": {
+        "target": "hex"
+      },
+      "input": "rgb(300 -20 50)",
+      "clean": "rgb(59 130 246)",
+      "expect": {
+        "titleContains": "clamped",
+        "mentions": ["rgb(300 -20 50)", "red 300", "green -20", "#ff0032"]
+      }
+    },
+    {
+      "row": 4,
+      "id": "yaml-comment-to-json",
+      "loss": "A YAML comment dropped on the way to JSON",
+      "cell": "Structured data · YAML → JSON",
+      "tool": "structured-data",
+      "options": {
+        "source": "yaml",
+        "target": "json"
+      },
+      "input": "# why this column exists\nretries: 3\n",
+      "clean": "retries: 3\n",
+      "expect": {
+        "titleContains": "comment",
+        "mentions": ["why this column exists"]
+      }
+    },
+    {
+      "row": 5,
+      "id": "yaml-anchor-to-json",
+      "loss": "A YAML anchor expanded on the way to JSON",
+      "cell": "Structured data · YAML → JSON",
+      "tool": "structured-data",
+      "options": {
+        "source": "yaml",
+        "target": "json"
+      },
+      "input": "defaults: &defaults\n  retries: 3\nservice: *defaults\n",
+      "clean": "defaults:\n  retries: 3\nservice:\n  retries: 3\n",
+      "expect": {
+        "titleContains": "anchor",
+        "mentions": ["defaults"]
+      }
+    },
+    {
+      "row": 6,
+      "id": "yaml-tag-to-json",
+      "loss": "A YAML tag dropped on the way to JSON",
+      "cell": "Structured data · YAML → JSON",
+      "tool": "structured-data",
+      "options": {
+        "source": "yaml",
+        "target": "json"
+      },
+      "input": "custom: !mytype\n  a: 1\n",
+      "clean": "custom:\n  a: 1\n",
+      "expect": {
+        "titleContains": "tag",
+        "mentions": ["!mytype"]
+      }
+    },
+    {
+      "row": 7,
+      "id": "yaml-block-style-to-json",
+      "loss": "A YAML block style collapsed on the way to JSON",
+      "cell": "Structured data · YAML → JSON",
+      "tool": "structured-data",
+      "options": {
+        "source": "yaml",
+        "target": "json"
+      },
+      "input": "description: |\n  one\n  two\n",
+      "clean": "description: one two\n",
+      "expect": {
+        "titleContains": "style",
+        "mentions": ["description"]
+      }
+    },
+    {
+      "row": 8,
+      "id": "yaml-anchor-to-yaml",
+      "loss": "A YAML anchor expanded on the way to YAML",
+      "cell": "Structured data · YAML → YAML",
+      "tool": "structured-data",
+      "options": {
+        "source": "yaml",
+        "target": "yaml"
+      },
+      "input": "defaults: &defaults\n  retries: 3\nservice: *defaults\n",
+      "clean": "defaults:\n  retries: 3\nservice:\n  retries: 3\n",
+      "expect": {
+        "titleContains": "anchor",
+        "mentions": ["defaults"]
+      }
+    },
+    {
+      "row": 9,
+      "id": "yaml-scalar-style-to-yaml",
+      "loss": "A YAML scalar style collapsed on the way to YAML",
+      "cell": "Structured data · YAML → YAML",
+      "tool": "structured-data",
+      "options": {
+        "source": "yaml",
+        "target": "yaml"
+      },
+      "input": "description: >\n  one\n  two\n",
+      "clean": "description: one two\n",
+      "expect": {
+        "titleContains": "style",
+        "mentions": ["description"]
+      }
+    },
+    {
+      "row": 10,
+      "id": "yaml-non-string-key",
+      "loss": "A non-string YAML key stringified",
+      "cell": "Structured data · YAML → YAML",
+      "tool": "structured-data",
+      "options": {
+        "source": "yaml",
+        "target": "yaml"
+      },
+      "input": "2024: launched\n",
+      "clean": "year: launched\n",
+      "expect": {
+        "titleContains": "key",
+        "mentions": ["2024"]
+      }
+    },
+    {
+      "row": 11,
+      "id": "csv-header-trimmed",
+      "loss": "A CSV header cell trimmed",
+      "cell": "Structured data · CSV/TSV → JSON/YAML",
+      "tool": "structured-data",
+      "options": {
+        "source": "csv",
+        "target": "json"
+      },
+      "input": "alpha, shipped at \n1,2\n",
+      "clean": "alpha,shipped at\n1,2\n",
+      "expect": {
+        "titleContains": "trim",
+        "mentions": ["shipped at"]
+      }
+    },
+    {
+      "row": 12,
+      "id": "json-duplicate-key",
+      "loss": "A duplicate JSON key discarded, last wins",
+      "cell": "Structured data · Reading JSON",
+      "tool": "structured-data",
+      "options": {
+        "source": "json",
+        "target": "json"
+      },
+      "input": "{\"retries\": 3, \"retries\": 5}",
+      "clean": "{\"retries\": 5}",
+      "expect": {
+        "titleContains": "duplicate",
+        "mentions": ["retries", "3"]
+      }
+    },
+    {
+      "row": 13,
+      "id": "markdown-caption-dropped",
+      "loss": "`<caption>` dropped, Markdown target",
+      "cell": "Text convert · HTML → Markdown",
+      "tool": "text-convert",
+      "options": {
+        "source": "html",
+        "target": "markdown"
+      },
+      "input": "<table><caption>Quarterly sales</caption><tr><th>Region</th></tr><tr><td>North</td></tr></table>",
+      "clean": "<table><tr><th>Region</th></tr><tr><td>North</td></tr></table>",
+      "expect": {
+        "titleContains": "caption",
+        "mentions": ["Quarterly sales"]
+      }
+    },
+    {
+      "row": 14,
+      "id": "markdown-cell-list-flattened",
+      "loss": "A table cell's list structure flattened, Markdown target",
+      "cell": "Text convert · HTML → Markdown",
+      "tool": "text-convert",
+      "options": {
+        "source": "html",
+        "target": "markdown"
+      },
+      "input": "<table><tr><th>Region</th></tr><tr><td><ul><li>North</li><li>South</li></ul></td></tr></table>",
+      "clean": "<table><tr><th>Region</th></tr><tr><td>North</td></tr></table>",
+      "expect": {
+        "titleContains": "list",
+        "mentions": []
+      }
+    },
+    {
+      "row": 15,
+      "id": "markdown-header-invented",
+      "loss": "An empty header row invented, Markdown target",
+      "cell": "Text convert · HTML → Markdown",
+      "tool": "text-convert",
+      "options": {
+        "source": "html",
+        "target": "markdown"
+      },
+      "input": "<table><tr><td>North</td><td>3</td></tr></table>",
+      "clean": "<table><tr><th>Region</th><th>Sales</th></tr><tr><td>North</td><td>3</td></tr></table>",
+      "expect": {
+        "titleContains": "header",
+        "mentions": []
+      }
+    },
+    {
+      "row": 16,
+      "id": "sanitiser-class-emptied",
+      "loss": "`class=\"btn\"` emptied to `class=\"\"`",
+      "cell": "Text convert · HTML → HTML (sanitised)",
+      "tool": "text-convert",
+      "options": {
+        "source": "html",
+        "target": "html-sanitised"
+      },
+      "input": "<p><a class=\"btn\" href=\"https://example.com\">link</a></p>",
+      "clean": "<p><a href=\"https://example.com\">link</a></p>",
+      "expect": {
+        "titleContains": "class",
+        "mentions": ["class"]
+      }
+    },
+    {
+      "row": 17,
+      "id": "markdown-mark-and-kbd",
+      "loss": "`<mark>` and `<kbd>` given formatting they never had",
+      "cell": "Text convert · HTML → Markdown",
+      "tool": "text-convert",
+      "options": {
+        "source": "html",
+        "target": "markdown"
+      },
+      "input": "<p><mark>highlighted</mark> and <kbd>Esc</kbd></p>",
+      "clean": "<p><em>emphasis</em> and <code>code</code></p>",
+      "expect": {
+        "titleContains": "mark",
+        "mentions": []
+      }
+    }
+  ]
+}
