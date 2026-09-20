@@ -1100,6 +1100,50 @@ describe('YAML parsing', () => {
     if (!result.ok) expect(result.error.code).toBe('limit-exceeded');
   });
 
+  /*
+   * AN ALIAS WITH NO ANCHOR IS NOT A SIZE PROBLEM, and it was reported as one.
+   *
+   * `toJS` throws a bare `ReferenceError` for two faults that have nothing in
+   * common - an unresolved alias, and the expansion limit above - and both came
+   * back as "That YAML expands to too much data to convert" with the library's
+   * own sentence about an anchor underneath it. Twenty-six bytes described as a
+   * resource-exhaustion refusal, with the message and its own detail
+   * contradicting each other.
+   *
+   * The two are separated by asking the DOCUMENT rather than by matching the
+   * error's wording: `visit` walks in document order, so the anchors seen when
+   * an alias is reached are exactly the ones the library resolves against. That
+   * is why the third case is here - an alias BEFORE its anchor is unresolved in
+   * YAML however far down the file the `&` eventually appears, and a check that
+   * merely collected every anchor in the document would call it resolved.
+   *
+   * `merged: {<<: *base, b: 2}` is where this was found: a merge key pasted out
+   * of the middle of somebody else's file, without the anchor it refers to.
+   */
+  it.each([
+    ['a flow merge key whose anchor was left behind', 'merged: {<<: *base, b: 2}\n', 'base'],
+    ['a plain alias with no anchor at all', 'a: 1\nb: *nope\n', 'nope'],
+    ['an alias that comes before its anchor', 'a: *later\nb: &later 1\n', 'later'],
+  ])('reports %s as a broken document rather than as too much data', (_name, source, anchor) => {
+    const result = parseSource(source, 'yaml', ',');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('parse-error');
+    expect(result.error.message).toBe(`The alias *${anchor} has no anchor before it.`);
+    // It points at the alias, which is the character the reader has to change.
+    expect(result.error.position?.offset).toBe(source.indexOf(`*${anchor}`));
+  });
+
+  /*
+   * THE POSITIVE PARTNER. An alias that really does resolve must still resolve,
+   * or the two assertions above are satisfied by a build that refuses every
+   * anchor in the language.
+   */
+  it('still resolves an alias whose anchor is set before it', () => {
+    expect(parsed('a: &x 1\nb: *x\n', 'yaml')).toEqual({ a: 1, b: 1 });
+  });
+
   it('reports a stack overflow in the composer as depth, not as bad syntax', () => {
     /*
      * A document too deep for the composer comes back as an ordinary parse

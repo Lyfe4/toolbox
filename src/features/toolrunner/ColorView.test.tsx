@@ -38,6 +38,37 @@ describe('ColorView', () => {
     expect(screen.getByText('fails AA')).toBeInTheDocument();
   });
 
+  /*
+   * THE CHEQUERBOARD, WHICH WAS DRAWN BEHIND EVERY COLOUR.
+   *
+   * `background-image` paints above `background-color`, so the four gradients
+   * that make the chequerboard were drawn ON TOP of an opaque swatch: a solid
+   * `#aabbcc` was shown as `#aabbcc` in 16px squares of `--pb-surface-raised`,
+   * which is a picture of a colour nobody asked for. And because every swatch
+   * had it, the pattern could not signal the one thing it exists to signal.
+   *
+   * jsdom has no layout engine and resolves nothing about how those gradients
+   * PAINT, so this is asserted on the class and the flag rather than on pixels;
+   * the geometric half belongs to `check:browsers`. The flag is the stable
+   * half - it is what a check in either place can name - and it is asserted in
+   * both directions, because a rule that fires on everything and a rule that
+   * fires on nothing are equally useless here.
+   */
+  it.each([
+    ['an opaque colour', { r: 0.6, g: 0.7, b: 0.8, a: 1 }, 'false'],
+    ['a fully transparent colour', { r: 0.6, g: 0.7, b: 0.8, a: 0 }, 'true'],
+    ['87% opaque, which is #aabbccdd', { r: 0.6, g: 0.7, b: 0.8, a: 0.8666 }, 'true'],
+    // The boundary itself: one step below 1 is translucent, and 1 is not.
+    ['a hair under opaque', { r: 0.6, g: 0.7, b: 0.8, a: 0.999 }, 'true'],
+  ])('marks %s as translucent: %s', (_name, color, expected) => {
+    render(<ColorView color={color} label="Colour" />);
+    const swatch = screen.getByRole('img', { name: 'Colour preview' });
+
+    expect(swatch).toHaveAttribute('data-translucent', expected);
+    // And the class follows the flag, which is what actually decides the paint.
+    expect(swatch.className.includes('translucent')).toBe(expected === 'true');
+  });
+
   it('labels the table so its purpose is clear out of context', () => {
     render(<ColorView color={MID_GREY} label="Colour" />);
     expect(screen.getByRole('table', { name: 'Contrast, WCAG 2.1' })).toBeInTheDocument();

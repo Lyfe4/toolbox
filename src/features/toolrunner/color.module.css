@@ -7,8 +7,16 @@
   block-size: 96px;
   border: var(--pb-border-width) solid var(--pb-border-hairline);
   border-radius: var(--pb-radius-control);
-  /* A chequerboard behind the swatch, so a translucent colour reads as
-     translucent rather than as a slightly different opaque colour. */
+}
+
+/* A chequerboard behind the swatch, so a translucent colour reads as
+   translucent rather than as a slightly different opaque colour.
+
+   ONLY WHEN THE COLOUR IS TRANSLUCENT. background-image paints ABOVE
+   background-color, so on an opaque swatch these gradients were drawn on top
+   of the colour itself - a solid `#aabbcc` came out as `#aabbcc` in chequered
+   squares of a different shade. See ColorView. */
+.translucent {
   background-image:
     linear-gradient(45deg, var(--pb-surface-raised) 25%, transparent 25%),
     linear-gradient(-45deg, var(--pb-surface-raised) 25%, transparent 25%),

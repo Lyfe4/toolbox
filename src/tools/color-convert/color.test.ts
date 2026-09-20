@@ -129,6 +129,46 @@ describe('formatting', () => {
     expect(formatColor(blue, 'oklch', 1).split(' ')[0]).toMatch(/^oklch\(0\.\d$/);
     expect(formatColor(blue, 'oklch', 4).split(' ')[0]).toMatch(/^oklch\(0\.\d{1,4}$/);
   });
+
+  /*
+   * A HUE OF 360, WHICH ONLY ROUNDING CAN PRODUCE.
+   *
+   * `rgbToHsl` and `rgbToOklch` both promise [0, 360) and both keep that
+   * promise - one adds 360 to a negative, the other takes `% 360`. The
+   * FORMATTER broke it: 359.996 at two decimal places is `360`, which is a
+   * wrap point printed as the value it wraps to, and the one number the range
+   * those functions document excludes.
+   *
+   * The exposing input is a real one rather than a constructed float. `#800000`
+   * written as `oklch()` and read back is a colour whose HSL hue is 359.996,
+   * and it was printed `hsl(360 100% 25.1%)` beside every other red in the same
+   * report starting at 0.
+   */
+  it('prints a hue that rounds to 360 as 0, in both notations', () => {
+    const maroon = parse(formatColor(parse('#800000'), 'oklch', 5));
+
+    // The control first: this really is the >= 359.995 case, so the assertions
+    // below are about the wrap and not about some other colour.
+    expect(rgbToHsl(maroon.r, maroon.g, maroon.b).h).toBeGreaterThan(359.99);
+    expect(formatColor(maroon, 'hsl', 5)).toBe('hsl(0 100% 25.1%)');
+
+    // And the same question of oklch(), whose hue goes through the same helper.
+    const wrapped = { r: 1, g: 0, b: 0.0000001, a: 1 };
+    expect(formatColor(wrapped, 'oklch', 5)).not.toContain(' 360)');
+  });
+
+  /*
+   * THE NEGATIVE PARTNER, and it is what keeps this a correction rather than a
+   * tolerance. A hue that genuinely drifted to 359.98 is a DIFFERENT number
+   * from 360 and no formatter can tell it from a hue somebody meant, so it is
+   * left exactly as it is - and 0 and 359 are untouched either way.
+   */
+  it('leaves every other hue alone, including one that merely drifted', () => {
+    expect(formatColor(parse('hsl(359.98 100% 50%)'), 'hsl', 5)).toContain('359.98');
+    expect(formatColor(parse('hsl(0 100% 50%)'), 'hsl', 5)).toBe('hsl(0 100% 50%)');
+    expect(formatColor(parse('hsl(359 100% 50%)'), 'hsl', 5)).toBe('hsl(359 100% 50%)');
+    expect(formatColor(parse('hsl(180 100% 50%)'), 'hsl', 5)).toBe('hsl(180 100% 50%)');
+  });
 });
 
 /*

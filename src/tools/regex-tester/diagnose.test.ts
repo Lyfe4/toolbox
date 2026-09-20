@@ -209,6 +209,61 @@ describe('diagnosing a pattern that found nothing', () => {
 
     expectNote(notes, 'No diagnosis was attempted');
   });
+
+  /*
+   * `\p{...}` WITH UNICODE OFF, which was the one silent failure in a tool that
+   * diagnoses everything else.
+   *
+   * Without `u` or `v`, `\p` is an identity escape for the letter `p`. The
+   * pattern is valid, it compiles, it runs, and it matches nothing - so the
+   * result is indistinguishable from a correct negative, and the only note the
+   * user got was the generic one about the first part not matching, which
+   * points at their text rather than at the flag.
+   *
+   * AND IT WAS WORSE THAN "NO HINT". Driven against the break - with this note
+   * removed - `\p{L}+` over `hello world` produces NO NOTES AT ALL: `prefixesOf`
+   * yields nothing for a pattern that is one atom, so even the generic "even
+   * the first part does not match" never fires. The tool that diagnoses a
+   * missing `i`, a missing `m`, a missing `s`, a stray `/`, a CRLF and a BOM
+   * said nothing whatsoever about the one failure a flag causes. That is what
+   * the length assertion below pins.
+   */
+  it('names the Unicode flag when a property escape found nothing without it', () => {
+    const notes = notesFor('\\p{L}+', 'g', 'hello world');
+    const note = expectNote(notes, 'Unicode flag');
+
+    expect(note.level).toBe('hint');
+    // The stronger half: the probe ran and the flagged pattern really matches,
+    // so the note says so rather than offering a flag that would not help.
+    expect(note.body).toContain('Turn on Unicode (u) and it matches');
+    // The note is the whole diagnosis here, which is the measurement behind the
+    // comment above: without it this pattern is diagnosed by nothing.
+    expect(notes).toHaveLength(1);
+  });
+
+  it('still names the flag when turning it on would not rescue the pattern', () => {
+    const note = expectNote(notesFor('\\p{Lu}+', 'g', 'lower case only'), 'Unicode flag');
+
+    expect(note.body).toContain('read as literal text');
+    expect(note.body).not.toContain('and it matches');
+  });
+
+  /*
+   * THE NEGATIVE CONTROLS, and the first is the one that decides the regex: an
+   * ESCAPED backslash in front of `p{` is a literal backslash followed by the
+   * letter p, not a property escape, and offering the Unicode flag for it would
+   * be advice about a construct that is not in the pattern.
+   */
+  it.each([
+    ['an escaped backslash before p{', '\\\\p{L}', 'g', 'zzz'],
+    ['an ordinary p', 'p\\{L\\}', 'g', 'zzz'],
+    ['a property escape that already has u', '\\p{L}+', 'gu', ''],
+    ['a property escape that already has v', '\\p{L}+', 'gv', ''],
+  ])('says nothing about the Unicode flag for %s', (_name, pattern, flags, subject) => {
+    expect(notesFor(pattern, flags, subject).map((note) => note.title)).not.toContain(
+      '`\\p{...}` needs the Unicode flag',
+    );
+  });
 });
 
 /* ========================================================================== *

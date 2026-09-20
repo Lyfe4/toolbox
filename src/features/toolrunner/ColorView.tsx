@@ -39,10 +39,20 @@ export function ColorView({ color, label }: ColorViewProps) {
         A swatch is decorative on its own; the accessible name is what makes it
         meaningful, and role="img" is what makes the name be read at all.
       */}
+      {/*
+        THE CHEQUERBOARD IS FOR TRANSLUCENCY, so it is drawn only when there is
+        translucency to show. Painted under every colour it did the opposite of
+        its job twice over: an opaque swatch was covered in squares of
+        `--pb-surface-raised` showing through nothing, so a solid colour was
+        misrepresented - and because every swatch had the pattern, having it
+        stopped meaning the colour was translucent. The one case the backdrop
+        exists for became the case it could not signal.
+      */}
       <div
-        className={styles.swatch}
+        className={`${styles.swatch ?? ''} ${color.a < 1 ? (styles.translucent ?? '') : ''}`}
         role="img"
         aria-label={`${label} preview`}
+        data-translucent={color.a < 1 ? 'true' : 'false'}
         style={{ backgroundColor: cssColor(color) }}
       />
 

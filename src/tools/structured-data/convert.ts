@@ -1,5 +1,6 @@
 import {
   Document as YamlDocument,
+  isAlias,
   isMap,
   isPair,
   isScalar,
@@ -735,14 +736,80 @@ function duplicateKeyFailure<T = never>(
       });
 }
 
-function yamlThrownFailure<T = never>(error: unknown): ToolResult<T> {
+/**
+ * The first alias in a document whose anchor was never set before it.
+ *
+ * Asked of the DOCUMENT rather than of the error, which is the whole point.
+ * `toJS` throws a bare `ReferenceError` for two completely different faults -
+ * an alias with no anchor, and the alias-expansion limit - and neither carries
+ * a code, so the only thing separating them in the error itself is the wording
+ * of a message, which is one release away from silently reverting. The
+ * document knows: `visit` walks in document order, so the anchors seen so far
+ * at the moment an alias is met are exactly the ones the library would have
+ * resolved it against ("the last instance of the source anchor BEFORE this
+ * node").
+ *
+ * Returns the alias node so the caller can name it and point at it.
+ */
+function firstUnresolvedAlias(document: Document.Parsed): {
+  readonly source: string;
+  readonly offset: number;
+} | null {
+  const seen = new Set<string>();
+  let found: { source: string; offset: number } | null = null;
+
+  visit(document, (_key, node) => {
+    if (node === null || typeof node !== 'object') return undefined;
+    if (isAlias(node)) {
+      if (!seen.has(node.source)) {
+        found = { source: node.source, offset: node.range?.[0] ?? 0 };
+        return visit.BREAK;
+      }
+      return undefined;
+    }
+    const anchor: unknown = (node as { anchor?: unknown }).anchor;
+    if (typeof anchor === 'string' && anchor !== '') seen.add(anchor);
+    return undefined;
+  });
+
+  return found;
+}
+
+function yamlThrownFailure<T = never>(
+  error: unknown,
+  document?: Document.Parsed,
+  text?: string,
+): ToolResult<T> {
   if (error instanceof RangeError) return tooDeep();
-  // The alias-expansion limit is reported as a ReferenceError by the library.
+
+  /*
+   * A ReferenceError out of `toJS` is one of TWO faults, and reporting both as
+   * the second one was a confident wrong answer.
+   *
+   *   - `*base` with no `&base` anywhere before it. That is a broken document,
+   *     and it is what `{<<: *base}` pasted out of the middle of somebody
+   *     else's file looks like.
+   *   - the alias-expansion limit, which is the billion-laughs guard.
+   *
+   * Both arrived as "That YAML expands to too much data to convert", so a
+   * six-byte document with one missing anchor was described as a resource
+   * problem, and the detail underneath it named a construct the message did
+   * not mention. The document is asked which one happened; only if no alias is
+   * unresolved is this really the limit.
+   */
   if (error instanceof ReferenceError) {
+    const unresolved = document === undefined ? null : firstUnresolvedAlias(document);
+    if (unresolved !== null) {
+      return fail('parse-error', `The alias *${unresolved.source} has no anchor before it.`, {
+        ...(text === undefined ? {} : { position: positionFromOffset(text, unresolved.offset) }),
+        detail: `An alias refers back to an anchor written earlier in the same document. Add \`&${unresolved.source}\` to the value this is meant to point at, or remove the alias.`,
+      });
+    }
     return fail('limit-exceeded', 'That YAML expands to too much data to convert.', {
       detail: error.message,
     });
   }
+
   return fail('parse-error', 'That is not valid YAML.', {
     detail: error instanceof Error ? error.message : undefined,
   });
@@ -1009,7 +1076,7 @@ function readYamlSource(text: string): ToolResult<Reading> {
     try {
       raw = document.toJS({ maxAliasCount: MAX_ALIAS_COUNT });
     } catch (error) {
-      return yamlThrownFailure(error);
+      return yamlThrownFailure(error, document, text);
     }
 
     // A multi-document stream is reported as an array, so the path says which

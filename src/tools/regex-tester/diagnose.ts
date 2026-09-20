@@ -417,6 +417,33 @@ function flagProbes(pattern: string, flags: string, subject: string, notes: Note
       });
     }
   }
+
+  /*
+   * THE SAME QUESTION IN THE OTHER DIRECTION, WHICH WAS MISSING.
+   *
+   * Every probe above asks what a flag being ON would do. `\p{...}` is the one
+   * construct whose failure is caused by a flag being OFF and is INVISIBLE
+   * without it: without `u` or `v`, `\p` is an identity escape for the letter
+   * `p`, so the pattern is valid, compiles, runs, and matches nothing. The user
+   * sees the same "No matches" a genuinely-absent subject produces, and the
+   * only note they get is the generic one about the first part not matching -
+   * which points at the text rather than at the flag.
+   *
+   * Gated on the pattern actually containing `\p{` or `\P{` with an unescaped
+   * backslash, so an ordinary `p` never triggers it, and on the flagged version
+   * really matching, so it is never offered where it would not help.
+   */
+  const unicodeProperty = /(?<!\\)(?:\\\\)*\\[pP]\{/.test(pattern);
+  if (unicodeProperty && !flags.includes('u') && !flags.includes('v')) {
+    const probe = wouldMatch(pattern, withFlag(flags, 'u'), subject);
+    notes.push({
+      level: 'hint',
+      title: '`\\p{...}` needs the Unicode flag',
+      body: probe
+        ? 'Without `u` or `v`, `\\p` is just the letter `p`, so this pattern is valid and matches nothing. Turn on Unicode (u) and it matches.'
+        : 'Without `u` or `v`, `\\p` is just the letter `p`, so a Unicode property escape is read as literal text rather than as a property. Turn on Unicode (u) to use it.',
+    });
+  }
 }
 
 /**

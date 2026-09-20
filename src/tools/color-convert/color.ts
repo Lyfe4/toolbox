@@ -357,6 +357,29 @@ function round(value: number, places: number): string {
   return fixed.includes('.') ? fixed.replace(/\.?0+$/, '') : fixed;
 }
 
+/**
+ * A hue, rounded, kept inside the half-open range the two converters promise.
+ *
+ * `rgbToHsl` and `rgbToOklch` both return a hue in [0, 360) - `rgbToHsl` adds
+ * 360 to a negative and `rgbToOklch` takes `% 360`, so neither can produce 360
+ * itself. ROUNDING CAN. A hue of 359.996 prints as `360` at two decimal places,
+ * and `hsl(360 50% 50%)` is a colour written the long way round: a wrap point
+ * stated as the value it wraps to.
+ *
+ * It is a real output. `#800000` through `oklch()` and back is `hsl(360 100%
+ * 25.1%)` - the same colour as `hsl(0 ...)`, printed as the one number the
+ * range excludes, next to every other red in the same report starting at 0.
+ *
+ * Only the exact wrap is moved. 359.98 is a DIFFERENT question - a hue that
+ * really did drift, which no formatter can distinguish from a hue somebody
+ * meant - and snapping a tolerance here would be a guess where this is an
+ * identity.
+ */
+function roundHue(value: number, places: number): string {
+  const text = round(value, places);
+  return text === '360' ? '0' : text;
+}
+
 function hexPair(value: number): string {
   return Math.round(clamp01(value) * 255)
     .toString(16)
@@ -383,13 +406,13 @@ export function formatColor(color: ColorPayload, format: ColorFormat, precision:
 
     case 'hsl': {
       const { h, s, l } = rgbToHsl(color.r, color.g, color.b);
-      const body = `${round(h, Math.min(precision, 2))} ${round(s * 100, Math.min(precision, 2))}% ${round(l * 100, Math.min(precision, 2))}%`;
+      const body = `${roundHue(h, Math.min(precision, 2))} ${round(s * 100, Math.min(precision, 2))}% ${round(l * 100, Math.min(precision, 2))}%`;
       return hasAlpha ? `hsl(${body} / ${round(color.a, 3)})` : `hsl(${body})`;
     }
 
     case 'oklch': {
       const { l, c, h } = rgbToOklch(color.r, color.g, color.b);
-      const body = `${round(l, precision)} ${round(c, precision)} ${round(h, Math.min(precision, 2))}`;
+      const body = `${round(l, precision)} ${round(c, precision)} ${roundHue(h, Math.min(precision, 2))}`;
       return hasAlpha ? `oklch(${body} / ${round(color.a, 3)})` : `oklch(${body})`;
     }
   }
