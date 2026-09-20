@@ -187,8 +187,8 @@ export const structuredDataTool = defineTool({
       input.type === 'json'
         ? wired(checkJsonInput(input.data))
         : options.source === 'auto'
-          ? readAuto(source, delimiter)
-          : readSource(source, options.source, delimiter);
+          ? readAuto(source, delimiter, options.target)
+          : readSource(source, options.source, delimiter, options.target);
 
     if (!parsed.ok) return parsed;
 

@@ -15,7 +15,7 @@ of what follows is about that.
 - [YAML: which library, and why](#yaml-which-library-and-why)
 - [Held to the yaml-test-suite, both ways](#held-to-the-yaml-test-suite-both-ways)
 - [CSV: hand-written, deliberately](#csv-hand-written-deliberately)
-- [The JSON boundary](#the-json-boundary)
+- [The value model, and what it cannot hold](#the-value-model-and-what-it-cannot-hold)
 - [Limits](#limits)
 - [Options](#options)
 - [Known limitations](#known-limitations)
@@ -179,8 +179,9 @@ unchanged — see the schema notes below.
 | CSV target, top level is not an array               | Refused, naming what was found                             |
 | CSV target, a row is not an object                  | Refused, naming the row                                    |
 | CSV target, every row is `{}`                       | Refused: there are no columns to write                     |
-| YAML `!!binary`, `!!set`, `!!omap`, a 1.1 timestamp | Refused, naming the path (`$.blob is a Uint8Array…`)       |
-| `NaN`, `Infinity`, `undefined`, `BigInt`            | Refused, naming the path                                   |
+| YAML `!!binary`, `!!set`, `!!omap`, a 1.1 timestamp | Refused, naming the path and the line                      |
+| `NaN`, `Infinity`, `undefined`, `BigInt`            | Refused, naming every one of them, by path and line        |
+| A YAML key that is a number, a boolean or null      | **Read as text, and reported.** See the value model        |
 | YAML keys that become the same object key           | Refused as a duplicate key, naming the line                |
 | A YAML key that is itself a collection              | Refused                                                    |
 | Anything nested deeper than 512                     | Refused as too deep                                        |
@@ -211,9 +212,31 @@ fails is named by path on the `Detected` report - visible on `/tools` and printe
 on the canvas node. The question is asked of the LITERAL rather than of the
 parsed value on purpose: `9007199254740994` is 2^53 + 2, which
 `Number.isSafeInteger` rejects and which a double holds perfectly, so the obvious
-implementation reports a number that was never rounded. The note also says where
-to go: CSV and TSV read every cell as a string and have no numeric ceiling at
-all.
+implementation reports a number that was never rounded.
+
+**The note also says what to do, and until round eleven the advice was false.**
+It read _"Convert to CSV or TSV to keep the digits, where every cell stays a
+string"_, appended whatever the target was. SD-13 filed that as JSON-specific
+advice turning up on a non-JSON target; it is worse than that. The rounding
+happens in the **reader** — `JSON.parse` and the YAML composer both produce a
+double — so by the time any writer runs the digits are already gone, and
+`{"id": 12345678901234567890}` converted to CSV really does come out as
+`12345678901234567000`. Following the advice exactly produced the loss it
+promised to avoid, on the two targets it named.
+
+What does keep the digits is **quoting the number in the source**, which makes
+it text before the parser can round it. That is true of every target, so the
+sentence says it — and what the output then looks like depends on the target,
+which is why the target is threaded into the read half:
+
+| Target    | What the note adds                                         |
+| --------- | ---------------------------------------------------------- |
+| JSON/YAML | "the output then holds it as a string"                     |
+| CSV/TSV   | "a cell has no type, so the output is the same either way" |
+
+The measurement that makes the old sentence false, and the one that makes the
+new one true, are both named tests in
+[`reports.test.ts`](reports.test.ts).
 
 **Rejected: refusing the document.** API responses with snowflake ids are among
 the most common things anybody would paste here, and most of the time the id is
@@ -382,13 +405,73 @@ Output is **LF, with no trailing newline**, whatever the delimiter. It goes into
 a text box and a clipboard; RFC 4180's CRLF would put a stray carriage return at
 the end of every line of it.
 
-## The JSON boundary
+## The value model, and what it cannot hold
 
-Everything parsed is normalised through a `JsonValue` check before it is
-serialised. YAML can produce values JSON cannot hold, so the whole tree is
-walked up front and the offending path is named
-(`$.blob is a Uint8Array, which JSON cannot represent`). Discovering that at
-serialisation time as a mangled `{}` would be much worse.
+**This tool converts between formats through one value model, and that is a
+deliberate boundary rather than an implementation detail that leaked.** Every
+source is read into it and every target is written out of it:
+
+```
+YAML ─┐                                        ┌─▶ YAML
+JSON ─┼─ read ─▶  text · finite numbers        ├─▶ JSON
+CSV  ─┤          true · false · null   ─ write ┼─▶ CSV
+TSV  ─┘          lists · maps                  └─▶ TSV
+```
+
+The model is `JsonValue`, a compile-time type in
+[`features/registry/types.ts`](../../features/registry/types.ts), and it is more
+than this tool's own business: it is the payload of the `json` data type every
+port in the app is typed against, so it is what this tool's `data` port carries,
+what a wire carries, and what the run cache is keyed on.
+
+**What that costs, exactly.** YAML can express things the model has no place
+for, and so can a JavaScript value arriving on the `json` port:
+
+| Outside the model                          | What happens                                                     |
+| ------------------------------------------ | ---------------------------------------------------------------- |
+| `.nan`, `.inf`, `-.inf`                    | Refused, by path and by line                                     |
+| `!!binary`, `!!set`, `!!omap`              | Refused, by path and by line                                     |
+| A `%YAML 1.1` timestamp, which is a `Date` | Refused, by path and by line                                     |
+| A key that is itself a collection          | Refused                                                          |
+| Two YAML keys that become one text key     | Refused, at the second key                                       |
+| A key that is a number, a boolean or null  | **Read as text, and reported** — `2024:` comes back as `"2024":` |
+
+**`YAML → YAML` is not a distinguished path, and that is the decision.** The
+obvious complaint is that a document going from YAML to YAML never touches
+JSON, so why should JSON's limits apply to it — and the answer is that they are
+not JSON's limits, they are the model's, and the model is the whole tool.
+Preserving `.nan` across that one path would need either a second value model
+that only `YAML → YAML` uses, or a wider `JsonValue`; the first is two tools
+wearing one name, and the second reaches the canvas, the run cache and
+`checkConnection` for a case that arises only when the source and target formats
+happen to be the same. Neither was taken.
+
+**What WAS wrong was the sentence.** Until round eleven the refusal read
+`$.a_nan is NaN, which JSON cannot represent` — naming a format that is in
+neither half of that run, and inviting the reading that some other route would
+be exempt. It names the real constraint now, says what the model holds, says
+that the boundary is deliberate, and — where a pair of quotes is the way
+through — says so:
+
+> **`$.a_nan` is NaN, which this tool's value model cannot hold.**
+> Line 1, column 8.
+> Every format here is read into one value model — text, finite numbers, true,
+> false, null, lists and maps — and the target is written out of it, so YAML to
+> YAML takes the same route as YAML to CSV. NaN, infinity, dates, binary, sets
+> and ordered maps are outside it. This is a stated limitation of the tool
+> rather than a fault in that document. Quote the value in the source and it
+> comes through as text instead.
+
+Two more things changed with it, and both are about a refusal being usable:
+
+- **It carries a line and column.** The reader has always known the range of
+  every node; the check simply was never given it, because `toJS` hands back a
+  plain JavaScript value with no source attached. A `.nan` on line 400 of a
+  900-line document used to name the path and leave you to find it.
+- **It names every value outside the model, not the first.** Six `.nan` values
+  needed six runs. The list stops at ten and the count does not, because a
+  16 MB document of nothing but `.nan` must not describe itself with three
+  million entries.
 
 The `json` **input** port is the one route in that never meets a parser, because
 the value arrives already parsed from another tool. It gets its own guard: see
@@ -483,6 +566,16 @@ world\nGoodbye, world` satisfies every test for delimited text, because it is
    at an arbitrary column. The mapping is against the library's declared
    `RESOURCE_EXHAUSTION` error code, not against the wording of a message, and a
    test asserts that code still arrives.
+10. **`.nan`, `.inf`, `!!binary`, `!!set`, `!!omap` and a 1.1 timestamp are
+    refused on every route, including `YAML → YAML`.** Described above under
+    [the value model](#the-value-model-and-what-it-cannot-hold). Deliberate: one
+    value model, refused honestly and by line, with quoting as the way through
+    for a scalar. Widening the model was considered and rejected in round
+    eleven.
+11. **A YAML key that is a number, a boolean or null becomes text.** `2024:`
+    comes back as `"2024":`. Same boundary as above — object keys in the model
+    are text — and unlike the rest of that list it is a silent change rather
+    than a refusal, so it is **reported** on the `Detected` port instead.
 
 ## Tests
 

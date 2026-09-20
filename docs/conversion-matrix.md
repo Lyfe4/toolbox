@@ -153,8 +153,11 @@ auto-detected unless you say otherwise; the target is always explicit.
 
 ### Between formats
 
-Every conversion goes through the same JSON-shaped value, so the cell is the
-combination of the two halves above plus what the target format cannot hold.
+Every conversion is read into the same value model and written back out of it,
+so the cell is the combination of the two halves above plus what the target
+format cannot hold. See
+[the value model, and `YAML → YAML`](#the-value-model-and-yaml-yaml) for what
+that route costs and why the cost was accepted.
 
 | From → To                     | Verdict                  | What is lost, and whether you are told                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ----------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -162,6 +165,7 @@ combination of the two halves above plus what the target format cannot hold.
 | YAML → JSON                   | **lossy, silent**        | Comments, anchors, tags and the choice of block style are not JSON and are dropped. **Nothing says so.** This cell read `lossy, told` from round three to round eight and no note for any of the four has ever been written — there is no builder for one in `report.ts` and no commit that removed one, so the claim was aspirational rather than drifted. It is four corpus rows, 4 to 7, and they are round ten and round twelve's work. Anything JSON genuinely cannot hold — a `!!binary`, a `!!set`, a collection used as a key, a 1.1 timestamp — is **refused by path**, not mangled, and that half was always true. |
 | JSON/YAML → CSV/TSV           | **lossy, told**          | Three losses, all real and all now reported **by path**: a nested value becomes compact JSON inside the cell (`$[0].user`); a key absent from one row becomes an empty cell indistinguishable from a present-and-empty one, and the columns are named; and every value becomes text. A non-array, or an array of non-objects, is refused clearly. [`reports.test.ts`](../src/tools/structured-data/reports.test.ts)                                                                                                                                                                                                          |
 | CSV/TSV → JSON/YAML           | **lossy, told**          | Every cell becomes a **string**, deliberately — `01234` is a part number, not the number 1234 — and the tool's README states it. Line endings inside quoted cells survive verbatim.                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| YAML → YAML                   | **lossy, told**          | Not a distinguished path, decided in round eleven: it goes through the same value model as every other cell. A comment, an anchor and a scalar style are dropped and **not** said (corpus rows 8 and 9, round twelve's work); a key that is a number, a boolean or null becomes text and **is** said, by key and by path (row 10, this round). `.nan`, `.inf`, `!!binary`, `!!set`, `!!omap` and a 1.1 timestamp are **refused**, by path and by line, in a message that names the model rather than naming JSON.                                                                                                            |
 | YAML stream → YAML            | **exact**                | **Fixed in round three.** A `---`-separated stream is written back as a stream, with a `---` in front of each document. It used to come back as a **sequence**, so a Kubernetes manifest that went through this tool was a file `kubectl` will not read, silently. The report says which of the two happened, and says it from the WRITER rather than from the source — `sortKeys` and a value arriving on the `json` port can both put a different array in front of it.                                                                                                                                                    |
 | YAML stream → JSON/CSV/TSV    | **lossy, told**          | None of the three has a document separator, so the documents become the elements of an array — which is the only JSON-representable form of a stream, and is still a file that does not convert back. Reported, with the count and with "choose YAML as the target to keep the stream". JSON Lines in is the same fact and gets the same note.                                                                                                                                                                                                                                                                               |
 | An empty document in a stream | **fixed in round three** | Found by the yaml-test-suite in round two. `---` STARTS a document and an empty one is `null`; dropping it made a five-document stream come back as a four-element array with no error. Three references agree about the same bytes — the suite's PUW8, js-yaml 5.4.2, and CPython's PyYAML 6.0.3, each asked directly. The rule is now "an empty document with no `---` to declare it", which keeps the case it was really for: an empty input box still says "nothing to parse" rather than producing `null`. Twelve of the twenty-one suite divergences were this one rule.                                               |
@@ -179,6 +183,63 @@ combination of the two halves above plus what the target format cannot hold.
 | Whatever was detected                                                                               | **fixed in round three** | The tool now says which format it decided on, which delimiter it used, and whether it guessed at all, on a `Detected` report port drawn on `/tools` and summarised on the canvas node.                                                                                                                                                                                                                                     |
 | Twenty-nine realistic documents                                                                     | **exact**                | Committed as [`spec/detection-corpus.json`](../src/tools/structured-data/spec/detection-corpus.json): the document, the format it is detected as, and the value it reads to. Round one ran a corpus of this shape and did not write it down; this one is a fixture so the next round can re-run it. See [What changed for a person pasting a document](#what-changed-for-a-person-pasting-a-document).                     |
 
+### The value model, and `YAML → YAML`
+
+**Taken in round eleven, and taken as a decision rather than as a fix.** SD-2
+and SD-5 report that `a_nan: .nan` is refused on a `YAML → YAML` run with the
+message _"`$.a_nan` is NaN, which JSON cannot represent"_, and that a key of
+`2024:` comes back as `"2024":`. Both are real. The question they raise is
+whether `YAML → YAML` is a distinguished path in this tool.
+
+**It is not, and it was not made one.** Every source here is read into one value
+model and every target is written out of it:
+
+| The model holds | The model does not hold                                             |
+| --------------- | ------------------------------------------------------------------- |
+| text            | `NaN`, `Infinity`, `-Infinity`                                      |
+| finite numbers  | dates, binary, sets, ordered maps                                   |
+| `true`, `false` | a key that is not text — a number, a boolean, null, or a collection |
+| `null`          | a comment, an anchor, a tag, a choice of scalar style               |
+| lists, maps     | anything two of which would become one thing                        |
+
+That model is `JsonValue`, and it is not this tool's private business: it is the
+payload of the `json` data type every port in the app is typed against, so it is
+what the `data` port carries, what a wire carries, and what the run cache is
+keyed on. Carrying `.nan` from a YAML reader to a YAML writer needs either a
+**second value model that only this one path uses** — two tools wearing one
+name — or a **wider `JsonValue`**, which reaches the canvas, the cache key and
+`checkConnection` for a case that arises only when the source and target formats
+happen to be the same. Neither is a misplaced check, and neither was taken.
+
+**What was wrong was the message, and it has been replaced.** Being told that
+JSON cannot represent something on a run where you chose neither JSON as the
+source nor JSON as the target is confusing in a way that has nothing to do with
+the actual limitation. Three things changed:
+
+| Before                                                | Now                                                                |
+| ----------------------------------------------------- | ------------------------------------------------------------------ |
+| `$.a_nan is NaN, which JSON cannot represent.`        | `$.a_nan is NaN, which this tool's value model cannot hold.`       |
+| No position at all — a path, and nothing else         | A line and column, at the **value**, not at the key in front of it |
+| The first offender only — six `.nan` values, six runs | Every one of them, listed to ten, counted past it                  |
+
+The detail under it says what the model holds, says that the boundary is
+deliberate rather than a fault in the document, points at the tool's README, and
+— where a pair of quotes really is the way through — says so. The way through is
+**asserted rather than offered**: the test that checks the sentence also converts
+the quoted document.
+
+**And the loss that is not a refusal is now told.** A key that is a number, a
+boolean or null is stringified rather than refused, because a scalar key cannot
+collide silently — `collidesAsJsKey` already refuses `1:` beside `"1":`. That
+left the only honest thing to do about it being to say it, and nothing did. It
+is corpus row 10, and it turns this round: `1 key became text`, naming the key
+as its author wrote it and the map it sits in, on `/tools` and on a canvas node.
+
+**What did not change, and is the round-twelve work.** A comment, an anchor and
+a scalar style are still dropped in silence on a `YAML → YAML` run. Those are
+corpus rows 8 and 9, and they are notes nobody has written rather than a
+boundary anybody decided.
+
 ### Numbers past 2^53, unavoidable and no longer silent
 
 `{"id": 12345678901234567890}` converts to `{"id": 12345678901234567000}`.
@@ -192,8 +253,27 @@ could be, and is not any more:
 
 > **2 numbers were rounded.** JavaScript has one numeric type and it is a
 > double, so an integer past 2^53 cannot be held exactly. 12345678901234567890
-> became 12345678901234567000. At `$.id`, `$.ok`. Convert to CSV or TSV to keep
-> the digits, where every cell stays a string.
+> became 12345678901234567000. At `$.id`, `$.ok`. Quoting it in the source —
+> `"12345678901234567890"` — keeps every digit, because a quoted scalar is read
+> as text, and the YAML output then holds it as a string.
+
+**THAT LAST SENTENCE USED TO BE FALSE, AND IT WAS THE ADVICE.** It read
+_"Convert to CSV or TSV to keep the digits, where every cell stays a string"_,
+appended whatever the target was. SD-13 filed it as JSON-specific advice
+appearing on a non-JSON target, which understates it: **the rounding happens in
+the reader**, so no choice of target can undo it, and following the advice
+exactly produces the rounded number in a CSV cell. Measured, and now a named
+test:
+
+| Source                             | Target | Output                        |
+| ---------------------------------- | ------ | ----------------------------- |
+| `[{"id": 12345678901234567890}]`   | CSV    | `id` / `12345678901234567000` |
+| `[{"id": "12345678901234567890"}]` | CSV    | `id` / `12345678901234567890` |
+
+The second row is the advice that replaced it. Quoting the number in the source
+makes it text before the parser can round it, which is true of every target —
+and what the output then looks like is not, so the target is threaded into the
+read half and the sentence ends differently for a table than for a document.
 
 **THE QUESTION IS ASKED OF THE LITERAL, NOT OF THE VALUE**, and that is the
 whole of why the report can be believed. The obvious implementation walks the
@@ -213,7 +293,8 @@ Three readers, one answer: JSON through a scanner over the source
 ([`lib/jsonNumbers.ts`](../src/lib/jsonNumbers.ts)), YAML through the library's
 own scalars, and the JWT tool through the same scanner over the claims. CSV and
 TSV have no ceiling at all, because every cell comes out as a string — which is
-what the note suggests as the way out.
+a fact about CSV as a **source**, and was for four rounds printed as advice
+about CSV as a **target**.
 
 **And "three readers, one answer" was two readers and two answers**, which round
 four found by asking the two of them the same question. `yamlPath` walks the
@@ -714,6 +795,7 @@ leaving one of those carry it:
 | A column absent from some rows                         | `output`             | The same.                                                          |
 | A number past 2^53 rounded                             | `output`, `data`     | The **read** half. The parser produced it, so both carry it.       |
 | A stream of documents that became an array             | `output`, `data`     | `json` has no document separator either.                           |
+| A YAML key that was not text                           | `output`, `data`     | The **read** half. The parsed structure has the text key too.      |
 | `text-convert`: what the sanitiser removed             | `output`, `rendered` | The sanitised hub is `rendered`, and `output` derives from it.     |
 | `text-convert`: what the Markdown round trip lost      | `output`             | The round trip runs **after** the hub, so `rendered` still has it. |
 | `base64`, `jwt-decode`, `image-convert`, `video-remux` | `output`             | One data port each.                                                |
@@ -779,11 +861,24 @@ manifest rather than left to the call sites:
   be three lines with every one of them a table row. A cell that emits a
   newline fails that last one in a real engine, which is where the document
   people paste actually comes from.
+- `checkValueModel` in the same file is round eleven's, and it is the one whose
+  subject is a **refusal** rather than a note. A refusal has two surfaces and
+  they carry different amounts of text: the panel on `/tools` shows the message,
+  the code, the line and column, and the detail under them; a canvas node shows
+  the **message alone**, because a node has no detail line. So both are asked,
+  and the message is held to naming the value model and to not naming JSON on a
+  `YAML → YAML` run in either place. Beside it, the six-offender enumeration,
+  the target-fitted rounding advice and corpus row 10's note, each drawn with a
+  box of non-zero size and no click anywhere.
 
 Every one of those has a negative control beside it: a conversion that loses
 nothing, a wire out of a port the loss is not in, and a **four-node lossless
 chain** in which every node must say `ok` and no accessible name may contain the
-word. The corpus carries its control per case rather than per suite — every
+word. Round eleven's controls are on SUBJECT rather than on wording — a document
+the model holds must draw **no error panel at all**, not merely a differently
+worded one, and `"2024": launched` must draw no note about a key, which is the
+sharp one: it produces the identical parsed value and the identical output as
+`2024: launched`, and only one of the two lost anything. The corpus carries its control per case rather than per suite — every
 entry names a second document of the same shape that loses nothing, and no note
 about that row's subject may fire on it. A mark that fires on a clean canvas is
 the one people learn to ignore before the day it is true.
@@ -880,8 +975,21 @@ a case proves it; a row with no case reads `not verified`; and the file is
 extended by appending one object, which is the only ceremony rounds ten to
 thirteen should have to perform.
 
-**Round ten moved three of them** — rows 13, 14 and 15, all `text-convert`, all
-`HTML → Markdown` — so the ratio is 6 of 17. Row 13's expectation was
+**Round eleven moved one more** — row 10, a non-string YAML key — so the ratio
+is **7 of 17**. It is worth saying which KIND of move that was, because the
+round it belongs to is mostly about a refusal and a refusal cannot turn a row
+green: a row measures whether a loss is told, and a document that is refused has
+not been converted, so no note about it exists to find. Row 10 is not one of
+those. A key of `2024:` is **not** refused — a scalar key cannot collide
+silently, so the model stringifies it and carries on — which left it a genuine
+silent loss with nothing standing in the way of saying it. It is said now.
+
+Rows 8 and 9, the other two `YAML → YAML` rows, did not move and were not
+expected to: an anchor and a scalar style are notes nobody has written, which is
+round twelve.
+
+**Round ten moved three before it** — rows 13, 14 and 15, all `text-convert`,
+all `HTML → Markdown`. Row 13's expectation was
 **re-specified rather than met as written**, and the corpus says so in the row
 itself: round nine asked the note to name the caption's TEXT, and the
 instrument round ten was asked to use is a census of NAMES. Rows 14 and 15
@@ -895,7 +1003,7 @@ in this file that can turn green without the tool changing, so
 
 <!-- loss-corpus:begin -->
 
-**6 of 17** documented losses are told.
+**7 of 17** documented losses are told.
 
 A round has reported zero silent losses twice, and every time the next round to look found more — round four found 2, and round eight found 17.
 
@@ -910,7 +1018,7 @@ A round has reported zero silent losses twice, and every time the next round to 
 | 7   | A YAML block style collapsed on the way to JSON          | Structured data · YAML → JSON          | `structured-data` | **lossy, silent** |
 | 8   | A YAML anchor expanded on the way to YAML                | Structured data · YAML → YAML          | `structured-data` | **lossy, silent** |
 | 9   | A YAML scalar style collapsed on the way to YAML         | Structured data · YAML → YAML          | `structured-data` | **lossy, silent** |
-| 10  | A non-string YAML key stringified                        | Structured data · YAML → YAML          | `structured-data` | **lossy, silent** |
+| 10  | A non-string YAML key stringified                        | Structured data · YAML → YAML          | `structured-data` | **lossy, told**   |
 | 11  | A CSV header cell trimmed                                | Structured data · CSV/TSV → JSON/YAML  | `structured-data` | **lossy, silent** |
 | 12  | A duplicate JSON key discarded, last wins                | Structured data · Reading JSON         | `structured-data` | **lossy, silent** |
 | 13  | `<caption>` dropped, Markdown target                     | Text convert · HTML → Markdown         | `text-convert`    | **lossy, told**   |
@@ -1228,11 +1336,11 @@ fixture if anything else disagrees.
 
 The twenty-nine come out as:
 
-| What the events describe          | How many | What this tool must do                                             |
-| --------------------------------- | -------- | ------------------------------------------------------------------ |
-| A value JSON can hold             | 13       | Produce it. All thirteen already agreed.                           |
-| A key that is itself a collection | 15       | Refuse at the JSON boundary, which it does, with that message.     |
-| Two keys that collide             | 1        | Refuse — and **the message was wrong**, which is the next section. |
+| What the events describe          | How many | What this tool must do                                                |
+| --------------------------------- | -------- | --------------------------------------------------------------------- |
+| A value JSON can hold             | 13       | Produce it. All thirteen already agreed.                              |
+| A key that is itself a collection | 15       | Refuse at the value-model boundary, which it does, with that message. |
+| Two keys that collide             | 1        | Refuse — and **the message was wrong**, which is the next section.    |
 
 **The key-naming rule came out of the measurement rather than out of taste.** A
 mapping key is named by its own scalar TEXT, not by the value it resolves to.
@@ -1255,16 +1363,18 @@ case. The rule that produced it is `collidesAsJsKey`, which exists because
 `true:` and `"true":` are two keys to YAML and one key to JavaScript — and so
 are `1:` and `"1":`, and `~:` and `"":`. Every one of those documents is valid
 YAML by every reference there is: the suite composes them, js-yaml reads them,
-PyYAML reads them. It is **JSON** that cannot hold them, which is the same
-boundary that refuses a `!!set`, a `!!binary` and a collection key — and the
-only one of the four that was blaming the document.
+PyYAML reads them. What cannot hold them is **this tool's value model**, whose
+keys are text — the same boundary that refuses a `!!set`, a `!!binary` and a
+collection key, and the only one of the four that was blaming the document.
 
 Someone told their valid YAML is invalid goes looking for a syntax error that is
 not there. The two are separated now:
 
 - `That mapping has the same key twice.` — genuinely one key written twice.
-- `Two different YAML keys become the same JSON key.` — the JSON boundary,
-  worded like its three neighbours.
+- `Two different YAML keys become one key in this tool.` — the value-model
+  boundary, worded like its three neighbours. It said `the same JSON key` until
+  round eleven, which named a format that is in neither half of a `YAML → YAML`
+  run; see [the value model](#the-value-model-and-yaml-yaml).
 
 Both are asserted in both directions, because a distinction that only fires one
 way is decoration. And the oracle test can now ask of the 94 error cases what it

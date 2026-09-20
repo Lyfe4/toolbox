@@ -15,7 +15,14 @@ import {
   type YAMLError,
 } from 'yaml';
 
-import { fail, isJsonArray, ok, type JsonValue, type ToolResult } from '@/features/registry/types';
+import {
+  fail,
+  isJsonArray,
+  ok,
+  type JsonValue,
+  type SourcePosition,
+  type ToolResult,
+} from '@/features/registry/types';
 import { isRounded, roundedNumbersInJson, type RoundedNumber } from '@/lib/jsonNumbers';
 import { lost, noted, type ToolNote } from '@/lib/notes';
 import { setOwnProperty } from '@/lib/safeObject';
@@ -60,13 +67,47 @@ export interface Reading {
 const LONG_DIGIT_RUN = /\d{16,}/;
 
 /**
+ * WHAT TO DO ABOUT A ROUNDED INTEGER, FITTED TO THE TARGET THAT WAS CHOSEN.
+ *
+ * This sentence used to be `Convert to CSV or TSV to keep the digits, where
+ * every cell stays a string`, appended whatever the target was. SD-13 filed it
+ * as JSON-specific advice showing up on a non-JSON target. It is worse than
+ * that: it is **wrong on every target, including the two it names**. The
+ * rounding happens in the READER - `JSON.parse` and the YAML composer both
+ * produce a double - so by the time any writer runs the digits are already
+ * gone, and `{"id": 12345678901234567890}` converted to CSV really does come
+ * out as `12345678901234567000`. Measured, and pinned by a test.
+ *
+ * What DOES keep the digits is quoting the number in the source, which makes it
+ * text before the parser can round it. That is true of every target; what
+ * changes with the target is what the output then looks like, and that is the
+ * half the target is threaded through the read for.
+ *
+ * `target` is optional because `parseSource` and `parseAuto` throw the notes
+ * away and genuinely have no target to name. The sentence is complete and true
+ * without one - it just cannot say what the output will look like.
+ */
+function keepTheDigits(source: string, target: Format | undefined): string {
+  const quoted = `Quoting it in the source - \`"${source}"\` - keeps every digit, because a quoted scalar is read as text`;
+
+  if (target === 'csv' || target === 'tsv') {
+    return `${quoted}, and a ${target.toUpperCase()} cell has no type, so the output is the same either way.`;
+  }
+  if (target === undefined) return `${quoted}.`;
+  return `${quoted}, and the ${target === 'json' ? 'JSON' : 'YAML'} output then holds it as a string.`;
+}
+
+/**
  * Rounded integers as notes: ONE note, with a count and every path.
  *
  * Not one note per number. A log export with four hundred snowflake ids in it
  * would otherwise produce four hundred notes, and a list nobody can read is a
  * list nobody reads. The count is the fact; the paths are how you find them.
  */
-function roundedNumberNotes(rounded: readonly RoundedNumber[]): ToolNote[] {
+function roundedNumberNotes(
+  rounded: readonly RoundedNumber[],
+  target: Format | undefined,
+): ToolNote[] {
   if (rounded.length === 0) return [];
 
   const shown = rounded.slice(0, 5);
@@ -81,7 +122,9 @@ function roundedNumberNotes(rounded: readonly RoundedNumber[]): ToolNote[] {
         : `${rounded.length.toString()} numbers were rounded`,
       `JavaScript has one numeric type and it is a double, so an integer past 2^53 cannot be held exactly.${
         first === undefined ? '' : ` ${first.source} became ${first.value.toString()}.`
-      } At ${paths}${rest > 0 ? `, and ${rest.toString()} more` : ''}. Convert to CSV or TSV to keep the digits, where every cell stays a string.`,
+      } At ${paths}${rest > 0 ? `, and ${rest.toString()} more` : ''}.${
+        first === undefined ? '' : ` ${keepTheDigits(first.source, target)}`
+      }`,
       /*
        * BOTH DATA PORTS, because this one happens in the READ half. The parser
        * produced the rounded number, so it is in the parsed structure as well
@@ -145,73 +188,221 @@ function tooDeep<T = never>(path?: string): ToolResult<T> {
 }
 
 /* ========================================================================== *
- * Guarding the JSON boundary
+ * The value model, and its boundary
  * ========================================================================== */
 
 /**
- * Confirms a parsed document really is JSON-representable.
+ * WHAT THIS TOOL CONVERTS THROUGH, AND WHY THE REFUSAL NAMES IT RATHER THAN
+ * NAMING JSON.
  *
- * YAML can produce values JSON cannot hold. `!!binary` yields a byte array,
- * `!!set` a Set, `!!omap` a Map, and a document declaring `%YAML 1.1` gets the
- * 1.1 schema's timestamps as `Date`s. Rather than discovering that at
- * serialisation time as a mangled `{}`, the whole tree is checked up front and
- * the offending path is named.
+ * Every conversion here is READ INTO ONE VALUE MODEL and WRITTEN OUT OF IT.
+ * That model is `JsonValue` - a compile-time type, and the payload of the
+ * `json` data type every port in the app is typed against - so it is also what
+ * the `data` port carries, what a wire carries and what the cache key is built
+ * from. There is one route through this tool and YAML to YAML takes it too.
+ *
+ * The refusals used to say `which JSON cannot represent`. That is true of the
+ * type and confusing on a run where the user chose neither JSON as the source
+ * nor JSON as the target: it names a format that is not in the conversion and
+ * invites the reading that a YAML to YAML path would be exempt. It would not
+ * be. A YAML to YAML path that preserved `.nan` would need a second value
+ * model or a wider `JsonValue`, and both reach the canvas, the cache key and
+ * `checkConnection` for a case that only arises when the two formats are the
+ * same. The decision is recorded in the tool README under
+ * "The value model, and what it cannot hold"; what is fixed here is the
+ * sentence, which named the wrong constraint.
  */
-export function toJsonValue(value: unknown, path = '$', depth = 0): ToolResult<JsonValue> {
-  if (value === null) return ok(null);
+const VALUE_MODEL =
+  'Every format here is read into one value model - text, finite numbers, true, false, null, lists and maps - and the target is written out of it, so YAML to YAML takes the same route as YAML to CSV. NaN, infinity, dates, binary, sets and ordered maps are outside it.';
+
+/** Said after `VALUE_MODEL`, so the refusal reads as a boundary, not a bug. */
+const KNOWN_LIMITATION =
+  'This is a stated limitation of the tool rather than a fault in that document - see "The value model, and what it cannot hold" in the tool README.';
+
+/** The ones a pair of quotes in the source carries through unchanged. */
+const QUOTABLE = new Set(['NaN', 'Infinity', '-Infinity']);
+
+/**
+ * How many offenders a refusal names before it stops listing them.
+ *
+ * SD-12: six `.nan` values needed six runs, because the walk returned on the
+ * first one. It collects now - but a 16 MB document of nothing but `.nan` must
+ * not build a list of three million objects to describe itself, so the COUNT is
+ * of everything and the LIST stops here.
+ */
+const MAX_NAMED_UNSUPPORTED = 10;
+
+/** One value the model cannot hold. `what` reads straight after the path. */
+interface UnsupportedValue {
+  readonly path: string;
+  readonly what: string;
+}
+
+/** The state one walk of a document accumulates. */
+interface ModelWalk {
+  /** Offenders in document order, capped at `MAX_NAMED_UNSUPPORTED`. */
+  readonly named: UnsupportedValue[];
+  /** Every offender, including the ones past the cap. */
+  total: number;
+  /** The first path past `MAX_DEPTH`, which stops the walk where it is. */
+  tooDeepAt: string | null;
+}
+
+/**
+ * One step of a path for an object key.
+ *
+ * Bracketed when the key is not a bare identifier, which is the spelling
+ * `yamlPath` and `lib/jsonNumbers.ts` both already use. It was `.${key}`
+ * unconditionally here, so `$.shipped at` was a path no reader could parse and
+ * the two halves of the same report disagreed about how to write one -
+ * jsonNumbers' own comment claims this spelling was already shared, and until
+ * now it was not.
+ */
+function pathStep(key: string): string {
+  return /^[A-Za-z_$][\w$]*$/.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`;
+}
+
+/** Records one value outside the model, and stands a null in its place. */
+function outsideTheModel(walk: ModelWalk, path: string, what: string): JsonValue {
+  walk.total += 1;
+  if (walk.named.length < MAX_NAMED_UNSUPPORTED) walk.named.push({ path, what });
+  return null;
+}
+
+/**
+ * Walks a parsed document into the value model, COLLECTING every value that
+ * does not fit rather than stopping at the first.
+ *
+ * The returned tree is only meaningful when nothing was collected; on a
+ * refusal it is thrown away, and the nulls standing in for the offenders exist
+ * so the walk can carry on past one.
+ */
+function intoValueModel(value: unknown, path: string, depth: number, walk: ModelWalk): JsonValue {
+  if (value === null) return null;
 
   switch (typeof value) {
     case 'string':
     case 'boolean':
-      return ok(value);
+      return value;
     case 'number':
-      // NaN and Infinity have no JSON representation.
-      return Number.isFinite(value)
-        ? ok(value)
-        : fail('unsupported-type', `${path} is ${String(value)}, which JSON cannot represent.`);
+      // NaN and the infinities are the only numbers outside the model.
+      return Number.isFinite(value) ? value : outsideTheModel(walk, path, String(value));
     case 'undefined':
-      return fail('unsupported-type', `${path} is undefined, which JSON cannot represent.`);
+      return outsideTheModel(walk, path, 'undefined');
     case 'bigint':
-      return fail('unsupported-type', `${path} is a BigInt, which JSON cannot represent.`);
+      return outsideTheModel(walk, path, 'a BigInt');
     case 'function':
     case 'symbol':
-      return fail('unsupported-type', `${path} is a ${typeof value}, which JSON cannot represent.`);
+      return outsideTheModel(walk, path, `a ${typeof value}`);
     default:
       break;
   }
 
-  if (depth >= MAX_DEPTH) return tooDeep(path);
+  if (depth >= MAX_DEPTH) {
+    walk.tooDeepAt ??= path;
+    return null;
+  }
 
   if (Array.isArray(value)) {
     const items: JsonValue[] = [];
     for (let index = 0; index < value.length; index += 1) {
-      const item = toJsonValue(value[index], `${path}[${index.toString()}]`, depth + 1);
-      if (!item.ok) return item;
-      items.push(item.value);
+      // Depth is the one finding that stops the walk: past it the recursion is
+      // what is at risk, so there is nothing to be gained by seeing the rest.
+      if (walk.tooDeepAt !== null) break;
+      items.push(intoValueModel(value[index], `${path}[${index.toString()}]`, depth + 1, walk));
     }
-    return ok(items);
+    return items;
   }
 
   // Anything with an exotic prototype (Date, Uint8Array, Map, ...) is refused
   // rather than quietly stringified into something meaningless.
   const prototype: unknown = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
-    return fail(
-      'unsupported-type',
-      `${path} is ${describeExotic(value)}, which JSON cannot represent.`,
-      {
-        detail: 'Only strings, numbers, booleans, null, arrays and plain objects convert.',
-      },
-    );
+    return outsideTheModel(walk, path, describeExotic(value));
   }
 
   const result: Record<string, JsonValue> = {};
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    const converted = toJsonValue(item, `${path}.${key}`, depth + 1);
-    if (!converted.ok) return converted;
-    setOwnProperty(result, key, converted.value);
+    if (walk.tooDeepAt !== null) break;
+    setOwnProperty(result, key, intoValueModel(item, `${path}${pathStep(key)}`, depth + 1, walk));
   }
-  return ok(result);
+  return result;
+}
+
+/** Builds the refusal from everything one walk found. */
+function outsideTheModelFailure<T = never>(
+  walk: ModelWalk,
+  locate: ((path: string) => SourcePosition | null) | undefined,
+): ToolResult<T> {
+  const positions = walk.named.map((entry) => locate?.(entry.path) ?? null);
+  const only = walk.named[0];
+
+  /*
+   * THE FIRST POSITION THERE IS, not the first entry's. Not every offender has
+   * one: an expanded alias puts a second copy of a value in the tree at a path
+   * no node in the document sits at, so `$.copy.n` is a real entry with nothing
+   * to point at. Taking `positions[0]` would hand back a refusal with no caret
+   * the moment the unlocatable one happened to come first - which today it
+   * cannot, because an anchor is written before its alias, and which is not a
+   * property worth depending on for the sake of one array index.
+   */
+  const first = positions.find((position) => position !== null) ?? undefined;
+
+  const message =
+    walk.total === 1 && only !== undefined
+      ? `${only.path} is ${only.what}, which this tool's value model cannot hold.`
+      : `${walk.total.toString()} values in that document are outside this tool's value model.`;
+
+  const rest = walk.total - walk.named.length;
+  const listed = walk.named
+    .map((entry, index) => {
+      const at = positions[index];
+      const where = at === null || at === undefined ? '' : ` (line ${at.line.toString()})`;
+      return `${entry.path} is ${entry.what}${where}`;
+    })
+    .join(', ');
+
+  const parts = [
+    walk.total === 1 ? '' : `${listed}${rest > 0 ? `, and ${rest.toString()} more` : ''}.`,
+    VALUE_MODEL,
+    KNOWN_LIMITATION,
+    // Only when every one of them really is quotable, which needs the list to
+    // be complete: advice that fits nine of eleven values is advice that sends
+    // somebody back for a second run, which is the finding above this one.
+    rest === 0 && walk.named.every((entry) => QUOTABLE.has(entry.what))
+      ? 'Quote the value in the source and it comes through as text instead.'
+      : '',
+  ].filter((part) => part !== '');
+
+  return fail('unsupported-type', message, { position: first, detail: parts.join(' ') });
+}
+
+/**
+ * Confirms a parsed document fits the value model, naming everything that does
+ * not - and, where the caller can say, WHERE each one is.
+ *
+ * YAML produces values the model cannot hold. `!!binary` yields a byte array,
+ * `!!set` a Set, `!!omap` a Map, `.nan` and `.inf` yield numbers no format here
+ * writes, and a document declaring `%YAML 1.1` gets the 1.1 schema's timestamps
+ * as `Date`s. Rather than discovering that at serialisation time as a mangled
+ * `{}`, the whole tree is checked up front.
+ *
+ * `locate` is optional because only the YAML reader has anything to answer it
+ * with: the library hands over a range per node, and `JSON.parse` hands over a
+ * value with no source at all.
+ */
+export function toJsonValue(
+  value: unknown,
+  path = '$',
+  locate?: (path: string) => SourcePosition | null,
+): ToolResult<JsonValue> {
+  const walk: ModelWalk = { named: [], total: 0, tooDeepAt: null };
+  const converted = intoValueModel(value, path, 0, walk);
+
+  // Depth first: it is the finding that stopped the walk, so the list of
+  // offenders behind it is whatever happened to be in front of the limit.
+  if (walk.tooDeepAt !== null) return tooDeep(walk.tooDeepAt);
+  return walk.total === 0 ? ok(converted) : outsideTheModelFailure(walk, locate);
 }
 
 /**
@@ -223,6 +414,16 @@ export function toJsonValue(value: unknown, path = '$', depth = 0): ToolResult<J
  * unexplained crash.
  */
 function describeExotic(value: object): string {
+  /*
+   * A TYPED ARRAY IS NAMED BY WHAT IT IS, because its class name is not the
+   * same in both engines this app ships to. The `yaml` package resolves
+   * `!!binary` to a `Buffer` where one exists and to a `Uint8Array` where one
+   * does not, so the refusal for one document read `$.blob is a Buffer` under
+   * Node and `$.blob is a Uint8Array` in a browser - two sentences for one
+   * fault, neither of them a word the person who wrote `!!binary` used.
+   */
+  if (ArrayBuffer.isView(value)) return 'binary data';
+
   const constructor: unknown = (value as { constructor?: unknown }).constructor;
   const name =
     typeof constructor === 'function' && typeof constructor.name === 'string'
@@ -640,7 +841,7 @@ function collidesAsJsKey(a: ParsedNode, b: ParsedNode): boolean {
  * `true: / "true":`. That second document is valid YAML by every reference
  * there is: yaml-test-suite composes it, js-yaml reads it, PyYAML reads it. It
  * is THIS TOOL that cannot carry it, because JSON object keys are strings and
- * both of those become `"true"` - the same JSON boundary that refuses a `!!set`
+ * both of those become `"true"` - the same value-model boundary that refuses a `!!set`
  * or a collection key, and the only one of the three that was blaming the
  * document for it.
  *
@@ -662,7 +863,7 @@ function isSameYamlKey(a: ParsedNode, b: ParsedNode): boolean {
  * the library stringifies it to `"[ a, b ]"` - which means two different
  * collection keys can flatten onto each other and one value wins, silently.
  * Refusing is consistent with how `!!set`, `!!omap` and `!!binary` are handled:
- * this is the JSON boundary, and it is stated rather than papered over.
+ * this is the value-model boundary, and it is stated rather than papered over.
  */
 function firstCollectionKey(document: Document.Parsed): ParsedNode | null {
   let found: ParsedNode | null = null;
@@ -708,7 +909,7 @@ function yamlParseFailure<T = never>(error: YAMLError): ToolResult<T> {
  *
  * Both are refusals - a document that means two things at one key has no JSON
  * form either way - but only one of them is about the document being wrong.
- * The `same-json-key` half is this tool's JSON boundary, which is why it is
+ * The `same-json-key` half is this tool's value-model boundary, which is why it is
  * worded like the other three (`!!set`, `!!binary`, a collection key) rather
  * than like a syntax error, and why the oracle test can now assert that no
  * document the yaml-test-suite marks invalid is refused by it.
@@ -727,12 +928,13 @@ function duplicateKeyFailure<T = never>(
           'A mapping may name each key once. Two entries with one key have no single value, so ' +
           'which one survived would be a coin toss.',
       })
-    : fail('unsupported-type', 'Two different YAML keys become the same JSON key.', {
+    : fail('unsupported-type', 'Two different YAML keys become one key in this tool.', {
         position,
         detail:
           'This is valid YAML - `true:` and `"true":` are two keys, and so are `1:` and `"1":`, ' +
-          'and `~:` and `"":`. JSON object keys are strings, so both become one and one value ' +
-          'would be lost with nothing to say so.',
+          'and `~:` and `"":`. Keys in the value model every conversion here goes through are ' +
+          'text, so both become one and one value would be lost with nothing to say so. ' +
+          KNOWN_LIMITATION,
       });
 }
 
@@ -915,9 +1117,7 @@ function yamlPath(ancestors: readonly unknown[], visited: unknown): string {
     if (isMap(node)) {
       const key: unknown = isPair(child) ? child.key : null;
       const name = isScalar(key) && typeof key.value === 'string' ? key.value : null;
-      if (name !== null) {
-        parts.push(/^[A-Za-z_$][\w$]*$/.test(name) ? `.${name}` : `[${JSON.stringify(name)}]`);
-      }
+      if (name !== null) parts.push(pathStep(name));
       continue;
     }
 
@@ -994,7 +1194,130 @@ function duplicateYamlDirective(text: string): number | null {
  */
 const DIRECTIVE_LINE = /^%/m;
 
-function readYamlSource(text: string): ToolResult<Reading> {
+/**
+ * Where each VALUE in a YAML stream sits in the source, by the path the value
+ * model names it with.
+ *
+ * Theme three's fourth member. Every `unsupported-type` refusal carried a path
+ * and no position: a `.nan` on line 400 of a 900-line document said what it was
+ * called and left the reader to find it. The reader has always known - the
+ * library hands over a range per node - and the boundary check simply was not
+ * given it, because `toJS` returns a plain JavaScript value with no source on
+ * it at all. This rebuilds the association from the document tree.
+ *
+ * ONLY BUILT ON A REFUSAL. A whole second walk of a 16 MB document is a real
+ * cost, and the happy path has nothing to look up.
+ *
+ * KEY SCALARS ARE SKIPPED. `visit` reaches a Pair's key and its value, and
+ * `yamlPath` gives both of them the same path - so without this the caret for
+ * `a_nan: .nan` would land on `a_nan` rather than on the `.nan` that is the
+ * problem, which is exactly the "at the construct start" complaint this is
+ * here to answer.
+ */
+function yamlValuePositions(
+  documents: readonly Document.Parsed[],
+  text: string,
+): ReadonlyMap<string, SourcePosition> {
+  const found = new Map<string, SourcePosition>();
+
+  documents.forEach((document, position) => {
+    const prefix = documentPrefix(documents, position);
+
+    const record = (key: unknown, node: unknown, ancestors: readonly unknown[]): undefined => {
+      if (key === 'key') return undefined;
+      const range: unknown = (node as { range?: unknown }).range;
+      if (!Array.isArray(range) || typeof range[0] !== 'number') return undefined;
+      const path = `${prefix}${yamlPath(ancestors, node)}`;
+      // First wins: an expanded alias can put a second node at one path, and
+      // the first is the one the reader scrolled past.
+      if (!found.has(path)) found.set(path, positionFromOffset(text, range[0]));
+      return undefined;
+    };
+
+    visit(document, {
+      Map: (key, node, ancestors) => record(key, node, ancestors),
+      Seq: (key, node, ancestors) => record(key, node, ancestors),
+      Scalar: (key, node, ancestors) => record(key, node, ancestors),
+    });
+  });
+
+  return found;
+}
+
+/** `$` for one document, `$[2]` for the third of a stream. */
+function documentPrefix(documents: readonly unknown[], index: number): string {
+  return documents.length > 1 ? `$[${index.toString()}]` : '$';
+}
+
+/**
+ * Keys the source wrote as something other than text, which the model made
+ * text - corpus row 10, and the half of SD-5 that survives the decision.
+ *
+ * YAML allows a number, a boolean, null or a 1.1 timestamp as a mapping key.
+ * The value model this tool converts through has text keys, so `2024:` becomes
+ * `"2024":` and the document that comes out is not the document that went in.
+ *
+ * THE DECISION WAS TAKEN NOT TO WIDEN THE MODEL - see `VALUE_MODEL` - so the
+ * remaining honest thing is to SAY SO, which nothing did. This is a read-half
+ * loss, so it reaches `data` as well as `output`: the parsed structure has the
+ * text key too.
+ *
+ * A key that is a COLLECTION is refused rather than noted, above, because two
+ * of those can collapse onto each other; a scalar key cannot collide silently,
+ * since `collidesAsJsKey` already refuses `1:` beside `"1":`.
+ */
+function nonStringKeyNotes(documents: readonly Document.Parsed[]): ToolNote[] {
+  const found: { readonly key: string; readonly at: string }[] = [];
+
+  documents.forEach((document, position) => {
+    const prefix = documentPrefix(documents, position);
+
+    visit(document, {
+      Pair: (_index, pair, ancestors) => {
+        const key: unknown = pair.key;
+        if (!isScalar(key) || typeof key.value === 'string') return undefined;
+        /*
+         * `source` is what the AUTHOR WROTE - `0x10` rather than `16` - which
+         * is the spelling they will search their own document for. An empty
+         * key (`: a`, which YAML reads as null) has no source to quote, and
+         * printing it as an empty pair of backticks would name nothing.
+         */
+        const written: unknown = key.source;
+        found.push({
+          key:
+            typeof written === 'string' && written !== ''
+              ? `\`${written}\``
+              : 'an empty key, which YAML reads as null,',
+          at: `${prefix}${yamlPath(ancestors, pair)}`,
+        });
+        return undefined;
+      },
+    });
+  });
+
+  if (found.length === 0) return [];
+
+  const one = found.length === 1;
+  const shown = found.slice(0, 5);
+  const rest = found.length - shown.length;
+  const where = shown.map((entry) => `${entry.key} at ${entry.at}`).join(', ');
+
+  return [
+    lost(
+      one ? '1 key became text' : `${found.length.toString()} keys became text`,
+      `YAML allows a number, a boolean or null as a mapping key, and the value model every conversion here goes through has text keys only. So ${where}${
+        rest > 0 ? `, and ${rest.toString()} more` : ''
+      } ${one ? 'is' : 'are'} text from here on, and a YAML target writes ${
+        one ? 'it' : 'them'
+      } back quoted. ${KNOWN_LIMITATION}`,
+      // Both, because the stringifying happened in the READ half: the parsed
+      // structure on `data` carries the text key as well as the document does.
+      ['output', 'data'],
+    ),
+  ];
+}
+
+function readYamlSource(text: string, target: Format | undefined): ToolResult<Reading> {
   const duplicate = duplicateYamlDirective(text);
   if (duplicate !== null) {
     return fail('parse-error', 'That document has two %YAML directives.', {
@@ -1056,6 +1379,15 @@ function readYamlSource(text: string): ToolResult<Reading> {
 
   const values: JsonValue[] = [];
 
+  /*
+   * Built once, and only if something is refused. See `yamlValuePositions`.
+   */
+  let positions: ReadonlyMap<string, SourcePosition> | null = null;
+  const locate = (path: string): SourcePosition | null => {
+    positions ??= yamlValuePositions(filled, text);
+    return positions.get(path) ?? null;
+  };
+
   for (let index = 0; index < filled.length; index += 1) {
     const document = filled[index];
     if (document === undefined) continue;
@@ -1064,10 +1396,10 @@ function readYamlSource(text: string): ToolResult<Reading> {
     if (collectionKey !== null) {
       return fail(
         'unsupported-type',
-        'A YAML key is itself a collection, which JSON cannot represent.',
+        "A YAML key is itself a collection, which this tool's value model cannot hold.",
         {
           position: positionFromOffset(text, collectionKey.range[0]),
-          detail: 'Object keys are strings, so two collection keys could collapse onto each other.',
+          detail: `Keys in that model are text, so two collection keys could collapse onto each other. ${KNOWN_LIMITATION}`,
         },
       );
     }
@@ -1081,7 +1413,7 @@ function readYamlSource(text: string): ToolResult<Reading> {
 
     // A multi-document stream is reported as an array, so the path says which
     // document a bad value came out of.
-    const converted = toJsonValue(raw, filled.length > 1 ? `$[${index.toString()}]` : '$');
+    const converted = toJsonValue(raw, documentPrefix(filled, index), locate);
     if (!converted.ok) return converted;
     values.push(converted.value);
   }
@@ -1101,8 +1433,10 @@ function readYamlSource(text: string): ToolResult<Reading> {
    */
 
   if (LONG_DIGIT_RUN.test(text)) {
-    notes.push(...roundedNumberNotes(roundedNumbersInYaml(filled)));
+    notes.push(...roundedNumberNotes(roundedNumbersInYaml(filled), target));
   }
+
+  notes.push(...nonStringKeyNotes(filled));
 
   const single = values.length === 1 ? values[0] : undefined;
   return ok({
@@ -1114,6 +1448,12 @@ function readYamlSource(text: string): ToolResult<Reading> {
   });
 }
 
+/**
+ * Reads and hands back the value alone, for callers with nothing to report to.
+ *
+ * No target, and that is not an omission: the notes go nowhere from here, so
+ * there is nothing for a target to fit.
+ */
 export function parseSource(
   source: string,
   format: Format,
@@ -1123,7 +1463,21 @@ export function parseSource(
   return read.ok ? ok(read.value.data) : read;
 }
 
-export function readSource(source: string, format: Format, delimiter: string): ToolResult<Reading> {
+/**
+ * Reads a document, in the format named.
+ *
+ * `target` is what will be WRITTEN, and it is here because one of the notes
+ * the read half produces is advice - what to do about an integer that was
+ * rounded - and advice that does not fit the target the user chose is the
+ * defect SD-13 filed. See `keepTheDigits`. It is optional because
+ * `parseSource` genuinely has no target; the note is complete without one.
+ */
+export function readSource(
+  source: string,
+  format: Format,
+  delimiter: string,
+  target?: Format,
+): ToolResult<Reading> {
   const text = stripBom(source);
 
   switch (format) {
@@ -1157,12 +1511,12 @@ export function readSource(source: string, format: Format, delimiter: string): T
         format: 'json',
         delimiter: null,
         documents: 1,
-        notes: roundedNumberNotes(roundedNumbersInJson(text)),
+        notes: roundedNumberNotes(roundedNumbersInJson(text), target),
       });
     }
 
     case 'yaml':
-      return readYamlSource(text);
+      return readYamlSource(text, target);
 
     case 'csv':
     case 'tsv': {
@@ -1206,7 +1560,7 @@ export function readSource(source: string, format: Format, delimiter: string): T
  * makes for `---`-separated documents, for the same reason: it is what the file
  * says, and it is the only JSON-representable form of it.
  */
-function parseJsonLines(text: string): ToolResult<Reading> | null {
+function parseJsonLines(text: string, target: Format | undefined): ToolResult<Reading> | null {
   const lines = text.split(/\r\n|\r|\n/).filter((line) => line.trim() !== '');
   if (lines.length < 2) return null;
 
@@ -1241,6 +1595,7 @@ function parseJsonLines(text: string): ToolResult<Reading> | null {
                 path: entry.path.replace(/^\$/, `$[${position.toString()}]`),
               })),
             ),
+            target,
           )
         : []),
     ],
@@ -1342,14 +1697,20 @@ const NOT_A_FORMAT = 'This is not JSON, YAML, CSV or TSV that this tool can read
  * If nothing else parses, the JSON error is reported rather than the YAML one -
  * it is the more specific of the two and names the real problem.
  */
+/** The value-only wrapper. No target, for the reason `parseSource` has none. */
 export function parseAuto(source: string, configuredDelimiter: string): ToolResult<JsonValue> {
   const read = readAuto(source, configuredDelimiter);
   return read.ok ? ok(read.value.data) : read;
 }
 
-export function readAuto(source: string, configuredDelimiter: string): ToolResult<Reading> {
+/** Detects and reads. `target` is threaded for the reason `readSource` states. */
+export function readAuto(
+  source: string,
+  configuredDelimiter: string,
+  target?: Format,
+): ToolResult<Reading> {
   const detected = detectSource(source, configuredDelimiter);
-  const first = readSource(source, detected.format, detected.delimiter);
+  const first = readSource(source, detected.format, detected.delimiter, target);
 
   /*
    * YAML was the fallback rather than a finding, AND IT FOUND NOTHING - either
@@ -1399,7 +1760,7 @@ export function readAuto(source: string, configuredDelimiter: string): ToolResul
 
   if (first.ok || detected.format !== 'json' || first.error.code !== 'parse-error') return first;
 
-  const asLines = parseJsonLines(stripBom(source));
+  const asLines = parseJsonLines(stripBom(source), target);
   if (asLines !== null) return asLines;
 
   /*
@@ -1432,7 +1793,7 @@ export function readAuto(source: string, configuredDelimiter: string): ToolResul
   let jsoncError: ToolResult<Reading> | null = null;
 
   if (stripped.changed) {
-    const asJsonc = readSource(stripped.text, 'json', detected.delimiter);
+    const asJsonc = readSource(stripped.text, 'json', detected.delimiter, target);
     if (!asJsonc.ok) jsoncError = asJsonc;
     if (asJsonc.ok) {
       const removed = describeJsonc(stripped);
@@ -1479,7 +1840,7 @@ export function readAuto(source: string, configuredDelimiter: string): ToolResul
    * error is the honest answer, and it points at the character that is
    * actually the problem.
    */
-  const asYaml = readSource(source, 'yaml', detected.delimiter);
+  const asYaml = readSource(source, 'yaml', detected.delimiter, target);
   if (!asYaml.ok || foldsLines(stripBom(source))) return jsoncError ?? first;
   return ok({
     ...asYaml.value,

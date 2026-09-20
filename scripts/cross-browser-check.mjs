@@ -4824,6 +4824,243 @@ async function checkLossReports(browser, label) {
 }
 
 /**
+ * THE REFUSAL THAT NAMES THE VALUE MODEL, AND THE TWO NOTES ROUND ELEVEN ADDED.
+ *
+ * Three user-facing sentences changed, and every one of them has to be READ by
+ * somebody with nothing clicked:
+ *
+ *   1. THE REFUSAL. `$.a_nan is NaN, which JSON cannot represent` named a
+ *      format that is in neither half of a YAML to YAML run. It names the value
+ *      model now, it carries a LINE AND COLUMN for the first time, and it lists
+ *      every offender rather than the first. The message is what a canvas node
+ *      prints on its own face - a node has no detail line - so both surfaces
+ *      are asked, which is the matrix's own bar for a sentence being told.
+ *   2. THE ROUNDING ADVICE. It used to say `Convert to CSV or TSV to keep the
+ *      digits` whatever the target was, which is false on every target
+ *      including those two. It fits the target now.
+ *   3. `1 key became text`, corpus row 10, which nothing said at all.
+ *
+ * jsdom can read every one of those strings out of a payload. What it cannot
+ * do is answer whether the box holding them has a size, which is the whole of
+ * the difference between a note existing and a person being told.
+ */
+async function checkValueModel(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  /** The visible text of a notes list, and whether it occupies any space. */
+  const notesOn = async () => {
+    const list = page.getByRole('list', { name: 'Structured data Detected notes' });
+    if ((await list.count()) === 0) return { drawn: false, text: '' };
+    const box = await list.first().boundingBox();
+    return {
+      drawn: box !== null && box.width > 0 && box.height > 0,
+      text: ((await list.first().innerText()) ?? '').replace(/\s+/g, ' ').trim(),
+    };
+  };
+
+  /**
+   * The error panel, DRAWN. `textContent` is satisfied by a panel of zero
+   * height, and a refusal nobody can read is the failure this whole round is
+   * about.
+   */
+  const errorOn = () =>
+    page.evaluate(() => {
+      const box = document.querySelector('[class*="error"]');
+      if (box === null) return { drawn: false, text: '' };
+      const rect = box.getBoundingClientRect();
+      return {
+        drawn: rect.width > 0 && rect.height > 0,
+        text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
+      };
+    });
+
+  /** Runs one document and waits for the panel to settle on an answer. */
+  const run = async (text, settled) => {
+    await page.getByLabel('Structured data input').fill(text);
+    await page.getByRole('button', { name: 'Run' }).click();
+    for (let attempt = 0; attempt < 150; attempt += 1) {
+      const error = await errorOn();
+      const notes = await notesOn();
+      if (settled(error, notes)) return { error, notes };
+      await page.waitForTimeout(100);
+    }
+    return { error: await errorOn(), notes: await notesOn() };
+  };
+
+  try {
+    /* -- 1: the refusal, on the tool page, YAML to YAML -------------------- */
+    await page.goto(`${ORIGIN}/tools/structured-data`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Structured data' }).waitFor({
+      timeout: 15_000,
+    });
+
+    await page.getByRole('combobox', { name: 'Source format' }).click();
+    await page.getByRole('option', { name: 'YAML', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Target format' }).click();
+    await page.getByRole('option', { name: 'YAML', exact: true }).click();
+
+    const nan = await run('a_nan: .nan\n', (error) => error.text.includes('value model'));
+    check(
+      label,
+      'a refused value is drawn on the tool page and names the value model, not JSON',
+      nan.error.drawn &&
+        nan.error.text.includes("$.a_nan is NaN, which this tool's value model cannot hold.") &&
+        !nan.error.text.includes('JSON'),
+      nan.error.text.slice(0, 220),
+    );
+
+    check(
+      label,
+      'and the same panel says what the model holds and where the value is',
+      nan.error.text.includes('text, finite numbers, true, false, null, lists and maps') &&
+        nan.error.text.includes('Line 1, column 8'),
+      nan.error.text.slice(0, 320),
+    );
+
+    /* -- 2: every offender, not the first --------------------------------- */
+    const six = await run('a: .nan\nb: .inf\nc: -.inf\nd: .nan\ne: .nan\nf: .nan\n', (error) =>
+      error.text.includes('6 values'),
+    );
+    check(
+      label,
+      'six unsupported values are enumerated in one run rather than needing six',
+      six.error.drawn &&
+        ['$.a is NaN', '$.b is Infinity', '$.c is -Infinity', '$.d', '$.e', '$.f'].every((part) =>
+          six.error.text.includes(part),
+        ),
+      six.error.text.slice(0, 320),
+    );
+
+    /* -- 3: the negative control for the refusal, on subject --------------- */
+    const fine = await run('a: 1\nb: two\n', (error) => !error.drawn);
+    check(
+      label,
+      'a document the model holds draws no error panel at all',
+      !fine.error.drawn && fine.error.text === '',
+      fine.error.text.slice(0, 160),
+    );
+
+    /* -- 4: SD-13, the advice fitted to the target ------------------------- */
+    const rounded = await run('id: 12345678901234567890\n', (_error, notes) =>
+      notes.text.includes('rounded'),
+    );
+    check(
+      label,
+      'the rounding note tells a YAML target what a YAML output will hold',
+      rounded.notes.drawn &&
+        rounded.notes.text.includes('Quoting it in the source') &&
+        rounded.notes.text.includes('the YAML output then holds it as a string') &&
+        !rounded.notes.text.includes('Convert to CSV or TSV'),
+      rounded.notes.text.slice(0, 280),
+    );
+
+    /* -- 5: corpus row 10 -------------------------------------------------- */
+    const key = await run('2024: launched\n', (_error, notes) => notes.text.includes('key'));
+    check(
+      label,
+      'a YAML key that was not text is drawn on the tool page, naming the key',
+      key.notes.drawn &&
+        key.notes.text.includes('1 key became text') &&
+        key.notes.text.includes('2024'),
+      key.notes.text.slice(0, 240),
+    );
+
+    // The control, and the sharp one: the same key, quoted by its author.
+    const quotedKey = await run('"2024": launched\n', (_error, notes) => !notes.drawn);
+    check(
+      label,
+      'and a key the author quoted draws no note, because nothing became text',
+      !quotedKey.notes.drawn && quotedKey.notes.text === '',
+      quotedKey.notes.text.slice(0, 160),
+    );
+
+    /* -- 6: both of them on a canvas node ---------------------------------- */
+    const nodeLink = (options) =>
+      `${ORIGIN}/?p=${shareParam({
+        v: 3,
+        n: [['n1', 'structured-data', 0, 0, options]],
+        e: [],
+      })}`;
+
+    const summaryOf = () =>
+      page.evaluate(() => {
+        const box = document.querySelector('[data-testid="node-n1"] [class*="nodeSummary"]');
+        if (box === null) return null;
+        const rect = box.getBoundingClientRect();
+        return {
+          text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
+          drawn: rect.width > 0 && rect.height > 0,
+        };
+      });
+
+    const typeInto = async (value) => {
+      await page.locator('[data-testid="node-n1"]').focus();
+      await page.keyboard.press('Enter');
+      const field = page.locator('[data-inspector-input]').first();
+      await field.waitFor({ timeout: 15_000 });
+      await field.fill(value);
+    };
+
+    const untilSummary = async (predicate, timeout) => {
+      const deadline = Date.now() + timeout;
+      for (;;) {
+        const summary = await summaryOf();
+        if ((summary !== null && predicate(summary.text)) || Date.now() > deadline) return summary;
+        await page.waitForTimeout(100);
+      }
+    };
+
+    const yamlToYaml = { source: 'yaml', target: 'yaml', indent: 2, delimiter: 'comma' };
+
+    await page.goto(nodeLink(yamlToYaml), { waitUntil: 'networkidle' });
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+
+    await typeInto('a_nan: .nan\n');
+    const refusedNode = await untilSummary((text) => text.includes('value model'), 30_000);
+    check(
+      label,
+      'a node prints the refusal on its own face, in the words the panel used',
+      refusedNode !== null &&
+        refusedNode.drawn &&
+        refusedNode.text.includes("$.a_nan is NaN, which this tool's value model cannot hold.") &&
+        !refusedNode.text.includes('JSON'),
+      JSON.stringify(refusedNode),
+    );
+
+    await page.goto(nodeLink(yamlToYaml), { waitUntil: 'networkidle' });
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+
+    await typeInto('2024: launched\n');
+    const keyNode = await untilSummary((text) => text.startsWith('Lossy'), 30_000);
+    check(
+      label,
+      'and prints the key that became text, which is corpus row 10 on a node',
+      keyNode !== null &&
+        keyNode.drawn &&
+        keyNode.text.startsWith('Lossy ·') &&
+        keyNode.text.includes('key became text'),
+      JSON.stringify(keyNode),
+    );
+
+    // The control on the canvas: the quoted key loses nothing, so no `Lossy`.
+    await page.goto(nodeLink(yamlToYaml), { waitUntil: 'networkidle' });
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+
+    await typeInto('"2024": launched\n');
+    const cleanNode = await untilSummary((text) => text.includes('1 key'), 30_000);
+    check(
+      label,
+      'a node whose keys were already text says nothing about a key',
+      cleanNode !== null && cleanNode.drawn && !cleanNode.text.includes('Lossy'),
+      JSON.stringify(cleanNode),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
  * THE TOOL THAT COULD NOT SPEAK, AND THE TABLE THAT IGNORED ALPHA.
  *
  * `color-convert` was the only shipped tool that changes values and had no
@@ -10147,7 +10384,29 @@ async function checkOutputViews(browser, label) {
     const jwtVerdict = async (key, token, keyEncoding = 'utf8') => {
       await page.goto(`${ORIGIN}/tools/jwt-decode`, { waitUntil: 'networkidle' });
       await page.getByRole('heading', { level: 1, name: 'JWT' }).waitFor({ timeout: 15_000 });
+      /*
+       * EVERYTHING TYPED HAPPENS BEFORE THE LISTBOX OPENS, AND THAT ORDERING IS
+       * THE FIX FOR A FAULT THAT HIT ROUGHLY ONE CALL IN THREE.
+       *
+       * This used to set the encoding first and fill the token afterwards, and
+       * in WebKit the token fill was silently discarded: `fill` reported
+       * success, reading the box back gave ZERO characters, Run then ran on an
+       * empty box and the tool correctly said `Paste a JWT to decode`. It
+       * presented as the verdict check failing, which is the one shape of
+       * wrongness this file exists to remove.
+       *
+       * Measured rather than guessed. Driving the old sequence on one reused
+       * page reproduced it 22 times in 64 calls; waiting for the listbox to be
+       * detached before typing brought that to 1 in 64, which is what names the
+       * mechanism - Radix hands focus back to the select trigger AFTER the
+       * listbox is gone, and a `fill` landing inside that window types into an
+       * element that focus is leaving. Waiting for a library's internal focus
+       * return is a guess about a library; not typing after it is not. The
+       * order below reproduced 0 times in 96.
+       */
       await page.getByLabel('Key', { exact: true }).fill(key);
+      await page.getByLabel('JWT input').fill(token);
+
       /*
        * A.1's key is base64url, and leaving this alone would hash the RFC's
        * ASCII SPELLING of the secret rather than the secret - which reads
@@ -10163,7 +10422,21 @@ async function checkOutputViews(browser, label) {
       await page
         .getByRole('option', { name: keyEncoding === 'base64url' ? 'Base64' : 'Plain text' })
         .click();
-      await page.getByLabel('JWT input').fill(token);
+
+      /*
+       * AND THE BOX IS READ BACK BEFORE ANYTHING IS ASKED OF THE RESULT.
+       *
+       * The ordering above removes the hazard; this is what stops the next
+       * person reintroducing it and getting a signature verdict as the error
+       * message. A run driven on input the harness failed to type is a fact
+       * about the harness, and it now SAYS so instead of being reported as the
+       * tool reaching the wrong verdict.
+       */
+      const typed = await page.getByLabel('JWT input').inputValue();
+      if (typed !== token) {
+        return `the harness could not type the token - the box holds ${typed.length.toString()} of ${token.length.toString()} characters`;
+      }
+
       await page.getByRole('button', { name: 'Run' }).click();
 
       /*
@@ -12272,6 +12545,7 @@ async function runChecks(engine, label) {
     await checkDeepLinks(browser, label);
     await checkStructuredData(browser, label);
     await checkLossReports(browser, label);
+    await checkValueModel(browser, label);
     await checkColourReports(browser, label);
     await checkMarkdownCensus(browser, label);
     await checkSerialisedFaces(browser, label);

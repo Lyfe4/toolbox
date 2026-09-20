@@ -27,6 +27,18 @@ Round eight, 2026-09-20, against `592b3b2`.
 > sentences the tool was printing that were false, one of them since round
 > four, and both were found by a negative control rather than by reading
 > anything.
+>
+> **Round eleven, 2026-09-21, against `3e00c62`, is after that** —
+> [Round eleven, done](#round-eleven-done). It takes the third item of the plan:
+> the value model. The decision is **not to widen it**, so what changed is the
+> refusal — it names the model rather than naming JSON, it carries a line and
+> column for the first time, and it lists every offender rather than the first.
+> SD-13 rode along and turned out to be worse than filed: the advice it
+> complained about was false on **every** target, including the two it named.
+> **The ratio goes from 6 of 17 to 7 of 17**, on row 10 — which turns because a
+> non-string key is stringified rather than refused. It also found, and fixed,
+> **why `check:browsers` fails in WebKit about one JWT call in three** — which
+> is not what the harness's own comment beside that timeout says it is.
 
 **The four-line summary of the reply.** Of the 40 numbered findings, 15
 reproduce exactly as described, 11 reproduce with a different cause or scope,
@@ -2141,3 +2153,361 @@ Rounds eleven to thirteen as the plan sets them out, with three items sharpened:
   it. It belongs with round thirteen's one-line decisions.
 - **The `unsupported` half of TC-1**, as set out above, with the test that
   falls due when somebody takes it.
+
+---
+
+## Round eleven, done
+
+2026-09-21, against `3e00c62`. The brief takes the decision before the work:
+**is `YAML → YAML` a distinguished path in this tool?** It is not, and it was
+not made one. So this round is not a change to a type — it is a refusal made
+honest, plus the three things riding along, plus the one corpus row that turns
+out not to be blocked by the decision at all.
+
+### The decision, and where it is now recorded
+
+One value model, `JsonValue`, read into from every source and written out of to
+every target. Carrying `.nan` or an integer key from a YAML reader to a YAML
+writer needs either a second value model that only that one path uses, or a
+wider `JsonValue` — and `JsonValue` is the payload of the `json` data type every
+port in the app is typed against, so widening it reaches the canvas, the run
+cache and `checkConnection` for a case that arises only when the two formats
+happen to be the same. Neither was taken.
+
+It is written down in two places a reader will actually be standing in when the
+question occurs to them, and it is written as a boundary rather than as an
+apology:
+
+- [`src/tools/structured-data/README.md`](../src/tools/structured-data/README.md)
+  §"The value model, and what it cannot hold" — which replaces §"The JSON
+  boundary", a heading that was itself part of the problem — plus two new
+  entries in that file's numbered **Known limitations** list, which is the list
+  somebody re-filing this as a bug would be pointed at.
+- [docs/conversion-matrix.md](conversion-matrix.md#the-value-model-and-yaml-yaml)
+  §"The value model, and `YAML → YAML`", and a `YAML → YAML` row in the
+  between-formats table, which had none.
+
+**Nothing is blocked with no way through, and that was checked rather than
+assumed.** Every scalar the model refuses has a spelling that carries it:
+
+| Refused               | Quoted spelling that converts | Reads to       |
+| --------------------- | ----------------------------- | -------------- |
+| `v: .nan`             | `v: ".nan"`                   | `".nan"`       |
+| `v: .inf`             | `v: ".inf"`                   | `".inf"`       |
+| `v: !!binary aGk=`    | `v: "aGk="`                   | `"aGk="`       |
+| `v: 2001-12-14` (1.1) | `v: "2001-12-14"`             | `"2001-12-14"` |
+
+`!!set` and `!!omap` have no such spelling, because the thing being refused is a
+_container_ rather than a scalar — and that is exactly why the refusal offers
+the workaround **conditionally** rather than always. It is offered when every
+value it found is a non-finite number, which is the case where a pair of quotes
+alone is enough; a `!!binary` needs the tag dropped as well, so it is not
+promised there either. A refusal that names a workaround nobody has run is the
+same wall with a sign on it, so the test that asserts the sentence also converts
+the quoted document.
+
+### What was built
+
+| Built                                                                | Where                                                      |
+| -------------------------------------------------------------------- | ---------------------------------------------------------- |
+| The refusal names the value model, not JSON                          | `VALUE_MODEL`, `outsideTheModelFailure`, `convert.ts`      |
+| …and the two neighbouring refusals with it                           | `duplicateKeyFailure`, the collection-key refusal          |
+| **SD-12** — every offender collected, listed to ten, counted past it | `intoValueModel`, `ModelWalk`, `MAX_NAMED_UNSUPPORTED`     |
+| **A line and column on an `unsupported-type` refusal**, at the value | `yamlValuePositions`, built only when something is refused |
+| **SD-13** — the target threaded into the read half                   | `keepTheDigits`, `readSource`/`readAuto`, `index.ts`       |
+| **Corpus row 10** — a key that was not text, said                    | `nonStringKeyNotes`                                        |
+| Binary named by what it is, not by the engine's class                | `describeExotic`                                           |
+| One path spelling across all three readers                           | `pathStep`                                                 |
+| A `LOSSY_RUNS` entry for the new note                                | `notePorts.test.ts`                                        |
+| `checkValueModel` — `/tools` and a canvas node, in two engines       | `scripts/cross-browser-check.mjs`                          |
+
+### SD-13 is worse than it was filed as, and the doc repeated the claim twice
+
+The write-up records it as _"Big-int rounding warning gives JSON-specific advice
+on non-JSON targets"_ and round eight confirmed it as a hard-coded literal. Both
+are true and both understate it. **The advice does not work on any target,
+including the two it names**, because the rounding happens in the **reader** —
+`JSON.parse` and the YAML composer each produce a double — so by the time a
+writer runs there are no digits left for a target to keep. Measured:
+
+| Source                             | Target | Output                        |
+| ---------------------------------- | ------ | ----------------------------- |
+| `[{"id": 12345678901234567890}]`   | CSV    | `id` / `12345678901234567000` |
+| `[{"id": "12345678901234567890"}]` | CSV    | `id` / `12345678901234567890` |
+
+Following the sentence to the letter produced the loss it promised to avoid.
+Both rows are now named tests in `reports.test.ts`, and the first one is the
+reason the sentence was replaced rather than re-worded.
+
+**And it was not only the note.** The same false claim was written into two
+documents as a statement about the product:
+
+- `src/tools/structured-data/README.md`: _"The note also says where to go: CSV
+  and TSV read every cell as a string and have no numeric ceiling at all."_
+- [docs/conversion-matrix.md](conversion-matrix.md#numbers-past-253-unavoidable-and-no-longer-silent):
+  _"CSV and TSV have no ceiling at all, because every cell comes out as a
+  string — which is what the note suggests as the way out."_
+
+Both sentences are **true about CSV as a source and were printed as advice about
+CSV as a target**, which is the whole of the bug in one substitution. Both are
+corrected, and the matrix now carries the measurement rather than the claim.
+
+What replaced it is true of every target — quote the number in the source and it
+is text before the parser can round it — with one clause that is not, which is
+what the target is threaded for:
+
+| Target    | The clause the target decides                                          |
+| --------- | ---------------------------------------------------------------------- |
+| JSON/YAML | "and the JSON/YAML output then holds it as a string"                   |
+| CSV/TSV   | "and a CSV/TSV cell has no type, so the output is the same either way" |
+
+`target` is **optional** on `readSource` and `readAuto`, and that is a decision
+rather than a shortcut: `parseSource` and `parseAuto` throw the notes away and
+genuinely have no target to name, so the alternative was a hundred test call
+sites passing a target that means nothing. The sentence is complete and correct
+without one — it simply cannot say what the output will look like — and the
+guard against the wiring rotting is behavioural rather than structural: every
+SD-13 test runs through `structuredDataTool.run`, so a `run` that stopped
+passing the target fails four of them.
+
+### Row 10 turns, and the reason is worth stating
+
+The brief asks whether row 10 turns, and offers the honest alternative: that a
+better refusal means the loss never happens rather than being told, which is a
+different outcome from a row still silent.
+
+**Neither. Row 10 turns, and it turns for an ordinary reason.** A key that is a
+number, a boolean or null is **not refused** — it is stringified and the
+conversion succeeds. It cannot be refused: a scalar key cannot collide silently,
+because `collidesAsJsKey` already refuses `1:` beside `"1":` at the parser, so
+the only documents left are ones where stringifying loses the key's TYPE and
+nothing else. That is a silent loss with nothing standing in the way of saying
+it, and nothing was saying it.
+
+So the distinction the brief asks the corpus to be able to draw — told, versus
+refused-instead-of-told, versus still silent — is not needed for this row.
+**It will be needed**, and this round is the first evidence of it: a corpus case
+whose document is refused throws inside `lossCorpus.test.ts`'s `run` rather than
+measuring anything, so if a future row's loss is closed by a refusal the file
+will fail loudly rather than carry a permanent red. That is the right failure
+and it is not the right _vocabulary_; recording it here rather than inventing a
+fourth verdict for a row that does not need one.
+
+**What did not turn, and was not expected to.** Rows 8 and 9 — a YAML anchor
+expanded and a scalar style collapsed, both on `YAML → YAML` — are notes nobody
+has written rather than a boundary anybody decided. They are round twelve.
+
+### Proving test and negative control, per item
+
+| Item                          | Proving test                                                                                                                                             | Negative control, and what it is keyed on                                                                                                                                           |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The refusal names the model   | `names the model rather than JSON, on a run where JSON is neither side`                                                                                  | `refuses nothing in a document the model holds perfectly well` — keyed on `result.ok`, not on wording                                                                               |
+| It says what the model holds  | `says what that model holds…`, `records it as a stated limitation…`                                                                                      | the same                                                                                                                                                                            |
+| The way through               | `offers a way through, and the way through works` — asserts the sentence AND converts the quoted document                                                | `offers it only when quoting really would carry every one of them` — a `!!set` must not get the sentence                                                                            |
+| SD-12, collecting             | `names every value outside the model rather than stopping at the first`                                                                                  | `still says which one when there is only one` — the count is measured, not a plural                                                                                                 |
+| SD-12, the cap                | `counts what it found rather than what it listed` — twelve, listed ten                                                                                   | the same test asserts `$.k10` is absent                                                                                                                                             |
+| The position                  | `points at the value rather than at the top of the document` — line 21, column 7                                                                         | `and the position follows the value when the value moves` — two documents, two answers                                                                                              |
+| The position, per document    | `says which document of a stream, and where in it`                                                                                                       | the same                                                                                                                                                                            |
+| The path spelling             | `brackets a path step that is not a bare identifier`                                                                                                     | `$.a.b` is asserted unchanged by the pre-existing `toJsonValue` test                                                                                                                |
+| Binary named by what it is    | `names binary data by what it is, not by whichever class the engine used`                                                                                | the message must contain neither `Buffer` nor `Uint8Array`, alongside an exact `toBe`                                                                                               |
+| SD-13, the advice is now true | `does not keep the digits, which is exactly what the old advice promised` and `and the advice that replaced it does keep them` — both measure the OUTPUT | —                                                                                                                                                                                   |
+| SD-13, per target             | four tests, one per target, through `structuredDataTool.run`                                                                                             | `says nothing about rounding for a number that was not rounded, on any target` — keyed on the subject `rounded`, and run on all four targets because the target is the new variable |
+| Row 10                        | `says so, naming the key as the author wrote it`, plus nesting, an empty key, and a JSON target                                                          | `and nothing about a numeric-looking key the author quoted` — `"2024": launched` produces the identical value and the identical output, and only one of the two lost anything       |
+| Row 10, end to end            | `lossCorpus.test.ts` row 10, which derives the verdict and the ratio                                                                                     | the corpus's own per-case control, on subject (`titleContains: "key"`)                                                                                                              |
+| All of the above, on screen   | `checkValueModel` in two engines: the panel on `/tools` and the node face                                                                                | a document the model holds must draw **no error panel at all**; a quoted key must draw no note                                                                                      |
+
+**Shown failing against a deliberate break, one at a time.** Eleven breaks were
+applied to `convert.ts`, each reverted before the next, with the file asserted
+byte-identical afterwards:
+
+| Break                                         | Noticed by                                                                   |
+| --------------------------------------------- | ---------------------------------------------------------------------------- |
+| The refusal names JSON again                  | 4 tests, including the stream and the single-value message                   |
+| The refusal carries no position               | 4, all four position tests                                                   |
+| The position is the key rather than the value | 1 — `points at the value…`, which is the column assertion                    |
+| The walk stops at the first offender again    | 3                                                                            |
+| The advice is the old hard-coded literal      | 2                                                                            |
+| The advice ignores the target it was given    | 2 — the CSV and TSV clauses                                                  |
+| No note when a key was not text               | 6, across `reports.test.ts`, `lossCorpus.test.ts` and `notePorts.test.ts`    |
+| The key note fires on every document          | 6, and **the first of them is the corpus's own negative control for row 10** |
+| A path step is never bracketed                | 1                                                                            |
+| Binary is named by the engine's class again   | 1                                                                            |
+| The duplicate-key refusal names JSON again    | 4, across the unit suite and the oracle                                      |
+
+Not one of them passed unnoticed.
+
+### The ratio, before and after
+
+|                     |             |
+| ------------------- | ----------- |
+| Before round eleven | **6 of 17** |
+| After round eleven  | **7 of 17** |
+
+Row 10. **Shown failing**: deleting the `nonStringKeyNotes` call drops it back
+to 6 of 17 and turns three files red at once — `lossCorpus.test.ts`, whose
+generated block stops matching the document; `reports.test.ts`; and
+`notePorts.test.ts`, whose new `LOSSY_RUNS` entry then produces no note at all.
+
+### What was looked for and not found
+
+- **Another user-facing message in this tool that names JSON where JSON is in
+  neither half.** Every string literal in `structured-data` containing `JSON`
+  was read. What is left is honest: `That is not valid JSON.` fires only on a
+  JSON read; `Read as YAML, not JSON` fires only when JSON was genuinely
+  attempted; `written into the cell as JSON` describes a cell that literally
+  holds compact JSON text, whatever the source and target were; the stream note
+  names JSON, CSV and TSV together as the three formats with no document
+  separator, which is a statement about all three rather than advice about one.
+  The four that were wrong are the four that changed.
+- **A document where the FIRST value outside the model has no position.** The
+  refusal picks the first position there is rather than the first entry's,
+  because an expanded alias contributes offenders at paths no node occupies. A
+  case where that matters could not be constructed: an anchor is written before
+  its alias, so the locatable copy always comes first. The `find` is therefore
+  defensive rather than exercised, and the test beside it is named for what it
+  actually proves — that the alias's copy is **counted** — rather than for what
+  it does not.
+- **Whether the new note cries wolf.** Measured twice rather than argued.
+  Over the yaml-test-suite's 284 readable documents it fires on **8**, and all
+  eight are true positives: `6M2F`, `DFF7`, `FH7J`, `FRK4`, `NHX8`, `S3PD`,
+  `SM9W/01` and `UKK6/00` each contain an empty or `!!null` mapping key. Over
+  the 29 documents of `spec/detection-corpus.json`, across all four targets, it
+  fires **zero** times — the only `warn` notes those 116 runs produce are the
+  two big-integer roundings that were already there.
+- **A cheaper place for the position than a second walk.** There is not one.
+  `toJS` returns a plain JavaScript value with no source attached, and the
+  library's ranges live on the document tree, so the association has to be
+  rebuilt. It is rebuilt **only on a refusal**, which is the one thing that
+  keeps a 16 MB happy path from paying for it.
+- **A way to widen the model cheaply.** `Reading.data` is `JsonValue`; so is the
+  `data` port's payload, so is a wire's, so is the cache key's. There is no
+  version of this that is local to `structured-data`.
+- **Whether `!!binary` could be rescued by the same sentence.** It can be
+  converted — `v: "aGk="` reads to the string — but the user has to drop the tag
+  as well as quote the scalar, so "quote the value" is not the whole
+  instruction. It is left out of the conditional rather than promised loosely.
+
+### The two `check:browsers` failures, and what they turned out to be
+
+**This round's first full `check:browsers` came back 2,679 passed, 10 skipped,
+2 failed** — both in WebKit, both in the JWT sweep, both reading:
+
+```
+no verdict after 30s - the tool reported: Paste a JWT to decode.
+Code: invalid-input
+```
+
+Neither is in this round's area, and the harness's own comment beside that
+timeout says the shape is known: _"measured three times in WebKit deep inside a
+full run… it reproduces on the previous commit too."_ **That is a reason to
+look, not a reason to stop.** Every failure in this file that was once called
+environmental has turned out to be the harness, and this one is no exception —
+but it is not the thing the comment describes either. It is a real fault with a
+nameable mechanism, and it was hitting roughly one call in three.
+
+**The first question was whether the diagnostic could be trusted.** It reports
+the first element whose class contains `error`, and _"Paste a JWT to decode"_ is
+also what an empty box shows — so the sentence is consistent with a fill that
+never landed AND with a stale panel in front of a run that is merely slow.
+Measured: on load, with nothing typed, the page has **no error panel at all**.
+The panel only appears after a Run on an empty box. So the run really did run on
+an empty box.
+
+**Then the mechanism, by reproduction.** Four probes, in order:
+
+| Probe                                                  | Result                                                        |
+| ------------------------------------------------------ | ------------------------------------------------------------- |
+| The two failing calls, a fresh browser context each    | 0 failures in 12, every verdict in ~200 ms                    |
+| The harness's real sequence, one reused page, 16 calls | **22 failures in 64**                                         |
+| The same, dumping the page at the failure              | the key field holds 451 characters; the token box holds **0** |
+| The same, waiting for the listbox to be detached first | 1 failure in 64                                               |
+
+`fill` reports success and the box is empty. The key field, filled a moment
+earlier, is intact. What sits between them is the `Secret encoding` listbox:
+Radix hands focus back to the select trigger **after** the listbox is removed,
+and a `fill` landing inside that window types into an element focus is leaving.
+
+**Waiting for the listbox to be detached takes it from 22 in 64 to 1 in 64,
+which names the mechanism and does not fix it** — the residue is the focus
+return, which happens later still. Waiting for a library's internal focus
+return would be a harness that depends on a library's internals. Not typing
+after it does not: the sequence now fills the key and the token **before** the
+listbox is ever opened. Reproduced **0 times in 96**.
+
+**And the harness now reads the box back before it clicks Run.** The ordering
+removes the hazard; this is what stops it being reintroduced silently, because
+a run driven on input the harness failed to type is a fact about the harness and
+it now says so, instead of being reported as the tool reaching the wrong verdict
+about a signature.
+
+**The same shape elsewhere does not reproduce**, which is worth recording
+because the obvious next move is to go and "fix" every one of them.
+`checkValueModel`, added this round, sets two selects and then fills the input
+repeatedly — the same sequence — and lost **0 fills in 96**. So the fault is not
+"a fill after an option click"; it is that plus whatever else the JWT page's
+sequence does, and the honest scope of the change is the one function that was
+measured failing.
+
+**Is it a product bug?** No, and the reason is worth writing down rather than
+asserting. The window is between a listbox closing and focus arriving at its
+trigger — one frame. Closing the listbox is itself a click, and a person cannot
+release that click, move to the textarea and produce a keystroke inside the same
+frame. A machine can, because `fill` is one call. The mechanism is real and the
+situation it needs is one only a driver can create — which is the inverse of the
+rule [CONTRIBUTING.md](../CONTRIBUTING.md) states for the manual checks, and
+worth having as the other half of it.
+
+### Two things the tool was saying that were not true
+
+Neither was found by reading the code. Both came out of writing a test that
+asked what the string actually was.
+
+1. **`lib/jsonNumbers.ts` claimed a spelling it did not share.** Its comment on
+   bracketing an awkward key reads _"the spelling `toJsonValue`'s refusals
+   already use for awkward keys"_ — and `toJsonValue` appended `.${key}`
+   unconditionally, so a key of `shipped at` produced the path `$.shipped at`,
+   which is not a path anything can read and is not what the rounding report
+   beside it would have printed for the same key. One `pathStep` now, used by
+   the value-model walk and by `yamlPath`, and the comment is true.
+2. **The `!!binary` refusal named a class that depends on the engine.** The
+   `yaml` package resolves `!!binary` to a `Buffer` where one exists and a
+   `Uint8Array` where one does not, so the sentence was `$.blob is a Buffer` in
+   the unit suite and `$.blob is a Uint8Array` in both shipped engines. The
+   tool README's own example wrote the second — correct about the product, and
+   a string no test in this repository could ever have produced. It is
+   `binary data` now, which is the same in both and is a word the person who
+   typed `!!binary` used.
+
+### Anything in the framing I think is wrong
+
+**One thing, and it is small: the brief's reading of what SD-13 costs.** It
+describes SD-13 as advice that needs the target threaded in. That is the fix,
+and it is not the fault — the fault is that the advice was false everywhere, and
+a round that had only threaded the target would have produced
+_"Convert to YAML to keep the digits"_, which is a new false sentence with a
+better provenance. The thing that made this safe was measuring the output of the
+conversion the old sentence recommended, which is not a step the framing asks
+for.
+
+**And one thing I want to record as agreement rather than as a finding**,
+because it was the decision the round turned on: the brief is right that a
+better refusal is enough here, and the check for that is the table of quoted
+spellings above. Had `!!set` been the common case rather than `.nan`, the answer
+would have been different, because a container has no quoted spelling and the
+document would genuinely have been blocked.
+
+### Still open, and unchanged by this round
+
+- **Rows 8 and 9** — a YAML anchor expanded and a scalar style collapsed, on
+  `YAML → YAML`. Both silent, both notes nobody has written. Round twelve, with
+  SD-4a, SD-9, SD-10 and SD-16.
+- **Round nine's claim about the fourteen silent rows** is still not a
+  guarantee, and this round adds a second exception to it: row 10 now produces a
+  note, and row 17 has produced two since round ten. A title match is a fact
+  about two strings, not a fact about the file.
+- **SD-14b**, the duplicate-header position — untouched. The positions added
+  this round are the value-model ones; the CSV header collision still reports
+  line 1, column 1.
+- **TC-9 / corpus row 16** and row 13's caption contents still want the same
+  third census dimension.
+- Everything else the plan lists for rounds twelve and thirteen.

@@ -985,8 +985,8 @@ describe('YAML parsing', () => {
     expect(({} as { polluted?: unknown }).polluted).toBeUndefined();
   });
 
-  it('refuses a value JSON cannot represent, naming the path', () => {
-    // !!binary yields a byte array, which has no JSON form.
+  it('refuses a value the model cannot hold, naming the path', () => {
+    // !!binary yields a byte array, which the value model has no place for.
     const result = parseSource('blob: !!binary "aGk="', 'yaml', ',');
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -1056,15 +1056,17 @@ describe('YAML parsing', () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         /*
-         * AND IT IS A JSON-BOUNDARY REFUSAL, NOT A SYNTAX ERROR. All three of
+         * AND IT IS A VALUE-MODEL REFUSAL, NOT A SYNTAX ERROR. All three of
          * these documents are valid YAML - the yaml-test-suite composes
          * documents of this shape, js-yaml reads them and PyYAML reads them.
-         * What cannot hold them is JSON. Round five separated the two; see
+         * What cannot hold them is the value model every conversion here goes
+         * through, whose keys are text. Round five separated the two and round
+         * eleven stopped the message calling that model JSON; see
          * `duplicateKeyFailure` and "a key that collides only once the document
-         * is JSON" in the oracle test.
+         * is read" in the oracle test.
          */
         expect(result.error.code).toBe('unsupported-type');
-        expect(result.error.message).toBe('Two different YAML keys become the same JSON key.');
+        expect(result.error.message).toBe('Two different YAML keys become one key in this tool.');
         expect(result.error.position?.line).toBe(2);
       }
     }
@@ -1184,7 +1186,7 @@ describe('YAML parsing', () => {
 
   it('refuses a 1.1 timestamp by name instead of emitting a Date', () => {
     // The 1.1 schema resolves timestamps to Date objects, which JSON cannot
-    // hold. The JSON boundary check catches it and names the path.
+    // hold. The value-model check catches it and names the path.
     const result = parseSource('%YAML 1.1\n---\nwhen: 2001-12-14', 'yaml', ',');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('$.when');
@@ -1514,6 +1516,213 @@ describe('sortKeysDeep', () => {
     // is deterministic, which is the property that actually matters here.
     const sorted = sortKeysDeep({ '�': 1, '\u{1F600}': 2, z: 3 });
     expect(Object.keys(sorted as object)).toEqual(['z', '\u{1F600}', '�']);
+  });
+});
+
+/* ========================================================================== *
+ * The value model, and the refusal that names it
+ * ========================================================================== */
+
+/**
+ * ROUND ELEVEN, AND THE DECISION IT RESTS ON.
+ *
+ * SD-2 and SD-5 asked for `.nan` and an integer key to survive YAML to YAML.
+ * The decision taken was NOT to widen the model: there is one value model here,
+ * `JsonValue`, and it is what the `data` port carries, what a wire carries and
+ * what the cache key is built from, so a second one for the single case where
+ * source and target are the same format would be a second tool wearing one
+ * name.
+ *
+ * What was wrong was the SENTENCE. `$.a_nan is NaN, which JSON cannot
+ * represent` names a format that is in neither half of a YAML to YAML run, and
+ * invites the reading that some other route would be exempt. These tests hold
+ * the refusal to naming the real constraint, to saying what the model holds,
+ * and - the part that decides whether this is a boundary or a wall - to naming
+ * a way through that is asserted to work rather than merely offered.
+ */
+describe('a value the model cannot hold', () => {
+  const refusal = (
+    source: string,
+    format: Parameters<typeof parseSource>[1] = 'yaml',
+  ): { message: string; detail: string; line: number | null; column: number | null } => {
+    const result = parseSource(source, format, ',');
+    expect(result.ok, `expected ${source} to be refused`).toBe(false);
+    if (result.ok) return { message: '', detail: '', line: null, column: null };
+    return {
+      message: result.error.message,
+      detail: result.error.detail ?? '',
+      line: result.error.position?.line ?? null,
+      column: result.error.position?.column ?? null,
+    };
+  };
+
+  it('names the model rather than JSON, on a run where JSON is neither side', () => {
+    const { message } = refusal('a_nan: .nan\n');
+    expect(message).toBe("$.a_nan is NaN, which this tool's value model cannot hold.");
+    expect(message).not.toContain('JSON');
+  });
+
+  it('says what that model holds, so the boundary is a fact and not a shrug', () => {
+    const { detail } = refusal('a_nan: .nan\n');
+    expect(detail).toContain('text, finite numbers, true, false, null, lists and maps');
+    expect(detail).toContain('YAML to YAML takes the same route as YAML to CSV');
+  });
+
+  it('records it as a stated limitation and says where it is written down', () => {
+    expect(refusal('a_nan: .nan\n').detail).toContain('stated limitation of the tool');
+    expect(refusal('a_nan: .nan\n').detail).toContain('The value model, and what it cannot hold');
+  });
+
+  /*
+   * THE WAY THROUGH, ASSERTED RATHER THAN OFFERED.
+   *
+   * A refusal that names a workaround nobody has run is worse than one that
+   * names none: it is the same wall with a sign on it. So the sentence is
+   * asserted AND the document it describes is converted, in the same test.
+   */
+  it('offers a way through, and the way through works', () => {
+    expect(refusal('a_nan: .nan\n').detail).toContain('Quote the value in the source');
+    expect(parsed('a_nan: ".nan"\n', 'yaml')).toEqual({ a_nan: '.nan' });
+  });
+
+  it('offers it only when quoting really would carry every one of them', () => {
+    // A Set is not a thing a pair of quotes rescues, so the sentence must not
+    // appear. The control for the test above: it fires on subject, not always.
+    const { detail } = refusal('!!set\n? a\n? b\n');
+    expect(detail).not.toContain('Quote the value in the source');
+    expect(detail).toContain('stated limitation of the tool');
+  });
+
+  it('names binary data by what it is, not by whichever class the engine used', () => {
+    /*
+     * `!!binary` resolves to a `Buffer` where one exists and a `Uint8Array`
+     * where one does not, so this message read differently under Node and in a
+     * browser - two sentences for one fault, neither of them a word the person
+     * who typed `!!binary` used.
+     */
+    const { message } = refusal('blob: !!binary aGk=\n');
+    expect(message).toBe("$.blob is binary data, which this tool's value model cannot hold.");
+    expect(message).not.toContain('Buffer');
+    expect(message).not.toContain('Uint8Array');
+  });
+
+  /* -- SD-12: every offender, not the first ------------------------------- */
+
+  it('names every value outside the model rather than stopping at the first', () => {
+    const { message, detail } = refusal('a: .nan\nb: .inf\nc: -.inf\nd: .nan\ne: .nan\nf: .nan\n');
+
+    expect(message).toBe("6 values in that document are outside this tool's value model.");
+    for (const path of ['$.a', '$.b', '$.c', '$.d', '$.e', '$.f']) {
+      expect(detail, `${path} was not named`).toContain(path);
+    }
+    // And WHAT each one is, not only where: three of the six are not NaN.
+    expect(detail).toContain('$.b is Infinity');
+    expect(detail).toContain('$.c is -Infinity');
+  });
+
+  it('counts what it found rather than what it listed', () => {
+    // Twelve, past the ten the list stops at. The count is of everything,
+    // because a 16 MB document of nothing but `.nan` must not be described by
+    // a list of three million objects.
+    const lines = Array.from({ length: 12 }, (_value, index) => `k${index.toString()}: .nan`);
+    const { message, detail } = refusal(`${lines.join('\n')}\n`);
+
+    expect(message).toBe("12 values in that document are outside this tool's value model.");
+    expect(detail).toContain('and 2 more');
+    expect(detail).toContain('$.k9 is NaN');
+    expect(detail).not.toContain('$.k10');
+  });
+
+  /*
+   * THE CONTROL FOR THE COUNT. One offender must read as one - `1 values in
+   * that document` would be the same list machinery with nothing measuring it,
+   * and the singular message is the one a person sees almost every time.
+   */
+  it('still says which one when there is only one', () => {
+    expect(refusal('only: .inf\n').message).toBe(
+      "$.only is Infinity, which this tool's value model cannot hold.",
+    );
+  });
+
+  /* -- theme three's fourth member: a path AND a position ----------------- */
+
+  it('points at the value rather than at the top of the document', () => {
+    const filler = Array.from({ length: 20 }, (_value, index) => `k${index.toString()}: 1`);
+    const { line, column } = refusal(`${filler.join('\n')}\nlate: .nan\n`);
+
+    expect(line).toBe(21);
+    // Column 7, not 1: the `.nan`, not the `late:` in front of it. A position
+    // at the construct start is the complaint, not the fix.
+    expect(column).toBe(7);
+  });
+
+  /*
+   * AND IT MOVES. A line number asserted once is satisfied by a constant, and
+   * this file has shipped exactly that before - round four's first CRLF test
+   * asserted a position recomputed from a byte offset and passed against the
+   * break. Two documents, two answers.
+   */
+  it('and the position follows the value when the value moves', () => {
+    expect(refusal('early: .nan\nk: 1\n').line).toBe(1);
+    expect(refusal('k: 1\nearly: .nan\n').line).toBe(2);
+  });
+
+  it('says which document of a stream, and where in it', () => {
+    const { message, line } = refusal('---\na: 1\n---\nb: .nan\n');
+    expect(message).toBe("$[1].b is NaN, which this tool's value model cannot hold.");
+    expect(line).toBe(4);
+  });
+
+  it('counts the copy an expanded alias makes, and still points somewhere', () => {
+    /*
+     * `*b` expands to a second copy of the same value, so there are two
+     * offenders - and only one of them sits at a path any node in the document
+     * occupies. The caret goes to the one that can be pointed at rather than to
+     * nowhere; see `outsideTheModelFailure`.
+     */
+    const { message, line } = refusal('base: &b\n  n: .nan\ncopy: *b\n');
+    expect(message).toBe("2 values in that document are outside this tool's value model.");
+    expect(line).toBe(2);
+  });
+
+  it('brackets a path step that is not a bare identifier', () => {
+    // The spelling `yamlPath` and `lib/jsonNumbers.ts` both already use, and
+    // which this walk claimed to share while writing `$.shipped at`.
+    expect(refusal('{"shipped at": 1e999}', 'json').message).toContain('$["shipped at"]');
+  });
+
+  /* -- the negative controls ---------------------------------------------- */
+
+  /*
+   * ON SUBJECT, NOT ON WORDING. The question is whether the document was
+   * refused AT ALL for being outside the model - a control that looked for the
+   * sentence would pass on a run that refused it for something else.
+   */
+  it('refuses nothing in a document the model holds perfectly well', () => {
+    const fine = 'a: 1\nb: 2.5\nc: true\nd: null\ne: [1, 2]\nf: {g: h}\n';
+    const result = parseSource(fine, 'yaml', ',');
+    expect(result.ok).toBe(true);
+  });
+
+  it('and nothing in one whose awkward values are quoted', () => {
+    expect(parsed('a: ".nan"\nb: ".inf"\nc: "2001-12-14"\n', 'yaml')).toEqual({
+      a: '.nan',
+      b: '.inf',
+      c: '2001-12-14',
+    });
+  });
+
+  /*
+   * THE OTHER CONTROL, AND THE ONE THAT WOULD CATCH A WALK THAT STOPPED
+   * WORKING. Collecting every offender means walking past one, and a walk that
+   * carried on past a DEPTH limit is the failure the limit exists to prevent.
+   * Depth still wins, and it is still a `limit-exceeded`.
+   */
+  it('still stops at the depth limit rather than collecting past it', () => {
+    const deep = `${'{"a":'.repeat(MAX_DEPTH + 1)}1${'}'.repeat(MAX_DEPTH + 1)}`;
+    const result = parseSource(deep, 'json', ',');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('limit-exceeded');
   });
 });
 

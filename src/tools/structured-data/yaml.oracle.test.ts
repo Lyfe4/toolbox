@@ -9,7 +9,7 @@ import suite from './spec/yaml-test-suite.json';
  *
  * The `yaml` package is held to the yaml-test-suite upstream. What was held to
  * nothing outside this repository was the WRAPPER around it in `convert.ts` -
- * the JSON boundary, the duplicate-key rule, the alias limit, the
+ * the value-model boundary, the duplicate-key rule, the alias limit, the
  * empty-document rule and the stream-to-array decision - and that wrapper is
  * where every one of this tool's own YAML answers is actually decided. It had
  * example-based tests only, and an example-based test for a format this large
@@ -71,7 +71,7 @@ function expectedValue(documents: readonly unknown[]): unknown {
  *  1. A VALUE JSON CANNOT HOLD IS REFUSED BY PATH. `!!set` is a Set, `!!omap`
  *     a Map, `!!binary` a byte array. The suite prints a JSON rendering of
  *     each; this tool refuses and says where, which is the documented
- *     behaviour of the JSON boundary and the opposite of mangling. Justified:
+ *     behaviour of the value-model boundary and the opposite of mangling. Justified:
  *     the alternative is inventing a JSON spelling for a YAML type and handing
  *     it back as though nothing happened.
  *
@@ -89,9 +89,9 @@ function expectedValue(documents: readonly unknown[]): unknown {
  *     promises everywhere else. Justified.
  */
 const EXPECTED_DIFFERENCES: Readonly<Record<string, string>> = {
-  '2XXW': 'a !!set becomes a Set, refused at the JSON boundary',
-  '565N': 'a !!binary becomes a byte array, refused at the JSON boundary',
-  J7PZ: 'an !!omap becomes a Map, refused at the JSON boundary',
+  '2XXW': 'a !!set becomes a Set, refused at the value-model boundary',
+  '565N': 'a !!binary becomes a byte array, refused at the value-model boundary',
+  J7PZ: 'an !!omap becomes a Map, refused at the value-model boundary',
 
   '8G76': 'comment lines only, so the stream holds no documents',
   '98YD': 'comment lines only, so the stream holds no documents',
@@ -212,7 +212,7 @@ describe('the cases the suite answers only as events', () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error.message).toBe(
-        'A YAML key is itself a collection, which JSON cannot represent.',
+        "A YAML key is itself a collection, which this tool's value model cannot hold.",
       );
     },
   );
@@ -248,17 +248,21 @@ describe('the cases the suite answers only as events', () => {
  * THE MESSAGE A COLLIDING KEY GETS, WHICH USED TO BE THE WRONG ONE.
  *
  * `true:` beside `"true":` is valid YAML - the suite composes documents of that
- * shape, js-yaml reads them and PyYAML reads them. It is JSON that cannot hold
- * it, because object keys are strings and both of those become `"true"`. This
- * tool refuses it, correctly, and until round five told the person that their
- * YAML was invalid: a sentence that sends somebody looking for a syntax error
- * that is not there.
+ * shape, js-yaml reads them and PyYAML reads them. What cannot hold it is the
+ * value model every conversion in this tool goes through, whose keys are text,
+ * so both of those become `"true"`. This tool refuses it, correctly, and until
+ * round five told the person that their YAML was invalid: a sentence that sends
+ * somebody looking for a syntax error that is not there.
  *
- * The two cases are separated now, and the separation is asserted in both
- * directions - a genuinely duplicated key must NOT get the JSON-boundary
- * wording either, or the distinction is decoration.
+ * ROUND ELEVEN CHANGED THE WORDING AND NOT THE RULE. The message said `the same
+ * JSON key`, which names a format that is in neither half of a YAML to YAML
+ * run. What it was always about is the model, and it says so now.
+ *
+ * The two cases are separated, and the separation is asserted in both
+ * directions - a genuinely duplicated key must NOT get the value-model wording
+ * either, or the distinction is decoration.
  */
-describe('a key that collides only once the document is JSON', () => {
+describe('a key that collides only once the document is read', () => {
   const refusal = (source: string): { message: string; detail: string } => {
     const result = parseSource(source, 'yaml', ',');
     expect(result.ok).toBe(false);
@@ -273,8 +277,8 @@ describe('a key that collides only once the document is JSON', () => {
     ['a boolean against its own spelling', 'true: a\n"true": b\n'],
     ['a number against its own spelling', '1: a\n"1": b\n'],
     ['null against the empty string', '~: a\n"": b\n'],
-  ])('says that %s is two YAML keys and one JSON key', (_name, source) => {
-    expect(message(source)).toBe('Two different YAML keys become the same JSON key.');
+  ])('says that %s is two YAML keys and one key here', (_name, source) => {
+    expect(message(source)).toBe('Two different YAML keys become one key in this tool.');
   });
 
   it.each([
@@ -445,7 +449,7 @@ describe('refusing, against the yaml-test-suite', () => {
    * in the same state on its first run: a bare `%YAML 1.2` with no document,
    * refused for being empty.
    *
-   * `empty`, `depth` and `json-boundary` are asserted at ZERO because each is a
+   * `empty`, `depth` and `value-model` are asserted at ZERO because each is a
    * rule this file enforces on top of the parser, and a rule that also refuses
    * VALID documents of the same shape cannot be evidence that an invalid one
    * was understood.
@@ -455,7 +459,8 @@ describe('refusing, against the yaml-test-suite', () => {
     if (/%YAML directives|directive has no document/.test(message)) return 'directive';
     if (message.includes('nested more than')) return 'depth';
     if (message === 'That mapping has the same key twice.') return 'duplicate-key';
-    if (/JSON cannot represent|itself a collection/.test(message)) return 'json-boundary';
+    if (/value model|itself a collection|become one key in this tool/.test(message))
+      return 'value-model';
     return 'parser';
   };
 
@@ -474,15 +479,15 @@ describe('refusing, against the yaml-test-suite', () => {
     expect(counts.get('ACCEPTED')).toBeUndefined();
     expect(counts.get('empty')).toBeUndefined();
     expect(counts.get('depth')).toBeUndefined();
-    expect(counts.get('json-boundary')).toBeUndefined();
+    expect(counts.get('value-model')).toBeUndefined();
     /*
      * AND THE KEY-COLLISION RULE IS AT ZERO TOO, WHICH IT COULD NOT BE ASKED
      * BEFORE. Until round five both kinds of collision came back as "That is
-     * not valid YAML.", so a case refused for having two keys that JSON cannot
+     * not valid YAML.", so a case refused for having two keys the model cannot
      * tell apart was indistinguishable here from one refused for a real syntax
      * fault - and 93 of the 94 fell in the same bucket whatever their reason.
-     * `Two different YAML keys become the same JSON key.` now classifies as
-     * `json-boundary`, which is already asserted absent above.
+     * `Two different YAML keys become one key in this tool.` now classifies as
+     * `value-model`, which is already asserted absent above.
      */
     expect(counts.get('duplicate-key')).toBeUndefined();
     expect(counts.get('directive')).toEqual(['9MMA', 'SF5V']);

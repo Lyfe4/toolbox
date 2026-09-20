@@ -136,6 +136,18 @@ const LOSSY_RUNS: readonly {
   },
   {
     /*
+     * Round eleven's note, added the day it landed. The list is the nearest
+     * thing in this repository to an enforcement of `lossy, told`, and a loss
+     * that is not in it is one nothing holds to naming a port it can travel
+     * to - which is how `color-convert` escaped for five rounds.
+     */
+    toolId: 'structured-data',
+    what: 'a YAML key that was not text, which the value model made text',
+    inputs: { input: { type: 'text', text: '2024: launched\n' } },
+    options: { source: 'yaml', target: 'yaml' },
+  },
+  {
+    /*
      * Built by hand rather than by `JSON.stringify`, because stringifying a
      * number past 2^53 writes the ROUNDED digits and there is nothing left to
      * find. The signature is nonsense on purpose: decoding does not verify.

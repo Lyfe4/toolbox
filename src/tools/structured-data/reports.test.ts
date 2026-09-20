@@ -318,6 +318,182 @@ describe('decision 3: integers a double cannot hold', () => {
 });
 
 /* ========================================================================== *
+ * SD-13: the advice fits the target, and the old advice was false
+ * ========================================================================== */
+
+/**
+ * WHAT THE ROUNDING NOTE TOLD PEOPLE TO DO, AND WHY IT COULD NOT WORK.
+ *
+ * The sentence was `Convert to CSV or TSV to keep the digits, where every cell
+ * stays a string`, appended whatever the target was. SD-13 filed it as
+ * JSON-specific advice appearing on a non-JSON target. It is worse than that:
+ * **the rounding happens in the READER**, so by the time any writer runs the
+ * digits are gone, and following the advice to the letter produces the rounded
+ * number in a CSV cell. The first test here is that measurement, and it is the
+ * reason the sentence changed rather than being re-worded.
+ *
+ * These run through the TOOL rather than through `readSource`, which is what
+ * makes them the guard on the target actually being threaded: `readSource`
+ * takes the target optionally - `parseSource` throws the notes away and has
+ * none - so a wiring that forgot to pass it would still compile.
+ */
+describe('SD-13: what to do about a rounded integer', () => {
+  // An array at the top level, because a CSV target needs rows and the same
+  // document has to reach all four targets for the comparison to mean anything.
+  const ONE_ROW = '[{"id": 12345678901234567890}]';
+
+  const advice = async (options: Record<string, unknown>): Promise<string> => {
+    const { report } = await convert(ONE_ROW, options);
+    return report.notes.find((entry) => entry.title.includes('rounded'))?.body ?? '';
+  };
+
+  it('does not keep the digits, which is exactly what the old advice promised', async () => {
+    const { output } = await convert(ONE_ROW, { source: 'json', target: 'csv' });
+
+    // The whole file, not a substring: the claim is that the digits are gone,
+    // and `toContain` would be satisfied by a cell that also held them.
+    expect(output).toBe('id\n12345678901234567000');
+  });
+
+  it('and the advice that replaced it does keep them', async () => {
+    const { output, report } = await convert('[{"id": "12345678901234567890"}]', {
+      source: 'json',
+      target: 'csv',
+    });
+
+    expect(output).toBe('id\n12345678901234567890');
+    expect(losses(report)).toEqual([]);
+  });
+
+  it('tells a YAML target what its own output will hold', async () => {
+    const body = await advice({ source: 'json', target: 'yaml' });
+    expect(body).toContain('Quoting it in the source - `"12345678901234567890"`');
+    expect(body).toContain('the YAML output then holds it as a string');
+  });
+
+  it('tells a JSON target the same thing in its own words', async () => {
+    expect(await advice({ source: 'json', target: 'json' })).toContain(
+      'the JSON output then holds it as a string',
+    );
+  });
+
+  it('tells a CSV target that the output looks no different', async () => {
+    expect(await advice({ source: 'json', target: 'csv' })).toContain(
+      'a CSV cell has no type, so the output is the same either way',
+    );
+  });
+
+  it('and says TSV when the target is TSV', async () => {
+    expect(await advice({ source: 'json', target: 'tsv' })).toContain('a TSV cell has no type');
+  });
+
+  it('reaches a YAML source too, where JSON is in neither half', async () => {
+    const { report } = await convert('id: 12345678901234567890\n', {
+      source: 'yaml',
+      target: 'yaml',
+    });
+    const body = report.notes.find((entry) => entry.title.includes('rounded'))?.body ?? '';
+
+    expect(body).toContain('the YAML output then holds it as a string');
+    expect(body).not.toContain('Convert to CSV or TSV');
+  });
+
+  /*
+   * THE NEGATIVE CONTROL, ON SUBJECT. The subject is "a note about rounding",
+   * not the words the advice happens to use - a control keyed on the advice
+   * would pass against a note that fired on every document and simply chose
+   * different advice for it. Every target, because the target is the new
+   * variable and a note that appeared for one of them would be missed by a
+   * control that only tried the default.
+   */
+  it('says nothing about rounding for a number that was not rounded, on any target', async () => {
+    for (const target of ['json', 'yaml', 'csv', 'tsv']) {
+      const { report } = await convert('[{"id": 42}]', { source: 'json', target });
+      expect(
+        report.notes.filter((entry) => entry.title.includes('rounded')),
+        `target ${target}`,
+      ).toEqual([]);
+    }
+  });
+});
+
+/* ========================================================================== *
+ * Corpus row 10: a YAML key that was not text
+ * ========================================================================== */
+
+/**
+ * THE HALF OF SD-5 THAT SURVIVES THE DECISION NOT TO WIDEN THE MODEL.
+ *
+ * `2024: launched` comes back as `"2024": launched`, because the value model
+ * every conversion here goes through has text keys. Round eleven decided not
+ * to carry a second model for the one case where source and target are both
+ * YAML - see `VALUE_MODEL` in convert.ts - which leaves exactly one honest
+ * thing to do about the loss, and nothing was doing it.
+ *
+ * This is corpus row 10, and it is the row that turns this round.
+ */
+describe('a YAML key that is not text', () => {
+  it('says so, naming the key as the author wrote it', async () => {
+    const { output, report } = await convert('2024: launched\n', {
+      source: 'yaml',
+      target: 'yaml',
+    });
+
+    expect(output).toBe('"2024": launched\n');
+    const note = report.notes.find((entry) => entry.title.includes('key'));
+    expect(note?.level).toBe('warn');
+    expect(note?.title).toBe('1 key became text');
+    expect(note?.body).toContain('`2024` at $');
+  });
+
+  it('counts them and says where each one is', async () => {
+    const { report } = await convert('years:\n  2024: x\n  true: y\n', {
+      source: 'yaml',
+      target: 'yaml',
+    });
+    const note = report.notes.find((entry) => entry.title.includes('key'));
+
+    expect(note?.title).toBe('2 keys became text');
+    expect(note?.body).toContain('`2024` at $.years');
+    expect(note?.body).toContain('`true` at $.years');
+  });
+
+  it('names an empty key by what it is rather than by nothing', async () => {
+    // `: a` is a null key, which has no source text to quote back.
+    const { report } = await convert(': a\n', { source: 'yaml', target: 'yaml' });
+    expect(report.notes.find((entry) => entry.title.includes('key'))?.body).toContain(
+      'an empty key, which YAML reads as null',
+    );
+  });
+
+  it('says it on the way to JSON as well, because the key changed when it was read', async () => {
+    const { report } = await convert('2024: launched\n', { source: 'yaml', target: 'json' });
+    expect(losses(report)).toContain('1 key became text');
+  });
+
+  /*
+   * THE CONTROLS. The first is the ordinary one; the second is the sharp one,
+   * and it is the reason the note is built from the SOURCE spelling rather than
+   * from the key that came out. `"2024"` and `2024` produce the identical
+   * parsed value and the identical output, and only one of them lost anything.
+   */
+  it('says nothing about a key that was already text', async () => {
+    const { report } = await convert('year: launched\n', { source: 'yaml', target: 'yaml' });
+    expect(report.notes.filter((entry) => entry.title.includes('key'))).toEqual([]);
+  });
+
+  it('and nothing about a numeric-looking key the author quoted', async () => {
+    const { output, report } = await convert('"2024": launched\n', {
+      source: 'yaml',
+      target: 'yaml',
+    });
+
+    expect(output).toBe('"2024": launched\n');
+    expect(report.notes.filter((entry) => entry.title.includes('key'))).toEqual([]);
+  });
+});
+
+/* ========================================================================== *
  * Decision 7: JSONC
  * ========================================================================== */
 
