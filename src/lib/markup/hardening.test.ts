@@ -1314,20 +1314,45 @@ describe('pinned behaviour', () => {
     expect(out).toContain('[ ] not done');
   });
 
-  it('turns <kbd> into inline code, which is the nearest Markdown has', () => {
+  it('keeps the text of <kbd> and drops the tag under "Keep the text, drop the tag"', () => {
     /*
-     * And it is hast-util-to-mdast's own default that does it: `kbd`, `samp`
-     * and `var` all map to `inlineCode`, which is the right answer - all three
-     * are rendered monospace, and a code span is the only monospace Markdown
-     * has.
+     * REVERSED IN ROUND THIRTEEN, and the reversal is TC-4 / corpus row 17.
      *
-     * It only applies under `text`. Under `keep`, `<kbd>` is one of the
-     * elements with no Markdown equivalent and is written back verbatim, which
-     * is lossless and therefore better. Both are asserted, because which one
-     * you get depends on an option and that is worth pinning.
+     * This test used to pin `Press \`Ctrl\``, on the ground that upstream maps
+     * `kbd`, `samp` and `var` to a code span and "all three are rendered
+     * monospace". Two things were wrong with that. The HTML Standard's
+     * rendering section gives `var` italics, not monospace, so for one of the
+     * three the code span was a different look. And the option is LABELLED
+     * "Keep the text, drop the tag": a code span is a tag Markdown has, so the
+     * policy most people use was delivering formatting the label promises it
+     * will not. The same went for `<mark>` becoming emphasis, which is a
+     * highlight turned into italics. See the 'text' branch of
+     * `unsupportedHandlers`.
+     *
+     * Under `keep` nothing changed: `<kbd>` is written back verbatim, which is
+     * lossless. Both are asserted, because which one you get depends on an
+     * option and that is worth pinning.
      */
-    expect(htmlToMarkdown('<p>Press <kbd>Ctrl</kbd></p>', MD_TEXT)).toBe('Press `Ctrl`' + LF);
+    expect(htmlToMarkdown('<p>Press <kbd>Ctrl</kbd></p>', MD_TEXT)).toBe('Press Ctrl' + LF);
     expect(htmlToMarkdown('<p>Press <kbd>Ctrl</kbd></p>', MD)).toBe('Press <kbd>Ctrl</kbd>' + LF);
+  });
+
+  it.each([
+    ['<p><mark>hi</mark></p>', 'hi'],
+    ['<p><samp>out</samp></p>', 'out'],
+    ['<p><var>x</var></p>', 'x'],
+    ['<p><q>quoted</q></p>', 'quoted'],
+  ])('writes %s as its words alone under the text policy', (html, words) => {
+    // The whole family upstream substitutes for, not only the two the
+    // finding named: the set is derived, so it is asserted as a set.
+    expect(htmlToMarkdown(html, MD_TEXT)).toBe(words + LF);
+  });
+
+  it('writes a definition list as its terms and definitions, not as bullets', () => {
+    const out = htmlToMarkdown('<dl><dt>term</dt><dd>meaning</dd></dl>', MD_TEXT);
+    expect(out).toBe('term' + LF + LF + 'meaning' + LF);
+    // The positive partner of a negative assertion: the words are there.
+    expect(out).not.toMatch(/^[-*+] /m);
   });
 
   it('renders plain text as a document rather than a stream of words', () => {

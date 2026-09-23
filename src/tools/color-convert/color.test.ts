@@ -158,16 +158,55 @@ describe('formatting', () => {
   });
 
   /*
-   * THE NEGATIVE PARTNER, and it is what keeps this a correction rather than a
-   * tolerance. A hue that genuinely drifted to 359.98 is a DIFFERENT number
-   * from 360 and no formatter can tell it from a hue somebody meant, so it is
-   * left exactly as it is - and 0 and 359 are untouched either way.
+   * CC-5a, round thirteen. This test used to assert the opposite - that
+   * 359.98 was left exactly as it was - as the negative partner of the 360
+   * wrap, with a note that snapping it needed a tolerance and a tolerance was a
+   * decision. The decision is taken in `hslHue`: the report's own 8-bit
+   * resolution. So the drifted red is 0, and so is a typed 359.98, which is
+   * the stated cost.
    */
-  it('leaves every other hue alone, including one that merely drifted', () => {
-    expect(formatColor(parse('hsl(359.98 100% 50%)'), 'hsl', 5)).toContain('359.98');
-    expect(formatColor(parse('hsl(0 100% 50%)'), 'hsl', 5)).toBe('hsl(0 100% 50%)');
+  it('prints a red that drifted to 359.98 as 0, because its hex says it is #ff0000', () => {
+    const red = parse(formatColor(parse('#ff0000'), 'oklch', 5));
+
+    // The control: this really is the drift, not the wrap next door.
+    expect(rgbToHsl(red.r, red.g, red.b).h).toBeGreaterThan(359.9);
+    expect(rgbToHsl(red.r, red.g, red.b).h).toBeLessThan(359.995);
+    expect(formatColor(red, 'hex', 5)).toBe('#ff0000');
+
+    expect(formatColor(red, 'hsl', 5)).toBe('hsl(0 100% 50%)');
+    expect(formatColor(parse('hsl(359.98 100% 50%)'), 'hsl', 5)).toBe('hsl(0 100% 50%)');
+  });
+
+  /*
+   * THE NEGATIVE PARTNERS: a hue one 8-bit step away is a different colour
+   * and is left alone, and so is everything nowhere near 0.
+   */
+  it('leaves a hue alone once its hex is no longer pure red, and every hue far from 0', () => {
+    expect(formatColor(parse('hsl(359.7 100% 50%)'), 'hex', 5)).toBe('#ff0001');
+    expect(formatColor(parse('hsl(359.7 100% 50%)'), 'hsl', 5)).toBe('hsl(359.7 100% 50%)');
+    expect(formatColor(parse('hsl(0.3 100% 50%)'), 'hsl', 5)).toBe('hsl(0.3 100% 50%)');
     expect(formatColor(parse('hsl(359 100% 50%)'), 'hsl', 5)).toBe('hsl(359 100% 50%)');
     expect(formatColor(parse('hsl(180 100% 50%)'), 'hsl', 5)).toBe('hsl(180 100% 50%)');
+  });
+
+  /*
+   * AND THE CLAIM THAT MAKES IT SAFE: an 8-bit colour's hue is untouched,
+   * because for those the rule's condition and a hue of exactly 0 are the same
+   * fact. A fixed stride through the whole cube, so it either passes for
+   * everybody or fails for everybody.
+   */
+  it('moves no 8-bit colour at all', () => {
+    let checked = 0;
+    for (let index = 0; index < 0x1000000; index += 997) {
+      const [r, g, b] = [(index >> 16) & 255, (index >> 8) & 255, index & 255];
+      const color = { r: r / 255, g: g / 255, b: b / 255, a: 1 };
+      const raw = rgbToHsl(color.r, color.g, color.b).h;
+      const printed = formatColor(color, 'hsl', 2).slice(4).split(' ')[0];
+      const expected = Number(raw.toFixed(2)) === 360 ? '0' : String(Number(raw.toFixed(2)));
+      expect(printed, `#${index.toString(16).padStart(6, '0')}`).toBe(expected);
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(16_000);
   });
 });
 

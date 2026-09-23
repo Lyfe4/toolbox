@@ -197,6 +197,29 @@ const STRING_CLAIMS: readonly (readonly [string, string])[] = [
   ['jti', 'Token ID'],
 ];
 
+/** Every claim the table above draws a row for, registered or timed. */
+const TABLED_CLAIMS: ReadonlySet<string> = new Set([
+  ...STRING_CLAIMS.map(([key]) => key),
+  'iat',
+  'nbf',
+  'exp',
+]);
+
+/**
+ * JWT-3: THE CLAIMS THE TABLE DOES NOT SHOW, NAMED UNDER IT.
+ *
+ * The table is RFC 7519's registered claims and nothing else, on purpose -
+ * those are the ones with a meaning this tool can render, a date or an
+ * issuer. A `name` or a `role` is drawn only in the payload block below. That
+ * was never wrong and never said, so a person scanning the table could take
+ * four rows for the whole token. Decided in round thirteen: keep the table as
+ * it is, and say what else there is and where.
+ */
+function otherClaims(payload: JsonValue | null): readonly string[] {
+  if (payload === null || !isJsonObject(payload)) return [];
+  return Object.keys(payload).filter((key) => !TABLED_CLAIMS.has(key));
+}
+
 function stringClaims(payload: JsonValue | null): readonly (readonly [string, string, string])[] {
   if (payload === null || !isJsonObject(payload)) return [];
 
@@ -398,11 +421,22 @@ export function JwtView({ value, label, baseFilename, onCopy, onDownload, now }:
 
   const { signature, claims } = decoded;
   const strings = stringClaims(decoded.payload);
+  const others = otherClaims(decoded.payload);
   const times = [
     claims.issuedAt === null ? null : (['Issued', claims.issuedAt, 'iat'] as const),
     claims.notBefore === null ? null : (['Not before', claims.notBefore, 'nbf'] as const),
     claims.expiresAt === null ? null : (['Expires', claims.expiresAt, 'exp'] as const),
   ].filter((row) => row !== null);
+
+  // Only under a table: with no registered claims there is no table to have
+  // left anything out of, and the payload block is the whole story.
+  const tabled = times.length > 0 || strings.length > 0;
+  const named = others.slice(0, 5).join(', ');
+  const more = others.length > 5 ? ` and ${(others.length - 5).toString()} more` : '';
+  const othersLine =
+    !tabled || others.length === 0
+      ? null
+      : `The table lists registered claims only. ${named}${more} ${others.length === 1 ? 'is' : 'are'} in the payload below.`;
 
   /*
    * The sentence that travels with the payload. Present unless a real
@@ -475,6 +509,12 @@ export function JwtView({ value, label, baseFilename, onCopy, onDownload, now }:
                 ))}
               </tbody>
             </table>
+          )}
+
+          {othersLine === null ? null : (
+            <p className={styles.aside} data-other-claims="">
+              {othersLine}
+            </p>
           )}
 
           {decoded.header === null ? null : (

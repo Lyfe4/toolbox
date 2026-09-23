@@ -474,14 +474,51 @@ function round(value: number, places: number): string {
  * 25.1%)` - the same colour as `hsl(0 ...)`, printed as the one number the
  * range excludes, next to every other red in the same report starting at 0.
  *
- * Only the exact wrap is moved. 359.98 is a DIFFERENT question - a hue that
- * really did drift, which no formatter can distinguish from a hue somebody
- * meant - and snapping a tolerance here would be a guess where this is an
- * identity.
+ * Only the exact wrap is moved here. 359.98 is the question `hslHue` answers.
  */
 function roundHue(value: number, places: number): string {
   const text = round(value, places);
   return text === '360' ? '0' : text;
+}
+
+/**
+ * CC-5a: THE HUE OF A RED THAT DRIFTED TO 359.98, AND THE TOLERANCE THAT
+ * SNAPS IT. Taken in round thirteen.
+ *
+ * `#ff0000` written as `oklch()` at five places and read back is a continuous
+ * colour a hair off pure red - blue a few millionths above green - and its
+ * HSL hue is honestly 359.98. The hex beside it is `#ff0000`, whose hue is 0.
+ * So the report printed two notations of one colour that a reader compares
+ * and finds disagree.
+ *
+ * THE TOLERANCE IS THE REPORT'S OWN 8-BIT RESOLUTION, NOT A CHOSEN NUMBER.
+ * The hue is printed as 0 when the colour, quantised exactly as the hex in the
+ * same report is, has a hue of exactly 0 - red the largest channel, green
+ * equal to blue. In degrees the window is HALF of one 8-bit step either side
+ * of 0, because that is where rounding puts the boundary, and it depends on
+ * the colour, as it has to: one step of green or blue moves a hue by
+ * 60 / (255 · (max − min)), so the window is 0.118° for a saturated red and
+ * wider for a greyer one. A fixed number of degrees would be too wide for the
+ * first and too narrow for the second.
+ *
+ * WHAT IT COSTS, SAID RATHER THAN HIDDEN: a hue TYPED as `hsl(359.98 100%
+ * 50%)` now prints `hsl(0 100% 50%)` too. No tolerance can avoid that - a hue
+ * somebody meant and a hue that drifted are the same number, which is why
+ * round eight called this a decision - so what the rule decides is how far
+ * the snap reaches, and it reaches exactly as far as the hex beside it already
+ * says the colour is `#ff0000`. `hsl(359.7 100% 50%)` is `#ff0001` and is
+ * left alone.
+ *
+ * WHAT IT CANNOT MOVE: any colour that already IS 8-bit. For those `rgbToHsl`
+ * returns exactly 0 whenever green equals blue, so the rule changes nothing -
+ * asserted over a stride of the whole cube in `color.test.ts`.
+ */
+function hslHue(color: ColorPayload, hue: number): number {
+  const [r, g, b] = [color.r, color.g, color.b].map((channel) =>
+    Math.round(clamp01(channel) * 255),
+  );
+  if (r === undefined || g === undefined || b === undefined) return hue;
+  return r > g && g === b ? 0 : hue;
 }
 
 function hexPair(value: number): string {
@@ -510,7 +547,7 @@ export function formatColor(color: ColorPayload, format: ColorFormat, precision:
 
     case 'hsl': {
       const { h, s, l } = rgbToHsl(color.r, color.g, color.b);
-      const body = `${roundHue(h, Math.min(precision, 2))} ${round(s * 100, Math.min(precision, 2))}% ${round(l * 100, Math.min(precision, 2))}%`;
+      const body = `${roundHue(hslHue(color, h), Math.min(precision, 2))} ${round(s * 100, Math.min(precision, 2))}% ${round(l * 100, Math.min(precision, 2))}%`;
       return hasAlpha ? `hsl(${body} / ${round(color.a, 3)})` : `hsl(${body})`;
     }
 

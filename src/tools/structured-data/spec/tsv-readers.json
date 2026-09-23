@@ -1,0 +1,297 @@
+{
+  "versions": {
+    "python": "3.14.7",
+    "pandas": "3.0.6",
+    "polars": "1.44.2",
+    "duckdb": "1.5.5",
+    "papaparse": "5.7.0",
+    "d3-dsv": "3.0.1",
+    "awk": "GNU Awk 5.0.0, API: 2.0 (GNU MPFR 4.2.1, GNU MP 6.3.0)",
+    "cut": "cut (GNU coreutils) 8.32"
+  },
+  "readers": [
+    "python-csv",
+    "pandas",
+    "polars",
+    "duckdb",
+    "duckdb-sniffed",
+    "papaparse",
+    "d3-dsv",
+    "awk",
+    "cut"
+  ],
+  "cases": [
+    {
+      "id": "tab",
+      "value": "has\ttab",
+      "spellings": {
+        "quoted": {
+          "written": "\"has\ttab\"",
+          "readers": {
+            "python-csv": "ok",
+            "pandas": "ok",
+            "polars": "ok",
+            "duckdb": "ok",
+            "duckdb-sniffed": "ok",
+            "papaparse": "ok",
+            "d3-dsv": "ok",
+            "awk": "wrong",
+            "cut": "wrong"
+          }
+        },
+        "backslash": {
+          "written": "has\\ttab",
+          "readers": {
+            "python-csv": "wrong",
+            "pandas": "wrong",
+            "polars": "wrong",
+            "duckdb": "wrong",
+            "duckdb-sniffed": "wrong",
+            "papaparse": "wrong",
+            "d3-dsv": "wrong",
+            "awk": "wrong",
+            "cut": "wrong"
+          }
+        },
+        "bare": {
+          "written": "has\ttab",
+          "readers": {
+            "python-csv": "wrong",
+            "pandas": "wrong",
+            "polars": "error",
+            "duckdb": "wrong",
+            "duckdb-sniffed": "wrong",
+            "papaparse": "wrong",
+            "d3-dsv": "wrong",
+            "awk": "wrong",
+            "cut": "wrong"
+          }
+        }
+      }
+    },
+    {
+      "id": "line break",
+      "value": "line\nbreak",
+      "spellings": {
+        "quoted": {
+          "written": "\"line\nbreak\"",
+          "readers": {
+            "python-csv": "ok",
+            "pandas": "ok",
+            "polars": "ok",
+            "duckdb": "ok",
+            "duckdb-sniffed": "ok",
+            "papaparse": "ok",
+            "d3-dsv": "ok",
+            "awk": "wrong",
+            "cut": "wrong"
+          }
+        },
+        "backslash": {
+          "written": "line\\nbreak",
+          "readers": {
+            "python-csv": "wrong",
+            "pandas": "wrong",
+            "polars": "wrong",
+            "duckdb": "wrong",
+            "duckdb-sniffed": "wrong",
+            "papaparse": "wrong",
+            "d3-dsv": "wrong",
+            "awk": "wrong",
+            "cut": "wrong"
+          }
+        }
+      }
+    },
+    {
+      "id": "quote inside",
+      "value": "say \"hi\"",
+      "spellings": {
+        "quoted": {
+          "written": "\"say \"\"hi\"\"\"",
+          "readers": {
+            "python-csv": "ok",
+            "pandas": "ok",
+            "polars": "ok",
+            "duckdb": "ok",
+            "duckdb-sniffed": "ok",
+            "papaparse": "ok",
+            "d3-dsv": "ok",
+            "awk": "wrong",
+            "cut": "wrong"
+          }
+        },
+        "bare": {
+          "written": "say \"hi\"",
+          "readers": {
+            "python-csv": "ok",
+            "pandas": "ok",
+            "polars": "ok",
+            "duckdb": "ok",
+            "duckdb-sniffed": "ok",
+            "papaparse": "ok",
+            "d3-dsv": "ok",
+            "awk": "ok",
+            "cut": "ok"
+          }
+        }
+      }
+    },
+    {
+      "id": "leading quote",
+      "value": "\"lead",
+      "spellings": {
+        "quoted": {
+          "written": "\"\"\"lead\"",
+          "readers": {
+            "python-csv": "ok",
+            "pandas": "ok",
+            "polars": "ok",
+            "duckdb": "ok",
+            "duckdb-sniffed": "ok",
+            "papaparse": "ok",
+            "d3-dsv": "ok",
+            "awk": "wrong",
+            "cut": "wrong"
+          }
+        },
+        "bare": {
+          "written": "\"lead",
+          "readers": {
+            "python-csv": "wrong",
+            "pandas": "error",
+            "polars": "error",
+            "duckdb": "ok",
+            "duckdb-sniffed": "ok",
+            "papaparse": "wrong",
+            "d3-dsv": "wrong",
+            "awk": "ok",
+            "cut": "ok"
+          }
+        }
+      }
+    },
+    {
+      "id": "wrapped in quotes",
+      "value": "\"x\"",
+      "spellings": {
+        "quoted": {
+          "written": "\"\"\"x\"\"\"",
+          "readers": {
+            "python-csv": "ok",
+            "pandas": "ok",
+            "polars": "ok",
+            "duckdb": "ok",
+            "duckdb-sniffed": "ok",
+            "papaparse": "ok",
+            "d3-dsv": "ok",
+            "awk": "wrong",
+            "cut": "wrong"
+          }
+        },
+        "bare": {
+          "written": "\"x\"",
+          "readers": {
+            "python-csv": "wrong",
+            "pandas": "wrong",
+            "polars": "wrong",
+            "duckdb": "wrong",
+            "duckdb-sniffed": "wrong",
+            "papaparse": "wrong",
+            "d3-dsv": "wrong",
+            "awk": "ok",
+            "cut": "ok"
+          }
+        }
+      }
+    },
+    {
+      "id": "edge spaces",
+      "value": " pad ",
+      "spellings": {
+        "quoted": {
+          "written": "\" pad \"",
+          "readers": {
+            "python-csv": "ok",
+            "pandas": "ok",
+            "polars": "ok",
+            "duckdb": "ok",
+            "duckdb-sniffed": "ok",
+            "papaparse": "ok",
+            "d3-dsv": "ok",
+            "awk": "wrong",
+            "cut": "wrong"
+          }
+        },
+        "bare": {
+          "written": " pad ",
+          "readers": {
+            "python-csv": "ok",
+            "pandas": "ok",
+            "polars": "ok",
+            "duckdb": "ok",
+            "duckdb-sniffed": "ok",
+            "papaparse": "ok",
+            "d3-dsv": "ok",
+            "awk": "ok",
+            "cut": "ok"
+          }
+        }
+      }
+    },
+    {
+      "id": "backslash",
+      "value": "a\\b",
+      "spellings": {
+        "bare": {
+          "written": "a\\b",
+          "readers": {
+            "python-csv": "ok",
+            "pandas": "ok",
+            "polars": "ok",
+            "duckdb": "ok",
+            "duckdb-sniffed": "ok",
+            "papaparse": "ok",
+            "d3-dsv": "ok",
+            "awk": "ok",
+            "cut": "ok"
+          }
+        },
+        "backslash": {
+          "written": "a\\\\b",
+          "readers": {
+            "python-csv": "wrong",
+            "pandas": "wrong",
+            "polars": "wrong",
+            "duckdb": "wrong",
+            "duckdb-sniffed": "wrong",
+            "papaparse": "wrong",
+            "d3-dsv": "wrong",
+            "awk": "wrong",
+            "cut": "wrong"
+          }
+        }
+      }
+    },
+    {
+      "id": "comma",
+      "value": "a,b",
+      "spellings": {
+        "bare": {
+          "written": "a,b",
+          "readers": {
+            "python-csv": "ok",
+            "pandas": "ok",
+            "polars": "ok",
+            "duckdb": "ok",
+            "duckdb-sniffed": "ok",
+            "papaparse": "ok",
+            "d3-dsv": "ok",
+            "awk": "ok",
+            "cut": "ok"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,11 +1,12 @@
 import {
   compareCensus,
-  compareMarkup,
   censusOfHtml,
   deadFragments,
   droppedIdentifiers,
+  lostClassNames,
   renamedIdentifiers,
   type Census,
+  type LostClassName,
   type MarkupChange,
 } from '@/lib/markup/changes';
 import { lost, noted, type ToolNote } from '@/lib/notes';
@@ -125,12 +126,66 @@ function attributeLabel(name: string): string {
  */
 const SERIALISER_WRAPPERS: ReadonlySet<string> = new Set(['thead', 'tbody']);
 
-function named(changes: readonly MarkupChange[], kind: MarkupChange['kind']): string[] {
+/**
+ * FOUR ELEMENTS THE ROUND TRIP RESPELLS, WHICH A CENSUS READS AS A LOSS AND AN
+ * INVENTION.
+ *
+ * Markdown has one spelling for bold, and `<b>` and `<strong>` both come back
+ * from it as `<strong>`. The census sees a `<b>` go and a `<strong>` arrive and
+ * said so in two notes - `<b>` among the elements the round trip could not
+ * carry, `<strong>` among the ones it invented - on every document with a bold
+ * word in it, on `HTML → HTML (normalised)` since round four and on the
+ * Markdown target since round ten. Found in round thirteen by reading the
+ * notes a probe for TC-4 printed for a document with nothing wrong with it.
+ *
+ * Each pair is two names for one rendering, and that is checked against a
+ * reference rather than asserted: the HTML Standard's rendering section
+ * (§15.3.4, phrasing content) gives `b, strong` one rule (`font-weight:
+ * bolder`), `i, em` one (`font-style: italic`), `s, strike, del` one
+ * (`text-decoration: line-through`) and `tt, code` one (`font-family:
+ * monospace`). `<mark>` and `<var>` are deliberately NOT here: a highlight is
+ * not italics, and `var` is italic where `code` is monospace, so either
+ * becoming the other is a change a reader can see.
+ *
+ * Suppressed only when the counts balance exactly - every `<strong>` gained is
+ * accounted for by a `<b>` lost - so a document that ALSO had a `<strong>`
+ * invented for some other reason still hears about it.
+ */
+const RESPELLINGS: Readonly<Record<string, readonly string[]>> = {
+  strong: ['b'],
+  em: ['i'],
+  del: ['s', 'strike'],
+  code: ['tt'],
+};
+
+function respelled(first: Census, second: Census): ReadonlySet<string> {
+  const quiet = new Set<string>();
+  const count = (census: Census, tag: string): number => census.elements.get(tag) ?? 0;
+
+  for (const [target, sources] of Object.entries(RESPELLINGS)) {
+    const gained = count(second, target) - count(first, target);
+    const went = sources.filter((tag) => count(first, tag) > count(second, tag));
+    const lost = went.reduce((sum, tag) => sum + count(first, tag) - count(second, tag), 0);
+    if (gained > 0 && gained === lost) {
+      quiet.add(target);
+      for (const tag of went) quiet.add(tag);
+    }
+  }
+
+  return quiet;
+}
+
+function named(
+  changes: readonly MarkupChange[],
+  kind: MarkupChange['kind'],
+  quiet: ReadonlySet<string> = new Set(),
+): string[] {
   return [
     ...new Set(
       changes
         .filter((change) => change.kind === kind)
         .filter((change) => kind === 'attribute-dropped' || !SERIALISER_WRAPPERS.has(change.name))
+        .filter((change) => kind === 'attribute-dropped' || !quiet.has(change.name))
         .map((change) =>
           kind === 'attribute-dropped' ? attributeLabel(change.name) : `<${change.name}>`,
         ),
@@ -166,6 +221,19 @@ function afterHub(input: NormalisationInput): readonly string[] {
 
 function plural(count: number, one: string, many: string): string {
   return count === 1 ? one : many;
+}
+
+/**
+ * `btn on <a>, primary on <a>, <div>`, capped with a count - the same bargain
+ * every by-name list in this file strikes.
+ */
+function classList(classes: readonly LostClassName[]): string {
+  const shown = classes
+    .slice(0, 5)
+    .map(({ name, elements }) => `${name} on ${elements.map((tag) => `<${tag}>`).join(', ')}`)
+    .join('; ');
+  const rest = classes.length - Math.min(classes.length, 5);
+  return rest > 0 ? `${shown}; and ${rest.toString()} more` : shown;
 }
 
 export function normalisationNotes(input: NormalisationInput): readonly ToolNote[] {
@@ -354,7 +422,9 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
    * "HTML (sanitised)" loses them too. The note says why, because these are the
    * removals a person should be glad of.
    */
-  const bySanitiser = compareMarkup(input.input, input.sanitised);
+  const inputCensus = censusOfHtml(input.input);
+  const sanitisedCensus = censusOfHtml(input.sanitised);
+  const bySanitiser = compareCensus(inputCensus, sanitisedCensus);
   const sanitisedAttributes = named(bySanitiser, 'attribute-dropped');
   const sanitisedElements = named(bySanitiser, 'element-dropped');
 
@@ -377,6 +447,30 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
         HUB_AND_OUTPUT,
       ),
     );
+  }
+
+  /*
+   * CORPUS ROW 16: A CLASS NAME THE SANITISER TOOK OUT OF AN ATTRIBUTE IT KEPT.
+   *
+   * `<a class="btn">` comes out `<a class="">`, because the schema allows
+   * `class` on `<a>` for one value only and filters rather than removes. The
+   * name census sees `class` on both sides and said nothing for eight rounds.
+   *
+   * Only when `class` is NOT already named above: an attribute gone from every
+   * element is the note before this one, and the same loss twice is a list
+   * nobody reads.
+   */
+  if (!sanitisedAttributes.includes('class')) {
+    const classes = lostClassNames(inputCensus, sanitisedCensus);
+    if (classes.length > 0) {
+      notes.push(
+        lost(
+          `${classes.length.toString()} ${plural(classes.length, 'class name was', 'class names were')} removed by the sanitiser`,
+          `${classList(classes)} went in and did not come out. The allowed list keeps class only where this tool has a use for it - a task list's own markers, a code block's language, a footnote's back-link - and takes every other name out. Where an element may carry a class at all the attribute stays behind holding only the permitted names, which is why a link written class="btn" comes out class="".`,
+          HUB_AND_OUTPUT,
+        ),
+      );
+    }
   }
 
   /*
@@ -405,9 +499,10 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
    *
    * It used to be appended to every invention, and extending the census to the
    * Markdown target is what made that a false sentence rather than an
-   * irrelevant one: a `<mark>` becoming `_…_` invents an `<em>`, and the note
-   * explained it by saying a Markdown table always has a header row. The count
-   * was right and the reason underneath it was about a different document.
+   * irrelevant one: a `<mark>` becoming `_…_` invented an `<em>` (until round
+   * thirteen stopped the substitution), and the note explained it by saying a
+   * Markdown table always has a header row. The count was right and the reason
+   * underneath it was about a different document.
    *
    * Asked of `<tr>` and `<th>`, which is what an invented header row IS - the
    * `<thead>` around it is filtered out above as the serialiser's own.
@@ -417,20 +512,51 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
       ? ' A Markdown table always has a header row, so a <table> written without one gains an empty header row that nobody wrote.'
       : '';
 
-  const byRoundTrip = compareMarkup(input.sanitised, input.normalised);
+  /*
+   * TC-3: A REVERSED LIST'S NUMBERS, WHICH ARE CONTENT RATHER THAN A NAME.
+   *
+   * `reversed` survives the sanitiser from round thirteen, so what goes is the
+   * round trip's doing, and the attribute note names it. What the name alone
+   * does not say is the consequence a reader sees: `<ol reversed>` displays
+   * 3, 2, 1, and CommonMark numbers a list upward from its first item whatever
+   * digits are written, so no Markdown spelling of those items counts down.
+   */
+  const reversedList = (attributes: readonly string[]): string =>
+    attributes.includes('reversed')
+      ? ' A list marked reversed counted down; a Markdown list always counts up from its first number, so the same items, in the same order, now count up.'
+      : '';
+
+  const normalisedCensus = censusOfHtml(input.normalised);
+  const byRoundTrip = compareCensus(sanitisedCensus, normalisedCensus);
+  const quiet = respelled(sanitisedCensus, normalisedCensus);
   const droppedAttributes = named(byRoundTrip, 'attribute-dropped');
-  const droppedElements = named(byRoundTrip, 'element-dropped');
-  const added = named(byRoundTrip, 'element-added');
+  const droppedElements = named(byRoundTrip, 'element-dropped', quiet);
+  const added = named(byRoundTrip, 'element-added', quiet);
 
   if (droppedAttributes.length > 0) {
     notes.push(
       lost(
         `${droppedAttributes.length.toString()} ${plural(droppedAttributes.length, 'attribute the round trip could not carry', 'attributes the round trip could not carry')}`,
-        `${trip} Markdown has no spelling for ${droppedAttributes.join(', ')}.${measured} Choose HTML (sanitised) to keep ${plural(droppedAttributes.length, 'it', 'them')}: it runs the sanitiser and nothing else.`,
+        `${trip} Markdown has no spelling for ${droppedAttributes.join(', ')}.${reversedList(droppedAttributes)}${measured} Choose HTML (sanitised) to keep ${plural(droppedAttributes.length, 'it', 'them')}: it runs the sanitiser and nothing else.`,
         // The round trip happens AFTER the hub, so `rendered` still has it.
         afterHub(input),
       ),
     );
+  }
+
+  // The class-name half of the same question, for the round trip. Same rule
+  // as the sanitiser's: silent when `class` itself is already named above.
+  if (!droppedAttributes.includes('class')) {
+    const classes = lostClassNames(sanitisedCensus, normalisedCensus);
+    if (classes.length > 0) {
+      notes.push(
+        lost(
+          `${classes.length.toString()} ${plural(classes.length, 'class name', 'class names')} the round trip could not carry`,
+          `${trip} Markdown keeps a class only where it has a construct that implies one - a fenced block's language, a task list. ${classList(classes)} went in and did not come out.${measured} Choose HTML (sanitised) to keep ${plural(classes.length, 'it', 'them')}.`,
+          afterHub(input),
+        ),
+      );
+    }
   }
 
   if (droppedElements.length > 0) {

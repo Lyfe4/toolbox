@@ -28,6 +28,12 @@ Round eight, 2026-09-20, against `592b3b2`.
 > four, and both were found by a negative control rather than by reading
 > anything.
 >
+> **Round thirteen, 2026-09-24, against `2d607fe`, is at the very end** —
+> [Round thirteen, done](#round-thirteen-done). The last fix round: the two
+> corpus rows every earlier round deferred, and the rest of round twelve's
+> list bar JWT-1. **The ratio goes from 15 of 17 to 20 of 20**, one of the two
+> rows by a re-specification that is set out for judging rather than buried.
+>
 > **Round eleven, 2026-09-21, against `3e00c62`, is after that** —
 > [Round eleven, done](#round-eleven-done). It takes the third item of the plan:
 > the value model. The decision is **not to widen it**, so what changed is the
@@ -2909,3 +2915,440 @@ out of the plan.
 - **Round nine's claim about the fourteen silent rows** has now lost eight more
   exceptions. It was never a guarantee and is now mostly wrong; the corpus is
   the answer to that question and the sentence should go next round.
+
+---
+
+## Round thirteen, done
+
+2026-09-24, against `2d607fe`. The last fix round of the consolidation: the two
+corpus rows every earlier round deferred, and everything else round twelve left
+on the list except JWT-1, which stays out by instruction.
+
+**The ratio goes from 15 of 17 to 20 of 20.** On the seventeen rows round eight
+wrote, it is 17 of 17. Three rows were added, because three of this round's
+decisions turned silent losses into told ones and a denominator that is not
+added to is the absolute number this corpus was built to replace. **One of the
+two original rows turned by a re-specification, not by a note, and that is the
+one thing in this section to judge** — see row 17 below.
+
+### Part one — the instrument change, and the two rows
+
+**What `compareMarkup` needed to see was attribute VALUES, for one attribute,
+and nothing about substitution.** The four candidates the brief names, each
+measured rather than argued:
+
+| Candidate                | Needed for        | Taken?  | Why                                                                                                                                                                                                                                                                                                                |
+| ------------------------ | ----------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Every attribute's values | row 16, in theory | **No**  | Measured: the round trip percent-encodes a URL, so `href="a b"` comes back `href="a%20b"` — the same address spelled differently. A census of "values that went in and did not come out" would name every link with a space in it.                                                                                 |
+| **Class names**          | row 16            | **Yes** | The second value in this app a pipeline rewrites, after `id`. `hast-util-sanitize` filters `className` token by token on seven elements and keeps the attribute, so it is names that go, not attributes. The census now carries class names per element, the same way it has carried identifiers since round four. |
+| Substitution             | row 17            | **No**  | Joining a departure to an arrival is either a guess (a similarity metric — which `changes.ts` refuses, for a reason that still holds) or needs a text dimension to join on. And measuring what row 17 actually was showed there was nothing to join: see below.                                                    |
+| Text                     | row 13's caption  | **No**  | Still the one change that would let row 13 name a caption's CONTENTS rather than its tag. Not needed by either row this round, and not built — so row 13's re-specification from round ten stands, and is still recorded as a weakening.                                                                           |
+
+**Row 16 turned on its original expectation.** `<a class="btn">` on
+`HTML → HTML (sanitised)` now reports `1 class name was removed by the
+sanitiser`, with `btn on <a>` in the body. The note fires only when `class`
+itself is NOT already reported as removed — a `<div class>` loses the whole
+attribute, and that was already said — so one loss is one note. The same
+question is asked of the round trip, where it fires for an inline code span's
+`language-*` when a fenced block elsewhere keeps its own.
+
+**Row 17 turned by a re-specification, and here is exactly why.** The row read
+_`<mark>` and `<kbd>` given formatting they never had_ and demanded a note about
+that. Measuring it found not a silent loss but a **defect in the policy the
+row was running under**. `unsupported: 'text'` — labelled _Keep the text, drop
+the tag_, and the default — registered no handlers, on the stated ground that
+upstream's default "keeps the words and discards the wrapper". For seven
+elements on the list it does not:
+
+| Element          | Upstream default (hast-util-to-mdast 10.1.2) | Came out as                                                                  |
+| ---------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
+| `mark`           | emphasis                                     | `_hi_`                                                                       |
+| `kbd`, `samp`    | inline code                                  | `` `Esc` ``                                                                  |
+| `var`            | inline code                                  | `` `x` `` — a monospace span for an element the HTML Standard renders italic |
+| `dl`, `dt`, `dd` | a list                                       | bullets                                                                      |
+| `q`              | quotation marks written into the text        | `"q"`                                                                        |
+
+For `kbd`, `samp` and `var` the sentence was never true — all three were on the
+list in `a1daf0d`, the commit that wrote it. For `mark` it stopped being true
+at `3bd124c`, the commit that allowed `mark` through the sanitiser. So the fix
+went into the conversion, not into a note. Under `text` those elements now
+become their words. The set is **derived** — an entry whose upstream default is
+neither the shared pass-through-inline function nor the shared
+pass-through-block one — so an upstream release that starts substituting for
+another element is caught by the same line.
+
+**That left row 17 describing a loss that no longer happens,** and the corpus
+has no verdict for "fixed rather than told". The two honest options were a
+permanently red row claiming something false, or re-specifying it to what the
+document still loses — the highlight and the key markup themselves, which the
+census reports as `2 elements the round trip could not carry: <mark>, <kbd>`.
+I took the second. The row carries a `whyThisExpectation` saying so, and the
+original claim is held **more strongly than a note could hold it**, in three
+places: `hardening.test.ts` asserts the Markdown is `Press Ctrl` with no code
+span, `normalisation.test.ts` asserts the census reports nothing invented, and
+`checkClassAndSubstitution` asserts the output in two real engines contains no
+`_`, `*` or backtick.
+
+**This is the call I most want looked at.** The brief says a red row with a
+stated cause beats a weakened expectation. I do not think this is a weakening
+— the new expectation is stricter than the old one, which matched any note
+with `mark` in its title — but it is a changed subject, and it is the one kind
+of edit to that file that can turn a row green without a note being written.
+
+**One decision reversed rather than taken.** `hardening.test.ts` pinned
+`<kbd>` → `` `Ctrl` `` on purpose, saying `kbd`, `samp` and `var` "are all
+rendered monospace". The HTML Standard (§15.3.4) gives `var` italics, so the
+reason was wrong for one of the three. And the pinned behaviour contradicts the
+label on the option it runs under. It is reversed, the test says why, and
+`keep` still writes `<kbd>` verbatim for anyone who wants the element.
+
+**What the class census cannot see, stated.** Names are compared per NAME AND
+ELEMENT, not per instance: `btn` going from one `<a>` while another `<a>`
+keeps it is not reported. The same limit the name census has always had —
+counts, not identities — and the reason is the same.
+
+### Part two — the remaining findings, and what I chose
+
+| Finding        | Chose                                                                                                                                   | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **SD-6**       | **Neither escape nor refuse: quote only what a reader would misread, and say so when a cell has a tab or a line break.** Corpus row 19. | Measured, nine readers — see below. Escaping is read correctly by **0 of 9**. Quoting a tab is read correctly by 7 of 9, and **no spelling at all** works for the other two. Refusing would throw away a spelling seven parsers read, to protect two readers that cannot be protected.                                                                                                                                                                        |
+| **SD-8**       | `!!float 1` is the number 1; a value its standard tag cannot be is **refused**, with the value's position.                              | The `yaml` package resolves an explicit tag with its implicit-resolution tests, which need a dot for `float`. YAML 1.2.2's core float grammar (spec.md line 6643) makes the dot optional; that regular expression, verbatim, is now the tag's test. Wider than filed: `-3`, `+12`, `01` and `!!float "2"` were strings too. `!!float abc`, `!!int 1.5` and (under 1.2) `!!bool yes` became strings silently; js-yaml refuses all three, PyYAML the first two. |
+| **SD-14b**     | The duplicate column is reported at the SECOND cell of the pair.                                                                        | The parser now records where each header field starts. Only the header's — a position per field of a 16 MB file is memory nothing reads.                                                                                                                                                                                                                                                                                                                      |
+| **SD-15**      | Documented, on screen and in the README. Not changed.                                                                                   | Agreed with the brief — and the finding's diagnosis was wrong. See below.                                                                                                                                                                                                                                                                                                                                                                                     |
+| **SD-1's gap** | **A documented limitation,** with the refusal saying how to get the table.                                                              | Every multi-line text is a valid one-column CSV. A signal that said yes to a single column would say yes to prose, a log and a word list — the confident wrong answer round one removed. The refusal's detail now ends: _If it is a table with a single column, choose CSV as the source format._                                                                                                                                                             |
+| **CC-5a**      | The hue prints as 0 when the colour, quantised as its own hex is, has hue exactly 0.                                                    | Not a number of degrees — the report's own 8-bit resolution. The window is half a step either side of 0, which is 0.118° for a saturated red and wider for a greyer one, as it has to be. The cost: a TYPED `hsl(359.98 100% 50%)` now prints `hsl(0 …)` too, because no tolerance can tell typed from drifted. `hsl(359.7 …)` is `#ff0001` and is left alone. Moves no 8-bit colour at all, asserted over a stride of the cube.                              |
+| **TC-3**       | `reversed` allowed through the sanitiser; the round trip's note says the numbers now count up. Corpus row 18.                           | `reversed` is content, not styling — it changes the numbers a reader sees — and it is a boolean with no URL, no script and no style, so allowing it widens nothing that matters. `HTML (sanitised)` now loses nothing. Markdown cannot count down, so on the other two targets the note names the consequence rather than only the attribute.                                                                                                                 |
+| **TC-11**      | **Not added.** `HTML (sanitised)` leaves a missing `alt` missing.                                                                       | `alt=""` is a claim that the image is decorative — a screen reader skips it — and only the author can make it. Adding it would hide an undescribed image from exactly the people alt text is for. **Recorded as open:** the normalised and Markdown targets DO add it, because `![](x)` has no spelling for "no alt", and nothing says so.                                                                                                                    |
+| **TC-12**      | **Kept** the trailing backslash.                                                                                                        | CommonMark and GFM both define it; the alternative, two trailing spaces, is invisible and is the thing editors and linters strip. Raw `<br>` is a third option that trades one renderer problem for an HTML-in-Markdown one. Documented in the tool README.                                                                                                                                                                                                   |
+| **JWT-3**      | Kept the table registered-only; a line under it names the rest.                                                                         | _The table lists registered claims only. name is in the payload below._ The claims were never missing — the payload block is right there — so the defect was a sentence, not data.                                                                                                                                                                                                                                                                            |
+| **Flow style** | **A fifth kind in the presentation census,** YAML target only, not counted for a document written entirely in flow. Corpus row 20.      | The sweep is why it has two exemptions and not none. See below.                                                                                                                                                                                                                                                                                                                                                                                               |
+| **JWT-1**      | Left out, as instructed.                                                                                                                | Still a product decision about a fifth verdict state.                                                                                                                                                                                                                                                                                                                                                                                                         |
+
+#### SD-6, measured
+
+Every cell written in every candidate spelling, then read back by nine readers.
+The fixture is `spec/tsv-readers.json`, generated by
+`scripts/generate-tsv-readers.py`: Python 3.14.7's `csv`, pandas 3.0.6, polars
+1.44.2, DuckDB 1.5.5 with and without its sniffer, Papa Parse 5.7.0, d3-dsv
+3.0.1, GNU awk 5.0.0 and GNU cut 8.32.
+
+| Cell                | Quoted | Backslash-escaped | Bare      | Written now                                                                                         |
+| ------------------- | ------ | ----------------- | --------- | --------------------------------------------------------------------------------------------------- |
+| holds a tab         | 7 / 9  | 0 / 9             | 0 / 9     | quoted, and reported                                                                                |
+| holds a line break  | 7 / 9  | 0 / 9             | —         | quoted, and reported                                                                                |
+| a quote inside      | 7 / 9  | —                 | **9 / 9** | **bare** (was quoted)                                                                               |
+| begins with a quote | 7 / 9  | —                 | 4 / 9     | quoted                                                                                              |
+| wrapped in quotes   | 7 / 9  | —                 | 2 / 9     | quoted                                                                                              |
+| spaces at the edges | 7 / 9  | —                 | **9 / 9** | **bare** (was quoted); a HEADER cell stays quoted, because this tool's reader trims an unquoted one |
+| a backslash         | —      | 0 / 9             | 9 / 9     | bare                                                                                                |
+
+The two readers that fail every quoted spelling are always awk and cut, which
+split on every tab and every line whatever else the file says.
+`tsv.readers.test.ts` holds the writer to the table: **for every case the
+spelling it chooses is read correctly by as many readers as any spelling
+measured**, and a change that lost a reader names it.
+
+**Where the finding was wrong, and it matters for the decision.** It says
+_"standard readers (Excel, cut -f, pandas) split on tabs unconditionally"_.
+Measured, pandas does not — it honours quotes, as do the other five parsers.
+cut does split unconditionally. Excel could not be driven from here and is
+not claimed either way. PostgreSQL's COPY and MySQL's LOAD DATA would read the
+backslash spelling — from their documentation, not a run — and are named in
+the tool README as the case CSV serves better.
+
+#### SD-15, and the diagnosis underneath it
+
+The finding reads `"2"` before `"10"` as natural sort and `Mango` before
+`apple` as code-point order, and asks which collation this is. **It is one
+comparison and one object model.** `sortKeysDeep` compares with `<`, which puts
+`"10"` before `"2"`; the object the sorted entries are written into then puts
+them back, because every JavaScript object lists canonical array-index keys
+first, in numeric order, whatever order they were inserted in (ECMA-262,
+OrdinaryOwnPropertyKeys). So `"01"` sorts as text and `"1"` does not. Round
+eight's plan called the order "`localeCompare`-shaped", which it is not — no
+locale is involved anywhere.
+
+**And the on-screen description was false.** It said _Sort object keys
+alphabetically_. It now says _by character code, recursively: capitals before
+lower case, and keys that are whole numbers first, in numeric order_, and a test
+reads the description off the option.
+
+#### Flow style, and what the sweep changed
+
+Folded into the round-twelve census rather than a note of its own, because the
+census is one line on a node whatever it holds: adding a kind adds a word to a
+note already printing for any document with a comment, and starts a new note
+only on a document that had nothing else.
+
+**The first version cried wolf, and the detection corpus is what showed it.**
+It fired on three of the 29 documents: JSON with single quotes, JSON with
+unquoted keys, and a JavaScript object literal — near-JSON the YAML fallback
+reads, converted to YAML by someone who wants blocks. Real JSON never reaches
+the YAML reader, so the note fired on the imitation and never on the original.
+Two exemptions, each measured:
+
+| Rule                                                           | Suite: fired / true / false / lost-and-silent | Detection corpus |
+| -------------------------------------------------------------- | --------------------------------------------- | ---------------- |
+| every non-empty flow collection                                | 55 / 55 / 0 / 0                               | **3 firings**    |
+| **not in a document whose root is flow; one run counted once** | **25 / 25 / 0 / 0**                           | **0**            |
+
+The 30 suite documents written entirely in flow are exempt by design, not
+missed, and a test asserts the silence with the output beside it. With the
+rule, the census fires on 139 of the suite's 284 documents on a YAML target
+rather than 117 — 22 documents gain a note they did not have, every one of them
+a flow collection inside a block document that came back as a block.
+
+### The cry-wolf sweep, per new note
+
+| Note                             | Over                                                      | Fired | On documents that have the thing | On documents that do not |
+| -------------------------------- | --------------------------------------------------------- | ----- | -------------------------------- | ------------------------ |
+| flow collection (census kind)    | yaml-test-suite, 284 readable, YAML target                | 25    | 25                               | **0**; lost-and-silent 0 |
+| flow collection                  | detection corpus, 29 × 4 targets                          | 0     | —                                | **0**                    |
+| cell holds a tab or a line break | CSV oracle's 31 readable read cases, to TSV               | 3     | 3                                | **0**; missed 0          |
+| cell holds a tab or a line break | detection corpus, 29 × 4 targets                          | 1     | 1 (the quoted multi-line cell)   | **0**                    |
+| class name removed / not carried | CommonMark + GFM expected HTML, 675 documents × 3 targets | 0     | —                                | **0**                    |
+| reversed list counts up          | the same                                                  | 0     | —                                | **0**                    |
+
+**The class-note row is weak, and I am saying so rather than letting a zero
+stand for more than it is.** Nine of the 675 documents have a `class` at all,
+and every one is a class the schema permits. So the sweep shows the note does
+not fire on ordinary markup and says nothing about how it behaves on the
+class-heavy HTML people actually paste. The yaml-test-suite and the detection
+corpus the brief names are structured-data corpora and cannot exercise a
+text-convert note at all; the markup corpora are the nearest thing this
+repository has. What holds the class note instead is the unit suite's
+controls, one per shape, and the two-engine check.
+
+**The respelling filter was found by probing, not by the sweep.** Running the
+probe for TC-4 printed `4 elements the round trip could not carry: <samp>,
+<var>, <b>, <i>…` and `4 elements were invented: <strong>, <em>, <del>, <code>`
+for a document with nothing wrong with its bold. The census has said that about
+every `<b>` since round four on `HTML → HTML (normalised)` and since round ten
+on the Markdown target. Four pairs are filtered — `b`/`strong`, `i`/`em`,
+`s`/`strike`/`del`, `tt`/`code` — each checked against the HTML Standard's
+rendering section rather than asserted, and only when the counts balance.
+
+### Proving test and negative control, per item
+
+Every one was run against a deliberate break and watched to fail. The breaks
+were applied one at a time by a script that restores the file from its own bytes
+and asserts it byte-identical before the next.
+
+| Item                        | Proving test                                                                                                  | Negative control, keyed on subject                                                                                                                                  | Break, and what caught it                                                                                                                                                         |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Row 16, the class-name note | `normalisation.test.ts` — `says so, naming the name and the element`; a filtered name beside a permitted one  | a link with no class, a permitted `language-*`, a task list: no note whose title mentions a class; a `<div class>` produces the attribute note and **not** this one | the census never loses a name: 4 red, including the corpus. The guard against saying it twice removed: 1 red                                                                      |
+| Row 16, the round-trip half | `reports the round trip dropping a name that survives elsewhere`                                              | the fenced block's `language-py` must not be named                                                                                                                  | the same break                                                                                                                                                                    |
+| Row 17, TC-4                | `hardening.test.ts` — `Press Ctrl`, and `<mark>`, `<samp>`, `<var>`, `<q>`, a definition list, each its words | `keep` still writes `<kbd>` verbatim                                                                                                                                | the `text` branch returning `{}` again: 7 red                                                                                                                                     |
+| The respelling filter       | five tags, each producing no warning at all                                                                   | a real `<sup>` loss still named beside a bold word; an invented `<th>` still named beside one                                                                       | `RESPELLINGS` emptied: 7 red                                                                                                                                                      |
+| TC-3, `reversed`            | kept through the sanitiser; `now count up` on both round-trip targets                                         | a list with `start="3"` and no `reversed` says nothing about counting                                                                                               | the sanitiser stripping it: 3 red. The sentence never written: 3 red. `sanitise.test.ts` also asserts `reversed` is allowed on `<ol>` and nothing else — broken separately, 2 red |
+| Row 19, the TSV cell note   | a tab in a cell, a line break in a header and in a cell                                                       | a quote inside, spaces at the edges, a comma: written bare and **no** warning                                                                                       | the note never built: 3 red. TSV quoting like CSV again: 4 red, 3 of them in `tsv.readers.test.ts`, naming the readers each spelling lost                                         |
+| SD-8                        | seven spellings of `!!float` read as numbers                                                                  | six UNTAGGED scalars unchanged, including `abc` and `.5x`; a custom tag not refused; `%YAML 1.1` reads `!!bool yes` as true                                         | the explicit tag removed: 5 red. Its pattern loosened to `/./`, so implicit resolution could reach it: 60 red. The refusal disabled: 4 red                                        |
+| SD-14b                      | column 12, column 7, a quoted cell's written width, a `sep=` line, a leading blank line                       | —                                                                                                                                                                   | the position back at column 1: 5 red                                                                                                                                              |
+| SD-15                       | the exact key order, and the option's description read off the option                                         | —                                                                                                                                                                   | the description saying "alphabetically" again: 1 red                                                                                                                              |
+| SD-1                        | the refusal names CSV as the way through                                                                      | CSV chosen reads the same file                                                                                                                                      | the sentence removed: 1 red                                                                                                                                                       |
+| Row 20, flow                | the census names `$.a` and `$.c`; one note shared with a comment; one run counted once                        | empty `[]` and `{}`; a block collection; a JSON target; **a document written entirely in flow**                                                                     | flow never reported: 5 red, including the committed sweep. The flow-root exemption removed: 2 red. Nested runs counted separately: 1 red                                          |
+| CC-5a                       | the drifted red prints `hsl(0 100% 50%)`, and so does a typed 359.98                                          | `hsl(359.7 …)` (`#ff0001`) and `hsl(0.3 …)` keep their hue; 16,828 8-bit colours move not at all                                                                    | the snap removed: 1 red. The snap applied to any red: 4 red                                                                                                                       |
+| JWT-3                       | the line names `name, role` and the payload really holds them                                                 | a token whose claims are all in the table draws no line                                                                                                             | never drawn: 1 red. Always drawn: 1 red                                                                                                                                           |
+
+**All twenty-one breaks were caught**, by the script in the scratchpad that
+applied each, ran the files that claim to cover it, restored the file from its
+own bytes and asserted it byte-identical before the next.
+
+**And the two-engine checks were broken too, in three passes**, because a check
+in a real engine can pass for reasons the unit suite cannot see. Each pass
+applied several breaks at once, rebuilt with Vite alone (the breaks do not
+typecheck), ran only the three new check functions in both engines, and
+restored:
+
+| Pass | Broke                                                                                       | Result                                                                                                 |
+| ---- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 1    | the class note, TC-4, the reversed sentence, the TSV note, flow, the hue snap, JWT-3's line | 10 checks red in both engines — and **three that should have failed passed**, each a defect in a check |
+| 2    | the three corrected, plus five "always fires" breaks aimed at the controls                  | every targeted check and every targeted control red                                                    |
+| 3    | the float tag, the refusal, the column, the hue snapped for any red, `em` unwrapped         | all five red                                                                                           |
+
+The three that passed in pass 1, and what each was:
+
+1. **The hue check typed the wrong colour.** `oklch(0.62796 0.25768 29.23389)`
+   reads back at a hue that rounds to exactly 360 — so round nine's wrap rule
+   printed 0, not this round's snap. The check now types what the tool itself
+   writes for `#ff0000`, `oklch(0.62796 0.25768 29.23)`, which reads back at
+   359.984.
+2. **The mark-and-kbd node check could not see the fix.** Before the fix the
+   census already said "could not carry"; the check now also asks the node's
+   accessible name for `highlighted and Esc`, the output itself.
+3. **The reversed node check sees titles, not bodies**, so removing the
+   sentence cannot turn it red. Its subject is the note reaching the node, and
+   the sanitiser stripping `reversed` does turn it red (pass 2).
+
+**One control was not shown failing, and I am saying which.** `and a list that
+was never reversed draws no note` — no natural fault makes a count-up sentence
+appear without a dropped attribute to carry it, so no break I could write
+without inventing code for the purpose would exercise it.
+
+### Both halves of `lossy, told`, in two engines
+
+Three new checks in `scripts/cross-browser-check.mjs`, each asserting the note
+drawn on `/tools` with a non-zero box and no click, and on a canvas node's own
+face, beside a control of the same shape:
+
+- `checkClassAndSubstitution` — rows 16, 17 and 18, and row 17's output.
+- `checkTableCellsAndFlow` — rows 19 and 20, the SD-8 refusal and its
+  position, `!!float 1` read as a number, and SD-14b's column on the panel.
+- `checkClaimsAndHue` — JWT-3's line and CC-5a's hue, which are sentences a
+  person reads rather than notes, asserted the same way.
+
+**The first run of those checks found one of my own controls passing for the
+wrong reason.** `a node holding a link with no class says nothing about loss`
+waited for the node's face to contain `plain` — the link text — and passed. The
+face said _Convert between Markdown, HTML and plain text_: the tool's own
+description, on the node before the run had produced anything, with the
+accessible name reading `running`. It is exactly the shape round twelve found
+three of. The settle word is `zebra` now, and every node control also requires
+the accessible name to say the run succeeded.
+
+### The ratio, before and after
+
+|                                             |              |
+| ------------------------------------------- | ------------ |
+| Before round thirteen                       | **15 of 17** |
+| After, on round eight's seventeen rows      | **17 of 17** |
+| After, with the three rows this round added | **20 of 20** |
+
+Row 16 on its original expectation. Row 17 by the re-specification above.
+Rows 18, 19 and 20 are new, each with its own clean control.
+
+### What was rejected, and why
+
+- **Backslash escaping for TSV.** 0 of 9 readers decode it.
+- **Refusing a TSV cell with a tab.** It would refuse a file seven of nine
+  parsers read correctly, to protect two readers no spelling can reach.
+- **A general attribute-value census.** URL normalisation on the round trip
+  would make it name every link with a space in it.
+- **A substitution detector.** A guess without a join key, and — once row 17
+  was measured — not needed.
+- **Snapping the hue by a fixed number of degrees.** Too wide for a saturated
+  red, too narrow for a grey one. The report's own resolution decides it.
+- **Adding `alt=""`.** It asserts something only the author knows.
+- **Flow style as `info`.** A note must be visible on the node, and `info`
+  never is — so it is a `warn` in the census, or nothing.
+- **Flow style on a JSON target.** JSON's syntax is flow style.
+- **A second value dimension for text (row 13's caption contents).** Still
+  the right next instrument; still not needed by either row this round.
+
+### Looked for and NOT found
+
+- **Another element upstream substitutes for, outside the list.** Read the
+  whole of hast-util-to-mdast 10.1.2's handler table. `b`, `i`, `s`, `strike`,
+  `tt` and `u` are substituted too, and each has a Markdown spelling — `u`
+  becomes emphasis, and never reaches the converter, because the sanitiser
+  removes it first.
+- **A document the explicit-float tag changes without naming the tag.**
+  Every string its pattern matches is matched first by the core `int`, `float`
+  or exponent test, so implicit resolution cannot reach it. Untagged `abc` and
+  `.5x` are asserted unchanged, and a break that loosened the pattern to `/./`
+  turned 60 tests in the file red.
+- **An 8-bit colour the hue rule moves.** A fixed stride of 16,828 colours
+  through the cube; none.
+- **A cry-wolf firing of the TSV note.** None, over both corpora.
+- **A place `reversed` could carry script or a URL.** It is a boolean
+  attribute; its value is ignored by every engine.
+
+### Anything in the framing I think is wrong
+
+1. **Row 17 was not a reporting gap.** Rounds nine to twelve carried it as a
+   loss the instrument could not see — _"it wants a report of a different
+   kind"_. It was a defect in the conversion that the census was already
+   half-reporting, as two notes that between them said the right thing in the
+   wrong shape. Building a substitution instrument to announce it would have
+   been the most expensive way to leave it in place.
+2. **SD-6 was framed as escape-or-refuse.** Measuring made it neither, and
+   showed half the finding's premise (pandas) was wrong.
+3. **SD-15's premise was a collation question.** It is an object-model fact,
+   and the old on-screen wording was the defect.
+4. **"Run it over the yaml-test-suite and the detection corpus" cannot be
+   done for a text-convert note.** Both are structured-data corpora. I used
+   the markup corpora the repository has and said where they are weak.
+5. **Round eight's CC-5 note — that no formatter can tell a hue that drifted
+   from one somebody meant — is right, and is the cost of every tolerance.**
+   The brief asked for a tolerance, so the report says what it costs.
+
+### Still open, and unchanged by this round
+
+- **JWT-1**, by instruction.
+- **TC-11's other half:** the normalised and Markdown targets turn a missing
+  `alt` into `alt=""` and nothing says so. A census would need an
+  "attribute added" kind; a targeted check is small. Not in the corpus yet.
+- **Row 13's caption contents** — the text dimension, as round ten recorded.
+- **The `unsupported` half of TC-1** — round ten's, unchanged.
+- **The class census counts names per element, not per instance.**
+- **Round nine's sentence about the fourteen silent rows**, in its own
+  section above: retired. Every one of the fourteen now produces a note, so it
+  describes nothing, and round twelve asked for it to go.
+
+### Candidates for the complexity pass and the documentation audit
+
+Written down rather than acted on, as asked.
+
+#### For the complexity pass
+
+- **Three copies of the same four harness helpers.** `checkValueModel`,
+  `checkMarkdownCensus` and the three round-thirteen checks each define their
+  own `notesOn` / `summaryOf` / `typeInto` / `untilSummary`, and round thirteen
+  added module-level `drawnNotes`, `nodeFace` and `onNode` rather than touch
+  the older ones in a fix round. One set, used by all of them, is the obvious
+  consolidation — and the settle-word lesson (a node's description is on its
+  face before a run lands) belongs in that one helper rather than in each
+  caller's memory.
+- **`yamlPresentationNotes` is now five kinds and three walks.** Comments over
+  every document, then a path-building walk, then the census and five
+  `because` branches. Each kind is a pure predicate plus a sentence; a table of
+  `{ kind, collect, sentence }` would make a sixth kind an entry, not an edit
+  in three places.
+- **`htmlNotes` builds the same note shape six times.** Sanitiser attributes,
+  sanitiser elements, sanitiser class names, round-trip attributes, round-trip
+  elements, round-trip class names, invented — each a title with a plural, a
+  body, and a `reaches`. The conditional sentences (`tableRow`,
+  `reversedList`) are the part that varies.
+- **`CsvRow.starts` is recorded for the first record only**, and the type does
+  not say so — an empty array means "not recorded" rather than "no fields".
+  A separate `header` return from `parseCsvRows` would make it unrepresentable
+  rather than documented.
+- **`needsQuoting` branches on `delimiter === '\t'`.** Two writers sharing one
+  function by a string comparison; a `dialect` object with its own quoting
+  rule is the shape the measurement actually describes.
+- **`firstMistypedScalar` is a fourth `visit` of a YAML document** on the read
+  path (after the parse, the collection-key check and the presentation walks).
+  It is cheap and early-exits, but the reader now visits each document several
+  times for different questions.
+- **The corpus has no verdict for "fixed rather than told".** Row 17 needed
+  one and got a re-specification instead. Round eleven noted the same gap from
+  the refusal side. A fourth verdict, or an `expect.absent` shape, is a design
+  question for the corpus, not a fix.
+
+#### For the documentation audit
+
+- **README.md's test count** — "5,012 tests across 125 files" as of round
+  eight; it is 5,304 across 128 after this round. Round eight already
+  recommended not hand-editing it.
+- **`docs/test-findings.md`'s seventeen-row table** is frozen at round eight by
+  design, and now sits above a corpus of twenty. Its heading and the sentence
+  under it should say where rows 18 to 20 are.
+- **Round nine's sentence about the fourteen silent rows** — retired in the
+  round-thirteen section rather than edited in place, per the document's rule
+  about not rewriting earlier rounds. An auditor may prefer a strike.
+- **`docs/conversion-matrix.md` §"A plan for the rounds after this one"** still
+  ends "The count is **zero**" in its round-seven paragraph, beneath a ratio of
+  20 of 20. Historical, and reads as current.
+- **`text-convert`'s `summary`** — "Convert between Markdown, HTML and plain
+  text" (TC-14) — is also the string a canvas node shows before it has run,
+  which is how the settle-word bug happened. Worth knowing when tightening it.
+- **`sanitise.ts`'s comment about `class`** was corrected and is now asserted
+  (`sanitise.test.ts`); the `ALSO_ALLOWED` comment in the same file still ends
+  "the attribute surface is exactly what it was", which was true of that change
+  and now sits above a schema with one attribute (`reversed`) added.
+- **`changes.ts`'s header comment** was corrected for class names; the
+  `identifiers` doc comment still calls itself "The one exception to 'a census
+  is a set of names'", and there are two exceptions now.
+- **The matrix's Structured data § Writing TSV cell** is the longest cell in
+  the file after this round. The measurement table in the tool README says it
+  better.

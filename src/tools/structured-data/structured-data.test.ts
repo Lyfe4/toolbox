@@ -1275,8 +1275,9 @@ describe('CSV parsing', () => {
     expect(parseCsvRows('name\n""', ',')).toEqual({
       ok: true,
       value: [
-        { fields: ['name'], quoted: [false], line: 1 },
-        { fields: [''], quoted: [true], line: 2 },
+        { fields: ['name'], quoted: [false], line: 1, starts: [{ line: 1, column: 1, offset: 0 }] },
+        // Positions are kept for the header alone; see `CsvRow.starts`.
+        { fields: [''], quoted: [true], line: 2, starts: [] },
       ],
     });
     expect(parsed('name\n""', 'csv')).toEqual([{ name: '' }]);

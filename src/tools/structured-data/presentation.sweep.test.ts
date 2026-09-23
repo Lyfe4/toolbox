@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isAlias, isScalar, parseAllDocuments, visit } from 'yaml';
+import { isAlias, isMap, isScalar, isSeq, parseAllDocuments, visit } from 'yaml';
 
 import {
   isJsonArray,
@@ -63,13 +63,22 @@ interface Holds {
   /** Counted rather than flagged: see the note in `lostBetween`. */
   readonly folded: number;
   readonly literal: number;
+  /** Non-empty flow collections. Round thirteen's fifth kind. */
+  readonly flow: number;
 }
 
-const NOTHING: Holds = { comment: false, anchor: false, tag: false, folded: 0, literal: 0 };
+const NOTHING: Holds = {
+  comment: false,
+  anchor: false,
+  tag: false,
+  folded: 0,
+  literal: 0,
+  flow: 0,
+};
 
 /** What a YAML document actually holds, asked of its text. */
 function holds(text: string): Holds {
-  const found = { comment: false, anchor: false, tag: false, folded: 0, literal: 0 };
+  const found = { comment: false, anchor: false, tag: false, folded: 0, literal: 0, flow: 0 };
 
   let documents;
   try {
@@ -81,9 +90,11 @@ function holds(text: string): Holds {
   for (const document of documents) {
     if (document.errors.length > 0) continue;
     if (document.commentBefore !== null || document.comment !== null) found.comment = true;
+    const root = document.contents;
+    const flowRoot = (isMap(root) || isSeq(root)) && root.flow === true;
 
     visit(document, {
-      Node: (_index, node) => {
+      Node: (_index, node, ancestors) => {
         if (node.commentBefore != null || node.comment != null) found.comment = true;
         if (isAlias(node)) {
           found.anchor = true;
@@ -93,6 +104,24 @@ function holds(text: string): Holds {
         if (typeof node.tag === 'string' && node.tag !== '') found.tag = true;
         if (isScalar(node) && node.type === 'BLOCK_FOLDED') found.folded += 1;
         if (isScalar(node) && node.type === 'BLOCK_LITERAL') found.literal += 1;
+        /*
+         * The same question `flowIsLost` asks, stated independently: a run of
+         * flow - the outermost flow collection - inside a document whose root
+         * is not itself flow. The scope is the rule's; what is measured is
+         * whether the OUTPUT still has one, which the rule never looks at.
+         */
+        const flowInside = ancestors.some(
+          (ancestor) => (isMap(ancestor) || isSeq(ancestor)) && ancestor.flow === true,
+        );
+        if (
+          !flowRoot &&
+          !flowInside &&
+          (isMap(node) || isSeq(node)) &&
+          node.flow === true &&
+          node.items.length > 0
+        ) {
+          found.flow += 1;
+        }
         return undefined;
       },
     });
@@ -110,16 +139,23 @@ function holds(text: string): Holds {
  * somewhere" answers yes and calls the note a false positive; "does it have
  * FEWER than it started with" answers the question that was asked.
  */
-function lostBetween(source: Holds, output: Holds): Readonly<Record<string, boolean>> {
+function lostBetween(
+  source: Holds,
+  output: Holds,
+  target: 'json' | 'yaml',
+): Readonly<Record<string, boolean>> {
   return {
     comment: source.comment && !output.comment,
     anchor: source.anchor && !output.anchor,
     tag: source.tag && !output.tag,
     style: source.folded > output.folded || source.literal > output.literal,
+    // JSON's syntax IS flow syntax, so a JSON target loses nothing of it; the
+    // question is only asked of a YAML output. See `flowIsLost`.
+    flow: target === 'yaml' && source.flow > output.flow,
   };
 }
 
-const KINDS = ['comment', 'anchor', 'tag', 'style'] as const;
+const KINDS = ['comment', 'anchor', 'tag', 'style', 'flow'] as const;
 
 async function convert(
   text: string,
@@ -158,7 +194,7 @@ describe.each(['json', 'yaml'] as const)(
     it('never names something the output still has, and never stays silent about one it lost', async () => {
       const wolf: string[] = [];
       const silent: string[] = [];
-      const tally: Record<string, number> = { comment: 0, anchor: 0, tag: 0, style: 0 };
+      const tally: Record<string, number> = { comment: 0, anchor: 0, tag: 0, style: 0, flow: 0 };
       let readable = 0;
 
       for (const entry of CASES) {
@@ -173,7 +209,7 @@ describe.each(['json', 'yaml'] as const)(
          * inside a string and call it a comment.
          */
         const output = target === 'yaml' ? holds(result.output) : NOTHING;
-        const lost = lostBetween(holds(entry.yaml), output);
+        const lost = lostBetween(holds(entry.yaml), output, target);
         const note = result.note ?? '';
 
         for (const kind of KINDS) {
@@ -191,6 +227,8 @@ describe.each(['json', 'yaml'] as const)(
        */
       expect(readable).toBeGreaterThan(250);
       for (const kind of KINDS) {
+        // Flow is never lost on a JSON target, so zero is the right count there.
+        if (kind === 'flow' && target === 'json') continue;
         expect(tally[kind], `the note never names a ${kind} in the whole suite`).toBeGreaterThan(
           20,
         );

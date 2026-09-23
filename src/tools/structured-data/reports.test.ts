@@ -12,6 +12,7 @@ import {
 
 import { detectSource, DELIMITERS } from './convert';
 import structuredDataTool from './index';
+import { structuredDataOptionFields } from './options';
 
 /**
  * THE DETECTED REPORT: ONE PORT, AND EVERY LOSS THAT NEEDED IT.
@@ -1276,5 +1277,285 @@ describe('the `detected` flag the report carries', () => {
     const told = await convert('name,age\nada,36\ngrace,45', { source: 'csv', target: 'json' });
     expect(told.report.detected).toBe(false);
     expect(told.report.summary).not.toContain('(detected)');
+  });
+});
+
+/* ========================================================================== *
+ * Round thirteen
+ * ========================================================================== */
+
+/** The refusal a run produced, or null when it did not refuse. */
+async function refusal(
+  input: string,
+  options: Record<string, unknown>,
+): Promise<{
+  readonly message: string;
+  readonly detail: string;
+  readonly position: unknown;
+} | null> {
+  const result = await structuredDataTool.run({
+    inputs: { input: { type: 'text', text: input } },
+    options,
+    context,
+  });
+  if (result.ok) return null;
+  return {
+    message: result.error.message,
+    detail: result.error.detail ?? '',
+    position: result.error.position,
+  };
+}
+
+const warnings = (report: Report): readonly Note[] =>
+  report.notes.filter((note) => note.level === 'warn');
+
+/**
+ * SD-6, decided by measuring nine readers. See `needsQuoting` in csv.ts and
+ * `spec/tsv-readers.json` for the measurement itself.
+ */
+describe('SD-6: TSV quotes only what a reader would otherwise get wrong', () => {
+  const TSV = { source: 'json', target: 'tsv' } as const;
+
+  it('writes a cell with a tab in quotes, and says which readers cannot read it', async () => {
+    const { output, report } = await convert('[{"note": "has\\ttab", "id": "1"}]', TSV);
+
+    expect(output).toBe('note\tid\n"has\ttab"\t1');
+    const note = warnings(report).find((entry) => entry.title.includes('tab'));
+    expect(note?.title).toBe('1 cell holds a tab or a line break');
+    expect(note?.body).toContain('$[0].note');
+    expect(note?.body).toContain('cut and awk');
+  });
+
+  it('says the same of a line break, and of a header that holds one', async () => {
+    const { report } = await convert('[{"two\\nlines": "a\\nb"}]', TSV);
+    const note = warnings(report).find((entry) => entry.title.includes('tab'));
+    expect(note?.title).toBe('2 cells hold a tab or a line break');
+    expect(note?.body).toContain('the header "two\\nlines"');
+    expect(note?.body).toContain('$[0].two\nlines');
+  });
+
+  it.each([
+    ['a quote inside the cell', 'say "hi"', 'say "hi"'],
+    ['spaces at its edges', ' pad ', ' pad '],
+    ['a comma', 'a,b', 'a,b'],
+  ])(
+    'writes a cell with %s bare, which every reader measured reads right',
+    async (_name, cell, written) => {
+      const { output, report } = await convert(JSON.stringify([{ a: cell }]), TSV);
+      expect(output).toBe(`a\n${written}`);
+      // The control: nothing to report about a cell TSV can spell.
+      expect(warnings(report)).toEqual([]);
+    },
+  );
+
+  it('still quotes a cell that begins with a quote, which bare would be misread', async () => {
+    const { output } = await convert('[{"a": "\\"lead"}]', TSV);
+    expect(output).toBe('a\n"""lead"');
+  });
+
+  it('quotes a padded HEADER cell, because this reader trims an unquoted one', async () => {
+    const { output } = await convert('[{" padded ": "x"}]', TSV);
+    expect(output).toBe('" padded "\nx');
+    // And it reads back as what was written - the reason for the exception.
+    const back = await convert(output, { source: 'tsv', target: 'json' });
+    expect(back.output).toContain('" padded ": "x"');
+  });
+
+  it('leaves CSV exactly as it was', async () => {
+    const { output, report } = await convert('[{"a": "say \\"hi\\"", "b": " pad "}]', {
+      source: 'json',
+      target: 'csv',
+    });
+    expect(output).toBe('a,b\n"say ""hi"""," pad "');
+    expect(warnings(report).some((entry) => entry.title.includes('tab'))).toBe(false);
+  });
+});
+
+/**
+ * SD-8, and the silent type change it was one case of.
+ */
+describe('SD-8: an explicit !!float, and a tag its value cannot satisfy', () => {
+  const YAML_TO_JSON = { source: 'yaml', target: 'json' } as const;
+
+  it.each([
+    ['1', 1],
+    ['-3', -3],
+    ['+12', 12],
+    ['01', 1],
+    ['"2"', 2],
+    ['1.5', 1.5],
+    ['1e3', 1000],
+  ])('reads !!float %s as the number %d', async (spelled, value) => {
+    const { output } = await convert(`v: !!float ${spelled}\n`, YAML_TO_JSON);
+    expect(JSON.parse(output)).toEqual({ v: value });
+  });
+
+  it.each([
+    ['1', 1],
+    ['01', 1],
+    ['"1"', '1'],
+    ['1.0', 1],
+    // Text, which no number tag's test may claim: the one that would catch a
+    // float test loose enough to be reached by implicit resolution.
+    ['abc', 'abc'],
+    ['.5x', '.5x'],
+  ])('changes nothing about an untagged %s', async (spelled, value) => {
+    // The control that matters: the new tag must never be reached by a
+    // scalar that did not name it.
+    const { output } = await convert(`v: ${spelled}\n`, YAML_TO_JSON);
+    expect(JSON.parse(output)).toEqual({ v: value });
+  });
+
+  it.each([
+    // The column is the VALUE's, after the tag: it is the text that is wrong.
+    ['!!float abc', '"abc" is tagged !!float and is not one.', 12],
+    ['!!float 0x1A', '"0x1A" is tagged !!float and is not one.', 12],
+    ['!!int 1.5', '"1.5" is tagged !!int and is not one.', 10],
+    ['!!bool yes', '"yes" is tagged !!bool and is not one.', 11],
+  ])(
+    'refuses %s rather than reading it as text, and says where',
+    async (value, message, column) => {
+      const refused = await refusal(`ok: 1\nv: ${value}\n`, YAML_TO_JSON);
+      expect(refused?.message).toBe(message);
+      expect(refused?.position).toMatchObject({ line: 2, column });
+    },
+  );
+
+  it('reads !!bool yes as true where the document declares YAML 1.1', async () => {
+    const { output } = await convert('%YAML 1.1\n---\nv: !!bool yes\n', YAML_TO_JSON);
+    expect(JSON.parse(output)).toEqual({ v: true });
+  });
+
+  it('leaves a custom tag to the presentation note rather than refusing it', async () => {
+    const { output, report } = await convert('v: !mytype abc\n', YAML_TO_JSON);
+    expect(JSON.parse(output)).toEqual({ v: 'abc' });
+    expect(warnings(report).some((note) => note.title.includes('1 tag'))).toBe(true);
+  });
+});
+
+describe('SD-14b: a duplicate column is reported where it is', () => {
+  const CSV = { source: 'csv', target: 'json' } as const;
+
+  it('points at the second cell of the pair', async () => {
+    const refused = await refusal('alpha,beta,alpha\n1,2,3\n', CSV);
+    expect(refused?.message).toBe('Duplicate column name "alpha".');
+    expect(refused?.position).toEqual({ line: 1, column: 12, offset: 11 });
+  });
+
+  it('and the position follows the cell when the cell moves', async () => {
+    const refused = await refusal('alpha,alpha,beta\n1,2,3\n', CSV);
+    expect(refused?.position).toMatchObject({ line: 1, column: 7 });
+  });
+
+  it('counts a quoted cell as the width it is written, not the name it holds', async () => {
+    const refused = await refusal('"a ""b""",x,"a ""b"""\n1,2,3\n', CSV);
+    expect(refused?.position).toMatchObject({ line: 1, column: 13 });
+  });
+
+  it('counts the line an Excel sep= directive takes up', async () => {
+    const refused = await refusal('sep=;\nalpha;alpha\n1;2\n', {
+      source: 'csv',
+      target: 'json',
+      delimiter: 'semicolon',
+    });
+    expect(refused?.position).toMatchObject({ line: 2, column: 7 });
+  });
+
+  it('and a header that begins after a blank line', async () => {
+    const refused = await refusal('\nalpha,alpha\n1,2\n', CSV);
+    expect(refused?.position).toMatchObject({ line: 2, column: 7 });
+  });
+});
+
+describe('SD-15: the order Sort keys produces, as the option now says it', () => {
+  it('is character code order, except whole-number keys, which come first', async () => {
+    const { output } = await convert('{"b":1,"10":2,"2":3,"a":4,"01":5,"Mango":6,"apple":7}', {
+      source: 'json',
+      target: 'json',
+      sortKeys: true,
+    });
+    expect(Object.keys(JSON.parse(output) as object)).toEqual([
+      '2',
+      '10',
+      '01',
+      'Mango',
+      'a',
+      'apple',
+      'b',
+    ]);
+  });
+
+  it('describes that on screen rather than saying alphabetically', () => {
+    const text =
+      structuredDataOptionFields.find((field) => field.key === 'sortKeys')?.description ?? '';
+    expect(text).toContain('capitals before lower case');
+    expect(text).toContain('whole numbers first');
+    expect(text).not.toContain('alphabetically');
+  });
+});
+
+describe('SD-1: a one-column table, which detection cannot see', () => {
+  it('refuses it on auto-detect and says how to read it', async () => {
+    const refused = await refusal('name\nada\nbob\n', { source: 'auto', target: 'json' });
+    expect(refused?.detail).toContain('choose CSV as the source format');
+  });
+
+  it('reads it when CSV is chosen, which is what the refusal says to do', async () => {
+    const { output } = await convert('name\nada\nbob\n', { source: 'csv', target: 'json' });
+    expect(JSON.parse(output)).toEqual([{ name: 'ada' }, { name: 'bob' }]);
+  });
+});
+
+/**
+ * FLOW STYLE, the fifth kind in the presentation census.
+ */
+describe('a flow collection written back as a block', () => {
+  const YAML_TO_YAML = { source: 'yaml', target: 'yaml' } as const;
+
+  it('is counted in the census and named by path', async () => {
+    const { output, report } = await convert('a: {b: 1}\nc: [1, 2]\n', YAML_TO_YAML);
+    expect(output).toBe('a:\n  b: 1\nc:\n  - 1\n  - 2\n');
+    const note = warnings(report).find((entry) => entry.title.startsWith('Not carried over'));
+    expect(note?.title).toBe('Not carried over: 2 flow collections');
+    expect(note?.body).toContain('$.a');
+    expect(note?.body).toContain('$.c');
+  });
+
+  it('shares the one note with the other kinds', async () => {
+    const { report } = await convert('# why\na: {b: 1}\n', YAML_TO_YAML);
+    expect(warnings(report).map((note) => note.title)).toEqual([
+      'Not carried over: 1 comment, 1 flow collection',
+    ]);
+  });
+
+  it.each([
+    ['an empty flow collection, which the writer keeps', 'a: []\nb: {}\n', 'a: []\nb: {}\n'],
+    ['a block collection', 'a:\n  b: 1\n', 'a:\n  b: 1\n'],
+  ])('says nothing about %s', async (_name, input, expected) => {
+    const { output, report } = await convert(input, YAML_TO_YAML);
+    expect(output).toBe(expected);
+    expect(warnings(report)).toEqual([]);
+  });
+
+  it('counts one run of flow once, however deeply it nests', async () => {
+    const { report } = await convert('ports: [{port: 80}, {port: 443}]\n', YAML_TO_YAML);
+    expect(warnings(report).map((note) => note.title)).toEqual([
+      'Not carried over: 1 flow collection',
+    ]);
+  });
+
+  it('says nothing for a document written entirely in flow, which is JSON-shaped', async () => {
+    // The exemption the cry-wolf sweep asked for: near-JSON read through the
+    // YAML fallback drew this note while real JSON never could. Asserted
+    // with the output, so the silence is about a conversion that happened.
+    const { output, report } = await convert('{a: 1, b: [1, 2]}\n', YAML_TO_YAML);
+    expect(output).toBe('a: 1\nb:\n  - 1\n  - 2\n');
+    expect(warnings(report)).toEqual([]);
+  });
+
+  it('says nothing on a JSON target, whose syntax is flow style', async () => {
+    const { output, report } = await convert('a: {b: 1}\n', { source: 'yaml', target: 'json' });
+    expect(JSON.parse(output)).toEqual({ a: { b: 1 } });
+    expect(warnings(report)).toEqual([]);
   });
 });

@@ -631,6 +631,16 @@ that is lossy for `<details>`, and `keep` is one control away.
 written as its opening tag, its children as **real Markdown**, and its closing
 tag, so a fenced code block inside `<details>` stays a fenced code block.
 
+**`text` means text for every element on the list, from round thirteen.** It
+used to register nothing and fall through to hast-util-to-mdast's defaults, on
+the belief that they keep the words and drop the wrapper. For seven elements
+they substitute instead: `<mark>` became `_emphasis_`, `<kbd>`, `<samp>` and
+`<var>` became code spans, a definition list became bullets, and `<q>` wrote
+quotation marks into the text. Under a policy labelled _Keep the text, drop the
+tag_, that is formatting the source never had (TC-4, corpus row 17). Now each
+becomes its words, and the census names the element that went. Choose `keep`
+for `<kbd>` as a key cap; it is written back verbatim.
+
 ## Known limitations
 
 Every one of these is asserted in
@@ -664,6 +674,32 @@ icon.
 to its output verbatim; this tool parses it, so `<a href="x">` with no closing
 tag comes out closed. Ours is well-formed and theirs is not, which is the
 right way round for output meant to be pasted somewhere.
+
+**An `<img>` with no `alt` is not given `alt=""` on HTML (sanitised).** An
+empty alt is a claim that the image is decorative — a screen reader skips it —
+and only the author knows that; adding it would hide an undescribed image from
+exactly the people alt text is for. The other two targets do add one, because
+`![](x)` has no spelling for "no alt", and nothing says so yet. (TC-11,
+decided in round thirteen; the second half is recorded as open.)
+
+**A hard line break is written as a trailing backslash.** CommonMark and GFM
+both define it. The alternative, two trailing spaces, is invisible and is the
+thing editors and linters strip; raw `<br>` trades a renderer question for an
+HTML-in-Markdown one. Renderers that predate CommonMark will show the
+backslash. (TC-12.)
+
+**`<ol reversed>` survives the sanitiser, and cannot survive Markdown.**
+`reversed` is a boolean with no URL, no script and no style, and it is
+content: it decides the numbers a reader sees. So `HTML (sanitised)` keeps it.
+CommonMark numbers every list upward from its first item, so on the other two
+targets the list counts up, and the note says so rather than only naming the
+attribute. (TC-3.)
+
+**A class name the sanitiser filters is reported.** On seven elements the
+schema allows `class` with permitted values only, and takes every other name
+out of the attribute while keeping it — `<a class="btn">` becomes
+`<a class="">`. The census counted names and could not see it; it now carries
+class names per element and says which went (corpus row 16).
 
 **Emoji shortcodes are not expanded.** `:rocket:` stays `:rocket:`. Shortcode
 expansion is a GitHub feature outside the GFM specification, and half-doing it

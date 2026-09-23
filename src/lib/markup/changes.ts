@@ -29,12 +29,23 @@ import type { Nodes as HastNodes, RootContent } from 'hast';
  *
  * TWO CONSEQUENCES OF THAT CHOICE, STATED RATHER THAN HIDDEN:
  *
- *   - An attribute whose VALUE changed is not reported, because the name is
- *     still there. The one case in this app is `id`, which the pipeline
- *     namespaces to `user-content-*` on purpose - and "documented elsewhere"
- *     turned out to mean "in a comment", not on screen. A census therefore
- *     also carries the identifier VALUES, which is the one attribute whose
- *     value this app is known to rewrite; see `renamedIdentifiers`.
+ *   - An attribute whose VALUE changed is not reported by the name census,
+ *     because the name is still there. There are TWO cases in this app, and
+ *     each gets a value dimension of its own rather than a general one:
+ *
+ *       `id`, which the pipeline namespaces to `user-content-*` on purpose -
+ *       see `renamedIdentifiers`.
+ *       `class`, which the sanitiser FILTERS rather than removes on the
+ *       elements whose schema entry names permitted values: `<a class="btn">`
+ *       comes out `<a class="">`, and a census of names sees `class` on both
+ *       sides. See `lostClassNames`. This comment used to say `id` was the
+ *       only one, and corpus row 16 was the counter-example for eight rounds.
+ *
+ *     A general value census - every attribute, every value - was measured and
+ *     rejected: the Markdown round trip percent-encodes a URL (`href="a b"`
+ *     comes back `href="a%20b"`), which is the same address spelled
+ *     differently, so a note about "values that went in and did not come out"
+ *     would name every link with a space in it.
  *   - An element that moved is not reported either, only one that appeared or
  *     disappeared. A `<p>` that gained a parent is the same `<p>`, and calling
  *     that a loss would put a note on almost every document.
@@ -61,7 +72,8 @@ export interface Census {
   /**
    * Every `id` and `name` the document DECLARES, as written.
    *
-   * The one exception to "a census is a set of names": these are values, and
+   * The first exception to "a census is a set of names" (`classNames` below
+   * is the second, from round thirteen): these are values, and
    * they are here because they are the only values in this app that a pipeline
    * rewrites. A set of identifiers is still nothing anybody can render - there
    * is no markup in it, nothing to copy and nothing to put on a port - which
@@ -84,6 +96,22 @@ export interface Census {
    * `href`. See `deadFragments`.
    */
   readonly fragments: ReadonlySet<string>;
+  /**
+   * Every class NAME the document uses, and the elements that carry it.
+   *
+   * The second set of values in a census, for the same reason as
+   * `identifiers`: a pipeline here rewrites them. hast-util-sanitize keeps
+   * `class` on an element whose schema entry permits particular values and
+   * takes every other name out of it, so the attribute survives and the names
+   * do not. Split into names because that is what the sanitiser filters -
+   * `class="btn data-footnote-backref"` keeps one and loses the other - and a
+   * comparison of whole strings would call that a change without saying which
+   * part went.
+   *
+   * Still nothing anybody can render: a class name is a token, and the element
+   * beside it is a tag name.
+   */
+  readonly classNames: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
 /** hast spells attributes as JSX-ish property names; HTML authors do not. */
@@ -115,6 +143,7 @@ export function censusOf(tree: HastNodes): Census {
   const attributes = new Set<string>();
   const identifiers = new Set<string>();
   const fragments = new Set<string>();
+  const classNames = new Map<string, Set<string>>();
 
   const walk = (node: RootContent | HastNodes): void => {
     if (node.type === 'element') {
@@ -124,6 +153,18 @@ export function censusOf(tree: HastNodes): Census {
         // and `null` mean the parser did not see one.
         if (value === undefined || value === null || value === false) continue;
         attributes.add(attributeName(property));
+        if (property === 'className') {
+          // hast holds `class` as a list of names; a string is tolerated
+          // because a hand-built tree can carry one.
+          const names = Array.isArray(value) ? value.map(String) : String(value).split(/\s+/);
+          for (const name of names) {
+            if (name === '') continue;
+            const carriers = classNames.get(name) ?? new Set<string>();
+            carriers.add(node.tagName);
+            classNames.set(name, carriers);
+          }
+          continue;
+        }
         if (typeof value !== 'string' || value === '') continue;
         if (property === 'id' || property === 'name') identifiers.add(value);
         // `#` alone is the top of the page in every browser and points at no
@@ -136,7 +177,36 @@ export function censusOf(tree: HastNodes): Census {
   };
 
   walk(tree);
-  return { elements, attributes, identifiers, fragments };
+  return { elements, attributes, identifiers, fragments, classNames };
+}
+
+/** A class name that went in on some elements and is not on them afterwards. */
+export interface LostClassName {
+  readonly name: string;
+  /** The tags that carried it before and do not now, in the order first seen. */
+  readonly elements: readonly string[];
+}
+
+/**
+ * Class names the first document puts on an element and the second does not.
+ *
+ * Asked per NAME AND ELEMENT rather than per name, because the question a
+ * reader has is "which of mine went", and `btn` surviving on a `<code>` while
+ * going from an `<a>` is still a `btn` somebody lost. A name the second
+ * document gained is not reported: inventing a class is not a thing any
+ * pipeline here does to a value the author wrote, and the task-list classes
+ * remark adds on the way back are its own vocabulary rather than a loss.
+ */
+export function lostClassNames(first: Census, second: Census): readonly LostClassName[] {
+  const lost: LostClassName[] = [];
+
+  for (const [name, carriers] of first.classNames) {
+    const after = second.classNames.get(name);
+    const gone = [...carriers].filter((tag) => after?.has(tag) !== true);
+    if (gone.length > 0) lost.push({ name, elements: gone });
+  }
+
+  return lost;
 }
 
 /**

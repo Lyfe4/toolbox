@@ -227,6 +227,28 @@ const LOSSY_RUNS: readonly {
     options: { source: 'markdown', target: 'html' },
   },
   {
+    // Round thirteen's, added the day they landed, for the reason round
+    // eleven's entry above gives. A write-half note, so `data` must escape it.
+    toolId: 'structured-data',
+    what: 'a TSV cell holding a tab, which TSV has no spelling for',
+    inputs: { input: { type: 'text', text: '[{"note": "has\\ttab"}]' } },
+    options: { source: 'json', target: 'tsv' },
+  },
+  {
+    toolId: 'structured-data',
+    what: 'a YAML flow collection written back as a block',
+    inputs: { input: { type: 'text', text: 'a: {b: 1}\n' } },
+    options: { source: 'yaml', target: 'yaml' },
+  },
+  {
+    toolId: 'text-convert',
+    what: 'a class name the sanitiser takes out of a class it keeps',
+    inputs: {
+      input: { type: 'text', text: '<p><a class="btn" href="https://example.com">x</a></p>' },
+    },
+    options: { source: 'html', target: 'html-sanitised' },
+  },
+  {
     toolId: 'text-convert',
     what: 'an attribute the sanitiser removes',
     inputs: { input: { type: 'text', text: '<p class="lead" data-x="1">Hello</p>' } },

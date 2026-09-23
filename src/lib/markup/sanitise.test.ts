@@ -3,6 +3,7 @@ import { unified } from 'unified';
 import { describe, expect, it } from 'vitest';
 
 import { htmlToMarkdown, htmlToText, markdownToHtml } from './pipelines';
+import { SANITISE_SCHEMA } from './sanitise';
 
 import type { Nodes } from 'hast';
 
@@ -324,5 +325,45 @@ describe('what survives', () => {
 
     assertInertHtml(out);
     expect(out).not.toContain('type="image"');
+  });
+});
+
+/**
+ * THE SENTENCE IN `sanitise.ts` ABOUT WHERE `class` IS ALLOWED, AS AN ASSERTION.
+ *
+ * The comment it replaced named `div` and `span`, which have no `className`
+ * entry, and missed four elements that do - a description of an inherited
+ * object, written down by reading it, and never true of the version installed.
+ * A list in a comment cannot fail; this can, and it fails the day a dependency
+ * update moves the boundary the comment describes.
+ */
+describe('where the schema allows class, and only with which values', () => {
+  it('is the seven elements the comment names, and each has a value filter', () => {
+    const withClass = Object.entries(SANITISE_SCHEMA.attributes ?? {})
+      .filter(([, rules]) =>
+        rules.some((rule) => (Array.isArray(rule) ? rule[0] : rule) === 'className'),
+      )
+      .map(([tag, rules]) => {
+        const rule = rules.find((entry) => Array.isArray(entry) && entry[0] === 'className');
+        return [tag, Array.isArray(rule) && rule.length > 1] as const;
+      })
+      .sort(([a], [b]) => (a < b ? -1 : 1));
+
+    expect(withClass).toEqual([
+      ['a', true],
+      ['code', true],
+      ['h2', true],
+      ['li', true],
+      ['ol', true],
+      ['section', true],
+      ['ul', true],
+    ]);
+  });
+
+  it('allows reversed on <ol> and on nothing else', () => {
+    const carriers = Object.entries(SANITISE_SCHEMA.attributes ?? {})
+      .filter(([, rules]) => rules.includes('reversed'))
+      .map(([tag]) => tag);
+    expect(carriers).toEqual(['ol']);
   });
 });

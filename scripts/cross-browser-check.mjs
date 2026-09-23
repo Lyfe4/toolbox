@@ -5757,6 +5757,566 @@ async function checkMarkdownCensus(browser, label) {
   }
 }
 
+/* ========================================================================== *
+ * Round thirteen
+ * ========================================================================== */
+
+/**
+ * The drawn text of a notes list, and whether it occupies any space. Shared by
+ * the three round-thirteen checks, which all ask the same two questions of a
+ * report: is it there, and could a person see it.
+ */
+async function drawnNotes(page, name) {
+  const list = page.getByRole('list', { name });
+  if ((await list.count()) === 0) return { drawn: false, text: '' };
+  const box = await list.first().boundingBox();
+  return {
+    drawn: box !== null && box.width > 0 && box.height > 0,
+    text: ((await list.first().innerText()) ?? '').replace(/\s+/g, ' ').trim(),
+  };
+}
+
+/** A node's summary box, drawn, and its accessible name. */
+async function nodeFace(page) {
+  return page.evaluate(() => {
+    const node = document.querySelector('[data-testid="node-n1"]');
+    const box = node?.querySelector('[class*="nodeSummary"]') ?? null;
+    if (box === null) return null;
+    const rect = box.getBoundingClientRect();
+    return {
+      text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
+      drawn: rect.width > 0 && rect.height > 0,
+      spoken: node?.getAttribute('aria-label') ?? '',
+    };
+  });
+}
+
+/**
+ * Loads one node of `tool` with `options`, types `text` into it through the
+ * inspector, and waits for the face to satisfy `settled` - which each caller
+ * makes something only THIS run can have produced, so a control cannot pass
+ * on an empty node before the conversion has landed.
+ */
+async function onNode(page, tool, options, text, settled) {
+  await page.goto(`${ORIGIN}/?p=${shareParam({ v: 3, n: [['n1', tool, 0, 0, options]], e: [] })}`, {
+    waitUntil: 'networkidle',
+  });
+  await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+  await page.locator('[data-testid="node-n1"]').focus();
+  await page.keyboard.press('Enter');
+  const field = page.locator('[data-inspector-input]').first();
+  await field.waitFor({ timeout: 15_000 });
+  await field.fill(text);
+
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const face = await nodeFace(page);
+    if ((face !== null && settled(face.text)) || Date.now() > deadline) return face;
+    await page.waitForTimeout(100);
+  }
+}
+
+/**
+ * CORPUS ROWS 16, 17 AND 18 - three text-convert losses, each asked on the tool
+ * page and on a canvas node, in the engine people actually paste into.
+ *
+ *   16  `<a class="btn">` emptied to `class=""` by the sanitiser. The census
+ *       now carries class names, and the note has to be drawn.
+ *   17  `<mark>` and `<kbd>` under "Keep the text, drop the tag". The fix is in
+ *       the conversion, so the first assertion is on the OUTPUT - no
+ *       emphasis, no code span - and the note that remains names both.
+ *   18  `<ol reversed>`. The note has to say the numbers now count up.
+ *
+ * Every control converts a document of the same shape that loses nothing, and
+ * waits for THAT document's output before asserting silence: the previous
+ * run's answer stays on screen while the next is in flight.
+ */
+async function checkClassAndSubstitution(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  const LINK = '<p><a class="btn" href="https://example.com/a">link</a></p>';
+  // `zebra`, not `plain`: a settle word must be one only THIS output holds,
+  // and `plain` is in the node's own description ("...HTML and plain text"),
+  // which is on its face before the run has produced anything. That exact
+  // control passed on a node still reading `running` on its first try.
+  const PLAIN_LINK = '<p><a href="https://example.com/b">zebra</a></p>';
+  const MARKED = '<p><mark>highlighted</mark> and <kbd>Esc</kbd></p>';
+  const EMPHASIS = '<p><em>emphasis</em> and <code>code</code></p>';
+  const REVERSED = '<ol reversed><li>three</li><li>two</li><li>one</li></ol>';
+  const COUNTING = '<ol><li>uno</li><li>dos</li></ol>';
+
+  /**
+   * Types the document BEFORE opening either listbox - round eleven's rule -
+   * reads the box back, runs, and waits for the output to hold `expected`.
+   */
+  const runAs = async (text, target, expected) => {
+    await page.goto(`${ORIGIN}/tools/text-convert`, { waitUntil: 'networkidle' });
+    await page
+      .getByRole('heading', { level: 1, name: 'Text convert' })
+      .waitFor({ timeout: 15_000 });
+    await page.getByLabel('Text convert input').fill(text);
+    await page.getByRole('combobox', { name: 'Source format' }).click();
+    await page.getByRole('option', { name: 'HTML', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Target format' }).click();
+    await page.getByRole('option', { name: target, exact: true }).click();
+
+    const typed = await page.getByLabel('Text convert input').inputValue();
+    if (typed !== text)
+      return {
+        output: null,
+        notes: { drawn: false, text: `typed ${typed.length} of ${text.length}` },
+      };
+
+    await page.getByRole('button', { name: 'Run' }).click();
+    const output = page.getByLabel('Text convert Converted');
+    await output.waitFor({ timeout: 30_000 });
+    for (let attempt = 0; attempt < 150; attempt += 1) {
+      const value = await output.inputValue();
+      if (value.includes(expected))
+        return { output: value, notes: await drawnNotes(page, 'Text convert Report notes') };
+      await page.waitForTimeout(100);
+    }
+    return { output: null, notes: { drawn: false, text: 'the output never arrived' } };
+  };
+
+  try {
+    /* -- row 16, on the tool page ----------------------------------------- */
+    const link = await runAs(LINK, 'HTML (sanitised)', 'class=""');
+    check(
+      label,
+      'a class name the sanitiser took out of a kept attribute is drawn on the tool page',
+      link.notes.drawn &&
+        link.notes.text.includes('1 class name was removed by the sanitiser') &&
+        link.notes.text.includes('btn on <a>'),
+      link.notes.text.slice(0, 220),
+    );
+
+    const plain = await runAs(PLAIN_LINK, 'HTML (sanitised)', 'zebra');
+    check(
+      label,
+      'and a link that had no class draws no note at all',
+      plain.output !== null && !/class/i.test(plain.notes.text),
+      plain.notes.text.slice(0, 160),
+    );
+
+    /* -- row 17 ------------------------------------------------------------ */
+    const marked = await runAs(MARKED, 'Markdown', 'highlighted and Esc');
+    check(
+      label,
+      '<mark> and <kbd> keep their words and gain no formatting under the text policy',
+      marked.output !== null && !/[_*`]/.test(marked.output),
+      JSON.stringify(marked.output),
+    );
+    check(
+      label,
+      'and the note that remains names both and invents nothing',
+      marked.notes.drawn &&
+        marked.notes.text.includes('could not carry') &&
+        marked.notes.text.includes('<mark>') &&
+        marked.notes.text.includes('<kbd>') &&
+        !marked.notes.text.includes('invented'),
+      marked.notes.text.slice(0, 240),
+    );
+
+    const emphasis = await runAs(EMPHASIS, 'Markdown', '_emphasis_');
+    check(
+      label,
+      'emphasis and code that were already there draw no note',
+      emphasis.output !== null &&
+        !emphasis.notes.text.includes('could not carry') &&
+        !emphasis.notes.text.includes('invented'),
+      emphasis.notes.text.slice(0, 160),
+    );
+
+    /* -- row 18 ------------------------------------------------------------ */
+    const reversed = await runAs(REVERSED, 'Markdown', '1. three');
+    check(
+      label,
+      'a reversed list says its numbers now count up, on the tool page',
+      reversed.notes.drawn &&
+        reversed.notes.text.includes('reversed') &&
+        reversed.notes.text.includes('now count up'),
+      reversed.notes.text.slice(0, 240),
+    );
+
+    const counting = await runAs(COUNTING, 'Markdown', '1. uno');
+    check(
+      label,
+      'and a list that was never reversed draws no note',
+      counting.output !== null &&
+        !counting.notes.text.includes('count up') &&
+        !counting.notes.text.includes('could not carry'),
+      counting.notes.text.slice(0, 160),
+    );
+
+    /* -- all three on a canvas node ------------------------------------- */
+    const sanitised = { source: 'html', target: 'html-sanitised' };
+    const markdown = { source: 'html', target: 'markdown' };
+
+    const linkNode = await onNode(page, 'text-convert', sanitised, LINK, (text) =>
+      text.startsWith('Lossy'),
+    );
+    check(
+      label,
+      'the class-name note reaches a node face, and its accessible name',
+      linkNode !== null &&
+        linkNode.drawn &&
+        linkNode.text.includes('class name was removed') &&
+        linkNode.spoken.includes('lossy:'),
+      JSON.stringify(linkNode),
+    );
+
+    const plainNode = await onNode(page, 'text-convert', sanitised, PLAIN_LINK, (text) =>
+      text.includes('zebra'),
+    );
+    check(
+      label,
+      'a node holding a link with no class says nothing about loss',
+      plainNode !== null &&
+        plainNode.drawn &&
+        plainNode.text.includes('zebra') &&
+        plainNode.spoken.includes('succeeded') &&
+        !plainNode.text.includes('Lossy'),
+      JSON.stringify(plainNode),
+    );
+
+    const markedNode = await onNode(page, 'text-convert', markdown, MARKED, (text) =>
+      text.startsWith('Lossy'),
+    );
+    check(
+      label,
+      'the mark and kbd note reaches a node face',
+      markedNode !== null &&
+        markedNode.drawn &&
+        markedNode.text.includes('could not carry') &&
+        // The node's accessible name carries its output's summary: the fix,
+        // not only the note, has to be on the canvas. Without this the check
+        // passed with TC-4 reverted, because the old census said "could not
+        // carry" too.
+        markedNode.spoken.includes('highlighted and Esc'),
+      JSON.stringify(markedNode),
+    );
+
+    const reversedNode = await onNode(page, 'text-convert', markdown, REVERSED, (text) =>
+      text.startsWith('Lossy'),
+    );
+    check(
+      label,
+      'the reversed-list note reaches a node face',
+      reversedNode !== null && reversedNode.drawn && reversedNode.text.includes('could not carry'),
+      JSON.stringify(reversedNode),
+    );
+
+    const countingNode = await onNode(page, 'text-convert', markdown, COUNTING, (text) =>
+      text.includes('uno'),
+    );
+    check(
+      label,
+      'a node holding a list that was never reversed says nothing about loss',
+      countingNode !== null &&
+        countingNode.drawn &&
+        countingNode.spoken.includes('succeeded') &&
+        !countingNode.text.includes('Lossy'),
+      JSON.stringify(countingNode),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * CORPUS ROWS 19 AND 20, AND TWO REFUSALS - structured data.
+ *
+ *   19  a cell holding a tab, written to TSV in quotes: the note names the
+ *       cell and the two readers that cannot read it.
+ *   20  a YAML flow collection written back as a block: a fifth kind in the
+ *       presentation census, which is still ONE line on a node.
+ *   SD-8   `!!float abc` refused, where it used to become the string "abc".
+ *   SD-14b the duplicate column's refusal drawn with the column it is in.
+ */
+async function checkTableCellsAndFlow(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  const TAB_CELL = '[{"note": "has\\ttab", "id": "1"}]';
+  const PLAIN_CELL = '[{"note": "no tab here", "id": "2"}]';
+  const FLOW = 'a: {b: 1}\nc: [1, 2]\n';
+  const BLOCK = 'a:\n  b: 7\n';
+
+  const errorOn = () =>
+    page.evaluate(() => {
+      const box = document.querySelector('[class*="error"]');
+      if (box === null) return { drawn: false, text: '' };
+      const rect = box.getBoundingClientRect();
+      return {
+        drawn: rect.width > 0 && rect.height > 0,
+        text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
+      };
+    });
+
+  /** As in checkValueModel: typed first, read back, settled on this run's own answer. */
+  const runAs = async (text, source, target, settled) => {
+    await page.goto(`${ORIGIN}/tools/structured-data`, { waitUntil: 'networkidle' });
+    await page
+      .getByRole('heading', { level: 1, name: 'Structured data' })
+      .waitFor({ timeout: 15_000 });
+    await page.getByLabel('Structured data input').fill(text);
+    await page.getByRole('combobox', { name: 'Source format' }).click();
+    await page.getByRole('option', { name: source, exact: true }).click();
+    await page.getByRole('combobox', { name: 'Target format' }).click();
+    await page.getByRole('option', { name: target, exact: true }).click();
+
+    const typed = await page.getByLabel('Structured data input').inputValue();
+    if (typed !== text) return null;
+
+    await page.getByRole('button', { name: 'Run' }).click();
+    for (let attempt = 0; attempt < 150; attempt += 1) {
+      const converted = page.getByLabel('Structured data Converted');
+      const output = (await converted.count()) > 0 ? await converted.inputValue() : '';
+      const error = await errorOn();
+      if (settled(output, error))
+        return { output, error, notes: await drawnNotes(page, 'Structured data Detected notes') };
+      await page.waitForTimeout(100);
+    }
+    return null;
+  };
+
+  try {
+    /* -- row 19 ------------------------------------------------------------ */
+    const tab = await runAs(TAB_CELL, 'JSON', 'TSV', (output) => output.includes('"has\ttab"'));
+    check(
+      label,
+      'a TSV cell holding a tab is written in quotes and drawn as a note naming it',
+      tab !== null &&
+        tab.notes.drawn &&
+        tab.notes.text.includes('1 cell holds a tab or a line break') &&
+        tab.notes.text.includes('$[0].note') &&
+        tab.notes.text.includes('cut and awk'),
+      tab === null ? 'did not settle' : tab.notes.text.slice(0, 240),
+    );
+
+    const plain = await runAs(PLAIN_CELL, 'JSON', 'TSV', (output) =>
+      output.includes('no tab here'),
+    );
+    check(
+      label,
+      'and a TSV with no such cell draws no warning about one',
+      plain !== null && !plain.notes.text.includes('tab or a line break'),
+      plain === null ? 'did not settle' : plain.notes.text.slice(0, 160),
+    );
+
+    /* -- row 20 ------------------------------------------------------------ */
+    const flow = await runAs(FLOW, 'YAML', 'YAML', (output) => output.includes('  - 2'));
+    check(
+      label,
+      'a flow collection written as a block is counted in the census on the tool page',
+      flow !== null &&
+        flow.notes.drawn &&
+        flow.notes.text.includes('Not carried over: 2 flow collections') &&
+        flow.notes.text.includes('$.a'),
+      flow === null ? 'did not settle' : flow.notes.text.slice(0, 240),
+    );
+
+    const block = await runAs(BLOCK, 'YAML', 'YAML', (output) => output.includes('b: 7'));
+    check(
+      label,
+      'and a document already written in blocks draws no note',
+      block !== null && !block.notes.text.includes('Not carried over'),
+      block === null ? 'did not settle' : block.notes.text.slice(0, 160),
+    );
+
+    /* -- SD-8 and SD-14b: two refusals, drawn -------------------------------- */
+    const mistyped = await runAs('v: !!float abc\n', 'YAML', 'JSON', (_output, error) =>
+      error.text.includes('tagged'),
+    );
+    check(
+      label,
+      'a value its tag cannot describe is refused on the tool page, with its line and column',
+      mistyped !== null &&
+        mistyped.error.drawn &&
+        mistyped.error.text.includes('"abc" is tagged !!float and is not one.') &&
+        mistyped.error.text.includes('Line 1, column 12'),
+      mistyped === null ? 'did not settle' : mistyped.error.text.slice(0, 240),
+    );
+
+    const float = await runAs('v: !!float 1\n', 'YAML', 'JSON', (output) =>
+      output.includes('"v": 1'),
+    );
+    check(
+      label,
+      'and !!float 1 is read as the number, not the string',
+      float !== null && !float.error.drawn && !float.output.includes('"1"'),
+      float === null ? 'did not settle' : float.output,
+    );
+
+    const duplicate = await runAs('alpha,beta,alpha\n1,2,3\n', 'CSV', 'JSON', (_output, error) =>
+      error.text.includes('Duplicate column'),
+    );
+    check(
+      label,
+      'a duplicate column is refused at the column it is in, not at column 1',
+      duplicate !== null &&
+        duplicate.error.drawn &&
+        duplicate.error.text.includes('Line 1, column 12'),
+      duplicate === null ? 'did not settle' : duplicate.error.text.slice(0, 200),
+    );
+
+    /* -- both notes on a canvas node --------------------------------------- */
+    const tabNode = await onNode(
+      page,
+      'structured-data',
+      { source: 'json', target: 'tsv', indent: 2, delimiter: 'comma' },
+      TAB_CELL,
+      (text) => text.startsWith('Lossy'),
+    );
+    check(
+      label,
+      'the TSV cell note reaches a node face',
+      tabNode !== null && tabNode.drawn && tabNode.text.includes('tab or a line break'),
+      JSON.stringify(tabNode),
+    );
+
+    const flowNode = await onNode(
+      page,
+      'structured-data',
+      { source: 'yaml', target: 'yaml', indent: 2, delimiter: 'comma' },
+      FLOW,
+      (text) => text.startsWith('Lossy'),
+    );
+    check(
+      label,
+      'the flow census reaches a node face as one line',
+      flowNode !== null && flowNode.drawn && flowNode.text.includes('flow collection'),
+      JSON.stringify(flowNode),
+    );
+
+    const blockNode = await onNode(
+      page,
+      'structured-data',
+      { source: 'yaml', target: 'yaml', indent: 2, delimiter: 'comma' },
+      BLOCK,
+      (text) => text.includes('1 key'),
+    );
+    check(
+      label,
+      'a node holding a block document says nothing about loss',
+      blockNode !== null &&
+        blockNode.drawn &&
+        blockNode.spoken.includes('succeeded') &&
+        !blockNode.text.includes('Lossy'),
+      JSON.stringify(blockNode),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * JWT-3 AND CC-5a, two sentences a person reads rather than two notes.
+ *
+ *   JWT-3  the line under the claims table naming the claims it leaves out.
+ *   CC-5a  a red that drifted to 359.98 through oklch() printed as hue 0,
+ *          because the hex beside it is #ff0000 - and one 8-bit step away,
+ *          left alone.
+ */
+async function checkClaimsAndHue(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  const b64 = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const token = (payload) => `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64(payload)}.c2lnbmF0dXJl`;
+
+  /** No key and no listbox, so nothing can steal the fill; read back anyway. */
+  const decode = async (jwt, settled) => {
+    await page.goto(`${ORIGIN}/tools/jwt-decode`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'JWT' }).waitFor({ timeout: 15_000 });
+    await page.getByLabel('JWT input').fill(jwt);
+    if ((await page.getByLabel('JWT input').inputValue()) !== jwt) return null;
+    await page.getByRole('button', { name: 'Run' }).click();
+    await page.locator('[data-trust]').first().waitFor({ timeout: 30_000 });
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (await settled()) break;
+      await page.waitForTimeout(100);
+    }
+    return page.evaluate(() => {
+      const line = document.querySelector('[data-other-claims]');
+      if (line === null) return { drawn: false, text: '' };
+      const rect = line.getBoundingClientRect();
+      return { drawn: rect.width > 0 && rect.height > 0, text: (line.textContent ?? '').trim() };
+    });
+  };
+
+  /** Converts to hsl(), typed before the listbox opens, and returns the answer. */
+  const toHsl = async (text) => {
+    await page.goto(`${ORIGIN}/tools/color-convert`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Colour' }).waitFor({ timeout: 15_000 });
+    await page.getByLabel('Colour input').fill(text);
+    await page.getByRole('combobox', { name: 'Convert to' }).click();
+    await page.getByRole('option', { name: 'hsl()', exact: true }).click();
+    if ((await page.getByLabel('Colour input').inputValue()) !== text) return null;
+    await page.getByRole('button', { name: 'Run' }).click();
+    const output = page.getByLabel('Colour Converted');
+    await output.waitFor({ timeout: 30_000 });
+    // Settled on a value only an hsl() run can produce: a fresh page holds
+    // nothing, and the hex default never starts with `hsl(`.
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const value = await output.inputValue();
+      if (value.startsWith('hsl(')) return value;
+      await page.waitForTimeout(100);
+    }
+    return null;
+  };
+
+  try {
+    const named = await decode(
+      token({ sub: 'ada', name: 'Ada' }),
+      async () => (await page.locator('[data-other-claims]').count()) > 0,
+    );
+    check(
+      label,
+      'the claims table says which claims it leaves out, drawn under it',
+      named !== null &&
+        named.drawn &&
+        named.text === 'The table lists registered claims only. name is in the payload below.',
+      JSON.stringify(named),
+    );
+
+    const registered = await decode(
+      token({ sub: 'grace' }),
+      async () => (await page.getByText('grace').count()) > 0,
+    );
+    check(
+      label,
+      'and a token whose every claim is in the table draws no such line',
+      registered !== null && !registered.drawn && registered.text === '',
+      JSON.stringify(registered),
+    );
+
+    // What this tool itself writes for #ff0000 at five places, which reads
+    // back at hue 359.984. A hand-typed longer hue rounded to exactly 360 and
+    // was caught by round nine's wrap rule instead, so the first version of
+    // this check passed with the snap removed.
+    const drifted = await toHsl('oklch(0.62796 0.25768 29.23)');
+    check(
+      label,
+      'a red that drifted through oklch() prints hue 0, because its hex is #ff0000',
+      drifted === 'hsl(0 100% 50%)',
+      String(drifted),
+    );
+
+    const nextDoor = await toHsl('hsl(359.7 100% 50%)');
+    check(
+      label,
+      'and a red one 8-bit step away keeps its hue',
+      nextDoor === 'hsl(359.7 100% 50%)',
+      String(nextDoor),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 /**
  * WHAT A NODE DRAWS WHEN ITS ANSWER IS A SERIALISED DOCUMENT.
  *
@@ -12793,6 +13353,9 @@ async function runChecks(engine, label) {
     await checkValueModel(browser, label);
     await checkColourReports(browser, label);
     await checkMarkdownCensus(browser, label);
+    await checkClassAndSubstitution(browser, label);
+    await checkTableCellsAndFlow(browser, label);
+    await checkClaimsAndHue(browser, label);
     await checkSerialisedFaces(browser, label);
     await checkLossAlongWires(browser, label);
     await checkDiff(browser, label);

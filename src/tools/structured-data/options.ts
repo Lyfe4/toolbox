@@ -68,7 +68,11 @@ export const structuredDataOptionFields: readonly OptionField<StructuredDataOpti
   {
     key: 'sortKeys',
     label: 'Sort keys',
-    description: 'Sort object keys alphabetically, recursively. Array order is kept.',
+    // Not "alphabetically", which it said until round thirteen and never was:
+    // `Mango` sorts before `apple`, and `2` before `10` for a reason that is
+    // not collation. See `sortKeysDeep`.
+    description:
+      'Sort object keys by character code, recursively: capitals before lower case, and keys that are whole numbers first, in numeric order. Array order is kept.',
     control: 'toggle',
   },
 ];

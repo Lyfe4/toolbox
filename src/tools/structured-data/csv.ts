@@ -1,4 +1,11 @@
-import { fail, isJsonArray, ok, type JsonValue, type ToolResult } from '@/features/registry/types';
+import {
+  fail,
+  isJsonArray,
+  ok,
+  type JsonValue,
+  type SourcePosition,
+  type ToolResult,
+} from '@/features/registry/types';
 import { lost, noted, type ToolNote } from '@/lib/notes';
 import { setOwnProperty } from '@/lib/safeObject';
 import { positionFromOffset } from '@/lib/textPosition';
@@ -57,6 +64,16 @@ export interface CsvRow {
   readonly quoted: readonly boolean[];
   /** 1-based, counting line breaks inside quoted fields. */
   readonly line: number;
+  /**
+   * Where each field begins, for the FIRST record only; empty for every other.
+   *
+   * SD-14b: a duplicate column was reported at line 1, column 1 whichever
+   * column collided, because nothing kept the position of a field once it had
+   * been read. The header is the only record whose errors name a column, and a
+   * position per field of a 16 MB file is memory nothing would read - so the
+   * parser keeps the header's and no one else's.
+   */
+  readonly starts: readonly SourcePosition[];
 }
 
 /**
@@ -104,10 +121,20 @@ export function parseCsvRows(
   let index = 0;
   let line = firstLine;
   let rowLine = firstLine;
+  /** Offset of the first character of the current line, for columns. */
+  let lineStart = 0;
+  let starts: SourcePosition[] = [];
+  /** Where the field being read began. Set when the previous one ended. */
+  let fieldAt: SourcePosition = { line, column: 1, offset: 0 };
+
+  const markFieldStart = (): void => {
+    if (rows.length === 0) fieldAt = { line, column: index - lineStart + 1, offset: index };
+  };
 
   const endField = (): void => {
     fields.push(field);
     quoted.push(fieldQuoted);
+    if (rows.length === 0) starts.push(fieldAt);
     field = '';
     fieldQuoted = false;
     fieldStarted = false;
@@ -125,9 +152,10 @@ export function parseCsvRows(
      * under which a trailing newline and a mid-file blank line behave the same.
      */
     const isBlank = fields.length === 1 && fields[0] === '' && quoted[0] === false;
-    if (!isBlank) rows.push({ fields, quoted, line: rowLine });
+    if (!isBlank) rows.push({ fields, quoted, line: rowLine, starts });
     fields = [];
     quoted = [];
+    starts = [];
     rowLine = line;
   };
 
@@ -166,12 +194,14 @@ export function parseCsvRows(
             index += 1;
           }
           line += 1;
+          lineStart = index;
           continue;
         }
         if (inner === '\n') {
           field += '\n';
           index += 1;
           line += 1;
+          lineStart = index;
           continue;
         }
 
@@ -193,6 +223,7 @@ export function parseCsvRows(
     if (char === delimiter) {
       endField();
       index += 1;
+      markFieldStart();
       continue;
     }
 
@@ -200,7 +231,9 @@ export function parseCsvRows(
       // Consume CRLF as a single break rather than two.
       index += char === '\r' && source[index + 1] === '\n' ? 2 : 1;
       line += 1;
+      lineStart = index;
       endRow();
+      markFieldStart();
       continue;
     }
 
@@ -342,7 +375,9 @@ export function readRecords(rows: readonly CsvRow[]): ToolResult<ReadRecords> {
       const byTrimming = previous.cell !== cell && (!previous.quoted || !isQuoted);
 
       return fail('parse-error', `Duplicate column name "${name}".`, {
-        position: { line: header.line, column: 1, offset: null },
+        // The SECOND cell of the pair: the first was fine until this one
+        // arrived, and it is the one a reader would rename.
+        position: header.starts[index] ?? { line: header.line, column: 1, offset: null },
         detail: byTrimming
           ? `Column names become object keys, so they have to be unique. ${JSON.stringify(previous.cell)} and ${JSON.stringify(cell)} are different as written and the same afterwards, because an unquoted header cell has its leading and trailing spaces removed. Quote one of them to keep the two names apart.`
           : 'Column names become object keys, so they have to be unique.',
@@ -424,7 +459,47 @@ function trimmedHeaderNotes(
   ];
 }
 
-function needsQuoting(field: string, delimiter: string): boolean {
+/**
+ * TSV QUOTES ONLY WHAT A READER WOULD OTHERWISE GET WRONG. SD-6, decided by
+ * measurement in round thirteen.
+ *
+ * TSV has no specification - the IANA registration for
+ * `text/tab-separated-values` says only that a field may not contain a tab -
+ * so what counts is what readers do. Nine were asked, and the answers are
+ * committed as `spec/tsv-readers.json` by `scripts/generate-tsv-readers.py`:
+ * Python's csv, pandas, polars, DuckDB with and without its sniffer, Papa
+ * Parse, d3-dsv, awk and cut.
+ *
+ *   - A tab or a line break in a cell, in CSV-style quotes: 7 of 9 read it
+ *     back. awk and cut, which split on every tab and every line, cannot read
+ *     it in ANY spelling.
+ *   - The same escaped as `\t` / `\n`: 0 of 9. Every reader measured takes
+ *     the backslash literally. That is why escaping, which the finding offers
+ *     as one of its two fixes, was rejected.
+ *   - A cell with a quote inside it, or spaces at its edges, written BARE: 9 of
+ *     9. Quoted, the way this writer used to write them: 7 of 9. So those
+ *     quotes cost two readers and bought nothing, and they are gone.
+ *   - A cell that BEGINS with a quote, bare: 4 of 9 - the quote-aware readers
+ *     take it for an opening quote. Quoted: 7 of 9. It stays quoted.
+ *
+ * One exception that is this tool's own: a HEADER cell with spaces at its
+ * edges is quoted, because this tool's reader trims an unquoted header cell
+ * (see `readRecords`), and a file this tool writes has to read back as what
+ * it wrote.
+ *
+ * CSV is untouched: it has RFC 4180, and its writer is held to CPython's
+ * byte for byte.
+ */
+function needsQuoting(field: string, delimiter: string, header: boolean): boolean {
+  if (delimiter === '\t') {
+    return (
+      field.includes('\t') ||
+      field.includes('\n') ||
+      field.includes('\r') ||
+      field.startsWith('"') ||
+      (header && field !== field.trim())
+    );
+  }
   return (
     field.includes(delimiter) ||
     field.includes('"') ||
@@ -434,9 +509,14 @@ function needsQuoting(field: string, delimiter: string): boolean {
   );
 }
 
-function quoteField(field: string, delimiter: string): string {
-  if (!needsQuoting(field, delimiter)) return field;
+function quoteField(field: string, delimiter: string, header = false): string {
+  if (!needsQuoting(field, delimiter, header)) return field;
   return `"${field.replaceAll('"', '""')}"`;
+}
+
+/** A cell TSV has no spelling for, which is written in quotes and reported. */
+function hasNoTsvSpelling(field: string): boolean {
+  return field.includes('\t') || field.includes('\n') || field.includes('\r');
 }
 
 /**
@@ -526,8 +606,17 @@ export function writeCsv(data: JsonValue, delimiter: string): ToolResult<Written
     });
   }
 
+  const tsv = delimiter === '\t';
+  /** Cells holding a tab or a line break, which TSV has no spelling for. */
+  const unspellable: string[] = [];
+
+  if (tsv) {
+    for (const column of columns)
+      if (hasNoTsvSpelling(column)) unspellable.push(`the header ${JSON.stringify(column)}`);
+  }
+
   const lines: string[] = [
-    writeLine(columns.map((column) => quoteField(column, delimiter)).join(delimiter)),
+    writeLine(columns.map((column) => quoteField(column, delimiter, true)).join(delimiter)),
   ];
 
   /** Paths whose value went into a cell as JSON text rather than as a value. */
@@ -551,7 +640,9 @@ export function writeCsv(data: JsonValue, delimiter: string): ToolResult<Written
             if (value !== undefined && value !== null && typeof value === 'object') {
               nested.push(`$[${index.toString()}].${column}`);
             }
-            return quoteField(cellToString(value), delimiter);
+            const cell = cellToString(value);
+            if (tsv && hasNoTsvSpelling(cell)) unspellable.push(`$[${index.toString()}].${column}`);
+            return quoteField(cell, delimiter);
           })
           .join(delimiter),
       ),
@@ -607,6 +698,27 @@ export function writeCsv(data: JsonValue, delimiter: string): ToolResult<Written
         `${names.length.toString()} column${names.length === 1 ? ' was' : 's were'} absent from some rows`,
         `CSV has one spelling for "this row has no such key" and for "this row's value is the empty string", and it is an empty cell. Reading the file back cannot tell them apart. The ${names.length === 1 ? 'column is' : 'columns are'} ${shown.join(', ')}${rest > 0 ? `, and ${rest.toString()} more` : ''}.`,
         // The written document only, for the same reason as the note above.
+        ['output'],
+      ),
+    );
+  }
+
+  /*
+   * SD-6: A CELL TSV CANNOT SPELL. Written in quotes, because seven of the nine
+   * readers measured read that back exactly and no spelling at all works for
+   * the other two - and SAID, because those two are the tools TSV is usually
+   * chosen for. `warn`: for a reader that splits on tabs, the cell does not
+   * come out.
+   */
+  if (unspellable.length > 0) {
+    const shown = unspellable.slice(0, 5);
+    const rest = unspellable.length - shown.length;
+    notes.push(
+      lost(
+        unspellable.length === 1
+          ? '1 cell holds a tab or a line break'
+          : `${unspellable.length.toString()} cells hold a tab or a line break`,
+        `TSV has no spelling for either inside a cell - its registration forbids a tab outright - so ${unspellable.length === 1 ? 'it is' : 'they are'} written in double quotes, the way CSV does it. Python's csv, pandas, polars, DuckDB, Papa Parse and d3-dsv all read that back as one cell; cut and awk, which split on every tab and every line, do not, and nothing written here could make them. At ${shown.join(', ')}${rest > 0 ? `, and ${rest.toString()} more` : ''}. Choose CSV if the file is going to something that splits by hand.`,
         ['output'],
       ),
     );

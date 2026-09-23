@@ -287,7 +287,7 @@
     {
       "row": 17,
       "id": "markdown-mark-and-kbd",
-      "loss": "`<mark>` and `<kbd>` given formatting they never had",
+      "loss": "`<mark>` and `<kbd>` unwrapped to their text, Markdown target",
       "cell": "Text convert · HTML → Markdown",
       "tool": "text-convert",
       "options": {
@@ -297,8 +297,60 @@
       "input": "<p><mark>highlighted</mark> and <kbd>Esc</kbd></p>",
       "clean": "<p><em>emphasis</em> and <code>code</code></p>",
       "expect": {
-        "titleContains": "mark",
-        "mentions": []
+        "titleContains": "could not carry",
+        "mentions": ["<mark>", "<kbd>"]
+      },
+      "whyThisExpectation": "Round eight filed this row as `<mark>` and `<kbd>` GIVEN FORMATTING THEY NEVER HAD - `_highlighted_` and a code span, under the policy labelled 'Keep the text, drop the tag'. Round thirteen found that was not a loss the tool failed to report but a defect in the policy: the 'text' branch registered no handlers, on the stated ground that upstream's default keeps the words and drops the wrapper, and for mark, kbd, samp, var, dl, dt, dd and q upstream substitutes instead. That was fixed rather than announced, so the substitution no longer happens and there is nothing about it left to tell - which the corpus has no verdict for. What the document still loses is the highlight and the key markup themselves, and that is what this row now measures. The old claim is held separately and more strongly than a note could hold it: constructs.test.ts asserts the output has no emphasis and no code span in it, under this policy, and that the census reports nothing invented. Recorded as a re-specification, in docs/test-findings.md, because it is the one kind of edit to this file that can turn a row green without a note being written."
+    },
+    {
+      "row": 18,
+      "id": "markdown-reversed-list",
+      "loss": "A reversed list's numbers now count up, Markdown target",
+      "cell": "Text convert · HTML → Markdown",
+      "tool": "text-convert",
+      "options": {
+        "source": "html",
+        "target": "markdown"
+      },
+      "input": "<ol reversed><li>three</li><li>two</li><li>one</li></ol>",
+      "clean": "<ol><li>one</li><li>two</li><li>three</li></ol>",
+      "expect": {
+        "titleContains": "could not carry",
+        "mentions": ["reversed", "count up"]
+      }
+    },
+    {
+      "row": 19,
+      "id": "tsv-cell-with-a-tab",
+      "loss": "A cell holding a tab, written to TSV in quotes that cut and awk cannot read",
+      "cell": "Structured data · Writing TSV",
+      "tool": "structured-data",
+      "options": {
+        "source": "json",
+        "target": "tsv"
+      },
+      "input": "[{\"note\": \"has\\ttab\", \"id\": \"1\"}]",
+      "clean": "[{\"note\": \"no tab here\", \"id\": \"1\"}]",
+      "expect": {
+        "titleContains": "tab",
+        "mentions": ["$[0].note"]
+      }
+    },
+    {
+      "row": 20,
+      "id": "yaml-flow-collection",
+      "loss": "A YAML flow collection written back as a block",
+      "cell": "Structured data · YAML → YAML",
+      "tool": "structured-data",
+      "options": {
+        "source": "yaml",
+        "target": "yaml"
+      },
+      "input": "a: {b: 1}\nc: [1, 2]\n",
+      "clean": "a:\n  b: 1\nc:\n  - 1\n  - 2\n",
+      "expect": {
+        "titleContains": "flow collection",
+        "mentions": ["$.a", "$.c"]
       }
     }
   ]

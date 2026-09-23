@@ -439,7 +439,10 @@ Handled:
   and `""` is a record holding one empty field.
 - Short rows are padded (extremely common in hand-edited files); long rows are an
   error naming the row and its line.
-- Duplicate column names are an error, since columns become object keys.
+- Duplicate column names are an error, since columns become object keys. The
+  refusal points at the **second** cell of the pair, by line and column — it
+  pointed at line 1, column 1 whichever column collided until round thirteen
+  (SD-14b).
 - **Unquoted header cells are trimmed; quoted ones are not.** ` name, age` is how
   hand-typed CSV looks, and a key of `" age"` helps nobody — but trimming a cell
   its author quoted is a silent edit, and it also made `a` and `" a "` collide as
@@ -466,6 +469,31 @@ Handled:
 Output is **LF, with no trailing newline**, whatever the delimiter. It goes into
 a text box and a clipboard; RFC 4180's CRLF would put a stray carriage return at
 the end of every line of it.
+
+### How a TSV cell is spelled, and why (SD-6)
+
+TSV has no specification beyond its IANA registration, which says a field may
+not contain a tab and nothing else. So the spelling was decided by asking nine
+readers — Python's `csv`, pandas, polars, DuckDB with and without its sniffer,
+Papa Parse, d3-dsv, awk and cut — and their answers are committed as
+[`spec/tsv-readers.json`](spec/tsv-readers.json) by
+[`scripts/generate-tsv-readers.py`](../../../scripts/generate-tsv-readers.py).
+
+- **A cell with a tab or a line break is quoted, CSV-style, and reported.**
+  Seven of the nine read that back; awk and cut read no spelling of it at all,
+  and the note names them.
+- **A backslash escape (`\t`, `\n`) is not used.** Not one of the nine decodes
+  it. PostgreSQL's COPY and MySQL's LOAD DATA would, by their documentation —
+  if that is where the file is going, CSV is the better target.
+- **A cell with a quote inside it, or spaces at its edges, is written bare.**
+  All nine read that correctly; quoted, only seven did. A cell that **begins**
+  with a quote stays quoted, because bare it is misread by five of them.
+- **A header cell with spaces at its edges stays quoted**, because this tool's
+  own reader trims an unquoted header cell and the file has to read back as
+  what was written.
+
+`tsv.readers.test.ts` holds the writer to the fixture: for every case, the
+spelling chosen is read correctly by as many readers as any spelling measured.
 
 ## The value model, and what it cannot hold
 
@@ -568,6 +596,16 @@ scanning forever.
 
 ## Options
 
+**Sort keys orders by character code, not alphabetically** — and its own
+description said "alphabetically" until round thirteen (SD-15). Capitals sort
+before lower case, so `Mango` comes before `apple`. And keys that are whole
+numbers come first, in numeric order, which is not the sort doing it: every
+JavaScript object lists canonical array-index keys (`0`, `2`, `10` — no sign,
+no leading zero) ahead of every other key, whatever order they were written
+in, so `2` precedes `10` and `01` sorts as text. Changing either would move
+every sorted output anybody has saved, so both are documented, on screen and
+here, rather than changed.
+
 | Option        | Effect                                                                      |
 | ------------- | --------------------------------------------------------------------------- |
 | Source format | Auto-detect, or force JSON / YAML / CSV / TSV. Forcing disables fallbacks.  |
@@ -646,6 +684,23 @@ world\nGoodbye, world` satisfies every test for delimited text, because it is
 13. **A duplicate JSON key is resolved last-wins before this tool sees the
     document.** `JSON.parse` does it, as does every other reader. The discarded
     value is reported by path.
+14. **A one-column CSV cannot be auto-detected.** It has no delimiter in it, and
+    "several lines of one field each" is also what prose, a log and a word list
+    are — a detector that accepted it would accept everything. Auto-detect
+    refuses it and says to choose CSV as the source, which reads it. (SD-1.)
+15. **A YAML flow collection is written back as a block.** `a: {b: 1}` comes
+    back as a block mapping; reported in the presentation census, as a fifth
+    kind. A document written ENTIRELY in flow is not counted — it is
+    JSON-shaped, and converting it to YAML is asking for blocks — and a flow
+    run nested inside another counts once.
+16. **A value tagged with a standard type it cannot be is refused.** `!!float
+abc`, `!!int 1.5`, and under YAML 1.2 `!!bool yes`, used to become strings
+    in silence. `!!float 1` is the number 1: YAML 1.2's float grammar makes the
+    dot optional, and the library's explicit-tag resolution did not know it.
+    (SD-8.)
+17. **A TSV cell holding a tab or a line break** is written in quotes that awk
+    and cut cannot read, and reported. See [how a TSV cell is
+    spelled](#how-a-tsv-cell-is-spelled-and-why-sd-6).
 
 ## Tests
 

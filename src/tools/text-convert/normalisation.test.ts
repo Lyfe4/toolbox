@@ -695,15 +695,16 @@ describe('the census on the Markdown target', () => {
      * becoming `_…_` invents an `<em>`, and the note explained the invention by
      * saying that a Markdown table always has a header row. The count was
      * right; the reason under it was about somebody else's document.
+     *
+     * Round thirteen removed that substitution (TC-4), so the invention this
+     * test stands on is a different one that is still true: an image at the
+     * top level becomes a paragraph holding it, which really is a `<p>` the
+     * input did not have.
      */
-    const substituted = await convert(
-      '<p><mark>highlighted</mark> and <kbd>Esc</kbd></p>',
-      MARKDOWN,
-    );
-    const invention = substituted.notes.find((entry) => entry.title.includes('invented'));
+    const invented = await convert('<img src="https://example.com/a.png" alt="a">', MARKDOWN);
+    const invention = invented.notes.find((entry) => entry.title.includes('invented'));
 
-    expect(substituted.output).toBe('_highlighted_ and `Esc`\n');
-    expect(invention?.body).toContain('<em>');
+    expect(invention?.body).toContain('<p>');
     expect(invention?.body).not.toContain('header row');
 
     // And the positive half, so this is not a test that the sentence is gone.
@@ -833,5 +834,187 @@ describe('the census on the Markdown target', () => {
 
     expect(reaches.length).toBeGreaterThan(0);
     for (const entry of reaches) expect(entry).toEqual(['output', 'rendered']);
+  });
+});
+
+/* ========================================================================== *
+ * Round thirteen: the value census, and the substitutions it no longer has to
+ * report
+ * ========================================================================== */
+
+/**
+ * CORPUS ROW 16, AND THE INSTRUMENT CHANGE ROUNDS TEN TO TWELVE DEFERRED.
+ *
+ * `<a class="btn">` comes out of the sanitiser as `<a class="">`, and a census
+ * of names sees `class` on both sides. The census now carries class NAMES per
+ * element - the second set of values a pipeline here rewrites, after `id` -
+ * and the controls are on SUBJECT: no note whose title mentions a class may
+ * fire on a document that lost none.
+ */
+describe('a class name the sanitiser takes out of an attribute it keeps', () => {
+  const SANITISED = { source: 'html', target: 'html-sanitised' } as const;
+  const aboutClasses = (notes: readonly Note[]): readonly Note[] =>
+    notes.filter((note) => note.level === 'warn' && /class/i.test(note.title));
+
+  it('says so, naming the name and the element, on HTML (sanitised)', async () => {
+    const { output, notes } = await convert(
+      '<p><a class="btn" href="https://example.com">link</a></p>',
+      SANITISED,
+    );
+
+    // The control on the premise: the attribute really is still there, empty.
+    expect(output).toContain('class=""');
+    const note = aboutClasses(notes)[0];
+    expect(note?.title).toBe('1 class name was removed by the sanitiser');
+    expect(note?.body).toContain('btn on <a>');
+  });
+
+  it('names a filtered name beside a permitted one, and not the permitted one', async () => {
+    const { output, notes } = await convert(
+      '<p><code class="language-js wide">x</code></p>',
+      SANITISED,
+    );
+    expect(output).toContain('class="language-js"');
+    const note = aboutClasses(notes)[0];
+    expect(note?.body).toContain('wide on <code>');
+    expect(note?.body).not.toContain('language-js on');
+  });
+
+  it.each([
+    ['a link with no class at all', '<p><a href="https://example.com">link</a></p>'],
+    ['a class the schema permits', '<pre><code class="language-js">x\n</code></pre>'],
+    [
+      'a task list, whose classes are the schema’s own',
+      '<ul class="contains-task-list"><li class="task-list-item"><input type="checkbox" disabled> a</li></ul>',
+    ],
+  ])('says nothing about classes for %s', async (_name, html) => {
+    const { output, notes } = await convert(html, SANITISED);
+    // The run has to have produced something, or silence proves nothing.
+    expect(output.length).toBeGreaterThan(0);
+    expect(aboutClasses(notes)).toEqual([]);
+  });
+
+  it('does not say it twice when class is removed from every element', async () => {
+    // `<div>` has no class entry, so the attribute goes whole and the
+    // attribute note already names it. One loss, one note.
+    const { notes } = await convert('<div class="card">x</div>', SANITISED);
+    const classNotes = aboutClasses(notes);
+    expect(losses(notes).some((title) => title.includes('attribute'))).toBe(true);
+    expect(classNotes).toEqual([]);
+  });
+
+  it('reports the round trip dropping a name that survives elsewhere on the page', async () => {
+    // The inline code's language cannot be carried - Markdown gives a code
+    // span no language - while the fenced block's can, so `class` is still in
+    // the output and the attribute note has nothing to say.
+    const { notes } = await convert(
+      '<p><code class="language-js">x</code></p><pre><code class="language-py">y\n</code></pre>',
+      { source: 'html', target: 'html' },
+    );
+    const note = notes.find((entry) => entry.title.includes('class name'));
+    expect(note?.title).toBe('1 class name the round trip could not carry');
+    expect(note?.body).toContain('language-js on <code>');
+    expect(note?.body).not.toContain('language-py');
+  });
+});
+
+/**
+ * CORPUS ROW 17 AND TC-4: the policy labelled "Keep the text, drop the tag"
+ * gave `<mark>` emphasis and `<kbd>` a code span. Fixed in the pipeline; what
+ * is asserted here is the census's side of it - nothing is invented any more,
+ * and what went is named.
+ */
+describe('mark and kbd under the text policy', () => {
+  const MARKDOWN = { source: 'html', target: 'markdown' } as const;
+
+  it('keeps the words, invents nothing, and names what went', async () => {
+    const { output, notes } = await convert(
+      '<p><mark>highlighted</mark> and <kbd>Esc</kbd></p>',
+      MARKDOWN,
+    );
+
+    expect(output).toBe('highlighted and Esc' + LF);
+    expect(output).not.toMatch(/[_*`]/);
+    expect(losses(notes).some((title) => title.includes('invented'))).toBe(false);
+    const gone = notes.find((note) => note.title.includes('could not carry'));
+    expect(gone?.body).toContain('<mark>');
+    expect(gone?.body).toContain('<kbd>');
+  });
+});
+
+/**
+ * FOUND BY THE CRY-WOLF SWEEP FOR THE CLASS NOTE: `<b>` reported as a loss and
+ * `<strong>` as an invention on every document with a bold word in it. See
+ * `RESPELLINGS` for the reference the four pairs rest on.
+ */
+describe('a respelling is not a loss and an invention', () => {
+  const MARKDOWN = { source: 'html', target: 'markdown' } as const;
+
+  it.each([
+    ['<b>', '<p><b>bold</b> text</p>'],
+    ['<i>', '<p><i>italic</i> text</p>'],
+    ['<s>', '<p><s>struck</s> text</p>'],
+    ['<strike>', '<p><strike>struck</strike> text</p>'],
+    ['<tt>', '<p><tt>mono</tt> text</p>'],
+  ])('says nothing about %s', async (_tag, html) => {
+    const { output, notes } = await convert(html, MARKDOWN);
+    expect(output).toContain('text');
+    expect(losses(notes)).toEqual([]);
+  });
+
+  it('still names a real loss in the same document', async () => {
+    // The positive partner: the filter must not swallow the census.
+    const { notes } = await convert('<p><b>bold</b> and <sup>2</sup></p>', MARKDOWN);
+    const gone = notes.find((note) => note.title.includes('could not carry'));
+    expect(gone?.body).toContain('<sup>');
+    expect(gone?.body).not.toContain('<b>');
+    expect(losses(notes).some((title) => title.includes('invented'))).toBe(false);
+  });
+
+  it('still reports an invention the respelling does not account for', async () => {
+    // A headerless table invents <th> cells: not a respelling of anything,
+    // and it must still be said beside a bold word that is.
+    const { notes } = await convert(
+      '<p><b>x</b></p><table><tr><td>North</td></tr></table>',
+      MARKDOWN,
+    );
+    const invented = notes.find((note) => note.title.includes('invented'));
+    expect(invented?.body).toContain('<th>');
+    expect(invented?.body).not.toContain('<strong>');
+  });
+});
+
+/**
+ * TC-3: A REVERSED LIST'S NUMBERS. `reversed` survives the sanitiser now, so
+ * `HTML (sanitised)` loses nothing; the round trip cannot carry it, and the
+ * note says what that does to the numbers rather than only naming the
+ * attribute.
+ */
+describe('a reversed list', () => {
+  const LIST = '<ol reversed><li>three</li><li>two</li><li>one</li></ol>';
+
+  it('keeps reversed through the sanitiser, and says nothing there', async () => {
+    const { output, notes } = await convert(LIST, { source: 'html', target: 'html-sanitised' });
+    expect(output).toContain('<ol reversed>');
+    expect(losses(notes)).toEqual([]);
+  });
+
+  it.each(['markdown', 'html'])(
+    'says the numbers now count up on the %s target',
+    async (target) => {
+      const { notes } = await convert(LIST, { source: 'html', target });
+      const note = notes.find((entry) => entry.title.includes('could not carry'));
+      expect(note?.body).toContain('reversed');
+      expect(note?.body).toContain('now count up');
+    },
+  );
+
+  it('says nothing about counting for a list that was never reversed', async () => {
+    const { output, notes } = await convert('<ol start="3"><li>a</li><li>b</li></ol>', {
+      source: 'html',
+      target: 'markdown',
+    });
+    expect(output).toContain('3. a');
+    expect(notes.some((note) => note.body.includes('count up'))).toBe(false);
   });
 });

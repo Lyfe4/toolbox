@@ -671,11 +671,14 @@ function namespaceIds() {
  * allowing, whereas this list is a decision somebody made.
  *
  * Anything NOT here either already has an mdast equivalent (`<p>`, `<ul>`,
- * `<code>`) or never reaches this stage at all - `<abbr>`, `<mark>`, `<cite>`
- * and friends are not in the sanitiser's allow-list, so they have already been
- * unwrapped to their text by the time the option is consulted. This list was
- * checked against the schema rather than guessed: it is exactly the
- * intersection of "allowed through" and "no Markdown equivalent".
+ * `<code>`) or never reaches this stage at all, because the sanitiser has
+ * already unwrapped it. `<abbr>`, `<mark>`, `<cite>` and the rest of the
+ * bottom group used to be in that second category and are not since the
+ * sanitiser's ALSO_ALLOWED. The list is meant to be exactly the intersection
+ * of "allowed through" and "no Markdown equivalent" - where "no equivalent"
+ * is this project's judgement, not upstream's: upstream writes `<kbd>` as a
+ * code span and `<mark>` as emphasis, which is a substitution, and see the
+ * 'text' branch below for what that cost.
  */
 const NO_MARKDOWN_EQUIVALENT: readonly string[] = [
   'div',
@@ -1068,9 +1071,46 @@ function unsupportedHandlers(
     );
   }
 
-  // 'text' is hast-util-to-mdast's own default: the wrapper goes, the words
-  // inside it stay. Nothing to register.
-  return {};
+  /*
+   * 'text' - "Keep the text, drop the tag" - REGISTERS A HANDLER FOR EVERY
+   * ELEMENT ON THE LIST WHOSE UPSTREAM DEFAULT IS NOT ALREADY THAT.
+   *
+   * This branch used to return nothing, on the stated ground that upstream's
+   * default is "the wrapper goes, the words inside it stay". For most of the
+   * list it is (`span`, `sub`, `abbr` pass their children through; `div`,
+   * `figure` pass them through as blocks). For seven it is not, and upstream
+   * substitutes something the source never had (hast-util-to-mdast@10.1.2,
+   * lib/handlers/index.js):
+   *
+   *   mark              -> emphasis     `<mark>hi</mark>` came out `_hi_`
+   *   kbd, samp, var    -> inlineCode   `<kbd>Esc</kbd>` came out `` `Esc` ``
+   *   dl, dt, dd        -> a list       a definition list came out as bullets
+   *   q                 -> quotation marks written into the text
+   *
+   * Under the policy most people use, labelled with the opposite promise.
+   * That is TC-4 and corpus row 17. For `kbd`, `samp` and `var` it was never
+   * true - all three were on the list in the commit that wrote the sentence -
+   * and for `mark` it stopped being true the day `mark` was allowed through
+   * the sanitiser. `keep` and `drop` were never affected: they register a
+   * handler for every entry.
+   *
+   * THE SET IS DERIVED, NOT LISTED. Upstream shares one `all` function across
+   * every element it unwraps inline and one `flow` function across every
+   * element it unwraps as blocks, so an entry whose default is neither of
+   * those is exactly an entry upstream would substitute. A future version
+   * that starts substituting for `abbr` is caught by this line rather than by
+   * the next manual test pass.
+   */
+  const upstream: Readonly<Record<string, unknown>> = defaultHandlers;
+  const passesThrough = new Set<unknown>([defaultHandlers.span, defaultHandlers.div]);
+  return Object.fromEntries(
+    NO_MARKDOWN_EQUIVALENT.filter((tag) => !passesThrough.has(upstream[tag])).map((tag) => [
+      tag,
+      KEEP_WHOLE.has(tag)
+        ? (((state: State, node: HastElement) => state.all(node)) satisfies Handle)
+        : (((state: State, node: HastElement) => state.toFlow(state.all(node))) satisfies Handle),
+    ]),
+  );
 }
 
 /**

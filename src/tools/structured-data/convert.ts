@@ -10,6 +10,7 @@ import {
   type Document,
   type DocumentOptions,
   type ParsedNode,
+  type ScalarTag,
   type SchemaOptions,
   type ToStringOptions,
   type YAMLError,
@@ -538,6 +539,19 @@ export function checkJsonInput(value: JsonValue): ToolResult<JsonValue> {
  * is not code-point order: an astral character sorts below U+FFFF because its
  * first surrogate does. Locale-aware collation was rejected deliberately - it
  * would make the output depend on the machine that produced it.
+ *
+ * THE OUTPUT IS NOT QUITE THAT ORDER, AND THE COMPARISON IS NOT WHY. SD-15
+ * filed `"2"` before `"10"` as "natural sort" beside `Mango` before `apple` as
+ * code-point order, and asked which collation this was. It is one collation
+ * and one object model: `<` puts `"10"` before `"2"`, and then the object the
+ * sorted entries are written into puts them back. Every JavaScript object
+ * lists keys that are canonical array indices - `0` to 2^32 - 2, written
+ * without a sign or a leading zero - FIRST, in numeric order, whatever order
+ * they were inserted in (ECMA-262, OrdinaryOwnPropertyKeys). So `"01"` sorts
+ * with the text and `"1"` does not. No sort written here can change it while
+ * the value model is a plain object, and changing the order anybody has saved
+ * would be worse than documenting it - which is what round thirteen did,
+ * on screen in the option's own description and in the tool README.
  */
 export function sortKeysDeep(value: JsonValue): JsonValue {
   if (value === null || typeof value !== 'object') return value;
@@ -932,6 +946,95 @@ function firstCollectionKey(document: Document.Parsed): ParsedNode | null {
   });
 
   return found;
+}
+
+/**
+ * SD-8: `!!float 1` IS THE NUMBER ONE, and it was read as the string "1".
+ *
+ * An explicit tag is resolved by the `yaml` package with the same tests it
+ * uses to GUESS a plain scalar's type (yaml@2.9.0,
+ * compose/compose-scalar.js, `findScalarTagByName`). Those tests split
+ * numbers between `int` and `float` - the float test wants a dot, the
+ * exponent test an exponent - so `1`, `-3`, `+12` and `01` satisfy none of
+ * the three float tags, the library warns "Unresolved tag", and the value
+ * comes back as TEXT. The warning is silenced here for a sound reason
+ * (custom tags raise it too), so it was a silent type change.
+ *
+ * YAML 1.2.2 §10.3.2 gives the core schema's float as
+ * `[-+]? ( \. [0-9]+ | [0-9]+ ( \. [0-9]* )? ) ( [eE] [-+]? [0-9]+ )?` - the
+ * dot is optional, which is what makes an integer spelling a valid float when
+ * the tag says so. That regular expression, verbatim, is this tag's test.
+ *
+ * It can never change what an UNTAGGED scalar means. Implicit resolution
+ * tries the built-in tags first, in order, and every string this pattern
+ * matches is already matched by the core `int`, `float` or exponent test
+ * ahead of it - so it is only ever reached by name.
+ */
+const EXPLICIT_FLOAT: ScalarTag = {
+  tag: 'tag:yaml.org,2002:float',
+  default: true,
+  test: /^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?$/,
+  resolve: (source) => Number.parseFloat(source),
+};
+
+/** What each standard scalar tag promises about the value it resolves to. */
+const STANDARD_SCALAR_TYPES: Readonly<Record<string, (value: unknown) => boolean>> = {
+  'tag:yaml.org,2002:int': (value) => typeof value === 'number' || typeof value === 'bigint',
+  'tag:yaml.org,2002:float': (value) => typeof value === 'number',
+  'tag:yaml.org,2002:bool': (value) => typeof value === 'boolean',
+  'tag:yaml.org,2002:null': (value) => value === null,
+};
+
+interface MistypedScalar {
+  readonly tag: string;
+  readonly source: string;
+  readonly offset: number;
+}
+
+/**
+ * A scalar whose author said what type it is, and whose text is not that type.
+ *
+ * `!!float abc`, `!!int 1.5`, `!!bool yes` (1.2 has only `true` and `false`)
+ * all resolved to a string with nothing said - the same silent type change as
+ * SD-8, for values no grammar can rescue. Asked directly: js-yaml 5.4.2 refuses
+ * all three; PyYAML 6.0.3 refuses the first two and reads `!!bool yes` as
+ * True, because PyYAML reads YAML 1.1, where `yes` IS a boolean - and a
+ * document that declares `%YAML 1.1` gets the same answer here.
+ *
+ * ASKED OF THE DOCUMENT, not of the warning: the warning carries its tag only
+ * inside a sentence, and this repository has written down why a message's
+ * wording is the wrong thing to match (known limitation 9 in the README). The
+ * resolved node keeps its tag and its value, and a `float` holding a string is
+ * the fact itself. Custom tags are left alone - they are SD-9's, dropped and
+ * said - because only the standard ones make a promise this can check.
+ */
+function firstMistypedScalar(document: Document.Parsed): MistypedScalar | null {
+  let found: MistypedScalar | null = null;
+  visit(document, {
+    Scalar(_key, node) {
+      const promise = node.tag === undefined ? undefined : STANDARD_SCALAR_TYPES[node.tag];
+      if (promise === undefined || promise(node.value)) return undefined;
+      found = {
+        tag: node.tag ?? '',
+        source: String(node.source ?? node.value),
+        offset: node.range?.[0] ?? 0,
+      };
+      return visit.BREAK;
+    },
+  });
+  return found;
+}
+
+function mistypedScalarFailure<T = never>(text: string, mistyped: MistypedScalar): ToolResult<T> {
+  const short = mistyped.tag.replace('tag:yaml.org,2002:', '!!');
+  return fail(
+    'parse-error',
+    `${JSON.stringify(mistyped.source)} is tagged ${short} and is not one.`,
+    {
+      position: positionFromOffset(text, mistyped.offset),
+      detail: `The tag says what type the value is, and this text cannot be read as that type, so reading it as something else would change the value without saying so. Correct the value, or remove the tag to let the value speak for itself.`,
+    },
+  );
 }
 
 function yamlParseFailure<T = never>(error: YAMLError): ToolResult<T> {
@@ -1415,6 +1518,8 @@ interface Presentation {
    * smaller cousin of the note that cries wolf.
    */
   folded: boolean;
+  /** Paths of non-empty flow collections, which a YAML target writes as blocks. */
+  readonly flows: string[];
 }
 
 /**
@@ -1469,6 +1574,54 @@ function styleIsLost(node: unknown, asKey: boolean, target: Format | undefined):
 }
 
 /**
+ * FLOW STYLE, THE FIFTH KIND - taken in round thirteen, having been named and
+ * left in round twelve.
+ *
+ * `a: {b: 1}` comes back from a YAML target as a block mapping, and nothing
+ * said so. It was left out of this note on the ground that it would fire on a
+ * large share of ordinary YAML for a difference few people would call a loss.
+ * Measured, that ground is narrower than it looked: the note is ONE line on a
+ * node whichever kinds it holds, so adding a kind adds a word to a census that
+ * is already printing for any document with a comment in it, and it only
+ * starts a note on a document that had no comment, anchor, tag or block
+ * scalar to begin with. The numbers are in docs/test-findings.md.
+ *
+ * TWO THINGS ARE NOT COUNTED, both because the sweep said so. A document
+ * whose ROOT is a flow collection is JSON-shaped - `{a: 1}` pasted and turned
+ * into YAML is somebody asking for blocks, and three documents in the
+ * detection corpus drew the note for exactly that. And a flow collection
+ * inside another is part of the same run, so it is counted once.
+ *
+ * YAML TARGET ONLY. JSON's syntax IS YAML's flow syntax, so there is nothing
+ * about a flow collection a JSON target fails to carry; CSV and TSV have no
+ * collection syntax to speak of. An EMPTY collection is exempt because the
+ * writer keeps it: `[]` and `{}` have no block spelling and come back as
+ * themselves - measured, and held by the sweep.
+ */
+function flowIsLost(
+  node: unknown,
+  ancestors: readonly unknown[],
+  document: Document.Parsed,
+  target: Format | undefined,
+): boolean {
+  if (target !== 'yaml') return false;
+  if (!(isMap(node) || isSeq(node)) || node.flow !== true || node.items.length === 0) return false;
+  // A document written entirely in flow is JSON-shaped, and converting it to
+  // YAML is asking for blocks. Found by the cry-wolf sweep: the detection
+  // corpus's single-quoted JSON, unquoted-key JSON and JavaScript object
+  // literal are all read through the YAML fallback, so without this they drew
+  // the note while real JSON - which never reaches this reader - did not.
+  if (isFlowCollection(document.contents)) return false;
+  // One run of flow is one choice, however deeply it nests: `[{port: 80}]`
+  // is one flow collection an author wrote, not two.
+  return !ancestors.some((ancestor) => isFlowCollection(ancestor));
+}
+
+function isFlowCollection(node: unknown): boolean {
+  return (isMap(node) || isSeq(node)) && node.flow === true;
+}
+
+/**
  * COMMENTS, ANCHORS, TAGS AND SCALAR STYLES - CORPUS ROWS 4 TO 9, AS ONE NOTE.
  *
  * Four rows of the loss table, and the matrix carried `YAML → JSON` as
@@ -1519,6 +1672,7 @@ function yamlPresentationNotes(
     tags: [],
     styles: [],
     folded: false,
+    flows: [],
   };
 
   const comment = (value: unknown): void => {
@@ -1572,6 +1726,10 @@ function yamlPresentationNotes(
           if (isScalar(node) && node.type === 'BLOCK_FOLDED') found.folded = true;
         }
 
+        if (flowIsLost(node, ancestors, document, target)) {
+          found.flows.push(`${prefix}${yamlPath(ancestors, node) || '$'}`);
+        }
+
         return undefined;
       },
     });
@@ -1582,6 +1740,7 @@ function yamlPresentationNotes(
   if (found.anchors.length > 0) census.push(counted(found.anchors.length, 'anchor'));
   if (found.tags.length > 0) census.push(counted(found.tags.length, 'tag'));
   if (found.styles.length > 0) census.push(counted(found.styles.length, 'block style'));
+  if (found.flows.length > 0) census.push(counted(found.flows.length, 'flow collection'));
   if (census.length === 0) return [];
 
   const because: string[] = [];
@@ -1632,6 +1791,14 @@ function yamlPresentationNotes(
           ? ' A folded scalar is folded by the READER, so its line breaks are already spaces before anything is written.'
           : ''
       }`,
+    );
+  }
+
+  if (found.flows.length > 0) {
+    because.push(
+      `A collection's flow style - \`{a: 1}\` or \`[1, 2]\` on one line - is not part of its value either, and this writer spells every non-empty collection as a block, so ${someOf(found.flows, 3)} ${
+        found.flows.length === 1 ? 'is' : 'are'
+      } now written one entry to a line.`,
     );
   }
 
@@ -1691,7 +1858,11 @@ function readYamlSource(text: string, target: Format | undefined): ToolResult<Re
      * "please use YAML.parseAllDocuments()" - an error naming an API the user
      * has no access to, for a file that is not wrong.
      */
-    documents = parseAllDocuments(text, { logLevel: 'error', uniqueKeys });
+    documents = parseAllDocuments(text, {
+      logLevel: 'error',
+      uniqueKeys,
+      customTags: [EXPLICIT_FLOAT],
+    });
   } catch (error) {
     return yamlThrownFailure(error);
   }
@@ -1703,6 +1874,8 @@ function readYamlSource(text: string, target: Format | undefined): ToolResult<Re
       if (collision !== undefined) return duplicateKeyFailure(text, error, collision);
       return yamlParseFailure(error);
     }
+    const mistyped = firstMistypedScalar(document);
+    if (mistyped !== null) return mistypedScalarFailure(text, mistyped);
   }
 
   if (documents.length === 0 && DIRECTIVE_LINE.test(text)) {
@@ -2125,10 +2298,21 @@ export function readAuto(
      * `hello` as well, and `hello` really is a YAML document meaning "hello".
      * Asking whether lines were folded is what separates the two.
      */
+    /*
+     * SD-1's real gap, decided in round thirteen as a DOCUMENTED LIMITATION
+     * rather than a new signal. A one-column CSV - a list of ids, a list of
+     * emails - has no delimiter in it, and "several lines, one field each" is
+     * also exactly what prose, a log and a word list are: every multi-line
+     * text in the world is a valid one-column CSV. A detector that said yes to
+     * it would say yes to everything that reaches this line, and a table of
+     * one column read from a paragraph is the confident wrong answer round one
+     * spent a round removing. So auto-detect refuses it, and says how to get
+     * the table - which is the only part of the gap that was ever fixable.
+     */
     if (first.ok && foldsLines(stripBom(source))) {
       return fail('invalid-input', NOT_A_FORMAT, {
         detail:
-          'Read as YAML it is one long string with the line breaks turned into spaces, which is almost certainly not what it is.',
+          'Read as YAML it is one long string with the line breaks turned into spaces, which is almost certainly not what it is. If it is a table with a single column, choose CSV as the source format: a file with one column has no delimiter in it for detection to find.',
       });
     }
   }

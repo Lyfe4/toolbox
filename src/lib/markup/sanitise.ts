@@ -191,7 +191,7 @@ export const SANITISE_SCHEMA: SanitiseSchema = {
   ],
 
   /*
-   * The attribute allow-list is the default's, untouched.
+   * The attribute allow-list is the default's, plus ONE attribute.
    *
    * Its wildcard entry is a list of 60-odd presentational and ARIA attribute
    * names, and there is not an event handler among them. That is what removes
@@ -199,13 +199,27 @@ export const SANITISE_SCHEMA: SanitiseSchema = {
    * as a CLASS rather than by name - the mechanism is that they were never
    * allowed, not that they were spotted and deleted.
    *
-   * Note what is NOT in the wildcard: `className`. Classes are allowed only on
-   * the specific elements that need them (`li`, `ol`, `code`, `div`, `span`)
-   * and, on `li` and `ol`, only the exact task-list values. Adding className to
-   * the wildcard to be helpful would widen the boundary, which is why this
-   * object is inherited rather than rewritten.
+   * Note what is NOT in the wildcard: `className`. In rehype-sanitize 6.0.0
+   * it is allowed on seven elements and ONLY WITH PERMITTED VALUES: `a`
+   * (`data-footnote-backref`), `code` (`language-*`), `h2` (`sr-only`), `li`
+   * (`task-list-item`), `ol` and `ul` (`contains-task-list`), `section`
+   * (`footnotes`). On those seven any other name is taken out and the
+   * attribute stays - `<a class="btn">` becomes `<a class="">` - and on every
+   * other element `class` is removed whole. `sanitise.test.ts` asserts this
+   * list against the schema, because the sentence it replaces named `div` and
+   * `span`, which have no entry at all, and missed four that do.
+   *
+   * THE ONE ADDITION: `reversed` on `<ol>`. It is a boolean - the value is
+   * ignored, it names no URL, runs nothing and styles nothing - and it is
+   * CONTENT: `<ol reversed>` displays 3, 2, 1, so removing it changes the
+   * numbers a reader sees rather than decoration. The note that reported its
+   * removal said "styling hooks go with it", which was not what it was.
+   * (TC-3.) `start`, its companion, was already allowed by the wildcard.
    */
-  attributes: defaultSchema.attributes,
+  attributes: {
+    ...defaultSchema.attributes,
+    ol: [...(defaultSchema.attributes?.ol ?? []), 'reversed'],
+  },
 
   protocols: {
     href: [...PROTOCOLS],

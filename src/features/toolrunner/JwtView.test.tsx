@@ -345,6 +345,32 @@ describe('JwtView: time claims', () => {
     expect(document.querySelector('[data-validity]')).toHaveAttribute('data-validity', 'not-yet');
   });
 
+  /*
+   * JWT-3, round thirteen. The table shows registered claims only, on purpose,
+   * and a `name` claim was drawn only in the payload block below it with
+   * nothing to say so - so four rows could be read as the whole token.
+   */
+  it('names the claims the table leaves out, and where they are', async () => {
+    renderToken(
+      await decode(tokenOf({ alg: 'HS256' }, { sub: 'ada', name: 'Ada', role: 'admin' })),
+    );
+
+    const line = document.querySelector('[data-other-claims]');
+    expect(line).toHaveTextContent(
+      'The table lists registered claims only. name, role are in the payload below.',
+    );
+    // And they really are there: the sentence points at something.
+    expect(screen.getByLabelText(/payload/)).toHaveTextContent('"role"');
+  });
+
+  it('says nothing when every claim is in the table', async () => {
+    renderToken(await decode(tokenOf({ alg: 'HS256' }, { sub: 'ada', iat: 1_700_000_000 })));
+
+    // The positive partner first, so the absence below is about this token.
+    expect(screen.getByRole('rowheader', { name: /Subject/ })).toBeInTheDocument();
+    expect(document.querySelector('[data-other-claims]')).toBeNull();
+  });
+
   it('states a future expiry as a fact rather than as an alarm', async () => {
     const later = Math.floor(NOW / 1000) + 3600;
     renderToken(await decode(tokenOf({ alg: 'HS256' }, { sub: 'ada', exp: later })));
