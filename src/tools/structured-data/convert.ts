@@ -23,12 +23,19 @@ import {
   type SourcePosition,
   type ToolResult,
 } from '@/features/registry/types';
-import { isRounded, roundedNumbersInJson, type RoundedNumber } from '@/lib/jsonNumbers';
+import {
+  duplicateJsonKeys,
+  isRounded,
+  roundedNumbersInJson,
+  scanJsonSource,
+  type DuplicateKey,
+  type RoundedNumber,
+} from '@/lib/jsonNumbers';
 import { lost, noted, type ToolNote } from '@/lib/notes';
 import { setOwnProperty } from '@/lib/safeObject';
 import { positionFromLineColumn, positionFromOffset, stripBom } from '@/lib/textPosition';
 
-import { parseCsvRows, readSepDirective, rowsToRecords, writeCsv, type Written } from './csv';
+import { parseCsvRows, readRecords, readSepDirective, writeCsv, type Written } from './csv';
 import { describeJsonc, stripJsonc } from './jsonc';
 
 /**
@@ -130,6 +137,51 @@ function roundedNumberNotes(
        * produced the rounded number, so it is in the parsed structure as well
        * as in whatever gets written out of it - unlike the write-half losses
        * in csv.ts, which `data` escapes.
+       */
+      ['output', 'data'],
+    ),
+  ];
+}
+
+/**
+ * A KEY WRITTEN TWICE, AND THE VALUE THAT LOST - CORPUS ROW 12.
+ *
+ * `{"retries": 3, "retries": 5}` is valid JSON. RFC 8259 permits it, says the
+ * behaviour is undefined, and every reader anybody uses - `JSON.parse`
+ * included - keeps the LAST one. So the 3 is gone before this tool has been
+ * handed anything, and until round twelve nothing said so: the conversion was
+ * correct about a document that was not the document in the box.
+ *
+ * WHY IT IS A LOSS AND NOT A REFUSAL, which is the opposite of what the YAML
+ * reader does with the same shape. YAML 1.2 makes a duplicate key an ERROR, so
+ * `uniqueKeys` refuses one and names both positions; RFC 8259 does not, and
+ * refusing a document every other reader accepts would make this tool the odd
+ * one out on a file that works everywhere else.
+ *
+ * ONE NOTE, capped at five named, for the reason `roundedNumberNotes` gives: a
+ * generated document with the same stray key on four hundred records would
+ * otherwise produce four hundred notes.
+ */
+function duplicateKeyNotes(duplicates: readonly DuplicateKey[]): ToolNote[] {
+  if (duplicates.length === 0) return [];
+
+  const shown = duplicates.slice(0, 5);
+  const rest = duplicates.length - shown.length;
+  const where = shown.map((entry) => `${entry.path} discarded \`${entry.discarded}\``).join(', ');
+
+  return [
+    lost(
+      duplicates.length === 1
+        ? '1 duplicate key was discarded'
+        : `${duplicates.length.toString()} duplicate keys were discarded`,
+      `JSON allows the same key twice in one object and leaves the behaviour undefined; every reader in use keeps the LAST one, so the earlier value is gone before this tool sees the document. ${where}${
+        rest > 0 ? `, and ${rest.toString()} more` : ''
+      }. Rename one of them to keep both.`,
+      /*
+       * BOTH DATA PORTS. `JSON.parse` resolved the duplicate, so the parsed
+       * structure on `data` holds the surviving value and nothing else -
+       * exactly like the written document. A read-half loss, not a write-half
+       * one.
        */
       ['output', 'data'],
     ),
@@ -1317,6 +1369,292 @@ function nonStringKeyNotes(documents: readonly Document.Parsed[]): ToolNote[] {
   ];
 }
 
+/**
+ * `tag:yaml.org,2002:str` as the person who typed it would recognise it.
+ *
+ * The library resolves a standard tag to its full URI, which is correct and is
+ * not what is in the document. `!!str` is what was written and is what the
+ * reader will search their own file for.
+ */
+const STANDARD_TAG = /^tag:yaml\.org,2002:(.+)$/u;
+
+function tagAsWritten(tag: string): string {
+  const standard = STANDARD_TAG.exec(tag);
+  return standard === null ? tag : `!!${standard[1] ?? ''}`;
+}
+
+/** `2 comments`, `1 anchor`. */
+function counted(howMany: number, what: string): string {
+  return `${howMany.toString()} ${what}${howMany === 1 ? '' : 's'}`;
+}
+
+/** Up to `limit` of them named, and the rest counted. The bargain every note here strikes. */
+function someOf(items: readonly string[], limit: number): string {
+  const shown = items.slice(0, limit);
+  const rest = items.length - shown.length;
+  return `${shown.join(', ')}${rest > 0 ? `, and ${rest.toString()} more` : ''}`;
+}
+
+interface Presentation {
+  /** Comment text, as written, without the `#`. */
+  readonly comments: string[];
+  /** Anchor names, as written, without the `&`. */
+  readonly anchors: string[];
+  /** How many aliases pointed at one of them. */
+  aliases: number;
+  /** Tags, spelled as the author spelled them. */
+  readonly tags: string[];
+  /** Paths of block scalars whose style cannot come back. */
+  readonly styles: string[];
+  /**
+   * Whether any of those was a FOLDED one.
+   *
+   * The body explains folding, and folding is a fact about `>` - so on a
+   * document whose only reported block is a literal `|-` that sentence would
+   * be a true statement about something the reader did not write, which is the
+   * smaller cousin of the note that cries wolf.
+   */
+  folded: boolean;
+}
+
+/**
+ * WHETHER A BLOCK SCALAR'S STYLE SURVIVES, WHICH DEPENDS ON THE TARGET AND ON
+ * WHICH BLOCK STYLE IT IS. Measured against the writer rather than predicted.
+ *
+ * A LITERAL block - `|`, `|-`, `|+` - keeps every line break IN THE VALUE, so
+ * a YAML target writes it back as a literal block with the same chomping and
+ * the document is unchanged. Measured: `lit: |` in, `lit: |` out; `|-` and
+ * `|+` likewise. Reporting that as a loss would be a note about a document
+ * that did not change, which is the one thing `lib/notes.ts` says a `warn` may
+ * never be.
+ *
+ * A FOLDED block - `>` - is different in kind, and the difference is not the
+ * writer's taste. FOLDING HAPPENS IN THE READER: `three\nfour` is already
+ * `three four` by the time any writer sees it, so there is nothing left for a
+ * writer to put back. `fold: >` comes out as `fold: |`, or as a plain scalar
+ * when the chomping removed the last break.
+ *
+ * And on JSON, CSV or TSV neither survives, because none of the three has a
+ * scalar style at all.
+ *
+ * THE TWO PLACES A LITERAL BLOCK DOES NOT SURVIVE EITHER, BOTH FOUND BY
+ * SWEEPING THE yaml-test-suite RATHER THAN BY READING THIS FUNCTION. The first
+ * version of it said "a literal survives a YAML target" flatly and was silent
+ * about eight documents in 284 that a literal went into and did not come out
+ * of:
+ *
+ *   - A VALUE WITH NO LINE BREAK LEFT IN IT. `--- |-\n ab\n` reads to `ab`,
+ *     and a writer handed `ab` has nothing to tell it that a block was ever
+ *     involved, so it writes a plain scalar. Same for the empty value an
+ *     indent indicator with no content produces (`--- |1-`), and same for
+ *     `|-\n \tbar`, where the tab rule in `writeYamlDocument` quotes what is
+ *     left. The newline IS the thing that carries the style, which is why
+ *     testing for it is the rule rather than a list of cases.
+ *   - A BLOCK USED AS A KEY. `? |\n  block key\n` is a mapping key, and keys
+ *     are written plain or quoted whatever their value looks like.
+ *
+ * With both, the sweep's misses go to zero and its false positives stay at
+ * zero. See docs/test-findings.md for the numbers.
+ */
+function styleIsLost(node: unknown, asKey: boolean, target: Format | undefined): boolean {
+  if (!isScalar(node)) return false;
+  const style: unknown = node.type;
+  if (style === 'BLOCK_FOLDED') return true;
+  if (style !== 'BLOCK_LITERAL') return false;
+  if (target !== 'yaml') return true;
+  if (asKey) return true;
+
+  const value: unknown = node.value;
+  return typeof value !== 'string' || !value.includes('\n');
+}
+
+/**
+ * COMMENTS, ANCHORS, TAGS AND SCALAR STYLES - CORPUS ROWS 4 TO 9, AS ONE NOTE.
+ *
+ * Four rows of the loss table, and the matrix carried `YAML → JSON` as
+ * `lossy, told` from round three to round eight for all four of them while no
+ * builder for any such note existed anywhere in this tool. This is that note.
+ *
+ * ONE NOTE RATHER THAN FOUR, AND THAT IS THE ROUND'S ONE DESIGN DECISION.
+ * A realistic Kubernetes manifest or CI config has a comment, an anchor, a tag
+ * and a block scalar in it, so one note per kind is FOUR warnings on an
+ * ordinary document - and a node's face shows one line, so three of the four
+ * would be a `+3 more` nobody opens. The four have one cause (the value model
+ * has no presentation layer) and one remedy (there is none), so they are one
+ * fact with a census, which is the shape `roundedNumberNotes` and
+ * `nonStringKeyNotes` already use for the same reason.
+ *
+ * The title is the census and NAMES EACH KIND PRESENT, which is what keeps the
+ * corpus's negative controls working: a document with no anchor must produce
+ * no note about anchors, and a title that said `YAML formatting was dropped`
+ * for everything would match a control it should fail.
+ *
+ * AN ANCHOR IS EXPANDED, NOT DROPPED. Round eight corrected the write-up that
+ * said otherwise and the correction is the body's job: an alias becomes a
+ * second copy of the value, so the output is BIGGER than the source and the
+ * reference is what went. Saying "dropped" would describe a smaller document
+ * than the one the reader is holding.
+ *
+ * READ-HALF, SO BOTH DATA PORTS. `toJS` is where all of this is left behind,
+ * and the parsed structure on `data` has no comments and no aliases in it
+ * either - unlike the write-half losses in csv.ts, which `data` escapes.
+ */
+function yamlPresentationNotes(
+  documents: readonly Document.Parsed[],
+  /*
+   * EVERY document the parser produced, including the empty ones `filled`
+   * drops. The suite's M7A3 puts a comment between two `...` markers, on a
+   * document with nothing in it - and a comment on a document nobody kept is
+   * about as gone as a comment can be, so scanning only the kept documents
+   * missed it. Nothing else is read from these: a dropped document has no
+   * path, and everything else here names one.
+   */
+  all: readonly Document.Parsed[],
+  target: Format | undefined,
+): ToolNote[] {
+  const found: Presentation = {
+    comments: [],
+    anchors: [],
+    aliases: 0,
+    tags: [],
+    styles: [],
+    folded: false,
+  };
+
+  const comment = (value: unknown): void => {
+    if (typeof value !== 'string') return;
+    for (const line of value.split('\n')) {
+      const tidy = line.trim();
+      if (tidy !== '') found.comments.push(tidy);
+    }
+  };
+
+  /*
+   * COMMENTS OVER EVERY DOCUMENT, IN A PASS OF THEIR OWN.
+   *
+   * Separate from the walk below because the two want different documents. A
+   * comment needs no path, so it can be collected from the documents the
+   * reader DROPS as well as the ones it keeps - and the suite's M7A3 is
+   * exactly that: `# No document` between two `...` markers, which the library
+   * hangs on the contents of an empty document. Everything below names a path,
+   * and a dropped document has none.
+   */
+  for (const document of all) {
+    comment(document.commentBefore);
+    comment(document.comment);
+    visit(document, {
+      Node: (_index, node) => {
+        comment(node.commentBefore);
+        comment(node.comment);
+        return undefined;
+      },
+    });
+  }
+
+  documents.forEach((document, position) => {
+    const prefix = documentPrefix(documents, position);
+
+    visit(document, {
+      Node: (index, node, ancestors) => {
+        if (isAlias(node)) {
+          found.aliases += 1;
+          return undefined;
+        }
+
+        const anchor: unknown = node.anchor;
+        if (typeof anchor === 'string' && anchor !== '') found.anchors.push(`&${anchor}`);
+
+        const tag: unknown = node.tag;
+        if (typeof tag === 'string' && tag !== '') found.tags.push(tagAsWritten(tag));
+
+        if (styleIsLost(node, index === 'key', target)) {
+          found.styles.push(`${prefix}${yamlPath(ancestors, node)}`);
+          if (isScalar(node) && node.type === 'BLOCK_FOLDED') found.folded = true;
+        }
+
+        return undefined;
+      },
+    });
+  });
+
+  const census: string[] = [];
+  if (found.comments.length > 0) census.push(counted(found.comments.length, 'comment'));
+  if (found.anchors.length > 0) census.push(counted(found.anchors.length, 'anchor'));
+  if (found.tags.length > 0) census.push(counted(found.tags.length, 'tag'));
+  if (found.styles.length > 0) census.push(counted(found.styles.length, 'block style'));
+  if (census.length === 0) return [];
+
+  const because: string[] = [];
+  if (found.comments.length > 0) {
+    because.push(
+      `A comment is not part of any value, so no target has anywhere to put one: ${someOf(
+        found.comments.map((entry) => `\`# ${entry}\``),
+        3,
+      )}.`,
+    );
+  }
+  if (found.anchors.length > 0) {
+    because.push(
+      found.aliases > 0
+        ? `${someOf(
+            found.anchors.map((entry) => `\`${entry}\``),
+            3,
+          )} ${found.anchors.length === 1 ? 'is' : 'are'} EXPANDED rather than dropped: the ${counted(
+            found.aliases,
+            'alias',
+          )} using ${found.anchors.length === 1 ? 'it' : 'them'} ${
+            found.aliases === 1 ? 'becomes a' : 'become'
+          } full ${found.aliases === 1 ? 'copy' : 'copies'} of the value, so the output is larger than the source and holds no reference at all.`
+        : `${someOf(
+            found.anchors.map((entry) => `\`${entry}\``),
+            3,
+          )} ${found.anchors.length === 1 ? 'has' : 'have'} no alias pointing at ${
+            found.anchors.length === 1 ? 'it' : 'them'
+          }, so only the name goes and the value is unchanged.`,
+    );
+  }
+  if (found.tags.length > 0) {
+    because.push(
+      `The value model has no place for a tag, so ${someOf(
+        [...new Set(found.tags)].map((entry) => `\`${entry}\``),
+        3,
+      )} ${found.tags.length === 1 ? 'is' : 'are'} gone and the value under ${
+        found.tags.length === 1 ? 'it' : 'them'
+      } is kept.`,
+    );
+  }
+  if (found.styles.length > 0) {
+    because.push(
+      `A scalar's style is not part of its value, so ${someOf(found.styles, 3)} ${
+        found.styles.length === 1 ? 'comes' : 'come'
+      } back however the target spells a string.${
+        found.folded
+          ? ' A folded scalar is folded by the READER, so its line breaks are already spaces before anything is written.'
+          : ''
+      }`,
+    );
+  }
+
+  /*
+   * THE CLAIM FIRST, THE CENSUS AFTER, BECAUSE THE NODE CLIPS AT 60.
+   *
+   * `2 comments, 1 anchor, 1 tag and 2 block styles were not carried over` is
+   * 68 characters, so a node's face drew `...were not car…` - the census
+   * survived and the verb, which is the only part that says anything happened,
+   * did not. Leading with it clips the tail of an enumeration instead, which
+   * is the half a reader can afford to lose and the half the panel repeats in
+   * full.
+   */
+  return [
+    lost(
+      `Not carried over: ${census.join(', ')}`,
+      `${because.join(' ')} ${KNOWN_LIMITATION}`,
+      // Both, for the reason the doc comment gives.
+      ['output', 'data'],
+    ),
+  ];
+}
+
 function readYamlSource(text: string, target: Format | undefined): ToolResult<Reading> {
   const duplicate = duplicateYamlDirective(text);
   if (duplicate !== null) {
@@ -1438,6 +1776,16 @@ function readYamlSource(text: string, target: Format | undefined): ToolResult<Re
 
   notes.push(...nonStringKeyNotes(filled));
 
+  /*
+   * LAST OF THE THREE, AND THE ORDER IS THE POINT. A node's face prints the
+   * FIRST `warn` note and counts the rest, so the order these are pushed in is
+   * the order of what a person standing at a canvas sees. A rounded integer
+   * and a stringified key change the VALUE; a dropped comment changes how it
+   * is written. When a document has both, the value loss is the one worth the
+   * one line there is.
+   */
+  notes.push(...yamlPresentationNotes(filled, documents, target));
+
   const single = values.length === 1 ? values[0] : undefined;
   return ok({
     data: single === undefined ? values : single,
@@ -1506,12 +1854,20 @@ export function readSource(
       const converted = toJsonValue(raw);
       if (!converted.ok) return converted;
 
+      /*
+       * ONE WALK FOR BOTH QUESTIONS. The rounded-integer gate is passed in
+       * rather than run inside `scanJsonSource`, because this caller wants the
+       * duplicate keys whatever the digits look like and a second
+       * `LONG_DIGIT_RUN.test` would be the same decision written twice.
+       */
+      const scan = scanJsonSource(text, { numbers: LONG_DIGIT_RUN.test(text) });
+
       return ok({
         data: converted.value,
         format: 'json',
         delimiter: null,
         documents: 1,
-        notes: roundedNumberNotes(roundedNumbersInJson(text), target),
+        notes: [...roundedNumberNotes(scan.rounded, target), ...duplicateKeyNotes(scan.duplicates)],
       });
     }
 
@@ -1527,11 +1883,11 @@ export function readSource(
 
       const rows = parseCsvRows(directive.body, active, directive.firstLine);
       if (!rows.ok) return rows;
-      const records = rowsToRecords(rows.value);
+      const records = readRecords(rows.value);
       if (!records.ok) return records;
 
       return ok({
-        data: records.value,
+        data: records.value.data,
         format,
         delimiter: active,
         documents: 1,
@@ -1541,8 +1897,12 @@ export function readSource(
          * not the number 1234 - so a nineteen-digit key in a spreadsheet export
          * keeps every digit. It is the one reading path in this tool with no
          * numeric ceiling at all.
+         *
+         * What it does carry is the HEADER's own loss - an unquoted header cell
+         * has its spaces removed - which `readRecords` measures while it is
+         * building the columns. Corpus row 11.
          */
-        notes: [],
+        notes: records.value.notes,
       });
     }
   }
@@ -1598,6 +1958,21 @@ function parseJsonLines(text: string, target: Format | undefined): ToolResult<Re
             target,
           )
         : []),
+      /*
+       * PER LINE, AND THE PATH SAYS WHICH ONE. Each line of a JSON Lines file
+       * is its own document, so a key repeated across two lines is not a
+       * duplicate and a key repeated inside one line is. Leaving this out
+       * would have been a hole with a shape - "the note fires unless your JSON
+       * arrived one record per line" - rather than a limitation anybody chose.
+       */
+      ...duplicateKeyNotes(
+        lines.flatMap((line, position) =>
+          duplicateJsonKeys(line).map((entry) => ({
+            ...entry,
+            path: entry.path.replace(/^\$/u, `$[${position.toString()}]`),
+          })),
+        ),
+      ),
     ],
   });
 }

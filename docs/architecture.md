@@ -4499,49 +4499,136 @@ branches. It compares every decoded sample, and it reads the performance
 timeline to confirm the downgrade actually happened, so a fallback that quietly
 failed to engage cannot pass as agreement.
 
-### A known pre-existing fault: the JWT verdict that never arrives
+### The JWT verdict that never arrived, found and fixed
 
-**This is not settled, and it is written down rather than left as folklore.**
+**Settled in round twelve. It was the harness typing into a button.**
 
 `checkOutputViews` drives the JWT tool through four published JWS examples,
 asserting a verdict for each. In WebKit, deep inside a full run, one of those
-runs produces no verdict: the harness waits 30 seconds for `[data-trust]` and
-gives up.
+runs produced no verdict: the harness waited 30 seconds for `[data-trust]` and
+gave up. Three occurrences, varying depth through the RSA block, zero check
+failures in those runs, never reproduced in isolation. It was written down here
+for four rounds as open, with the cheapest next step recorded rather than taken:
+wait for an occurrence that names its own state.
 
-What is known:
+#### The occurrence, and what it named
 
-|                              |                                                                                                       |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Occurrences                  | 3, across separate full runs                                                                          |
-| Engine                       | WebKit only. Gecko passes the same block every time                                                   |
-| Where                        | The RSA examples, at **varying depth** - once on the first RS256 assertion, once on the fourth        |
-| Check failures in those runs | **0.** It is an exception, not a verdict                                                              |
-| Reproduction in isolation    | None. 6 consecutive passes of `checkOutputViews` alone in WebKit, under 16 busy processes on 16 cores |
-| Present on `867f42a`         | **Yes**, identically - so it predates the round that found it                                         |
+Round eleven's first full run came back two failed, both in WebKit, both in the
+JWT sweep, both reading:
 
-**It reproduces on a commit that was already deployed**, which is what settles
-that it is not caused by the work around it. It is also not constant: earlier
-full runs of the same code passed, so it is intermittent rather than broken.
+```
+no verdict after 30s - the tool reported: Paste a JWT to decode.
+Code: invalid-input
+```
 
-**The untested hypothesis** is the tool's own deadline. `jwt-decode` runs in a
-worker with `timeoutMs: 10_000`; if an RSA verification overran that under
-whatever load a full run puts on JavaScriptCore, the tool would return an error,
-`JwtView` would not render, and `[data-trust]` would never appear - which is
-exactly the observed shape. Nothing has measured an RSA verification in that
-engine under those conditions, so this remains a story that fits rather than a
-cause.
+That is the third of the three states the instrumented wait was built to tell
+apart, and it is the one nobody had guessed: **the run happened, on an empty
+box**. Dumping the page at the failure showed the key field holding its 451
+characters and the token field holding **zero**, with `fill` having reported
+success for both.
 
-**What changed while it stayed unfixed** is that it no longer destroys the run.
-The wait was a bare `waitFor`, so a timeout threw an uncaught `TimeoutError` and
-took roughly 1,700 passing checks with it, leaving a stack trace whose only
-information was which line had been waiting. It now returns what was on screen,
-so the assertion fails by name and carries the reason - a tool that errored, a
-run still in flight, or a page where nothing happened at all. Those are three
-different bugs and the harness could not previously tell them apart.
+What sits between the two fills is the `Secret encoding` listbox. Radix returns
+focus to the select trigger **after** the listbox is removed, and a `fill`
+landing inside that window types into the element focus is leaving. The tool was
+right about the document it was given; the harness had given it nothing, and the
+failure presented as the tool reaching the wrong verdict about a signature.
 
-**So the next occurrence should name its own state**, which is the cheapest
-possible next step: no investigation is scheduled, because the instrument that
-would have made one productive did not exist until now.
+The fix is an ordering, not a wait: the key and the token are filled **before**
+the listbox is opened at all, and the box is read back before Run is clicked, so
+a run driven on input the harness failed to type says that rather than being
+reported as a signature problem. Waiting for the listbox to detach first takes
+it from 22 in 64 to 1 in 64 and would be a harness that depends on a library's
+internals; not typing after it reproduced 0 in 96.
+
+#### Why this is the same fault, measured rather than argued
+
+Round eleven filed it as new because the detail was new. Round twelve asked
+whether new detail was simply what the instrument was built to produce, and
+traced `jwtVerdict` across every commit that has touched
+`scripts/cross-browser-check.mjs`:
+
+| Commit                | Round      | The `jwtVerdict` sequence                                             | Can the fault occur? |
+| --------------------- | ---------- | --------------------------------------------------------------------- | -------------------- |
+| …–`7eeb2f8`           | one–four   | the helper does not exist                                             | **no**               |
+| `825d50a`             | five       | goto, fill Key, fill Token, Run — **no listbox anywhere**             | **no**               |
+| `326a057` … `17349a3` | six–eleven | goto, fill Key, **open listbox, pick option**, fill Token, Run        | **yes**              |
+| `00d3352`             | eleven     | goto, fill Key, fill Token, open listbox, pick option, read back, Run | **no**               |
+
+**The mechanism has a first commit, and it is `326a057`.** Every recorded
+occurrence is after it and none before it. That is the discriminating fact,
+because the competing explanation predicts otherwise: round eight attributed the
+step at `326a057` to exposure — UI-driven RSA verifications went from 2 to 6 at
+the same commit — and a per-verification failure probability gives a threefold
+rise **from a nonzero base**. Round five should then have had occurrences at a
+third the rate, and it had none. Nor would they have been quiet: at `825d50a`
+the wait was a bare `waitFor`, so an occurrence would have thrown and taken the
+run with it, which is a failure mode nobody misses.
+
+Round eight's arithmetic is right and its mechanism is not. The commit it names
+is the right commit for a different reason: `326a057` did not only add two more
+RSA examples, it inserted the listbox click **between the two fills**.
+
+Everything else the old record holds fits without adjustment:
+
+| The old record said                 | Under a lost fill                                                                              |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------- |
+| WebKit only                         | Measured only in WebKit; the window is an engine's focus scheduling                            |
+| Varying depth through the RSA block | Predicted: the race is per call, so position carries no information                            |
+| 0 check failures in those runs      | The wait was bare then, so a lost fill was an uncaught `TimeoutError`, not a verdict           |
+| Never reproduced in isolation       | A fresh context per call removes the reused page the race needs — measured at 0 failures in 12 |
+| Reproduces on `867f42a`             | True of every commit from `326a057` on                                                         |
+
+#### The hypothesis that was carried for four rounds, refuted
+
+**The tool's own 10 s worker deadline is not it.** That story fitted the shape —
+an RSA verification overrunning the deadline would produce an error, no
+`JwtView` and no verdict — and it is now positively excluded rather than merely
+unmeasured. Every verdict takes about 200 ms on a fresh context in the same
+engine, and a deadline overrun would leave the run in flight or produce an error
+about the signature. What the instrumented occurrence captured is
+`invalid-input` on a box with nothing in it. The verification never started.
+
+The brief's original mechanism — accumulated browser state over a long run —
+goes the same way. What the fault needs is a reused page, which is a much
+smaller claim, and it is why a fresh context per call makes it vanish.
+
+#### What is NOT settled: the rate
+
+Written down as unsettled rather than rounded off, because three measurements of
+the same ordering disagree:
+
+| Round  | Conditions                                                | Lost fills   |
+| ------ | --------------------------------------------------------- | ------------ |
+| eight  | `checkOutputViews` alone, 6 passes, 16 busy processes     | 0 in ~96     |
+| eleven | the real sequence, one reused page, 4 × 16 calls          | **22 in 64** |
+| twelve | the same sequence against the current build, machine idle | 0 in 64      |
+| twelve | the same, under 16 busy processes on 16 cores             | 0 in 64      |
+| twelve | the same, with focus instrumentation                      | 0 in 192     |
+
+So "roughly one run in three" is not a number this document can stand behind,
+and it is no longer claimed.
+
+**What round twelve did measure is better than a rate.** The old ordering puts
+essentially every call inside the window the mechanism needs: at the moment the
+token fill began, the listbox was already detached and `document.activeElement`
+was `body` on **177 of 192** calls and the select trigger on the other **15**.
+Focus is in transit, or has only just landed, on every single call. That is the
+argument for the fix that was taken — do not type after the listbox — rather
+than for a longer wait, which would be tuning against a machine.
+
+One tension is recorded rather than smoothed over: all three historical
+occurrences were on RSA examples, and a per-call race predicts about half of
+them, since 8 of the block's 16 calls are RS256 or PS256. Three of three has
+probability about one in eight under that model. It is not enough to separate
+the two faults and it is not nothing.
+
+**And the honest limit.** The three historical occurrences were not
+instrumented, so no measurement can show what they were. What can be shown is
+that the mechanism existed at those commits, that it produces exactly the
+recorded symptom, that it cannot have existed before the first commit with an
+occurrence, and that the one occurrence anybody did instrument was this. If a
+verdict goes missing again after `00d3352`, that is a new finding and this
+section is wrong.
 
 ## Build and deployment
 

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { lossSummary, SUMMARY_LIMIT } from '@/features/canvas/resultSummary';
+import { TOOL_MANIFEST } from '@/features/registry/manifest';
 import {
   bytesValue,
   isJsonArray,
@@ -604,6 +606,555 @@ describe('a byte order mark', () => {
     const bytes = new TextEncoder().encode('{"a": 1}');
     const { report } = await convert(bytes, { target: 'json' });
     expect(report.notes).toEqual([]);
+  });
+});
+
+/* ========================================================================== *
+ * Corpus rows 4 to 9: what YAML has that the value model does not
+ * ========================================================================== */
+
+/**
+ * FOUR ROWS OF THE LOSS TABLE, AND ONE NOTE.
+ *
+ * docs/conversion-matrix.md carried `YAML → JSON` as `lossy, told` from round
+ * three to round eight for a comment, an anchor, a tag and a block style, and
+ * no builder for any such note existed anywhere in this tool. These are the
+ * notes, and the negative control beside each one is what stops the cure being
+ * worse: a comment is in nearly every real config file, so a note about one
+ * that fired on a document without one would be the note that teaches people
+ * to stop reading notes.
+ *
+ * The broader question - does it fire ONLY when it should, over documents
+ * nobody chose for it - is asked of 284 of them in `presentation.sweep.test.ts`.
+ */
+describe('a YAML comment, which no target can hold', () => {
+  it('says so, and quotes the comment', async () => {
+    const { report } = await convert('# why this column exists\nretries: 3\n', {
+      source: 'yaml',
+      target: 'json',
+    });
+
+    const note = report.notes.find((entry) => entry.title.includes('comment'));
+    expect(note?.level).toBe('warn');
+    expect(note?.title).toBe('Not carried over: 1 comment');
+    expect(note?.body).toContain('`# why this column exists`');
+  });
+
+  it('says nothing for the same document without one', async () => {
+    const { report } = await convert('retries: 3\n', { source: 'yaml', target: 'json' });
+    expect(losses(report)).toEqual([]);
+  });
+
+  it('says it on a YAML target too, where the output has no comment either', async () => {
+    const { output, report } = await convert('# keep me\nretries: 3\n', {
+      source: 'yaml',
+      target: 'yaml',
+    });
+
+    expect(losses(report)).toEqual(['Not carried over: 1 comment']);
+    // The claim, checked against the thing it is a claim about.
+    expect(output).not.toContain('#');
+  });
+
+  it('counts a comment on a document the reader drops as empty', async () => {
+    /*
+     * The yaml-test-suite's M7A3 puts `# No document` between two `...`
+     * markers, and the library hangs it on the CONTENTS of a document with
+     * nothing in it - which `isEmptyDocument` filters out before anything
+     * walks it. Found by the sweep rather than by reading the code, and it is
+     * why comments are collected in a pass of their own over every document
+     * the parser produced rather than over the ones that survived.
+     */
+    const { report } = await convert('a: 1\n...\n# no document here\n...\nb: 2\n', {
+      source: 'yaml',
+      target: 'json',
+    });
+
+    const note = report.notes.find((entry) => entry.title.includes('comment'));
+    expect(note?.body).toContain('`# no document here`');
+  });
+
+  it('says nothing about a comment for a document that is JSON', async () => {
+    /*
+     * THE CROSS-SUBJECT CONTROL. `#` is a comment in YAML and four characters
+     * of a colour in JSON, and this tool reads near-JSON through a YAML
+     * fallback - so "no note about YAML comments on a JSON document" is a
+     * claim about routing, not a tautology.
+     */
+    const { report } = await convert('{"colour": "#ff0000", "note": "# not a comment"}', {
+      source: 'json',
+      target: 'yaml',
+    });
+    expect(losses(report)).toEqual([]);
+  });
+});
+
+describe('a YAML anchor, which is expanded rather than dropped', () => {
+  it('names the anchor and says the alias became a copy', async () => {
+    const { report } = await convert('defaults: &defaults\n  retries: 3\nservice: *defaults\n', {
+      source: 'yaml',
+      target: 'json',
+    });
+
+    const note = report.notes.find((entry) => entry.title.includes('anchor'));
+    expect(note?.title).toBe('Not carried over: 1 anchor');
+    /*
+     * ROUND EIGHT'S CORRECTION, IN THE PRODUCT RATHER THAN IN A DOCUMENT. The
+     * write-up said anchors were "dropped"; they are EXPANDED, so the output
+     * is BIGGER than the source and it is the reference that went. A note
+     * saying "dropped" would describe a smaller document than the one the
+     * reader is holding.
+     */
+    expect(note?.body).toContain('`&defaults`');
+    expect(note?.body).toContain('EXPANDED');
+    expect(note?.body).toContain('larger than the source');
+  });
+
+  it('says nothing for the same document written out in full', async () => {
+    const { report } = await convert('defaults:\n  retries: 3\nservice:\n  retries: 3\n', {
+      source: 'yaml',
+      target: 'json',
+    });
+    expect(losses(report)).toEqual([]);
+  });
+
+  it('says only the name goes when nothing aliases it', async () => {
+    // An anchor with no alias expands nothing, so the sentence about a copy
+    // would be false. Two shapes, two sentences, and this is the one that says
+    // the value is unchanged.
+    const { report } = await convert('defaults: &unused\n  retries: 3\n', {
+      source: 'yaml',
+      target: 'yaml',
+    });
+
+    const note = report.notes.find((entry) => entry.title.includes('anchor'));
+    expect(note?.body).toContain('no alias pointing at it');
+    expect(note?.body).not.toContain('EXPANDED');
+  });
+});
+
+describe('a YAML tag, which the value model has no place for', () => {
+  it('names a custom tag as the author wrote it', async () => {
+    const { report } = await convert('custom: !mytype\n  a: 1\n', {
+      source: 'yaml',
+      target: 'json',
+    });
+
+    const note = report.notes.find((entry) => entry.title.includes('tag'));
+    expect(note?.title).toBe('Not carried over: 1 tag');
+    expect(note?.body).toContain('`!mytype`');
+  });
+
+  it('names a standard tag the way it is written rather than as a URI', async () => {
+    /*
+     * The library resolves `!!str` to `tag:yaml.org,2002:str`, which is correct
+     * and is not what is in the document. A note naming a URI the author never
+     * typed is a note about somebody else's file.
+     */
+    const { report } = await convert('typed: !!str 7\n', { source: 'yaml', target: 'json' });
+
+    const note = report.notes.find((entry) => entry.title.includes('tag'));
+    expect(note?.body).toContain('`!!str`');
+    expect(note?.body).not.toContain('yaml.org');
+  });
+
+  it('says nothing for the same document untagged', async () => {
+    const { report } = await convert('custom:\n  a: 1\n', { source: 'yaml', target: 'json' });
+    expect(losses(report)).toEqual([]);
+  });
+});
+
+describe('a YAML scalar style, which depends on the target and on the style', () => {
+  it('reports a block scalar by path on the way to JSON', async () => {
+    const { report } = await convert('description: |\n  one\n  two\n', {
+      source: 'yaml',
+      target: 'json',
+    });
+
+    const note = report.notes.find((entry) => entry.title.includes('style'));
+    expect(note?.title).toBe('Not carried over: 1 block style');
+    expect(note?.body).toContain('$.description');
+  });
+
+  it('says NOTHING about a literal block on a YAML target, because it survives', async () => {
+    /*
+     * MEASURED AGAINST THE WRITER RATHER THAN PREDICTED, and the output below
+     * is the measurement. A literal block keeps its line breaks in the VALUE,
+     * so a YAML target writes it back as a literal block and the document does
+     * not change - reporting that would be a `warn` about nothing, which is
+     * the one thing lib/notes.ts says the level may never be.
+     *
+     * The assertion on the output is what makes the silence above safe: if the
+     * writer ever stops reproducing the block, this fails rather than leaving
+     * a silent loss behind a passing test.
+     */
+    const { output, report } = await convert('description: |\n  one\n  two\n', {
+      source: 'yaml',
+      target: 'yaml',
+    });
+
+    expect(output).toContain('description: |');
+    expect(losses(report)).toEqual([]);
+  });
+
+  it('and reports a FOLDED one on a YAML target, because the folding already happened', async () => {
+    /*
+     * The other half of the same measurement. `>` folds in the READER, so
+     * `three\nfour` is `three four` before any writer sees it and there is
+     * nothing left to put back. The output proves it: the folded block comes
+     * back as a literal.
+     */
+    const { output, report } = await convert('description: >\n  one\n  two\n', {
+      source: 'yaml',
+      target: 'yaml',
+    });
+
+    expect(losses(report)).toEqual(['Not carried over: 1 block style']);
+    expect(output).toContain('one two');
+    expect(output).not.toContain('description: >');
+  });
+
+  it('reports a literal whose value has no line break left in it', async () => {
+    // `|-` strips the trailing break, so a one-line literal reads to a value
+    // with nothing in it to carry the style, and the writer writes a plain
+    // scalar. Eight documents in the yaml-test-suite are this shape.
+    const { output, report } = await convert('description: |-\n  only\n', {
+      source: 'yaml',
+      target: 'yaml',
+    });
+
+    expect(losses(report)).toEqual(['Not carried over: 1 block style']);
+    expect(output).toBe('description: only\n');
+  });
+
+  it('reports a literal used as a key, which is written plain whatever it holds', async () => {
+    const { report } = await convert('? |\n  block key\n: value\n', {
+      source: 'yaml',
+      target: 'yaml',
+    });
+    expect(losses(report)).toEqual(['Not carried over: 1 block style']);
+  });
+
+  it('explains folding only on a document that has a folded scalar', async () => {
+    /*
+     * The body's sentence about folding is a fact about `>`. On a document
+     * whose only reported block is a literal that lost its style for a
+     * different reason, printing it would be a true statement about something
+     * the reader did not write - the smaller cousin of the note that cries
+     * wolf, and the one this pair keeps out.
+     */
+    const folded = await convert('description: >\n  one\n  two\n', {
+      source: 'yaml',
+      target: 'yaml',
+    });
+    const literal = await convert('description: |-\n  only\n', { source: 'yaml', target: 'yaml' });
+
+    const body = (report: Report): string =>
+      report.notes.find((entry) => entry.title.includes('style'))?.body ?? '';
+
+    expect(body(folded.report)).toContain('folded by the READER');
+    expect(body(literal.report)).not.toContain('folded');
+    // Both really did produce the note, or the line above passes on an absence.
+    expect(body(literal.report)).toContain('$.description');
+  });
+
+  it('says nothing about style for a plain scalar', async () => {
+    const { report } = await convert('description: one two\n', { source: 'yaml', target: 'yaml' });
+    expect(losses(report)).toEqual([]);
+  });
+
+  it('says nothing about style for a quoted one either', async () => {
+    /*
+     * The boundary this note does NOT claim, asserted so that widening it is a
+     * decision rather than a drift. Single versus double quoting is a style
+     * too, and warning about every quoted string in every document is the note
+     * that cries wolf - so quoting is out of scope and the control says so.
+     */
+    const { report } = await convert("description: 'one two'\n", {
+      source: 'yaml',
+      target: 'yaml',
+    });
+    expect(losses(report)).toEqual([]);
+  });
+});
+
+describe('four losses at once, which is what a real config file looks like', () => {
+  const RICH =
+    '# why this exists\ndefaults: &defaults\n  retries: 3\nservice: *defaults\ncustom: !mytype\n  a: 1\ntext: |\n  one\n  two\n';
+
+  it('produces ONE note whose title is the census', async () => {
+    /*
+     * THE ROUND'S ONE DESIGN DECISION, ASSERTED RATHER THAN DESCRIBED.
+     *
+     * One note per kind is four warnings on an ordinary manifest, and a canvas
+     * node shows ONE line - so three of the four would live behind a `+3 more`
+     * nobody opens. The four have one cause and one remedy, so they are one
+     * fact with a census; the title names every kind present, which is what
+     * keeps each row's negative control able to fail.
+     */
+    const { report } = await convert(RICH, { source: 'yaml', target: 'json' });
+
+    expect(losses(report)).toEqual(['Not carried over: 1 comment, 1 anchor, 1 tag, 1 block style']);
+  });
+
+  it('fits the 60 characters a node prints, with every kind still named', async () => {
+    /*
+     * The title used to read `... were not carried over`, which is 68
+     * characters for this document - so a node drew `...were not car…` and
+     * clipped the only part that said anything had happened. Leading with the
+     * claim clips the tail of an enumeration instead. `SUMMARY_LIMIT` is
+     * imported rather than written as 60, because the two must move together.
+     */
+    const { report } = await convert(RICH, { source: 'yaml', target: 'json' });
+    const title = losses(report)[0] ?? '';
+
+    expect(title.length).toBeLessThanOrEqual(SUMMARY_LIMIT);
+    for (const kind of ['comment', 'anchor', 'tag', 'block style']) {
+      expect(title).toContain(kind);
+    }
+  });
+
+  it('counts the same kind rather than listing it forever', async () => {
+    // Six comments is one clause, not six notes. The bargain every list in
+    // these reports strikes, at the boundary where the count starts.
+    const source = `${'# one\n'.repeat(6)}a: 1\n`;
+    const { report } = await convert(source, { source: 'yaml', target: 'json' });
+
+    const note = report.notes.find((entry) => entry.title.includes('comment'));
+    expect(note?.title).toBe('Not carried over: 6 comments');
+    expect(note?.body).toContain('and 3 more');
+  });
+});
+
+describe('the most notes one run can produce, and the order they arrive in', () => {
+  /*
+   * WHAT SIX NOTES LOOK LIKE, PINNED RATHER THAN DESCRIBED.
+   *
+   * A YAML stream carrying a comment, an anchor, a tag and a rounded integer,
+   * converted to CSV, is the worst case this tool has: three read-half losses,
+   * the stream, and both write-half losses. Round twelve added four of the
+   * possible titles, so the question "is the panel still readable" stopped
+   * being hypothetical - and the answer is a list a person can act on, because
+   * every entry has a different remedy.
+   *
+   * THE ORDER IS THE POINT, and it is the reason this is a test rather than a
+   * paragraph. A node prints the FIRST warn title and counts the rest, so the
+   * order `readYamlSource` pushes its notes in decides what a person standing
+   * at a canvas sees. A rounded integer changes the VALUE; a dropped comment
+   * changes how it is written. Swapping them loses nothing a test would
+   * otherwise notice, which is exactly why one says so here.
+   */
+  const WORST =
+    '# a comment\nshared: &shared\n  q: 1\n---\nrows: !mytype\n  - id: 12345678901234567890\n';
+
+  it('lists every loss once, with the value losses in front of the presentation ones', async () => {
+    const { report } = await convert(WORST, { source: 'yaml', target: 'csv' });
+
+    expect(losses(report)).toEqual([
+      'The number at $[1].rows[0].id was rounded',
+      'Not carried over: 1 comment, 1 anchor, 1 tag',
+      'A stream of 2 documents became an array',
+      '2 nested values were written into their cells as JSON',
+      '2 columns were absent from some rows',
+    ]);
+  });
+
+  it('and a node prints the first of them with a count for the rest', async () => {
+    /*
+     * The canvas half of the same claim. `lossSummary` is imported from the
+     * module the canvas uses rather than re-implemented, so a change to how a
+     * node summarises reaches this test instead of going unnoticed.
+     */
+    const result = await structuredDataTool.run({
+      inputs: { input: { type: 'text', text: WORST } },
+      options: {
+        ...(structuredDataTool.defaultOptions as Record<string, unknown>),
+        source: 'yaml',
+        target: 'csv',
+      },
+      context,
+    });
+    expect(result.ok).toBe(true);
+
+    const entry = TOOL_MANIFEST.find((tool) => tool.id === 'structured-data');
+    const face = entry === undefined || !result.ok ? null : lossSummary(entry, result.value);
+    expect(face).toBe('The number at $[1].rows[0].id was rounded · +4 more');
+    expect((face ?? '').length).toBeLessThanOrEqual(SUMMARY_LIMIT);
+  });
+});
+
+/* ========================================================================== *
+ * Corpus row 12: a JSON key written twice
+ * ========================================================================== */
+
+describe('a duplicate JSON key, where the last one wins', () => {
+  it('names the key, its path and the value that lost', async () => {
+    const { report } = await convert('{"retries": 3, "retries": 5}', {
+      source: 'json',
+      target: 'json',
+    });
+
+    const note = report.notes.find((entry) => entry.title.includes('duplicate'));
+    expect(note?.level).toBe('warn');
+    expect(note?.title).toBe('1 duplicate key was discarded');
+    expect(note?.body).toContain('$.retries discarded `3`');
+  });
+
+  it('says nothing for a document whose keys are all distinct', async () => {
+    const { report } = await convert('{"retries": 5, "tries": 3}', {
+      source: 'json',
+      target: 'json',
+    });
+    expect(losses(report)).toEqual([]);
+  });
+
+  it('is not confused by the same key in two different objects', async () => {
+    /*
+     * THE CONTROL THAT DECIDES WHETHER THE SCANNER TRACKS SCOPE. `retries` in
+     * two sibling objects is two keys, not one written twice, and a scanner
+     * that kept one set for the whole document would call every normal array
+     * of records a duplicate.
+     */
+    const { report } = await convert('[{"retries": 3}, {"retries": 5}]', {
+      source: 'json',
+      target: 'json',
+    });
+    expect(losses(report)).toEqual([]);
+  });
+
+  it('names a nested one by its path', async () => {
+    const { report } = await convert('{"a": [{"b": {"k": 1, "k": 2}}]}', {
+      source: 'json',
+      target: 'json',
+    });
+
+    const note = report.notes.find((entry) => entry.title.includes('duplicate'));
+    expect(note?.body).toContain('$.a[0].b.k discarded `1`');
+  });
+
+  it('quotes a discarded object rather than printing the whole thing', async () => {
+    const big = JSON.stringify({ padding: 'x'.repeat(200) });
+    const { report } = await convert(`{"k": ${big}, "k": 1}`, { source: 'json', target: 'json' });
+
+    const note = report.notes.find((entry) => entry.title.includes('duplicate'));
+    expect(note?.body).toContain('…');
+    expect(note?.body).not.toContain('x'.repeat(100));
+  });
+
+  it('counts three of them and reports each', async () => {
+    const { report } = await convert('{"a": 1, "a": 2, "b": 3, "b": 4, "b": 5}', {
+      source: 'json',
+      target: 'json',
+    });
+
+    const note = report.notes.find((entry) => entry.title.includes('duplicate'));
+    expect(note?.title).toBe('3 duplicate keys were discarded');
+  });
+
+  it('survives the JSONC step, which strips comments before parsing', async () => {
+    /*
+     * The stripper blanks a comment to spaces of the same length rather than
+     * removing it, so the scanner runs over a document with the same offsets -
+     * which is exactly why the duplicate is still findable afterwards and the
+     * path still points where the reader is looking.
+     */
+    const { report } = await convert('{\n  // a note\n  "retries": 3,\n  "retries": 5,\n}', {
+      target: 'json',
+    });
+
+    expect(titles(report)).toContain('Read as JSONC');
+    expect(losses(report)).toContain('1 duplicate key was discarded');
+  });
+
+  it('treats the same key on two JSON Lines records as two keys', async () => {
+    // Each line is its own document, so this is the JSON Lines shape of the
+    // sibling-objects control above.
+    const { report } = await convert('{"a": 1}\n{"a": 2}\n', { target: 'json' });
+    expect(losses(report)).not.toContain('1 duplicate key was discarded');
+  });
+
+  it('and reports one written twice inside a single record', async () => {
+    const { report } = await convert('{"a": 1, "a": 2}\n{"b": 3}\n', { target: 'json' });
+
+    const note = report.notes.find((entry) => entry.title.includes('duplicate'));
+    expect(note?.body).toContain('$[0].a');
+  });
+
+  it('is a note for JSON and still a refusal for YAML, which is the other spec', async () => {
+    /*
+     * The boundary, stated as a test because the two readers deliberately
+     * disagree: RFC 8259 permits a repeated key and leaves the behaviour
+     * undefined, YAML 1.2 makes it an error. Refusing the JSON would make this
+     * tool the odd one out on a file every other reader opens.
+     */
+    await expect(convert('a: 1\na: 2\n', { source: 'yaml', target: 'yaml' })).rejects.toThrow(
+      /the same key twice/iu,
+    );
+  });
+});
+
+/* ========================================================================== *
+ * Corpus row 11: a CSV header cell that was trimmed
+ * ========================================================================== */
+
+describe('a CSV header cell whose spaces were removed', () => {
+  it('says so, and shows the cell with its spaces', async () => {
+    const { report } = await convert('alpha, shipped at \n1,2\n', {
+      source: 'csv',
+      target: 'json',
+    });
+
+    const note = report.notes.find((entry) => entry.title.includes('trimmed'));
+    expect(note?.level).toBe('warn');
+    expect(note?.title).toBe('1 header cell was trimmed');
+    expect(note?.body).toContain('" shipped at " became `shipped at`');
+    expect(note?.body).toContain('Quote the cell - `" shipped at "`');
+  });
+
+  it('says nothing for the same header with no spaces in it', async () => {
+    const { report } = await convert('alpha,shipped at\n1,2\n', { source: 'csv', target: 'json' });
+    expect(losses(report)).toEqual([]);
+  });
+
+  it('says nothing for a cell whose author quoted the spaces', async () => {
+    /*
+     * Quoting is the author saying the spaces are part of the name, so nothing
+     * is trimmed and nothing was lost. The control for the control: this is
+     * the one header shape that looks like the subject and is not it.
+     */
+    const { report } = await convert('alpha," shipped at "\n1,2\n', {
+      source: 'csv',
+      target: 'json',
+    });
+    expect(losses(report)).toEqual([]);
+  });
+
+  it('says nothing about trimming for an empty cell it had to name', async () => {
+    // An empty cell is not trimmed, it is replaced - a different decision with
+    // a different name, and conflating the two would put a note about lost
+    // spaces on a header that had none.
+    const { report } = await convert('alpha,,c\n1,2,3\n', { source: 'csv', target: 'json' });
+    expect(losses(report)).toEqual([]);
+  });
+
+  it('counts several and names the first few', async () => {
+    const header = Array.from({ length: 7 }, (_unused, index) => ` c${String(index)} `).join(',');
+    const { report } = await convert(`${header}\n1,2,3,4,5,6,7\n`, {
+      source: 'csv',
+      target: 'json',
+    });
+
+    const note = report.notes.find((entry) => entry.title.includes('trimmed'));
+    expect(note?.title).toBe('7 header cells were trimmed');
+    expect(note?.body).toContain('and 2 more');
+  });
+
+  it('reaches a TSV source too, which is the same reader', async () => {
+    const { report } = await convert('alpha\t shipped at \n1\t2\n', {
+      source: 'tsv',
+      target: 'json',
+    });
+    expect(losses(report)).toContain('1 header cell was trimmed');
   });
 });
 

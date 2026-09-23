@@ -1628,27 +1628,58 @@ Every one of the nine new checks was run against a deliberate break before being
 trusted: the resolution removed, the declaration removed, `mode` ignored,
 `complete` ignored, and five malformed declarations. Each failed, named.
 
-### One known pre-existing fault, written down rather than argued about
+### The pre-existing fault that turned out to be the harness typing into a button
 
-`check:browsers` has an intermittent failure in WebKit: the JWT tool produces no
-verdict for one of the RSA examples, deep inside a full run, and the harness
-waits 30s and gives up. Three occurrences, at varying depth through the RSA
-block, zero check failures in those runs - it is an exception rather than a
-verdict. It does not reproduce in isolation: six consecutive passes of that
-check alone in WebKit under 16 busy processes, all green.
+For four rounds this section described an open fault: in WebKit, deep inside a
+full run, the JWT tool produced no verdict for one of the RSA examples and the
+harness waited 30s and gave up. Three occurrences, varying depth, zero check
+failures in those runs, no reproduction in isolation. The recorded plan was to
+wait for an instrumented occurrence, because the instrument that would name the
+state did not exist when the fault was found.
 
-**It reproduces on `867f42a`, which is already deployed**, so it predates the
-work that found it, and blocking otherwise-green work on it helps nobody. The
-untested hypothesis is the tool's own 10s worker deadline: an RSA verification
-overrunning it would produce an error, no `JwtView`, and no verdict - the shape
-that is seen. Nothing has measured that, so it is a story that fits.
+**The instrumented occurrence arrived in round eleven, and it named the state:**
+`no verdict after 30s - the tool reported: Paste a JWT to decode. Code:
+invalid-input`. The run really had run on an empty box. `fill` reported
+success, the token field held **zero characters**, and the key field beside it
+was intact — so the tool was right about the document it was given and the
+harness had given it nothing. Radix returns focus to a select trigger _after_
+its listbox is removed, and a `fill` landing in that window types into the
+element focus is leaving. The harness set the `Secret encoding` option between
+filling the key and filling the token; it now fills both **before** the listbox
+is ever opened, and reads the box back before clicking Run.
 
-What did change is that it no longer destroys the run. The wait was a bare
-`waitFor`, so a timeout threw and took ~1,700 passing checks with it. It returns
-what was on screen now, so the check fails by name with the reason - the tool
-errored, the run is still in flight, or nothing happened at all - which are
-three different bugs the harness could not previously distinguish. The next
-occurrence should therefore say which one it is.
+**Round twelve asked whether that was the same fault, and the answer is yes.**
+The evidence is the harness's own history rather than a rate: `jwtVerdict` at
+`825d50a` — round five, where the helper was born — never opened a listbox at
+all, so the mechanism could not exist. The `Secret encoding` click appears at
+`326a057`, _between the two fills_, and every recorded occurrence is after that
+commit and none before it. Round eight explained the same step as exposure —
+RSA verifications went 2 to 6 at `326a057` — which predicts a threefold rise
+from a nonzero base; the base is zero, and at round five an occurrence would
+have been loud rather than quiet, because the wait was still a bare `waitFor`
+that took the whole run with it. That is also why the old record says "zero
+check failures in those runs": an uncaught `TimeoutError` is what a lost fill
+looked like before the wait was instrumented.
+
+**The 10s worker deadline is refuted rather than still untested.** Every verdict
+takes about 200 ms on a fresh context, and a deadline overrun would leave the
+run in flight or produce an error about the signature — not `invalid-input` on
+an empty box. The tool never saw the token.
+
+**What is not settled is the rate**, and it is written down that way. Round
+eleven reproduced the lost fill 22 times in 64 calls and 0 in 96 after the fix;
+round eight reported six clean isolated passes, about 96 calls, with none; and
+round twelve drove the pre-fix ordering 320 more times — idle, and under 16 busy
+processes — without losing one. What round twelve did measure is that the old
+ordering puts **every** call inside the window: at the moment the token fill
+began, the listbox was already gone and focus was at `body` on 177 of 192 calls
+and at the trigger on the other 15. Focus is in transit on essentially every
+call, and whether the fill survives is a sub-frame race whose rate moves with
+the machine. That is the argument for not typing after the listbox at all
+rather than for waiting longer.
+
+The reasoning, the commit-by-commit trace and the measurements are in
+[test-findings.md](docs/test-findings.md#the-crash-b-timeline).
 
 ### The layout that was built for the widest case
 

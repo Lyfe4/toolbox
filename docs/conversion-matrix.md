@@ -138,7 +138,7 @@ auto-detected unless you say otherwise; the target is always explicit.
 | ----- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | CSV   | **exact**                               | 32 documents read by CPython's `csv.reader` and by this parser, field for field, including a lone CR terminator, a NUL byte, a quote opening mid-field, a field of four quotes, CRLF inside a quoted cell and every delimiter offered. [`csv.oracle.test.ts`](../src/tools/structured-data/csv.oracle.test.ts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | TSV   | **exact**                               | Same corpus, tab delimiter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| JSON  | **lossy, told**                         | Structure and strings are exact — it is `JSON.parse`. **Integers past 2^53 are rounded**, which is unavoidable, and each one is now reported by path. See [Numbers](#numbers-past-253-unavoidable-and-no-longer-silent).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| JSON  | **lossy, told**                         | Structure and strings are exact — it is `JSON.parse`. **Integers past 2^53 are rounded**, which is unavoidable, and each one is now reported by path. See [Numbers](#numbers-past-253-unavoidable-and-no-longer-silent). **A key written twice is resolved last-wins** before this tool sees the document — RFC 8259 permits it and leaves the behaviour undefined — and from round twelve the discarded value is reported by path (corpus row 12). It is a note rather than a refusal, which is the opposite of what the YAML reader does with the same shape, because YAML 1.2 makes a duplicate key an error and JSON does not: refusing it would make this tool the odd one out on a file every other reader opens.                                                                        |
 | JSONC | **exact**, against VS Code's own parser | `//` and `/* */` comments and trailing commas are removed before parsing, and the document is read as the author meant it. 25 documents are compared against `jsonc-parser` — the parser Visual Studio Code uses for its own settings files — value for value, including every case that decides whether a stripper tracks string state: a `//` inside a URL, a `/*` inside a glob, an escaped quote in front of a comment marker. [`jsonc.oracle.test.ts`](../src/tools/structured-data/jsonc.oracle.test.ts)                                                                                                                                                                                                                                                                                 |
 | YAML  | **exact**, with 9 named exceptions      | 402 cases from the [yaml-test-suite](https://github.com/yaml/yaml-test-suite)'s own `data-2022-01-17` release, committed as [`spec/yaml-test-suite.json`](../src/tools/structured-data/spec/yaml-test-suite.json). 94 documents the suite marks as errors are all refused, **and round four asks what each one was refused FOR**: 92 by the parser, 2 by this file's own directive rules, 0 by the empty-input rule, and the counts are asserted. 279 carry the value a conforming parser must produce and **270 of them match exactly — 258 before round three**. The 9 that do not are listed by id with a reason, each is asserted to **still** differ, and the 12 that were fixed are asserted to **now agree**. [`yaml.oracle.test.ts`](../src/tools/structured-data/yaml.oracle.test.ts) |
 
@@ -159,17 +159,17 @@ format cannot hold. See
 [the value model, and `YAML → YAML`](#the-value-model-and-yaml-yaml) for what
 that route costs and why the cost was accepted.
 
-| From → To                     | Verdict                  | What is lost, and whether you are told                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ----------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| JSON → YAML                   | **exact**                | Nothing. Key order is preserved unless `sortKeys` is on.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| YAML → JSON                   | **lossy, silent**        | Comments, anchors, tags and the choice of block style are not JSON and are dropped. **Nothing says so.** This cell read `lossy, told` from round three to round eight and no note for any of the four has ever been written — there is no builder for one in `report.ts` and no commit that removed one, so the claim was aspirational rather than drifted. It is four corpus rows, 4 to 7, and they are round ten and round twelve's work. Anything JSON genuinely cannot hold — a `!!binary`, a `!!set`, a collection used as a key, a 1.1 timestamp — is **refused by path**, not mangled, and that half was always true. |
-| JSON/YAML → CSV/TSV           | **lossy, told**          | Three losses, all real and all now reported **by path**: a nested value becomes compact JSON inside the cell (`$[0].user`); a key absent from one row becomes an empty cell indistinguishable from a present-and-empty one, and the columns are named; and every value becomes text. A non-array, or an array of non-objects, is refused clearly. [`reports.test.ts`](../src/tools/structured-data/reports.test.ts)                                                                                                                                                                                                          |
-| CSV/TSV → JSON/YAML           | **lossy, told**          | Every cell becomes a **string**, deliberately — `01234` is a part number, not the number 1234 — and the tool's README states it. Line endings inside quoted cells survive verbatim.                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| YAML → YAML                   | **lossy, told**          | Not a distinguished path, decided in round eleven: it goes through the same value model as every other cell. A comment, an anchor and a scalar style are dropped and **not** said (corpus rows 8 and 9, round twelve's work); a key that is a number, a boolean or null becomes text and **is** said, by key and by path (row 10, this round). `.nan`, `.inf`, `!!binary`, `!!set`, `!!omap` and a 1.1 timestamp are **refused**, by path and by line, in a message that names the model rather than naming JSON.                                                                                                            |
-| YAML stream → YAML            | **exact**                | **Fixed in round three.** A `---`-separated stream is written back as a stream, with a `---` in front of each document. It used to come back as a **sequence**, so a Kubernetes manifest that went through this tool was a file `kubectl` will not read, silently. The report says which of the two happened, and says it from the WRITER rather than from the source — `sortKeys` and a value arriving on the `json` port can both put a different array in front of it.                                                                                                                                                    |
-| YAML stream → JSON/CSV/TSV    | **lossy, told**          | None of the three has a document separator, so the documents become the elements of an array — which is the only JSON-representable form of a stream, and is still a file that does not convert back. Reported, with the count and with "choose YAML as the target to keep the stream". JSON Lines in is the same fact and gets the same note.                                                                                                                                                                                                                                                                               |
-| An empty document in a stream | **fixed in round three** | Found by the yaml-test-suite in round two. `---` STARTS a document and an empty one is `null`; dropping it made a five-document stream come back as a four-element array with no error. Three references agree about the same bytes — the suite's PUW8, js-yaml 5.4.2, and CPython's PyYAML 6.0.3, each asked directly. The rule is now "an empty document with no `---` to declare it", which keeps the case it was really for: an empty input box still says "nothing to parse" rather than producing `null`. Twelve of the twenty-one suite divergences were this one rule.                                               |
-| Anything → CSV                | **lossy, told**          | The output has no terminator after the last record and uses LF, whatever the input used. RFC 4180 specifies CRLF; every reader accepts LF. Reported at `info` on every CSV write — nothing is lost, the table reads back identically, and the fact matters exactly when the next step is a byte comparison or a digest, which on this canvas is one wire away.                                                                                                                                                                                                                                                               |
+| From → To                     | Verdict                  | What is lost, and whether you are told                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JSON → YAML                   | **exact**                | Nothing. Key order is preserved unless `sortKeys` is on.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| YAML → JSON                   | **lossy, told**          | Comments, anchors, tags and the choice of block style are not JSON and are dropped. **Said, from round twelve**, as one note whose title is a census — `Not carried over: 2 comments, 1 anchor, 1 tag, 2 block styles` — with each instance named in the body and the anchor described as **expanded** rather than dropped, which is what actually happens to it. This cell read `lossy, told` from round three to round eight with no builder for such a note anywhere in the tool; corpus rows 4 to 7 are what make the claim measurable rather than written. Anything JSON genuinely cannot hold — a `!!binary`, a `!!set`, a collection used as a key, a 1.1 timestamp — is **refused by path**, not mangled, and that half was always true.                                            |
+| JSON/YAML → CSV/TSV           | **lossy, told**          | Three losses, all real and all now reported **by path**: a nested value becomes compact JSON inside the cell (`$[0].user`); a key absent from one row becomes an empty cell indistinguishable from a present-and-empty one, and the columns are named; and every value becomes text. A non-array, or an array of non-objects, is refused clearly. [`reports.test.ts`](../src/tools/structured-data/reports.test.ts)                                                                                                                                                                                                                                                                                                                                                                         |
+| CSV/TSV → JSON/YAML           | **lossy, told**          | Every cell becomes a **string**, deliberately — `01234` is a part number, not the number 1234 — and the tool's README states it. Line endings inside quoted cells survive verbatim. An unquoted header cell has its leading and trailing spaces removed, which is the right decision and was made in silence until round twelve; it is reported now, with the cell shown quoted so the spaces are visible (corpus row 11).                                                                                                                                                                                                                                                                                                                                                                  |
+| YAML → YAML                   | **lossy, told**          | Not a distinguished path, decided in round eleven: it goes through the same value model as every other cell. A comment, an anchor, a tag and a **folded** scalar are dropped and said (corpus rows 8 and 9, round twelve); a key that is a number, a boolean or null becomes text and is said, by key and by path (row 10). A **literal** block scalar survives this cell — measured against the writer, `lit: \|` in and `lit: \|` out, chomping included — and is deliberately not reported, except where its value has no line break left in it or it is used as a key, which are the two places it does not survive. `.nan`, `.inf`, `!!binary`, `!!set`, `!!omap` and a 1.1 timestamp are **refused**, by path and by line, in a message that names the model rather than naming JSON. |
+| YAML stream → YAML            | **exact**                | **Fixed in round three.** A `---`-separated stream is written back as a stream, with a `---` in front of each document. It used to come back as a **sequence**, so a Kubernetes manifest that went through this tool was a file `kubectl` will not read, silently. The report says which of the two happened, and says it from the WRITER rather than from the source — `sortKeys` and a value arriving on the `json` port can both put a different array in front of it.                                                                                                                                                                                                                                                                                                                   |
+| YAML stream → JSON/CSV/TSV    | **lossy, told**          | None of the three has a document separator, so the documents become the elements of an array — which is the only JSON-representable form of a stream, and is still a file that does not convert back. Reported, with the count and with "choose YAML as the target to keep the stream". JSON Lines in is the same fact and gets the same note.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| An empty document in a stream | **fixed in round three** | Found by the yaml-test-suite in round two. `---` STARTS a document and an empty one is `null`; dropping it made a five-document stream come back as a four-element array with no error. Three references agree about the same bytes — the suite's PUW8, js-yaml 5.4.2, and CPython's PyYAML 6.0.3, each asked directly. The rule is now "an empty document with no `---` to declare it", which keeps the case it was really for: an empty input box still says "nothing to parse" rather than producing `null`. Twelve of the twenty-one suite divergences were this one rule.                                                                                                                                                                                                              |
+| Anything → CSV                | **lossy, told**          | The output has no terminator after the last record and uses LF, whatever the input used. RFC 4180 specifies CRLF; every reader accepts LF. Reported at `info` on every CSV write — nothing is lost, the table reads back identically, and the fact matters exactly when the next step is a byte comparison or a digest, which on this canvas is one wire away.                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ### Detection
 
@@ -975,18 +975,28 @@ a case proves it; a row with no case reads `not verified`; and the file is
 extended by appending one object, which is the only ceremony rounds ten to
 thirteen should have to perform.
 
-**Round eleven moved one more** — row 10, a non-string YAML key — so the ratio
-is **7 of 17**. It is worth saying which KIND of move that was, because the
-round it belongs to is mostly about a refusal and a refusal cannot turn a row
-green: a row measures whether a loss is told, and a document that is refused has
-not been converted, so no note about it exists to find. Row 10 is not one of
-those. A key of `2024:` is **not** refused — a scalar key cannot collide
-silently, so the model stringifies it and carries on — which left it a genuine
-silent loss with nothing standing in the way of saying it. It is said now.
+**Round twelve moved eight** — rows 4 to 9, 11 and 12 — so the ratio is
+**15 of 17**, and what is left is rows 16 and 17, both `text-convert`. Six of
+the eight are the `YAML → JSON` and `YAML → YAML` presentation losses this
+document carried as `lossy, told` from round three to round eight without a
+builder for any such note existing anywhere in the tool; the other two are a
+trimmed CSV header and a discarded duplicate JSON key.
 
-Rows 8 and 9, the other two `YAML → YAML` rows, did not move and were not
-expected to: an anchor and a scalar style are notes nobody has written, which is
-round twelve.
+The six are **one note**, not six, and the reasoning is in
+[docs/test-findings.md](test-findings.md#the-one-thing-to-judge-eight-notes-one-line-on-a-node):
+a realistic manifest has all four kinds in it, a node's face prints one line,
+and the four share a cause and a non-remedy. The title is a census that names
+every kind present — `Not carried over: 2 comments, 1 anchor, 1 tag, 2 block
+styles` — which is what keeps each row's negative control able to fail.
+
+**Round eleven moved one before that** — row 10, a non-string YAML key. It is
+worth saying which KIND of move that was, because the round it belongs to is
+mostly about a refusal and a refusal cannot turn a row green: a row measures
+whether a loss is told, and a document that is refused has not been converted,
+so no note about it exists to find. Row 10 is not one of those. A key of `2024:`
+is **not** refused — a scalar key cannot collide silently, so the model
+stringifies it and carries on — which left it a genuine silent loss with nothing
+standing in the way of saying it.
 
 **Round ten moved three before it** — rows 13, 14 and 15, all `text-convert`,
 all `HTML → Markdown`. Row 13's expectation was
@@ -1003,7 +1013,7 @@ in this file that can turn green without the tool changing, so
 
 <!-- loss-corpus:begin -->
 
-**7 of 17** documented losses are told.
+**15 of 17** documented losses are told.
 
 A round has reported zero silent losses twice, and every time the next round to look found more — round four found 2, and round eight found 17.
 
@@ -1012,15 +1022,15 @@ A round has reported zero silent losses twice, and every time the next round to 
 | 1   | Out-of-gamut OKLCH clipped                               | Colour · Out-of-gamut OKLCH            | `color-convert`   | **lossy, told**   |
 | 2   | Out-of-range hsl() clamped                               | Colour · Out-of-range hsl()            | `color-convert`   | **lossy, told**   |
 | 3   | Out-of-range rgb() clamped                               | Colour · Out-of-range rgb()            | `color-convert`   | **lossy, told**   |
-| 4   | A YAML comment dropped on the way to JSON                | Structured data · YAML → JSON          | `structured-data` | **lossy, silent** |
-| 5   | A YAML anchor expanded on the way to JSON                | Structured data · YAML → JSON          | `structured-data` | **lossy, silent** |
-| 6   | A YAML tag dropped on the way to JSON                    | Structured data · YAML → JSON          | `structured-data` | **lossy, silent** |
-| 7   | A YAML block style collapsed on the way to JSON          | Structured data · YAML → JSON          | `structured-data` | **lossy, silent** |
-| 8   | A YAML anchor expanded on the way to YAML                | Structured data · YAML → YAML          | `structured-data` | **lossy, silent** |
-| 9   | A YAML scalar style collapsed on the way to YAML         | Structured data · YAML → YAML          | `structured-data` | **lossy, silent** |
+| 4   | A YAML comment dropped on the way to JSON                | Structured data · YAML → JSON          | `structured-data` | **lossy, told**   |
+| 5   | A YAML anchor expanded on the way to JSON                | Structured data · YAML → JSON          | `structured-data` | **lossy, told**   |
+| 6   | A YAML tag dropped on the way to JSON                    | Structured data · YAML → JSON          | `structured-data` | **lossy, told**   |
+| 7   | A YAML block style collapsed on the way to JSON          | Structured data · YAML → JSON          | `structured-data` | **lossy, told**   |
+| 8   | A YAML anchor expanded on the way to YAML                | Structured data · YAML → YAML          | `structured-data` | **lossy, told**   |
+| 9   | A YAML scalar style collapsed on the way to YAML         | Structured data · YAML → YAML          | `structured-data` | **lossy, told**   |
 | 10  | A non-string YAML key stringified                        | Structured data · YAML → YAML          | `structured-data` | **lossy, told**   |
-| 11  | A CSV header cell trimmed                                | Structured data · CSV/TSV → JSON/YAML  | `structured-data` | **lossy, silent** |
-| 12  | A duplicate JSON key discarded, last wins                | Structured data · Reading JSON         | `structured-data` | **lossy, silent** |
+| 11  | A CSV header cell trimmed                                | Structured data · CSV/TSV → JSON/YAML  | `structured-data` | **lossy, told**   |
+| 12  | A duplicate JSON key discarded, last wins                | Structured data · Reading JSON         | `structured-data` | **lossy, told**   |
 | 13  | `<caption>` dropped, Markdown target                     | Text convert · HTML → Markdown         | `text-convert`    | **lossy, told**   |
 | 14  | A table cell's list structure flattened, Markdown target | Text convert · HTML → Markdown         | `text-convert`    | **lossy, told**   |
 | 15  | An empty header row invented, Markdown target            | Text convert · HTML → Markdown         | `text-convert`    | **lossy, told**   |
@@ -1222,6 +1232,73 @@ And round six's, all of them about the JWT tool:
   `verify.ts`, and `check:browsers` reads them from the fixture rather than
   deriving them a third time. A shared table would make a wrong one agree with
   itself in every engine.
+
+## Found in round twelve, by writing the notes the matrix had already promised
+
+Eight rows of the loss corpus turned at once, so the ratio went from **7 of 17**
+to **15 of 17**. Six of the eight were cells this document had carried as
+`lossy, told` since round three with no builder for such a note anywhere in the
+tool; the other two were a trimmed CSV header and a discarded duplicate JSON
+key. The verdicts are generated from the corpus, so those numbers are what the
+tools did on the run that published this page.
+
+Three things came out of the work that were not the notes.
+
+### A file nobody could read, behind a naming rule
+
+`column_2` is a name this tool invents for an empty header cell, and it was
+invented without looking at the document it was going into. A file whose author
+had written a column called `column_2` therefore collided with the invention and
+was **refused outright**, with a message blaming its author for a duplicate they
+had not written — and there is no spelling of that header that gets the file
+read, because the offending column is the one the tool made up. The reserved set
+is now every name the header declares plus every name assigned so far, computed
+in a pass of its own: checking only the names already assigned would invent
+`column_1` for the first cell of `,column_1` and then refuse the second.
+
+### A block scalar rule that had to be measured three times
+
+The presentation note's one target-dependent claim, and each attempt was swept
+over the yaml-test-suite's 284 readable documents before it was believed:
+
+| Attempt                                        | Named and false | Lost and silent |
+| ---------------------------------------------- | --------------- | --------------- |
+| "a literal block survives a YAML target"       | 0               | **8**           |
+| plus "unless it is used as a key"              | **3**           | 0               |
+| plus "unless its value has no line break left" | **0**           | **0**           |
+
+A **folded** block is always lost, because folding happens in the READER —
+`three\nfour` is `three four` before any writer sees it. A **literal** block
+survives a YAML target, measured against the writer rather than predicted
+(`lit: |` in, `lit: |` out, chomping included), unless its value has no line
+break left in it or it is used as a mapping key. The newline is the thing that
+carries the style, which is why testing for it is the rule rather than a list of
+cases.
+
+### The instrument: the output, not a second opinion about the input
+
+A note saying a comment was not carried over is true exactly when the source has
+one and the output does not, so
+[`presentation.sweep.test.ts`](../src/tools/structured-data/presentation.sweep.test.ts)
+asks both halves, of two different documents, and asserts **both** directions:
+nothing named that the output still has, and nothing lost that no note mentions.
+Over 284 documents on both targets, both are zero, with 44 comments, 30 anchors,
+34 tags and 59 block styles correctly named. It is in the gate rather than being
+a number somebody once produced, and it caught eight of the eighteen deliberate
+breaks this round was checked against.
+
+The note fires on 133 of the 284 on a JSON target. That is a high proportion and
+it is what the suite is — a corpus built out of YAML's corners. On the
+29-document detection corpus it fires five times across 116 runs, and all five
+documents genuinely have the thing.
+
+### What is still silent, and is now named
+
+**Flow style.** `a: {b: 1}` comes back as a block mapping and nothing says so.
+It is deliberately not folded into the presentation note: it would fire on a
+large share of ordinary Kubernetes-shaped YAML for a difference few people would
+call a loss, and that judgement deserves a row in the corpus rather than a quiet
+inclusion. It is a new silent loss on the list, not a closed one.
 
 ## Found in round four, by breaking things on purpose
 

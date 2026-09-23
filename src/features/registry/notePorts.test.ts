@@ -148,6 +148,38 @@ const LOSSY_RUNS: readonly {
   },
   {
     /*
+     * Round twelve's three, added the day they landed, for the reason the
+     * entry above gives.
+     *
+     * The first is deliberately the RICH document rather than one loss at a
+     * time: four kinds of presentation in one file is what a real manifest
+     * looks like, and it is the case that decides whether the census note
+     * still names a port when every branch of it fires at once.
+     */
+    toolId: 'structured-data',
+    what: 'a YAML comment, anchor, tag and block style, none of which the model holds',
+    inputs: {
+      input: {
+        type: 'text',
+        text: '# why\ndefaults: &d\n  a: 1\nuse: *d\ntagged: !mine 1\ntext: |\n  one\n  two\n',
+      },
+    },
+    options: { source: 'yaml', target: 'json' },
+  },
+  {
+    toolId: 'structured-data',
+    what: 'a CSV header cell whose spaces were removed',
+    inputs: { input: { type: 'text', text: 'alpha, shipped at \n1,2\n' } },
+    options: { source: 'csv', target: 'json' },
+  },
+  {
+    toolId: 'structured-data',
+    what: 'a duplicate JSON key, where the last one wins',
+    inputs: { input: { type: 'text', text: '{"retries": 3, "retries": 5}' } },
+    options: { source: 'json', target: 'json' },
+  },
+  {
+    /*
      * Built by hand rather than by `JSON.stringify`, because stringifying a
      * number past 2^53 writes the ROUNDED digits and there is nothing left to
      * find. The signature is nonsense on purpose: decoding does not verify.

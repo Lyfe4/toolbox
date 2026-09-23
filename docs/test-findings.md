@@ -1318,6 +1318,16 @@ So the recommendation is three lines rather than a number:
 
 ## The crash B timeline
 
+> **Settled in round twelve: crash B and round eleven's lost fill are the same
+> fault, and it is fixed.** The section below is round eight's analysis, kept
+> because its arithmetic is still right and its mechanism is not — it named
+> `326a057` as the commit where the rate stepped, and the reason is not the
+> RSA verifications it credits but the `Secret encoding` listbox click that the
+> same commit inserted **between the two fills**. The verdict, the commit-by-
+> commit trace and what could not be settled are in
+> [round twelve](#round-twelve-done), and the record itself is in
+> [architecture.md](architecture.md#the-jwt-verdict-that-never-arrived-found-and-fixed).
+
 **The question in the brief is why a fault that hits roughly one run in three
 never showed up, when every round has reported `check:browsers` green. The
 answer is that the window in which it could show up is two rounds wide, and
@@ -1636,7 +1646,9 @@ Six things, in descending order of how much they would have cost.
    something else narrowed detection" — has a third answer, which is that the
    finding's document converts and the one that does not is ragged. Spending a
    round bisecting detection would have found nothing.
-4. **The crash B mechanism in the brief is probably not the one.** Accumulated
+4. **The crash B mechanism in the brief is probably not the one.** _(Round
+   twelve: right, and the replacement offered here is not the one either — see
+   the note at the top of the crash B timeline.)_ Accumulated
    browser state is a story that fits; exposure inside the JWT block tripling
    at `326a057` is a measurement, and it accounts for the observations on its
    own. The brief's _conclusion_ — that the rate is rising and this stops
@@ -1664,7 +1676,9 @@ round did not settle and did not pretend to:
   clipboard.** No code in this app does. That is a negative assertion whose
   subject is an engine, which is the shape this repository already knows not
   to trust: the minimal check is in the plan.
-- **Whether crash B occurs at `825d50a`.** Not run. The structural answer
+- **Whether crash B occurs at `825d50a`.** Not run — and round twelve settles
+  it without a run: `jwtVerdict` at `825d50a` never opens a listbox, so the
+  mechanism cannot exist there. The structural answer
   makes it a much less interesting question than it looked, and the run budget
   it needs is stated rather than spent.
 
@@ -2511,3 +2525,387 @@ document would genuinely have been blocked.
 - **TC-9 / corpus row 16** and row 13's caption contents still want the same
   third census dimension.
 - Everything else the plan lists for rounds twelve and thirteen.
+
+---
+
+## Round twelve, done
+
+Two halves: the crash B verdict, and the eight notes that never fired.
+
+### Part one — crash B and the lost fill are the same fault
+
+**Verdict: the same fault, found and fixed in round eleven. The record now says
+so.** The measurements are in
+[architecture.md](architecture.md#the-jwt-verdict-that-never-arrived-found-and-fixed)
+and the short form is here.
+
+**The discriminating fact is a source trace, not a rate.** `jwtVerdict` was
+read at every commit that has ever touched `scripts/cross-browser-check.mjs`:
+
+| Commit                | Round      | Sequence                                                   | Fault possible? |
+| --------------------- | ---------- | ---------------------------------------------------------- | --------------- |
+| …–`7eeb2f8`           | one–four   | helper does not exist                                      | **no**          |
+| `825d50a`             | five       | fill Key, fill Token, Run — **no listbox in the function** | **no**          |
+| `326a057` … `17349a3` | six–eleven | fill Key, **open listbox, pick**, fill Token, Run          | **yes**         |
+| `00d3352`             | eleven     | fill Key, fill Token, open listbox, pick, read back, Run   | **no**          |
+
+Every recorded occurrence is after `326a057` and none before it. That is what
+separates this explanation from round eight's: exposure predicts a threefold
+rise **from a nonzero base**, so round five should have shown occurrences at a
+third the rate, and it showed none — in a round where an occurrence could not
+have been quiet, because the wait was still a bare `waitFor` that took the run
+with it.
+
+**Round eight's arithmetic is right and its mechanism is wrong.** It named the
+correct commit for the wrong reason. `326a057` did two things: it took UI-driven
+RSA verifications from 2 to 6, and it inserted the `Secret encoding` click
+between the two fills. The second is the one that matters.
+
+**What matched, point by point:** WebKit only; varying depth through the RSA
+block (a per-call race carries no positional information); zero check failures
+in those runs (a bare `waitFor` throws, so a lost fill was an exception rather
+than a verdict); never reproduced in isolation (a fresh context per call removes
+the reused page — measured at 0 in 12); reproduces on `867f42a` (true of every
+commit from `326a057` on).
+
+**What the earlier hypotheses got wrong:**
+
+- **The 10 s worker deadline** — carried in README.md and architecture.md for
+  four rounds as "the untested hypothesis". It is refuted, not untested. Every
+  verdict takes about 200 ms on a fresh context in the same engine, and an
+  overrun would leave the run in flight or produce an error about the signature.
+  What was captured is `invalid-input` on a box holding zero characters: the
+  verification never started.
+- **Accumulated browser state** — the brief's original mechanism, already
+  doubted by round eight. What the fault needs is a reused page, which is a far
+  smaller claim and is exactly why isolation with a fresh context per call makes
+  it disappear.
+- **"It predates the round that found it"** — true, and it now has a first
+  commit. `867f42a` is not where it starts; `326a057` is.
+- **Round eleven treating it as distinct** — understandable and wrong. The
+  detail was new because the instrument was new, which is what the instrument
+  was for.
+
+**What is NOT settled, and is written down as unsettled: the rate.**
+
+| Round  | Conditions                                            | Lost fills   |
+| ------ | ----------------------------------------------------- | ------------ |
+| eight  | `checkOutputViews` alone, 6 passes, 16 busy processes | 0 in ~96     |
+| eleven | the real sequence, one reused page, 4 × 16 calls      | **22 in 64** |
+| twelve | the same sequence, current build, machine idle        | 0 in 64      |
+| twelve | the same, under 16 busy processes on 16 cores         | 0 in 64      |
+| twelve | the same, with focus instrumentation                  | 0 in 192     |
+
+Round twelve drove the pre-fix ordering 320 times against a build of `00d3352`
+— which changes nothing in the JWT tool relative to `17349a3`, so the page
+under test is the page round eleven measured — and did not lose a single fill.
+"Roughly one run in three" is therefore not a number this repository can stand
+behind, and it has been removed from README.md rather than repeated.
+
+**What was measured instead, and it is better than a rate.** The probe recorded
+`document.activeElement` at the instant the token fill began, on every call of
+the old ordering:
+
+| State when the token fill started                     | Calls         |
+| ----------------------------------------------------- | ------------- |
+| listbox already detached, focus on `body`             | **177 / 192** |
+| listbox already detached, focus on the select trigger | 15 / 192      |
+| listbox still present                                 | 0 / 192       |
+
+So the old ordering puts **every** call inside the window: focus has left the
+listbox and, in 92% of calls, has not yet arrived anywhere. Whether the fill
+survives is a sub-frame race inside that window, and its rate moves with the
+machine. That is the argument for the fix that was taken — do not type after the
+listbox — rather than for waiting longer, which would be tuning against a
+machine. It is also why the residue round eleven measured for "wait for the
+listbox to detach" (1 in 64) was never going to reach zero.
+
+**One tension, recorded rather than smoothed over.** All three historical
+occurrences were on RSA examples. A per-call race predicts about half, since 8
+of the block's 16 calls are RS256 or PS256; three of three has probability about
+one in eight. Not enough to separate the two faults, and not nothing.
+
+**And the honest limit.** The three historical occurrences were not
+instrumented, so nothing can show what they were. What can be shown is that the
+mechanism existed at those commits, produces exactly the recorded symptom,
+cannot have existed before the first commit with an occurrence, and is what the
+one instrumented occurrence was. If a verdict goes missing after `00d3352`, that
+is a new finding and this verdict is wrong.
+
+### Part two — what was built
+
+Eight corpus rows, one tool, and one design decision.
+
+| Row(s) | Item        | What the tool says now                                                                           |
+| ------ | ----------- | ------------------------------------------------------------------------------------------------ |
+| 4–9    | SD-9, SD-16 | `Not carried over: 2 comments, 1 anchor, 1 tag, 2 block styles`, with each one named in the body |
+| 11     | SD-4a       | `1 header cell was trimmed`, showing the cell with its spaces                                    |
+| 12     | SD-10       | `1 duplicate key was discarded`, with the path and the value that lost                           |
+| —      | SD-4b       | The duplicate-column refusal says when trimming is why two different cells collided              |
+| —      | SD-4c       | A synthesised `column_N` is checked against the names already in the file                        |
+
+**SD-4c was a file nobody could read.** `column_2` is a name this tool invents
+for an empty header cell, and it was invented without looking at the document —
+so a file whose author had written a column called `column_2` collided with the
+invention and was refused outright, blaming its author for a duplicate they had
+not written. There is no spelling of that header that gets the file read. The
+reserved set is now every name the header declares plus every name assigned so
+far, built in a pass of its own: checking only the names already assigned would
+invent `column_1` for the first cell of `,column_1` and then refuse the second,
+which is the same defect one column further along.
+
+### The one thing to judge: eight notes, one line on a node
+
+**The four YAML presentation losses are ONE note, and the other two are
+separate. That is the round's design decision.**
+
+A realistic manifest has a comment, an anchor, a tag and a block scalar in it,
+so one note per kind is four warnings on an ordinary document — and a node's
+face prints the first `warn` title and counts the rest, so three of the four
+would live behind a `+3 more` nobody opens. The four have **one cause** (the
+value model has no presentation layer) and **one remedy** (there is none), which
+is the test for grouping. It is also the bargain `roundedNumberNotes` and
+`nonStringKeyNotes` already strike in the same file, for the same reason: a list
+nobody can read is a list nobody reads.
+
+The title is the census and **names every kind present**, which is what keeps
+each row's negative control able to fail. A title like `YAML formatting was
+dropped` would match a document with no anchors just as happily.
+
+Three things fell out of writing it:
+
+1. **The claim leads and the census follows.** `2 comments, 1 anchor, 1 tag and
+2 block styles were not carried over` is 68 characters, and `SUMMARY_LIMIT`
+   is 60 — so a node drew `…were not car…`, clipping the only part that said
+   anything had happened. `Not carried over: 2 comments, 1 anchor, 1 tag, 2
+block styles` clips the tail of an enumeration instead, which is the half the
+   panel repeats in full. There is a test on the length that imports
+   `SUMMARY_LIMIT` rather than writing 60, so the two move together.
+2. **The order the read half pushes notes in is the order of what a person
+   sees.** A rounded integer and a stringified key change the VALUE; a dropped
+   comment changes how it is written. The presentation note is pushed last, so
+   on a document with both the value loss is the one line there is.
+3. **SD-4a and SD-10 stay separate**, and it costs nothing: a document is read
+   as one format, so a CSV header note and a YAML census can never co-occur, and
+   a JSON duplicate cannot co-occur with either. Each has its own remedy — quote
+   the cell, rename the key — which is the same test grouping passed.
+
+**The worst case was measured rather than imagined.** A YAML stream with a
+comment, an anchor, a tag and a rounded integer, converted to CSV, produces six
+notes: the rounding, the census, the stream, the nested cells, the absent
+columns, and the LF `info`. The node reads `The number at $[1].rows[0].id was
+rounded · +4 more`. Every one of the six is a distinct fact with a distinct
+remedy, and the document is deliberately pathological.
+
+**What was rejected.**
+
+- **One note per kind.** Four warnings on an ordinary config file, three of them
+  invisible on a canvas.
+- **Downgrading comments to `info`.** It is the obvious way to keep the panel
+  quiet and it would break the promise the level carries: `info` means it cost
+  nothing, and a comment going missing is not nothing. The cry-wolf question is
+  answered by measurement below, not by relabelling.
+- **Reporting quote style.** Single versus double quoting is a scalar style too,
+  and warning about every quoted string in every document is the note that
+  trains people to skip notes. Out of scope, with a control asserting the
+  silence so widening it is a decision rather than a drift.
+- **Reporting flow collections.** `{a: 1}` coming back as a block mapping is a
+  style collapse, and it is not in this note. Recorded as still silent rather
+  than quietly folded in — see below.
+- **A second scanner for duplicate JSON keys.** `lib/jsonNumbers.ts` already
+  walks JSON source text and builds paths, and two walks would be two path
+  spellings a document could tell apart. One walk answers both questions; the
+  rounded-integer gate is threaded in rather than re-tested.
+
+### The block scalar rule, which was measured three times
+
+The note's one target-dependent claim, and it took three attempts:
+
+| Attempt                                        | Over the 284 readable suite documents  |
+| ---------------------------------------------- | -------------------------------------- |
+| "a literal block survives a YAML target"       | 8 documents lost one and were not told |
+| plus "unless it is used as a key"              | 3 documents told about nothing         |
+| plus "unless its value has no line break left" | **0 and 0**                            |
+
+The rule now: a **folded** block is always lost, because folding happens in the
+READER — `three\nfour` is `three four` before any writer sees it. A **literal**
+block survives a YAML target, measured against the writer (`lit: |` in, `lit: |`
+out, chomping included), unless it is a mapping key or its value has no line
+break left in it, because the newline is the thing that carries the style. On
+JSON, CSV or TSV neither survives; none of the three has a scalar style.
+
+The three documents the second attempt cried wolf on were an artefact of the
+measuring instrument, not of the code — `strip: |-` beside `clip: |` is one
+document with two literal blocks and only the first loses its style, and asking
+"does the output still have a literal **somewhere**" answers the wrong question.
+Counting them per style is what the sweep does now.
+
+### The cry-wolf sweep
+
+Round eleven's standard, applied to each new note, and the instrument is
+**the output rather than a second opinion about the input**: a note saying a
+comment was not carried over is true exactly when the source has one and the
+output does not. It is committed as
+[`presentation.sweep.test.ts`](../src/tools/structured-data/presentation.sweep.test.ts),
+so it runs in the gate rather than being a number somebody once produced.
+
+**The yaml-test-suite, 284 readable documents, both targets:**
+
+| Kind        | Named and true (JSON) | Named and true (YAML) | Named and false | Lost and silent |
+| ----------- | --------------------- | --------------------- | --------------- | --------------- |
+| comment     | 44                    | 44                    | **0**           | **0**           |
+| anchor      | 30                    | 30                    | **0**           | **0**           |
+| tag         | 34                    | 34                    | **0**           | **0**           |
+| block style | 59                    | 34                    | **0**           | **0**           |
+
+The note fires on 133 of 284 documents on a JSON target and 117 on a YAML one.
+That is a high proportion and it is what the suite is: a corpus built out of
+YAML's corners. Every firing was checked against the document the conversion
+produced, and every one of them was true.
+
+**The detection corpus, 29 documents × 4 targets = 116 runs:** the new notes
+fire **5 times**, and all five are true positives — `a YAML block scalar` and
+`a YAML folded scalar` (3 runs between them) and `a YAML mapping with comments`
+(2 runs). Nothing else in that corpus produces one. For comparison, the notes
+that were already there fire 13 times across the same 116 runs.
+
+**The two notes with no YAML in them** were swept the same way rather than
+argued about. Over the 29-document detection corpus the trimmed-header note
+fires 0 times and the duplicate-key note 0 times, which is right — none of those
+documents has a padded header or a repeated key. Over the CSV oracle's own 32
+read cases the trimmed-header note fires **once**, on the fixture literally
+called `leading spaces` (`a, b , c`), which is the only one of the 32 with a
+padded unquoted header cell. One firing, one document that has the thing.
+
+### Proving test and negative control, per item
+
+Every one was run against a deliberate break of the code it describes and
+watched to fail. Eighteen breaks, eighteen caught.
+
+| Break                                               | Caught by                                                             |
+| --------------------------------------------------- | --------------------------------------------------------------------- |
+| a folded block is never reported                    | `reports a FOLDED one on a YAML target`; the sweep, both targets      |
+| a literal block on a YAML target is reported anyway | `says NOTHING about a literal block on a YAML target`; the sweep      |
+| a block used as a key is treated like a value       | `reports a literal used as a key`; the sweep                          |
+| comments are not collected                          | four report tests and the sweep                                       |
+| comments are collected only from kept documents     | `counts a comment on a document the reader drops as empty`; the sweep |
+| anchors are not collected                           | `names the anchor and says the alias became a copy`; the sweep        |
+| the anchor sentence never says EXPANDED             | `names the anchor and says the alias became a copy`                   |
+| a tag is printed as the library resolves it         | `names a standard tag the way it is written rather than as a URI`     |
+| tags are not collected                              | `names a custom tag as the author wrote it`; the sweep                |
+| the census title trails the verb again              | `fits the 60 characters a node prints`                                |
+| the duplicate-key note is never built               | four report tests                                                     |
+| one key set for the whole document, not per object  | `is not confused by the same key in two different objects`            |
+| a discarded value is never clipped                  | `quotes a discarded object rather than printing the whole thing`      |
+| the trimmed-header note is never built              | `says so, and shows the cell with its spaces`, and three more         |
+| a quoted header cell counts as trimmed              | `says nothing for a cell whose author quoted the spaces`              |
+| `column_N` is synthesised without reading the file  | `reads a file whose author has a column literally called column_2`    |
+| only already-assigned names are reserved            | `avoids a literal name that appears AFTER the empty cell`             |
+| the collision message always blames trimming        | `does not blame trimming for two cells that were always the same`     |
+
+Each of the eight corpus rows also has its own negative control in
+`spec/loss-corpus.json`, matched **on subject** — the control asks whether a
+note about anchors fired, not whether any note fired — and two more were added
+that the corpus shape cannot express: a JSON document containing `#ff0000` and
+`"# not a comment"` produces no note about YAML comments, and a literal block on
+a YAML target produces no note about style **with an assertion on the output**
+saying the block is still there.
+
+Both halves of the matrix's definition of `lossy, told` are asserted in Gecko
+and WebKit in `checkValueModel`: the census, the trimmed header and the
+discarded key are each drawn on `/tools` with a non-zero box and each printed on
+a canvas node's own face, with a control beside each.
+
+### The ratio, before and after
+
+|                     |              |
+| ------------------- | ------------ |
+| Before round twelve | **7 of 17**  |
+| After round twelve  | **15 of 17** |
+
+Rows 4, 5, 6, 7, 8, 9, 11 and 12. **Shown failing**: each of the eighteen breaks
+above drops the block the matrix carries out of step, and `lossCorpus.test.ts`
+prints the replacement rather than a count.
+
+What is left is rows 16 and 17, both `text-convert`, both round thirteen's.
+
+### What was looked for and NOT found
+
+- **A cheap exact gate for duplicate JSON keys.** There is not one, and the
+  walk it forces is the most expensive thing this round added. Sixteen
+  consecutive digits is a property of the TEXT that one regular expression
+  settles, which is why the rounded-integer scan has a gate; "the same key twice
+  in one object" is a property of the STRUCTURE, and deciding it needs the walk
+  that finds it. **Measured, and the first number was wrong.** A proxy loop
+  suggested 63 ms; the real `scanJsonSource` over an 11.7 MB document is
+  **~200 ms**, against `JSON.parse`'s ~40–55 ms on the same bytes — four to five
+  times the parse, not a rounding error on it. It is accepted, on a tool with a
+  15 s budget and a 16 MB ceiling, and the alternative was a size threshold
+  above which the note silently stops firing.
+
+  One optimisation was tried and **did not work**, which is worth recording so
+  nobody tries it twice: `readString` calls `JSON.parse` on every key, and
+  short-circuiting the keys with no backslash in them (whose contents are the
+  slice without its quotes, exactly) changed nothing measurable — 245 ms against
+  200 ms, inside the run-to-run spread. V8 is not spending the time there. The
+  cost is the per-character loop itself, and removing that means not answering
+  the question.
+
+- **A place the presentation note could be built more cheaply than a second
+  visit.** The comment pass and the path-building pass want different documents
+  — comments can be read off the documents the reader DROPS, and everything else
+  needs a path — so they are two visits on purpose. Found by the sweep: the
+  suite's M7A3 hangs `# No document` on the contents of an empty document, and
+  one pass over the kept documents missed it.
+- **A fifth kind of YAML presentation.** Flow style is real and is **not**
+  covered: `a: {b: 1}` comes back as a block mapping and nothing says so. It is
+  not folded into this note because it would fire on a large share of ordinary
+  Kubernetes-shaped YAML for a difference nobody would call a loss, and that
+  judgement deserves its own row in the corpus rather than a quiet inclusion
+  here. It is a new silent loss on the list, not a closed one.
+- **A duplicate key that JSON.parse resolves differently from the scanner.**
+  Every reader in use keeps the last; the scanner reports the earlier ones as
+  discarded, and the corpus case asserts the surviving value is in the output.
+- **A second `readRecords` caller that wanted the notes.** `rowsToRecords` stays
+  as a value-only wrapper because the CSV oracle compares VALUES against
+  CPython's `csv.reader` and should not have to learn a new shape — the same
+  arrangement `parseSource`/`readSource` already has.
+- **Anything in this tool that reports a trimmed DATA cell.** Only header cells
+  are trimmed; a data cell is kept verbatim. Checked, and the note's wording
+  says "header cell" rather than "cell" because of it.
+
+### Anything in the framing I think is wrong
+
+**One thing, and it is about Part One.** The brief says "measure rather than
+argue: run the pre-fix harness sequence against the commits where crash B was
+recorded if that is what it takes." That was run — 320 calls of the pre-fix
+ordering, idle and loaded — and it produced **zero** occurrences, which measures
+nothing about whether the two faults are the same. The thing that settled it was
+reading `jwtVerdict` at seven commits and finding that the mechanism cannot
+exist before `326a057`. A rate measurement could only ever have been suggestive;
+a fault that is structurally impossible in round five, with zero occurrences in
+round five, is an argument no run improves on.
+
+That is not a complaint about the instruction — the run was worth doing, and it
+produced the focus census, which is the most useful number in Part One. It is
+that "measure rather than argue" and "find the fact that decides it" are not the
+same instruction, and here the second one was the cheap one.
+
+**And one agreement worth recording**, because it was the round's real risk: the
+brief is right that eight notes in one tool is a readability question and not
+just a build. Writing them one per kind first, and looking at the node face,
+is what produced the grouping — the decision came out of the measurement, not
+out of the plan.
+
+### Still open, and unchanged by this round
+
+- **Rows 16 and 17** — `class="btn"` emptied and `<mark>`/`<kbd>` given
+  formatting they never had, both `text-convert`. Round thirteen.
+- **Flow style**, new on the list above: a silent loss with no corpus row yet.
+- **SD-14b**, the duplicate-header position — still line 1, column 1. SD-4b
+  improves the _sentence_; the position is untouched.
+- **SD-6**, **SD-8**, **SD-15**, **TC-8**, **TC-11**, **TC-12**, **JWT-1**,
+  **JWT-3**, **SD-1's real gap**, **CC-5a** — round thirteen's list, unchanged.
+- **Round nine's claim about the fourteen silent rows** has now lost eight more
+  exceptions. It was never a guarantee and is now mostly wrong; the corpus is
+  the answer to that question and the sentence should go next round.

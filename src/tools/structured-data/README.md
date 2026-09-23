@@ -324,6 +324,57 @@ what its author meant.
   collection keys can flatten onto each other. Refused, consistently with
   `!!set`, `!!omap` and `!!binary`.
 
+### Four more that are told rather than closed
+
+**Round twelve.** A comment, an anchor, a tag and a scalar style are all YAML
+**presentation**, and the value model holds none of them. They cannot be closed
+without a second value model that only `YAML → YAML` would use, which round
+eleven considered and rejected — so the remaining honest thing is to say so,
+which nothing did.
+
+They are reported as **one** note whose title is a census:
+
+```
+Not carried over: 2 comments, 1 anchor, 1 tag, 2 block styles
+```
+
+One note rather than four because a realistic manifest has all four in it, a
+canvas node prints one line, and the four share a cause and a non-remedy. The
+body names each instance, and says what actually happens to each:
+
+- **An anchor is EXPANDED, not dropped.** An alias becomes a full copy of the
+  value, so the output is **larger** than the source and holds no reference at
+  all. "Dropped" would describe a smaller document than the one you get.
+- **A folded scalar is folded by the reader.** `>` turns line breaks into spaces
+  before any writer sees the value, so no target can put them back.
+- **A literal scalar survives a YAML target** — `lit: |` in, `lit: |` out,
+  chomping included — and is deliberately **not** reported there, because a
+  warning about a document that did not change is the note that trains people to
+  stop reading notes. The two places it does not survive are reported: a value
+  with no line break left in it (`|-` on one line), and a block used as a
+  mapping key.
+
+**What is not covered:** flow style. `a: {b: 1}` comes back as a block mapping
+and nothing says so. Including it would fire on a large share of ordinary
+Kubernetes-shaped YAML for a difference few people would call a loss; it is
+recorded as a silent loss in
+[docs/conversion-matrix.md](../../../docs/conversion-matrix.md) rather than
+folded in quietly.
+
+### A duplicate JSON key is a note, where a duplicate YAML key is a refusal
+
+The two specifications differ and so does this tool. YAML 1.2 makes a repeated
+key an **error**, so one is refused with both positions. RFC 8259 permits one
+and leaves the behaviour undefined; every reader in use keeps the **last**, so
+the earlier value is gone before this tool is handed anything. Refusing a
+document every other reader opens would make this tool the odd one out, so it is
+reported instead — by path, with the value that lost:
+
+```
+1 duplicate key was discarded
+$.retries discarded `3`
+```
+
 ### Streams
 
 `---`-separated documents are read as an **array**, one element per document. A
@@ -392,9 +443,20 @@ Handled:
 - **Unquoted header cells are trimmed; quoted ones are not.** ` name, age` is how
   hand-typed CSV looks, and a key of `" age"` helps nobody — but trimming a cell
   its author quoted is a silent edit, and it also made `a` and `" a "` collide as
-  duplicate columns when they are different names.
+  duplicate columns when they are different names. **The trimming is reported**
+  on the `Detected` port from round twelve, with the cell shown quoted so the
+  spaces are visible: the decision was written down here while the edit itself
+  was made in silence.
+- **And when trimming is why two cells collided, the refusal says so.** `a, a `
+  is a duplicate column whose header does not look like one; naming only the
+  name they collapsed onto leaves the reader comparing two spellings that are
+  identical.
 - Empty header cells get stable `column_N` names, unless they were quoted empty,
-  which is the author saying the name really is empty.
+  which is the author saying the name really is empty. **The synthesised name is
+  checked against the names already in the file** — a document with a real
+  column called `column_2` used to collide with the invented one and be refused
+  outright, blaming its author for a duplicate they had not written, and no
+  spelling of that header could be read.
 - `__proto__` as a column name creates a real own property. Plain assignment
   would replace the object's prototype instead, silently losing the key.
 - **A line that would be written empty is written `""`.** A one-column table with
@@ -576,6 +638,14 @@ world\nGoodbye, world` satisfies every test for delimited text, because it is
     comes back as `"2024":`. Same boundary as above — object keys in the model
     are text — and unlike the rest of that list it is a silent change rather
     than a refusal, so it is **reported** on the `Detected` port instead.
+12. **YAML comments, anchors, tags and scalar styles do not survive any
+    conversion**, including `YAML → YAML`. Same boundary again: they are
+    presentation, and the value model holds values. Reported as one census note
+    on the `Detected` port. A literal block scalar is the one exception that
+    genuinely survives a YAML target, and is not reported there.
+13. **A duplicate JSON key is resolved last-wins before this tool sees the
+    document.** `JSON.parse` does it, as does every other reader. The discarded
+    value is reported by path.
 
 ## Tests
 

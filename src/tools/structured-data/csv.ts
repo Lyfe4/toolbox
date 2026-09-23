@@ -223,13 +223,88 @@ export function parseCsvRows(
   return ok(rows);
 }
 
+/**
+ * A NAME FOR AN EMPTY HEADER CELL THAT THE FILE IS NOT ALREADY USING.
+ *
+ * `column_2` is a synthesised name, and until round twelve it was synthesised
+ * without looking at the document it was going into - so a file whose author
+ * had written a column called `column_2` collided with the invented one and
+ * was refused outright, with a message blaming the author for a duplicate they
+ * had not written. There is no spelling of that header that gets the file read:
+ * `a,,c` with a real `column_2` anywhere in it is unreadable, and the second
+ * column is the one the tool made up.
+ *
+ * `taken` is every name the header declares PLUS every name assigned so far,
+ * which is why it is threaded in rather than recomputed: a document with two
+ * empty cells must not synthesise the same name twice either.
+ *
+ * The suffix is bounded rather than a `for (;;)`: `taken` is finite, so one of
+ * the first `taken.size + 1` candidates is free, and a loop that says so is a
+ * loop nobody has to prove terminates.
+ */
+function synthesiseColumnName(index: number, taken: ReadonlySet<string>): string {
+  const base = `column_${(index + 1).toString()}`;
+  if (!taken.has(base)) return base;
+
+  for (let suffix = 2; suffix <= taken.size + 2; suffix += 1) {
+    const candidate = `${base}_${suffix.toString()}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  // Unreachable while `taken` is finite; a name rather than a throw, because
+  // this function is not the place a document gets refused.
+  return `${base}_${(taken.size + 3).toString()}`;
+}
+
+/** What a CSV read produced, and what the header cost. */
+export interface ReadRecords {
+  readonly data: JsonValue;
+  readonly notes: readonly ToolNote[];
+}
+
 /** Turns records into objects, using the first record as the header. */
 export function rowsToRecords(rows: readonly CsvRow[]): ToolResult<JsonValue> {
+  const read = readRecords(rows);
+  return read.ok ? ok(read.value.data) : read;
+}
+
+/**
+ * The same read, with what the header cost.
+ *
+ * ONE LOSS, REAL AND PREVIOUSLY SILENT. An unquoted header cell is trimmed,
+ * which is the right decision - ` name, age` is what hand-typed CSV looks like
+ * and a key of `" age"` helps nobody - and the decision was written down in
+ * this tool's README while the edit itself was made in silence. A column named
+ * `shipped at ` in the file is `shipped at` in every port downstream, and the
+ * first place that matters is a diff of two exports whose headers were typed
+ * by different people.
+ *
+ * The value-only wrapper above is kept because the CSV oracle compares VALUES
+ * against CPython's `csv.reader` and should not have to learn a new shape.
+ */
+export function readRecords(rows: readonly CsvRow[]): ToolResult<ReadRecords> {
   const header = rows[0];
-  if (header === undefined) return ok([]);
+  if (header === undefined) return ok({ data: [], notes: [] });
 
   const columns: string[] = [];
-  const seen = new Set<string>();
+  /** Name -> the cell it came from, so a collision can say what collided. */
+  const seen = new Map<string, { readonly cell: string; readonly quoted: boolean }>();
+  /** Header cells whose spaces were removed, for the note at the end. */
+  const trimmed: { readonly written: string; readonly name: string }[] = [];
+
+  /*
+   * EVERY NAME THE FILE ITSELF DECLARES, BEFORE ANY IS INVENTED.
+   *
+   * A pre-pass rather than the running `seen` set, because a synthesised name
+   * has to avoid a literal column that appears AFTER it: `,column_1` would
+   * otherwise invent `column_1` for the first cell and then refuse the second,
+   * which is the same defect one column further along.
+   */
+  const declared = new Set<string>();
+  for (let index = 0; index < header.fields.length; index += 1) {
+    const cell = header.fields[index] ?? '';
+    if (header.quoted[index] === true) declared.add(cell);
+    else if (cell.trim() !== '') declared.add(cell.trim());
+  }
 
   for (let index = 0; index < header.fields.length; index += 1) {
     // Unquoted header cells are trimmed, because ` name, age` is how hand-typed
@@ -243,17 +318,38 @@ export function rowsToRecords(rows: readonly CsvRow[]): ToolResult<JsonValue> {
     const name = isQuoted
       ? cell
       : cell.trim() === ''
-        ? `column_${(index + 1).toString()}`
+        ? synthesiseColumnName(index, new Set([...declared, ...seen.keys()]))
         : cell.trim();
 
-    if (seen.has(name)) {
+    if (!isQuoted && cell.trim() !== '' && cell !== name) {
+      trimmed.push({ written: cell, name });
+    }
+
+    const previous = seen.get(name);
+    if (previous !== undefined) {
+      /*
+       * SAY WHEN TRIMMING IS WHY TWO VISIBLY DIFFERENT CELLS COLLIDED.
+       *
+       * `a, a ` is a duplicate column and the header does not look like one:
+       * the two cells differ by four characters. The old message named the
+       * name they collapsed onto and left the reader comparing two spellings
+       * that are the same, which reads as the tool being unable to count.
+       *
+       * Only when the two cells really are different as written - two cells
+       * both spelled `a` are an ordinary duplicate and the trimming had
+       * nothing to do with it.
+       */
+      const byTrimming = previous.cell !== cell && (!previous.quoted || !isQuoted);
+
       return fail('parse-error', `Duplicate column name "${name}".`, {
         position: { line: header.line, column: 1, offset: null },
-        detail: 'Column names become object keys, so they have to be unique.',
+        detail: byTrimming
+          ? `Column names become object keys, so they have to be unique. ${JSON.stringify(previous.cell)} and ${JSON.stringify(cell)} are different as written and the same afterwards, because an unquoted header cell has its leading and trailing spaces removed. Quote one of them to keep the two names apart.`
+          : 'Column names become object keys, so they have to be unique.',
       });
     }
 
-    seen.add(name);
+    seen.set(name, { cell, quoted: isQuoted });
     columns.push(name);
   }
 
@@ -280,7 +376,52 @@ export function rowsToRecords(rows: readonly CsvRow[]): ToolResult<JsonValue> {
     records.push(record);
   }
 
-  return ok(records);
+  return ok({ data: records, notes: trimmedHeaderNotes(trimmed) });
+}
+
+/**
+ * The trimming, as one note with a count and the cells named.
+ *
+ * ONE NOTE, NOT ONE PER CELL - the bargain `roundedNumberNotes` and
+ * `nonStringKeyNotes` both strike, for the same reason. A spreadsheet exported
+ * with a space after every comma has a space in every column, and forty notes
+ * saying the same thing forty times is a list nobody reads.
+ *
+ * The cell is printed through `JSON.stringify` rather than in backticks
+ * because the whole subject is whitespace, and backticks around ` shipped at `
+ * print a name that looks identical to the one it became.
+ */
+function trimmedHeaderNotes(
+  trimmed: readonly { readonly written: string; readonly name: string }[],
+): readonly ToolNote[] {
+  if (trimmed.length === 0) return [];
+
+  const shown = trimmed.slice(0, 5);
+  const rest = trimmed.length - shown.length;
+  const first = shown[0];
+  const where = shown
+    .map((entry) => `${JSON.stringify(entry.written)} became \`${entry.name}\``)
+    .join(', ');
+
+  return [
+    lost(
+      trimmed.length === 1
+        ? '1 header cell was trimmed'
+        : `${trimmed.length.toString()} header cells were trimmed`,
+      `An unquoted header cell has its leading and trailing spaces removed, because \` name, age\` is how hand-typed CSV looks and a key of \` age\` helps nobody. ${where}${
+        rest > 0 ? `, and ${rest.toString()} more` : ''
+      }. ${
+        first === undefined ? '' : `Quote the cell - \`"${first.written}"\` - `
+      }to keep the spaces in the name.`,
+      /*
+       * BOTH DATA PORTS. The header becomes the object keys during the READ,
+       * so the parsed structure on `data` carries the trimmed name as well as
+       * the written document does - unlike the write-half losses below, which
+       * `data` escapes.
+       */
+      ['output', 'data'],
+    ),
+  ];
 }
 
 function needsQuoting(field: string, delimiter: string): boolean {

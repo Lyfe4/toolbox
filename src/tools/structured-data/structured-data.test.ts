@@ -1330,6 +1330,96 @@ describe('CSV parsing', () => {
     if (!result.ok) expect(result.error.message).toContain('Duplicate column');
   });
 
+  /* -- SD-4b: say when TRIMMING is why two cells collided ---------------- */
+
+  it('says trimming is why two visibly different header cells collided', () => {
+    /*
+     * `a, a ` is a duplicate column and the header does not look like one: the
+     * two cells differ by four characters. The old message named the name they
+     * collapsed onto and left the reader comparing two spellings that are
+     * identical, which reads as the tool being unable to count.
+     *
+     * The cells are printed through `JSON.stringify` rather than in backticks
+     * on purpose - the whole subject is whitespace, and backticks around
+     * ` a ` print something that looks exactly like `a`.
+     */
+    const result = parseSource('a, a \n1,2', 'csv', ',');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain('Duplicate column name "a"');
+      expect(result.error.detail).toContain('"a" and " a "');
+      expect(result.error.detail).toContain('trailing spaces removed');
+      expect(result.error.detail).toContain('Quote one of them');
+    }
+  });
+
+  it('does not blame trimming for two cells that were always the same', () => {
+    /*
+     * THE NEGATIVE CONTROL, and the one that decides whether the sentence
+     * above is a fact or a decoration. `a,a` is an ordinary duplicate; telling
+     * its author that the two are "different as written" would be false, and a
+     * message that says it unconditionally is a message nobody can trust when
+     * it is right.
+     */
+    const result = parseSource('a,a\n1,2', 'csv', ',');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.detail).toBe(
+        'Column names become object keys, so they have to be unique.',
+      );
+    }
+  });
+
+  it('does not blame trimming when both cells were quoted', () => {
+    // Quoting means nothing was trimmed, so a collision between two quoted
+    // cells is the plain kind however much whitespace is in them.
+    const result = parseSource('" a "," a "\n1,2', 'csv', ',');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.detail).not.toContain('trailing spaces removed');
+  });
+
+  /* -- SD-4c: a synthesised name the file is not already using ----------- */
+
+  it('reads a file whose author has a column literally called column_2', () => {
+    /*
+     * THE REAL DEFECT BEHIND SD-4. `column_2` is a name this tool INVENTS for
+     * an empty header cell, and it used to be invented without looking at the
+     * document - so a file that already had a column called `column_2`
+     * collided with the invention and was refused outright, blaming its author
+     * for a duplicate they had not written. There is no spelling of that
+     * header that gets the file read: it was unreadable, full stop.
+     */
+    expect(parsed('column_2,,c\n1,2,3', 'csv')).toEqual([
+      { column_2: '1', column_2_2: '2', c: '3' },
+    ]);
+  });
+
+  it('avoids a literal name that appears AFTER the empty cell', () => {
+    /*
+     * Which is why the reserved set is built in a pass of its own rather than
+     * accumulated as the columns are named. Checking only the names already
+     * assigned would invent `column_1` for the first cell and then refuse the
+     * second - the same defect, one column further along.
+     */
+    expect(parsed(',column_1\n1,2', 'csv')).toEqual([{ column_1_2: '1', column_1: '2' }]);
+  });
+
+  it('gives two empty cells two different names', () => {
+    // The index makes them different already; this is the control that says so,
+    // because a synthesiser that ignored the index would collide with itself.
+    expect(parsed('a,,,d\n1,2,3,4', 'csv')).toEqual([
+      { a: '1', column_2: '2', column_3: '3', d: '4' },
+    ]);
+  });
+
+  it('still refuses a duplicate the author really did write', () => {
+    // The negative control for all of the above: making synthesis collision-safe
+    // must not make a genuine duplicate readable.
+    const result = parseSource('column_2,column_2\n1,2', 'csv', ',');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('Duplicate column');
+  });
+
   it('trims an unquoted header cell but not a quoted one', () => {
     /*
      * Header cells were trimmed unconditionally, which silently edited a name

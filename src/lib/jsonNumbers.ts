@@ -28,6 +28,19 @@
  * `check:browsers` drives. A scanner over a document `JSON.parse` has ALREADY
  * ACCEPTED is a much smaller job than a parser: it never has to decide whether
  * the document is valid, only where it is.
+ *
+ * AND A SECOND QUESTION, ASKED OF THE SAME WALK. Round twelve needed duplicate
+ * OBJECT KEYS - `{"retries": 3, "retries": 5}` is valid JSON that every reader
+ * resolves last-wins, so the 3 is gone before this tool is handed anything -
+ * and a reviver cannot see one either, for a sharper reason: the object is
+ * built before the reviver runs, so the duplicate has already been resolved.
+ * The second scanner that would have answered it is not here. One walk answers
+ * both, because the thing the two have to agree about is the path spelling,
+ * and two walks would be two spellings a document could tell apart.
+ *
+ * The file is still called `jsonNumbers` because the round that added the
+ * second question decided a rename was not worth rewriting the round-eleven
+ * write-up that names it.
  */
 
 export interface RoundedNumber {
@@ -63,17 +76,87 @@ export function isRounded(literal: string): boolean {
   return BigInt(literal) !== BigInt(value);
 }
 
+/** A key written twice in one object, and the value that lost. */
+export interface DuplicateKey {
+  /** JSONPath-ish to the key: the same spelling `RoundedNumber.path` uses. */
+  readonly path: string;
+  /** The key, as the author wrote it. */
+  readonly key: string;
+  /** The literal that was discarded, as the author wrote it, clipped. */
+  readonly discarded: string;
+}
+
+export interface JsonSourceScan {
+  readonly rounded: readonly RoundedNumber[];
+  readonly duplicates: readonly DuplicateKey[];
+}
+
+/**
+ * How much of a discarded value to quote.
+ *
+ * The point of quoting it at all is that the reader can tell which of the two
+ * values they lost. A whole discarded object would put a document inside a
+ * note, so it is clipped - and clipped visibly, because a silently truncated
+ * value would be a third value neither of the two in the file.
+ */
+const DISCARDED_LIMIT = 60;
+
+function clipLiteral(literal: string): string {
+  const tidy = literal.trim().replace(/\s+/gu, ' ');
+  return tidy.length <= DISCARDED_LIMIT ? tidy : `${tidy.slice(0, DISCARDED_LIMIT)}…`;
+}
+
 /**
  * Every rounded integer in a JSON document, by path.
+ *
+ * The gate is here rather than inside the walk because this is the entry point
+ * for callers that want nothing else - `jwt-decode`'s payload read is one -
+ * and for them a document with no sixteen-digit run costs one regular
+ * expression rather than a walk.
+ */
+export function roundedNumbersInJson(source: string): readonly RoundedNumber[] {
+  if (!LONG_RUN.test(source)) return [];
+  return scanJsonSource(source, { numbers: true }).rounded;
+}
+
+/**
+ * Every key written twice in one object, by path, with the value that lost.
+ *
+ * NO CHEAP GATE, AND THAT IS NOT AN OVERSIGHT. The rounded-integer scan has
+ * one because sixteen consecutive digits is a property of the TEXT that a
+ * regular expression settles in one pass; "the same key twice in one object"
+ * is a property of the STRUCTURE, and deciding it needs the walk that finds
+ * it.
+ *
+ * SO IT IS NOT CHEAP, AND THE NUMBER IS HERE RATHER THAN THE WORD. Measured on
+ * an 11.7 MB document: ~200 ms, against `JSON.parse`'s ~40-55 ms on the same
+ * bytes. That is four to five times the parse, accepted on a tool with a 15 s
+ * budget and a 16 MB ceiling, because the alternative is a size above which
+ * the note silently stops firing. Short-circuiting the `JSON.parse` in
+ * `readString` for keys with no escapes was tried and moved nothing - the cost
+ * is the per-character loop. See docs/test-findings.md.
+ */
+export function duplicateJsonKeys(source: string): readonly DuplicateKey[] {
+  return scanJsonSource(source, { numbers: false }).duplicates;
+}
+
+/**
+ * One walk, both questions.
  *
  * The document must already have been accepted by `JSON.parse`; this walks it
  * for positions rather than validating it. A malformed document simply yields
  * whatever it found before running out, which is why nothing here throws.
+ *
+ * `numbers` is the rounded-integer gate, threaded in rather than re-tested:
+ * the caller that wants both facts has already run the regular expression, and
+ * running it again would be the second copy of a decision.
  */
-export function roundedNumbersInJson(source: string): readonly RoundedNumber[] {
-  if (!LONG_RUN.test(source)) return [];
-
+export function scanJsonSource(
+  source: string,
+  options: { readonly numbers: boolean },
+): JsonSourceScan {
   const found: RoundedNumber[] = [];
+  const duplicates: DuplicateKey[] = [];
   /** The path to the value currently being read, as segments to join. */
   const stack: string[] = [];
   let index = 0;
@@ -115,6 +198,8 @@ export function roundedNumbersInJson(source: string): readonly RoundedNumber[] {
 
     if (char === '{') {
       index += 1;
+      /** Keys seen in THIS object, with the extent of the value each named. */
+      let keys: Map<string, { readonly start: number; readonly end: number }> | null = null;
       for (;;) {
         skipSpace();
         if (source[index] === '}' || index >= source.length) {
@@ -143,7 +228,32 @@ export function roundedNumbersInJson(source: string): readonly RoundedNumber[] {
         // A key that is not a bare identifier is printed in brackets, which is
         // the spelling `toJsonValue`'s refusals already use for awkward keys.
         stack.push(/^[A-Za-z_$][\w$]*$/.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`);
+        /*
+         * The value's own extent, so a duplicate can quote the literal that
+         * lost. `skipSpace` first, or the slice opens with the whitespace
+         * after the colon; `readValue` skips it again and does not mind.
+         */
+        skipSpace();
+        const valueStart = index;
         readValue();
+
+        /*
+         * Lazily, and only for this object. A Map per object is the cost of
+         * the question; allocating one for the objects that never get a second
+         * key is not, and a document of sixty thousand small records is the
+         * shape this runs on.
+         */
+        const previous = keys?.get(key);
+        if (previous !== undefined) {
+          duplicates.push({
+            path: `$${stack.join('')}`,
+            key,
+            discarded: clipLiteral(source.slice(previous.start, previous.end)),
+          });
+        }
+        keys ??= new Map();
+        keys.set(key, { start: valueStart, end: index });
+
         stack.pop();
       }
     }
@@ -191,6 +301,7 @@ export function roundedNumbersInJson(source: string): readonly RoundedNumber[] {
       }
       index += 1;
     }
+    if (!options.numbers) return;
     const literal = source.slice(start, index);
     if (isRounded(literal)) {
       found.push({ path: `$${stack.join('')}`, source: literal, value: Number(literal) });
@@ -198,5 +309,5 @@ export function roundedNumbersInJson(source: string): readonly RoundedNumber[] {
   };
 
   readValue();
-  return found;
+  return { rounded: found, duplicates };
 }

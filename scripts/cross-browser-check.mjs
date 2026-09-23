@@ -5055,6 +5055,245 @@ async function checkValueModel(browser, label) {
       cleanNode !== null && cleanNode.drawn && !cleanNode.text.includes('Lossy'),
       JSON.stringify(cleanNode),
     );
+
+    /* ================================================================== *
+     * 7: round twelve - corpus rows 4 to 9, 11 and 12
+     * ================================================================== *
+     *
+     * EIGHT ROWS OF THE LOSS TABLE TURNED IN ONE ROUND, AND A PAYLOAD IS NOT
+     * VISIBILITY. The unit suite reads every one of these strings off a port;
+     * what it cannot say is whether the box holding them has a size, which is
+     * the whole of the difference between a note existing and a person being
+     * told. Both halves of the matrix's own definition of `lossy, told` are
+     * asserted here - the panel on /tools, and the node's own face - in two
+     * engines, with a control beside each that shares its subject.
+     */
+
+    /*
+     * THE INPUT IS FILLED BEFORE EITHER LISTBOX IS OPENED, which is round
+     * eleven's fix rather than a style. `fill` landing in the window between a
+     * Radix listbox closing and focus arriving back at its trigger is silently
+     * discarded, and it presents as the tool reaching the wrong verdict about
+     * a document it was never given. The box is read back as well, so a run
+     * driven on input the harness failed to type says so instead.
+     */
+    const runAs = async (text, source, target, expected) => {
+      await page.goto(`${ORIGIN}/tools/structured-data`, { waitUntil: 'networkidle' });
+      await page.getByRole('heading', { level: 1, name: 'Structured data' }).waitFor({
+        timeout: 15_000,
+      });
+
+      await page.getByLabel('Structured data input').fill(text);
+
+      await page.getByRole('combobox', { name: 'Source format' }).click();
+      await page.getByRole('option', { name: source, exact: true }).click();
+      await page.getByRole('combobox', { name: 'Target format' }).click();
+      await page.getByRole('option', { name: target, exact: true }).click();
+
+      const typed = await page.getByLabel('Structured data input').inputValue();
+      if (typed !== text) {
+        return {
+          error: { drawn: false, text: '' },
+          notes: {
+            drawn: false,
+            text: `the harness could not type the document - the box holds ${typed.length.toString()} of ${text.length.toString()} characters`,
+          },
+        };
+      }
+
+      await page.getByRole('button', { name: 'Run' }).click();
+
+      /*
+       * THE CONVERTED DOCUMENT IS THE SETTLE SIGNAL, AND THAT MATTERS MOST FOR
+       * THE CONTROLS.
+       *
+       * Each of these runs starts from a fresh `goto`, so the page has no
+       * notes list at all until one arrives - which makes "wait until there
+       * are no notes" true on the FIRST poll, before Run has produced
+       * anything. That is an assertion that cannot fail, and round four found
+       * eighteen of exactly that shape in this file. Waiting for the
+       * `Converted` port to hold a string only THIS run can have put there is
+       * waiting for this run.
+       */
+      const converted = page.getByLabel('Structured data Converted');
+      await converted.waitFor({ timeout: 30_000 });
+      await expectValue(converted, expected);
+
+      return { error: await errorOn(), notes: await notesOn() };
+    };
+
+    /* -- 7a: the four YAML presentation losses, as one note ---------------- */
+    const RICH =
+      '# why this exists\ndefaults: &defaults\n  retries: 3\nservice: *defaults\ncustom: !mytype\n  a: 1\ntext: >\n  one\n  two\n';
+
+    const rich = await runAs(RICH, 'YAML', 'JSON', '"retries": 3');
+    check(
+      label,
+      'a comment, an anchor, a tag and a block style are drawn as ONE note naming all four',
+      rich.notes.drawn &&
+        ['1 comment', '1 anchor', '1 tag', '1 block style'].every((part) =>
+          rich.notes.text.includes(part),
+        ),
+      rich.notes.text.slice(0, 280),
+    );
+
+    check(
+      label,
+      'and the same panel says an anchor is expanded rather than dropped',
+      rich.notes.text.includes('EXPANDED') && rich.notes.text.includes('larger than the source'),
+      rich.notes.text.slice(0, 320),
+    );
+
+    /*
+     * THE CONTROL, ON SUBJECT AND PER KIND. A document with a comment and
+     * nothing else must produce a note that does NOT mention an anchor, a tag
+     * or a style - a census that named every kind whatever the document held
+     * would pass the check above on every YAML file ever pasted in.
+     */
+    const commentOnly = await runAs(
+      '# why this exists\nretries: 3\n',
+      'YAML',
+      'JSON',
+      '"retries": 3',
+    );
+    check(
+      label,
+      'a YAML document with only a comment names only the comment',
+      commentOnly.notes.drawn &&
+        commentOnly.notes.text.includes('1 comment') &&
+        !commentOnly.notes.text.includes('anchor') &&
+        !commentOnly.notes.text.includes('tag') &&
+        !commentOnly.notes.text.includes('block style'),
+      commentOnly.notes.text.slice(0, 240),
+    );
+
+    /*
+     * AND THE SHARPEST ONE, because it is the only place the note deliberately
+     * stays quiet about something that IS a YAML style: a literal block
+     * survives a YAML target, measured against the writer, so saying it did
+     * not would be a warning about a document that has not changed.
+     */
+    const literal = await runAs('text: |\n  one\n  two\n', 'YAML', 'YAML', 'text: |');
+    check(
+      label,
+      'a literal block on a YAML target draws no note, because the output still has one',
+      !literal.notes.drawn && literal.notes.text === '',
+      literal.notes.text.slice(0, 200),
+    );
+
+    /* -- 7b: corpus row 11, a trimmed CSV header --------------------------- */
+    const trimmed = await runAs('alpha, shipped at \n1,2\n', 'CSV', 'JSON', '"shipped at"');
+    check(
+      label,
+      'a trimmed CSV header cell is drawn on the tool page, with its spaces shown',
+      trimmed.notes.drawn &&
+        trimmed.notes.text.includes('1 header cell was trimmed') &&
+        trimmed.notes.text.includes('" shipped at "'),
+      trimmed.notes.text.slice(0, 240),
+    );
+
+    const untrimmed = await runAs(
+      'alpha," shipped at "\n1,2\n',
+      'CSV',
+      'JSON',
+      '" shipped at ": "2"',
+    );
+    check(
+      label,
+      'and a header cell the author quoted draws none, because nothing was removed',
+      !untrimmed.notes.drawn && untrimmed.notes.text === '',
+      untrimmed.notes.text.slice(0, 200),
+    );
+
+    /* -- 7c: corpus row 12, a duplicate JSON key --------------------------- */
+    const duplicate = await runAs('{"retries": 3, "retries": 5}', 'JSON', 'JSON', '"retries": 5');
+    check(
+      label,
+      'a discarded duplicate JSON key is drawn on the tool page, with the value that lost',
+      duplicate.notes.drawn &&
+        duplicate.notes.text.includes('1 duplicate key was discarded') &&
+        duplicate.notes.text.includes('$.retries discarded `3`'),
+      duplicate.notes.text.slice(0, 240),
+    );
+
+    const noDuplicate = await runAs(
+      '[{"retries": 3}, {"retries": 5}]',
+      'JSON',
+      'JSON',
+      '"retries": 5',
+    );
+    check(
+      label,
+      'and the same key in two sibling objects draws none, because it is two keys',
+      !noDuplicate.notes.drawn && noDuplicate.notes.text === '',
+      noDuplicate.notes.text.slice(0, 200),
+    );
+
+    /* -- 7d: all three on a canvas node ------------------------------------ */
+    const onNode = async (options, text, predicate) => {
+      await page.goto(nodeLink(options), { waitUntil: 'networkidle' });
+      await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+      await typeInto(text);
+      return untilSummary(predicate, 30_000);
+    };
+
+    const richNode = await onNode(yamlToYaml, RICH, (text) => text.startsWith('Lossy'));
+    check(
+      label,
+      'the presentation census reaches a node face, which is where nobody opens a panel',
+      richNode !== null &&
+        richNode.drawn &&
+        richNode.text.startsWith('Lossy ·') &&
+        richNode.text.includes('Not carried over:') &&
+        richNode.text.includes('comment'),
+      JSON.stringify(richNode),
+    );
+
+    const cleanYamlNode = await onNode(yamlToYaml, 'retries: 3\n', (text) =>
+      text.includes('1 key'),
+    );
+    check(
+      label,
+      'and a YAML document with none of it leaves the node face clean',
+      cleanYamlNode !== null && cleanYamlNode.drawn && !cleanYamlNode.text.includes('Lossy'),
+      JSON.stringify(cleanYamlNode),
+    );
+
+    const csvToJson = { source: 'csv', target: 'json', indent: 2, delimiter: 'comma' };
+    const trimmedNode = await onNode(csvToJson, 'alpha, shipped at \n1,2\n', (text) =>
+      text.startsWith('Lossy'),
+    );
+    check(
+      label,
+      'the trimmed-header note reaches a node face too',
+      trimmedNode !== null &&
+        trimmedNode.drawn &&
+        trimmedNode.text.includes('1 header cell was trimmed'),
+      JSON.stringify(trimmedNode),
+    );
+
+    const jsonToJson = { source: 'json', target: 'json', indent: 2, delimiter: 'comma' };
+    const duplicateNode = await onNode(jsonToJson, '{"retries": 3, "retries": 5}', (text) =>
+      text.startsWith('Lossy'),
+    );
+    check(
+      label,
+      'and so does the discarded duplicate key',
+      duplicateNode !== null &&
+        duplicateNode.drawn &&
+        duplicateNode.text.includes('1 duplicate key was discarded'),
+      JSON.stringify(duplicateNode),
+    );
+
+    const cleanJsonNode = await onNode(jsonToJson, '{"retries": 5}', (text) =>
+      text.includes('1 key'),
+    );
+    check(
+      label,
+      'a JSON document with one of each key leaves the node face clean',
+      cleanJsonNode !== null && cleanJsonNode.drawn && !cleanJsonNode.text.includes('Lossy'),
+      JSON.stringify(cleanJsonNode),
+    );
   } finally {
     await context.close().catch(() => {});
   }
@@ -10444,11 +10683,17 @@ async function checkOutputViews(browser, label) {
        *
        * This used to be a bare `waitFor`, and when it timed out the whole run
        * died on an uncaught TimeoutError - roughly 1,700 passing checks
-       * discarded, and a stack trace that says only which line was waiting. It
-       * happens: measured three times in WebKit deep inside a full run, at
-       * varying depth through the RSA examples, and it reproduces on the
-       * previous commit too, so it is neither new nor caused by whatever is
-       * being changed around it.
+       * discarded, and a stack trace that says only which line was waiting.
+       *
+       * THE FAULT IT WAS BUILT FOR IS FIXED, and this stays. It was the lost
+       * fill above: three occurrences in WebKit at varying depth through the
+       * RSA examples, all of them after `326a057` put a listbox click between
+       * the two fills, none before it, and the one occurrence anybody
+       * instrumented said `invalid-input` on an empty box. Round twelve traced
+       * that commit by commit - see docs/architecture.md. What kept it open for
+       * four rounds is that a bare `waitFor` cannot say which of three things
+       * went wrong, so the instrument stays whether or not anything is known to
+       * need it.
        *
        * The waiting is the same. What is different is that giving up returns
        * what was ON SCREEN instead of throwing, so the check that follows fails
