@@ -4188,6 +4188,20 @@ no layout, so its `pointermove` is an event a test dispatched rather than one a
 mouse produced, and that distinction is the entire bug. `checkNotifications` in
 `check:browsers` drives all of it with the mouse in both engines.
 
+**It drives the clock too, from round sixteen, and waits out no lifetime.** The
+countdown is one `window.setTimeout` per notification and `Date.now()`, both
+looked up when called, which is exactly what Playwright's `page.clock`
+replaces - so the check advances the page past a twenty-second deadline with
+`runFor` while every pointer event stays a real one. The lifetime is not
+shortened; the app's own twenty seconds is what the clock is driven past, and
+a provider that starts no timer leaves the notification on screen however far
+it goes. It took 55 s per engine and takes under 3. Shown against three breaks
+
+- the pause ignored, no timer started (the bug above), and a notification that
+  leaves the moment the pointer does - each red in both engines; the first was
+  green in WebKit until a count taken the instant the clock stopped was replaced
+  by one that must hold, because WebKit commits the dismissal a turn later.
+
 ## State
 
 Five Zustand stores, split by what invalidates them:

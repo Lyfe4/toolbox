@@ -1,0 +1,458 @@
+{
+  "$schema-note": "Hand-written and pasted HTML: the input class the CommonMark and GFM corpora cannot contain, because they are HTML written by cmark in exactly the vocabulary this tool's pipeline emits. Read by scripts/generate-pasted-html-oracle.mjs, which runs every document through the tool, renders each pair of documents in Chromium, Firefox and WebKit, and commits what the engines saw to pasted-html.oracle.json. Read by pasted-html.test.ts, which holds every census note to that answer.",
+  "provenance": {
+    "hand-written": "Written for this corpus, in the shapes people type: no <p> where one is optional, <pre> with no <code>, a <div> for a line, <b> for bold. Each isolates one construct where it can, so a note's truth can be read off the whole document.",
+    "export-shape": "The markup a product is known to emit, RECONSTRUCTED here rather than captured - the ids, classes, inline styles and wrapper elements that characterise the format - around text written for this corpus. None of these products can be driven from this repository, so the shape rests on knowledge of the format, and the entry says which features it is reproducing. Weaker than a capture and stated as such.",
+    "clipboard": "Captured: a real Ctrl+C in a real engine over a page scripts/capture-pasted-html.mjs serves itself, read back through navigator.clipboard.read(). What a browser's own serialiser puts on the clipboard, which is the machine-made half of pasted HTML. Chromium and Firefox only: WebKit's async clipboard returns no items to a read in Playwright's build, measured, so there is no WebKit capture rather than an imitation of one."
+  },
+  "documents": [
+    {
+      "id": "pre-without-code",
+      "kind": "hand-written",
+      "html": "<pre>one\ntwo</pre>",
+      "about": "A preformatted block as people type it. Markdown writes it back as a fenced block, which renders as <pre><code>."
+    },
+    {
+      "id": "pre-with-code",
+      "kind": "hand-written",
+      "html": "<pre><code>one\ntwo</code></pre>",
+      "about": "The control for the one above: already in the shape the pipeline writes."
+    },
+    {
+      "id": "bare-span",
+      "kind": "hand-written",
+      "html": "<p>a <span>plain</span> word</p>",
+      "about": "A span with nothing on it. It renders as nothing, and Markdown has no spelling for it."
+    },
+    {
+      "id": "div-around-paragraph",
+      "kind": "hand-written",
+      "html": "<div><p>inside</p></div>",
+      "about": "The commonest wrapper there is."
+    },
+    {
+      "id": "div-around-blocks",
+      "kind": "hand-written",
+      "html": "<div><h2>Title</h2><p>First.</p><ul><li>one</li></ul></div>",
+      "about": "A wrapper around several blocks, none of which it changes."
+    },
+    {
+      "id": "div-holding-text",
+      "kind": "hand-written",
+      "html": "<div>just a line of text</div>",
+      "about": "A div used as a paragraph. The round trip makes it a <p>, which has margins a <div> does not."
+    },
+    {
+      "id": "divs-as-lines",
+      "kind": "hand-written",
+      "html": "<div>line one</div><div>line two</div>",
+      "about": "Two lines written as two divs, as an email client writes them."
+    },
+    {
+      "id": "text-with-no-paragraph",
+      "kind": "hand-written",
+      "html": "Just some text with <b>bold</b> in it.",
+      "about": "A fragment with no block element at all."
+    },
+    {
+      "id": "heading-then-bare-text",
+      "kind": "hand-written",
+      "html": "<h1>Title</h1>Text after the heading.",
+      "about": "Round ten judged the invented <p> here true: the text gains a paragraph's margins."
+    },
+    {
+      "id": "blockquote-bare",
+      "kind": "hand-written",
+      "html": "<blockquote>quoted words</blockquote>",
+      "about": "A quotation with its text directly inside. Markdown puts a paragraph in it."
+    },
+    {
+      "id": "blockquote-with-paragraph",
+      "kind": "hand-written",
+      "html": "<blockquote><p>quoted words</p></blockquote>",
+      "about": "The control: already in the shape the pipeline writes."
+    },
+    {
+      "id": "image-alone",
+      "kind": "hand-written",
+      "html": "<img src=\"https://example.com/chart.png\" alt=\"A chart\">",
+      "about": "An image with no block around it."
+    },
+    {
+      "id": "list-tight",
+      "kind": "hand-written",
+      "html": "<ul><li>one</li><li>two</li></ul>",
+      "about": "The control for lists."
+    },
+    {
+      "id": "list-with-paragraphs",
+      "kind": "hand-written",
+      "html": "<ul><li><p>one</p></li><li><p>two</p></li></ul>",
+      "about": "A loose list, written out."
+    },
+    {
+      "id": "list-nested",
+      "kind": "hand-written",
+      "html": "<ul><li>one<ul><li>inner</li></ul></li><li>two</li></ul>",
+      "about": "A nested list with text directly in the outer item."
+    },
+    {
+      "id": "list-ordered-start",
+      "kind": "hand-written",
+      "html": "<ol start=\"3\"><li>third</li><li>fourth</li></ol>",
+      "about": "A numbered list that does not start at one."
+    },
+    {
+      "id": "table-header-row-as-tr",
+      "kind": "hand-written",
+      "html": "<table><tr><th>Region</th><th>Sales</th></tr><tr><td>North</td><td>3</td></tr></table>",
+      "about": "Round ten's <thead> case: the header row written as a plain <tr> of <th>."
+    },
+    {
+      "id": "table-with-thead",
+      "kind": "hand-written",
+      "html": "<table><thead><tr><th>Region</th></tr></thead><tbody><tr><td>North</td></tr></tbody></table>",
+      "about": "The control: the shape the pipeline writes."
+    },
+    {
+      "id": "table-headerless",
+      "kind": "hand-written",
+      "html": "<table><tr><td>North</td><td>3</td></tr></table>",
+      "about": "A real invention: Markdown has no table without a header row, so one appears."
+    },
+    {
+      "id": "table-caption",
+      "kind": "hand-written",
+      "html": "<table><caption>Quarterly sales</caption><tr><th>Region</th></tr><tr><td>North</td></tr></table>",
+      "about": "A real loss: Markdown has nowhere to put a caption."
+    },
+    {
+      "id": "bold-and-italic-as-b-i",
+      "kind": "hand-written",
+      "html": "<p><b>bold</b> and <i>italic</i></p>",
+      "about": "Round thirteen's respelling case."
+    },
+    {
+      "id": "strike-and-tt",
+      "kind": "hand-written",
+      "html": "<p><strike>old</strike> and <tt>mono</tt></p>",
+      "about": "The other two respellings."
+    },
+    {
+      "id": "superscript-subscript",
+      "kind": "hand-written",
+      "html": "<p>E = mc<sup>2</sup> and H<sub>2</sub>O</p>",
+      "about": "A real loss: Markdown has no spelling for either, and the 2s come down to the line."
+    },
+    {
+      "id": "definition-list",
+      "kind": "hand-written",
+      "html": "<dl><dt>Term</dt><dd>What it means.</dd></dl>",
+      "about": "A real loss: no definition lists in Markdown."
+    },
+    {
+      "id": "details-block",
+      "kind": "hand-written",
+      "html": "<details><summary>More</summary><p>Hidden until opened.</p></details>",
+      "about": "A disclosure. The sanitiser keeps it; Markdown cannot."
+    },
+    {
+      "id": "line-break",
+      "kind": "hand-written",
+      "html": "<p>first line<br>second line</p>",
+      "about": "A hard break, which Markdown can spell."
+    },
+    {
+      "id": "rule-between-paragraphs",
+      "kind": "hand-written",
+      "html": "<p>above</p><hr><p>below</p>",
+      "about": "A thematic break, which Markdown can spell."
+    },
+    {
+      "id": "inline-code",
+      "kind": "hand-written",
+      "html": "<p>Run <code>pnpm test</code> first.</p>",
+      "about": "The control for code."
+    },
+    {
+      "id": "headings-all-levels",
+      "kind": "hand-written",
+      "html": "<h1>one</h1><h2>two</h2><h3>three</h3><h4>four</h4><h5>five</h5><h6>six</h6>",
+      "about": "Every heading level, each of which Markdown can spell."
+    },
+    {
+      "id": "sectioning-elements",
+      "kind": "hand-written",
+      "html": "<article><section><h2>Part</h2><p>Body.</p></section></article>",
+      "about": "Sectioning wrappers around ordinary blocks."
+    },
+    {
+      "id": "empty-paragraph-spacer",
+      "kind": "hand-written",
+      "html": "<p>above</p><p>&nbsp;</p><p>below</p>",
+      "about": "A paragraph holding only a no-break space, used as a spacer."
+    },
+    {
+      "id": "entities",
+      "kind": "hand-written",
+      "html": "<p>&copy; 2024 &mdash; caf&eacute; &amp; bar</p>",
+      "about": "Named references, which become characters."
+    },
+    {
+      "id": "inline-quote",
+      "kind": "hand-written",
+      "html": "<p>She said <q>not today</q>.</p>",
+      "about": "A <q>, whose quotation marks are drawn by the engine rather than written."
+    },
+    {
+      "id": "abbreviation",
+      "kind": "hand-written",
+      "html": "<p><abbr title=\"HyperText Markup Language\">HTML</abbr> is old.</p>",
+      "about": "An abbreviation with its expansion in a tooltip."
+    },
+    {
+      "id": "bare-url-in-text",
+      "kind": "hand-written",
+      "html": "<p>See https://example.com for more.</p>",
+      "about": "A URL written as text. On the way back from Markdown, GFM's autolinks make it a link."
+    },
+    {
+      "id": "link-with-title",
+      "kind": "hand-written",
+      "html": "<p><a href=\"https://example.com\" title=\"Example\">a link</a></p>",
+      "about": "A link with a title, which Markdown can spell."
+    },
+    {
+      "id": "task-list",
+      "kind": "hand-written",
+      "html": "<ul><li><input type=\"checkbox\" checked> done</li><li><input type=\"checkbox\"> not yet</li></ul>",
+      "about": "A task list written by hand rather than by GFM."
+    },
+    {
+      "id": "code-with-language",
+      "kind": "hand-written",
+      "html": "<pre><code class=\"language-js\">const a = 1;</code></pre>",
+      "about": "The control for a language class, which a fence carries."
+    },
+    {
+      "id": "span-with-style",
+      "kind": "hand-written",
+      "html": "<p>a <span style=\"color: red\">red</span> word</p>",
+      "about": "The sanitiser removes the style, which is a real loss; the span is then as bare as bare-span."
+    },
+    {
+      "id": "span-with-class",
+      "kind": "hand-written",
+      "html": "<p>a <span class=\"highlight\">marked</span> word</p>",
+      "about": "The sanitiser removes the class, which is a real loss; the span is then as bare as bare-span."
+    },
+    {
+      "id": "pre-with-spans",
+      "kind": "hand-written",
+      "html": "<pre><span>const</span> a = <span>1</span>;</pre>",
+      "about": "Syntax highlighting after its classes are gone: a pre, spans, no code."
+    },
+    {
+      "id": "google-docs-clipboard",
+      "kind": "export-shape",
+      "shapeOf": "Google Docs' text/html clipboard flavour: a <meta charset>, one <b style=\"font-weight:normal\"> with a docs-internal-guid id around the whole selection, a <p dir=\"ltr\"> per paragraph with inline line-height and margins, and a <span> per run carrying the whole computed style, font-weight included. A <br> between paragraphs.",
+      "html": "<meta charset=\"utf-8\"><b style=\"font-weight:normal;\" id=\"docs-internal-guid-4f1c2a7e-7fff-3b1d-9c2e-5a6b7c8d9e0f\"><p dir=\"ltr\" style=\"line-height:1.38;margin-top:0pt;margin-bottom:0pt;\"><span style=\"font-size:11pt;font-family:Arial,sans-serif;color:#000000;background-color:transparent;font-weight:700;font-style:normal;font-variant:normal;text-decoration:none;vertical-align:baseline;white-space:pre;white-space:pre-wrap;\">Launch notes</span></p><br><p dir=\"ltr\" style=\"line-height:1.38;margin-top:0pt;margin-bottom:0pt;\"><span style=\"font-size:11pt;font-family:Arial,sans-serif;color:#000000;background-color:transparent;font-weight:400;font-style:normal;font-variant:normal;text-decoration:none;vertical-align:baseline;white-space:pre;white-space:pre-wrap;\">The first release ships on Monday.</span></p>",
+      "about": "The <b> around everything is cancelled by its own style. The sanitiser removes the style and keeps the <b>, so the whole document turns bold in every HTML output - a real change the style note is the only report of."
+    },
+    {
+      "id": "word-html",
+      "kind": "export-shape",
+      "shapeOf": "Microsoft Word's HTML: class=MsoNormal paragraphs, <o:p> elements holding a no-break space, a <span> carrying the run's style, <b> and <i> for formatting, and a WordSection1 div around the body.",
+      "html": "<div class=\"WordSection1\"><p class=\"MsoNormal\"><b><span style=\"font-size:14.0pt\">Minutes<o:p></o:p></span></b></p><p class=\"MsoNormal\">Present: the <i>whole</i> team.<o:p></o:p></p><p class=\"MsoNormal\"><o:p>&nbsp;</o:p></p><p class=\"MsoNormal\">Next meeting Thursday.<o:p></o:p></p></div>",
+      "about": "An empty paragraph holding an <o:p>, used as a spacer, and the rest ordinary."
+    },
+    {
+      "id": "word-list",
+      "kind": "export-shape",
+      "shapeOf": "Word's list paragraphs: MsoListParagraphCxSp* classes, mso-list in the style, the bullet written as a Symbol-font character inside conditional comments, and a Times New Roman span of no-break spaces for the indent.",
+      "html": "<p class=\"MsoListParagraphCxSpFirst\" style=\"text-indent:-.25in;mso-list:l0 level1 lfo1\"><!--[if !supportLists]--><span style=\"font-family:Symbol\">&middot;<span style=\"font:7.0pt &quot;Times New Roman&quot;\">&nbsp;&nbsp;&nbsp;&nbsp; </span></span><!--[endif]-->First item<o:p></o:p></p><p class=\"MsoListParagraphCxSpLast\" style=\"text-indent:-.25in;mso-list:l0 level1 lfo1\"><!--[if !supportLists]--><span style=\"font-family:Symbol\">&middot;<span style=\"font:7.0pt &quot;Times New Roman&quot;\">&nbsp;&nbsp;&nbsp;&nbsp; </span></span><!--[endif]-->Second item<o:p></o:p></p>",
+      "about": "A Word list is paragraphs with a drawn bullet, not a list."
+    },
+    {
+      "id": "gmail-body",
+      "kind": "export-shape",
+      "shapeOf": "Gmail's compose HTML: a <div dir=\"ltr\"> around the message, one <div> per line, and <div><br></div> for a blank line.",
+      "html": "<div dir=\"ltr\">Hi team,<div><br></div><div>The notes are below.</div><div><br></div><div>Thanks,</div><div>Sam</div></div>",
+      "about": "Lines and blank lines as divs."
+    },
+    {
+      "id": "outlook-body",
+      "kind": "export-shape",
+      "shapeOf": "Outlook's HTML body: a WordSection1 div and MsoNormal paragraphs with <o:p> elements, as Word writes, plus an inline-styled signature span.",
+      "html": "<div class=\"WordSection1\"><p class=\"MsoNormal\">Hello,<o:p></o:p></p><p class=\"MsoNormal\"><o:p>&nbsp;</o:p></p><p class=\"MsoNormal\">Attached is the report.<o:p></o:p></p><p class=\"MsoNormal\"><span style=\"color:#1F497D\">Alex<o:p></o:p></span></p></div>",
+      "about": "Word's vocabulary in an email."
+    },
+    {
+      "id": "github-readme-dom",
+      "kind": "export-shape",
+      "shapeOf": "A rendered GitHub README as its DOM reads in devtools: article.markdown-body, a div.markdown-heading around each heading with an anchor link holding an octicon SVG, code blocks as div.highlight around a <pre> with pl-* spans and no <code>, and dir=\"auto\" everywhere.",
+      "html": "<article class=\"markdown-body entry-content container-lg\" itemprop=\"text\"><div class=\"markdown-heading\" dir=\"auto\"><h2 tabindex=\"-1\" class=\"heading-element\" dir=\"auto\">Install</h2><a id=\"user-content-install\" class=\"anchor\" aria-label=\"Permalink: Install\" href=\"#install\"><svg class=\"octicon octicon-link\" viewBox=\"0 0 16 16\" version=\"1.1\" width=\"16\" height=\"16\" aria-hidden=\"true\"><path d=\"M4 8h8\"></path></svg></a></div><div class=\"highlight highlight-source-shell notranslate position-relative overflow-auto\" dir=\"auto\"><pre>pnpm add <span class=\"pl-s\">patchbay</span></pre></div><p dir=\"auto\">Then run <code>pnpm dev</code>.</p></article>",
+      "about": "The code block is a <pre> with no <code>, which is exactly the shape of the pre-without-code false note."
+    },
+    {
+      "id": "wikipedia-dom",
+      "kind": "export-shape",
+      "shapeOf": "A MediaWiki article body as its DOM reads: div.mw-parser-output, a <b> for the article's subject, wiki links with titles, a citation <sup class=\"reference\"> with bracket spans, and a div.mw-heading around each heading with an edit-section span.",
+      "html": "<div class=\"mw-content-ltr mw-parser-output\" lang=\"en\" dir=\"ltr\"><p>A <b>pangram</b> is a sentence that uses every <a href=\"/wiki/Letter\" title=\"Letter\">letter</a>.<sup id=\"cite_ref-1\" class=\"reference\"><a href=\"#cite_note-1\"><span class=\"cite-bracket\">[</span>1<span class=\"cite-bracket\">]</span></a></sup></p><div class=\"mw-heading mw-heading2\"><h2 id=\"Examples\">Examples</h2><span class=\"mw-editsection\"><span class=\"mw-editsection-bracket\">[</span><a href=\"/w/index.php?action=edit&amp;section=1\" title=\"Edit section: Examples\"><span>edit</span></a><span class=\"mw-editsection-bracket\">]</span></span></div><p>Short ones are hard to write.</p></div>",
+      "about": "The <sup> is a real loss; the bracket spans and heading wrapper are not."
+    },
+    {
+      "id": "stack-overflow-code",
+      "kind": "export-shape",
+      "shapeOf": "A Stack Overflow code block: pre.s-code-block with a lang-* class, a <code> with highlight.js's hljs and language-* classes, and hljs-* spans.",
+      "html": "<pre class=\"lang-js s-code-block\"><code class=\"hljs language-javascript\"><span class=\"hljs-keyword\">const</span> total = <span class=\"hljs-number\">3</span>;</code></pre>",
+      "about": "Highlighter spans inside a code block that already has its <code>."
+    },
+    {
+      "id": "mdn-code-example",
+      "kind": "export-shape",
+      "shapeOf": "An MDN code example: div.code-example with an example-header naming the language, and a pre with a brush class around a <code>.",
+      "html": "<div class=\"code-example\"><div class=\"example-header\"><span class=\"language-name\">js</span></div><pre class=\"brush: js notranslate\"><code>const answer = 42;</code></pre></div>",
+      "about": "Wrappers and a language label around an ordinary code block."
+    },
+    {
+      "id": "wordpress-blocks",
+      "kind": "export-shape",
+      "shapeOf": "WordPress block-editor markup: each block delimited by <!-- wp:* --> comments, wp-block-* classes, and a list in its own block.",
+      "html": "<!-- wp:heading --><h2 class=\"wp-block-heading\">Opening hours</h2><!-- /wp:heading --><!-- wp:paragraph --><p>We are open <strong>every day</strong>.</p><!-- /wp:paragraph --><!-- wp:list --><ul class=\"wp-block-list\"><li>Weekdays nine to five</li><li>Weekends ten to four</li></ul><!-- /wp:list -->",
+      "about": "Ordinary blocks with classes and comments around them."
+    },
+    {
+      "id": "notion-export",
+      "kind": "export-shape",
+      "shapeOf": "Notion's HTML export: a UUID id and an empty class on every block, list items carrying an inline list-style-type, and lists split one item per <ul>.",
+      "html": "<h1 id=\"8a1f0c2e-1d3b-4e5f-a6b7-c8d9e0f1a2b3\" class=\"\">Plan</h1><p id=\"9b2e1d3f-2e4c-5f6a-b7c8-d9e0f1a2b3c4\" class=\"\">Three things, in order.</p><ul id=\"0c3f2e4a-3f5d-6a7b-c8d9-e0f1a2b3c4d5\" class=\"bulleted-list\"><li style=\"list-style-type:disc\">Draft</li></ul><ul id=\"1d4a3f5b-4a6e-7b8c-d9e0-f1a2b3c4d5e6\" class=\"bulleted-list\"><li style=\"list-style-type:disc\">Review</li></ul>",
+      "about": "Two one-item lists, which Markdown writes back as one list of two."
+    },
+    {
+      "id": "html-email-template",
+      "kind": "export-shape",
+      "shapeOf": "A table-laid-out marketing email: role=\"presentation\" tables with width and align, <font face>, <center>, and a bgcolor on a cell.",
+      "html": "<center><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr><td align=\"center\" bgcolor=\"#f4f4f4\"><font face=\"Arial\" size=\"4\">Welcome aboard</font></td></tr><tr><td align=\"center\"><font face=\"Arial\">Your account is ready.</font></td></tr></table></center>",
+      "about": "Layout tables are the wrong thing to convert and are converted anyway; every change here is a real one."
+    },
+    {
+      "id": "medium-post",
+      "kind": "export-shape",
+      "shapeOf": "A Medium post body: generated class names on every paragraph, data-selectable-paragraph, <em> and <strong> with classes of their own.",
+      "html": "<h1 class=\"pw-post-title gj gk gl bf gm gn go gp gq\" data-testid=\"storyTitle\">A short title</h1><p class=\"pw-post-body-paragraph nd ne gt nf b ng\" data-selectable-paragraph=\"\">Writing <em class=\"oh\">slowly</em> is <strong class=\"nf gu\">still</strong> writing.</p>",
+      "about": "Classes and data attributes on ordinary markup."
+    },
+    {
+      "id": "confluence-macro",
+      "kind": "export-shape",
+      "shapeOf": "A Confluence info macro as its DOM reads: nested divs with confluence-information-macro classes, a span holding an icon, and the body in a div of its own.",
+      "html": "<div class=\"confluence-information-macro confluence-information-macro-information\"><span class=\"aui-icon aui-icon-small aui-iconfont-info confluence-information-macro-icon\"></span><div class=\"confluence-information-macro-body\"><p>Deploys are frozen until Friday.</p></div></div>",
+      "about": "Wrappers around a paragraph, and an empty icon span."
+    },
+    {
+      "id": "refused-link",
+      "kind": "hand-written",
+      "html": "<p><a href=\"javascript:alert(1)\">click me</a> or <a href=\"https://example.com\">this one</a></p>",
+      "about": "A link whose address the allow-list refuses. It is unwrapped to its text after the sanitiser, beside a link that survives, so the href attribute is still in the document."
+    },
+    {
+      "id": "refused-image",
+      "kind": "hand-written",
+      "html": "<p><img src=\"javascript:void(0)\" alt=\"the logo\"> beside text</p>",
+      "about": "An image whose source is refused, which becomes its alt text."
+    },
+    {
+      "id": "section-around-h1",
+      "kind": "hand-written",
+      "html": "<section><h1>Big title</h1><p>Body.</p></section>",
+      "about": "The HTML Standard sizes an <h1> inside a section smaller; unwrapping the section makes it grow. A real change a wrapper rule must not hide."
+    },
+    {
+      "id": "heading-text-then-div",
+      "kind": "hand-written",
+      "html": "<h2>Title</h2>Text after the heading.<div>and a div after it</div>",
+      "about": "The heading-then-bare-text case with a neighbour that has no margins, where an invented <p> has margins that show."
+    },
+    {
+      "id": "text-between-divs",
+      "kind": "hand-written",
+      "html": "<div>one</div>loose text<div>two</div>",
+      "about": "Loose text between two margin-less blocks."
+    },
+    {
+      "id": "figure-with-caption",
+      "kind": "hand-written",
+      "html": "<figure><img src=\"https://example.com/chart.png\" alt=\"A chart\"><figcaption>Sales by region</figcaption></figure>",
+      "about": "A figure and its caption."
+    },
+    {
+      "id": "span-holding-bold",
+      "kind": "hand-written",
+      "html": "<p>a <span><b>bold</b></span> word</p>",
+      "about": "A bare span around a respelled element."
+    },
+    {
+      "id": "span-with-lang",
+      "kind": "hand-written",
+      "html": "<p>She said <span lang=\"fr\">bonjour</span>.</p>",
+      "about": "A span that carries a language, which is information even though it draws nothing."
+    },
+    {
+      "id": "chromium-copy-blog-post",
+      "kind": "clipboard",
+      "engine": "chromium 153.0.8010.12",
+      "html": "<h2 style=\"color: rgb(34, 34, 34); font-family: Georgia, serif; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial;\">Release notes</h2><p style=\"color: rgb(34, 34, 34); font-family: Georgia, serif; font-size: medium; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial;\">This week we <em>finally</em> shipped the <a href=\"https://example.com/importer\">new importer</a>. Thanks to <span class=\"author\" style=\"color: rgb(138, 75, 0); font-weight: 600;\">Ana</span> for most of it.</p><ul style=\"color: rgb(34, 34, 34); font-family: Georgia, serif; font-size: medium; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial;\"><li>Faster</li><li>Smaller</li></ul>",
+      "about": "A styled article: a heading, a paragraph with emphasis, a link and a classed span, and a list."
+    },
+    {
+      "id": "chromium-copy-highlighted-code",
+      "kind": "clipboard",
+      "engine": "chromium 153.0.8010.12",
+      "html": "<p style=\"color: rgb(34, 34, 34); font-family: Georgia, serif; font-size: medium; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial;\">Add them up:</p><pre class=\"code\" style=\"background: rgb(246, 248, 250); padding: 12px; color: rgb(34, 34, 34); font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial;\"><code><span class=\"kw\" style=\"color: rgb(122, 31, 162); font-weight: bold;\">function</span> add(a, b) {\n  <span class=\"kw\" style=\"color: rgb(122, 31, 162); font-weight: bold;\">return</span> a + b;\n}</code></pre><pre class=\"code\" style=\"background: rgb(246, 248, 250); padding: 12px; color: rgb(34, 34, 34); font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial;\"><span class=\"kw\" style=\"color: rgb(122, 31, 162); font-weight: bold;\">const</span> name = <span class=\"str\" style=\"color: rgb(26, 127, 55);\">\"patchbay\"</span>;</pre>",
+      "about": "Two highlighted code blocks, one with a <code> inside its <pre> and one without, as highlighters write both."
+    },
+    {
+      "id": "chromium-copy-data-table",
+      "kind": "clipboard",
+      "engine": "chromium 153.0.8010.12",
+      "html": "<table style=\"color: rgb(34, 34, 34); font-family: Georgia, serif; font-size: medium; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: start; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial;\"><thead><tr><th style=\"background: rgb(238, 238, 238); text-align: left;\">Region</th><th style=\"background: rgb(238, 238, 238); text-align: left;\">Sales</th></tr></thead><tbody><tr><td>North</td><td>3</td></tr><tr><td>South</td><td>5</td></tr></tbody></table><p class=\"muted\" style=\"color: rgb(102, 102, 102); font-family: Georgia, serif; font-size: medium; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial;\">Figures are in thousands.</p>",
+      "about": "A data table with a header row, and a muted note under it."
+    },
+    {
+      "id": "chromium-copy-docs-page",
+      "kind": "clipboard",
+      "engine": "chromium 153.0.8010.12",
+      "html": "<h1 style=\"color: rgb(34, 34, 34); font-family: Georgia, serif; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial;\">Configuration</h1><p style=\"color: rgb(34, 34, 34); font-family: Georgia, serif; font-size: medium; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial;\">Set <code>port</code> in the config file.</p><blockquote style=\"color: rgb(34, 34, 34); font-family: Georgia, serif; font-size: medium; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial;\"><p>Defaults are fine for most people.</p></blockquote><ol style=\"color: rgb(34, 34, 34); font-family: Georgia, serif; font-size: medium; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial;\"><li>Open the file<ul><li>it is in the root</li></ul></li><li>Save it</li></ol>",
+      "about": "A documentation page: a heading, inline code, a quotation and a nested list."
+    },
+    {
+      "id": "firefox-copy-blog-post",
+      "kind": "clipboard",
+      "engine": "firefox 155.0",
+      "html": "<h2>Release notes</h2><p>This week we <em>finally</em> shipped the <a href=\"https://example.com/importer\">new importer</a>. Thanks to <span class=\"author\">Ana</span> for most of it.</p><ul><li>Faster</li><li>Smaller</li></ul>",
+      "about": "A styled article: a heading, a paragraph with emphasis, a link and a classed span, and a list."
+    },
+    {
+      "id": "firefox-copy-highlighted-code",
+      "kind": "clipboard",
+      "engine": "firefox 155.0",
+      "html": "<p>Add them up:</p><pre class=\"code\"><code><span class=\"kw\">function</span> add(a, b) {\r\n  <span class=\"kw\">return</span> a + b;\r\n}</code></pre><pre class=\"code\"><span class=\"kw\">const</span> name = <span class=\"str\">\"patchbay\"</span>;</pre>",
+      "about": "Two highlighted code blocks, one with a <code> inside its <pre> and one without, as highlighters write both."
+    },
+    {
+      "id": "firefox-copy-data-table",
+      "kind": "clipboard",
+      "engine": "firefox 155.0",
+      "html": "<table><thead><tr><th>Region</th><th>Sales</th></tr></thead><tbody><tr><td>North</td><td>3</td></tr><tr><td>South</td><td>5</td></tr></tbody></table><p class=\"muted\">Figures are in thousands.</p>",
+      "about": "A data table with a header row, and a muted note under it."
+    },
+    {
+      "id": "firefox-copy-docs-page",
+      "kind": "clipboard",
+      "engine": "firefox 155.0",
+      "html": "<h1>Configuration</h1><p>Set <code>port</code> in the config file.</p><blockquote><p>Defaults are fine for most people.</p></blockquote><ol><li>Open the file<ul><li>it is in the root</li></ul></li><li>Save it</li></ol>",
+      "about": "A documentation page: a heading, inline code, a quotation and a nested list."
+    }
+  ]
+}

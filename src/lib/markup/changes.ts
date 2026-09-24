@@ -112,6 +112,17 @@ export interface Census {
    * beside it is a tag name.
    */
   readonly classNames: ReadonlyMap<string, ReadonlySet<string>>;
+  /**
+   * How many `<a>` carry an `href`, and how many `<img>` a `src`.
+   *
+   * Counts rather than names, for the one question the name census answered
+   * with the wrong reason: an `<a>` whose address the sanitiser refuses is
+   * unwrapped a step later, and "`<a>` is not on the allowed list" is false -
+   * it is the address that is not. An anchor with no `href` was never a link
+   * and is not counted, so it cannot be mistaken for one that lost its target.
+   */
+  readonly linksWithAddress: number;
+  readonly imagesWithSource: number;
 }
 
 /** hast spells attributes as JSX-ish property names; HTML authors do not. */
@@ -144,10 +155,14 @@ export function censusOf(tree: HastNodes): Census {
   const identifiers = new Set<string>();
   const fragments = new Set<string>();
   const classNames = new Map<string, Set<string>>();
+  let linksWithAddress = 0;
+  let imagesWithSource = 0;
 
   const walk = (node: RootContent | HastNodes): void => {
     if (node.type === 'element') {
       elements.set(node.tagName, (elements.get(node.tagName) ?? 0) + 1);
+      if (node.tagName === 'a' && typeof node.properties.href === 'string') linksWithAddress += 1;
+      if (node.tagName === 'img' && typeof node.properties.src === 'string') imagesWithSource += 1;
       for (const [property, value] of Object.entries(node.properties)) {
         // An attribute present and empty is still present; only `undefined`
         // and `null` mean the parser did not see one.
@@ -177,7 +192,15 @@ export function censusOf(tree: HastNodes): Census {
   };
 
   walk(tree);
-  return { elements, attributes, identifiers, fragments, classNames };
+  return {
+    elements,
+    attributes,
+    identifiers,
+    fragments,
+    classNames,
+    linksWithAddress,
+    imagesWithSource,
+  };
 }
 
 /** A class name that went in on some elements and is not on them afterwards. */

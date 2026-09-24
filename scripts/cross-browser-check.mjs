@@ -3809,11 +3809,27 @@ async function checkRouteFeedback(browser, label) {
 /**
  * WHETHER A NOTIFICATION EVER LEAVES ON ITS OWN.
  *
- * This is the only check in this file that spends most of its time waiting,
- * and it is here because the defect it covers survived a unit suite that had
- * six tests on the toast and hit production anyway. Every one of those tests
- * asserted something about a toast that was on screen; none asked whether it
- * was still there a minute later.
+ * The defect this covers survived a unit suite that had six tests on the toast
+ * and hit production anyway. Every one of those tests asserted something about
+ * a toast that was on screen; none asked whether it was still there a minute
+ * later.
+ *
+ * THE PAGE'S CLOCK IS DRIVEN, NOT WAITED OUT - round sixteen. This section was
+ * 55 s per engine, nearly all of it real twenty-second lifetimes. The
+ * countdown is one `window.setTimeout` per notification and `Date.now()`, both
+ * looked up at the moment they are called (`Toast.tsx`), so Playwright's
+ * `page.clock` - which replaces exactly those - advances the page past a
+ * deadline in no time at all while every pointer event stays a real one. The
+ * lifetime is NOT shortened: the app's own twenty seconds is what the clock
+ * is driven past, and a provider that starts no timer - the reported bug -
+ * leaves the notification on screen however far the clock goes. `runFor`
+ * rather than `fastForward`, because it fires every timer due in the window
+ * rather than each at most once, so a countdown that ticked would be driven
+ * the way time would drive it.
+ *
+ * What it gives up, said: that the engine's REAL setTimeout fires a callback
+ * after twenty real seconds. That is the engine's promise rather than this
+ * app's, and every other timed check in this file already relies on it.
  *
  * The unit suite can ask that now, with a fake clock. What it still cannot ask
  * is whether a REAL pointer reaches the viewport element - jsdom has no
@@ -3852,11 +3868,32 @@ async function checkNotifications(browser, label) {
     return box === null ? null : { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   };
 
+  /*
+   * WHETHER THE COUNT HOLDS, rather than what it reads at one instant.
+   *
+   * A dismissal the driven clock sets off leaves the screen when React commits
+   * it, and WebKit commits a turn later: a count taken the moment `runFor`
+   * returned read 1 with the pause broken, and passed. Found by breaking the
+   * pause, which failed this check in Firefox and not in WebKit. So "still
+   * there" is asked for 400 ms of real time, in which a commit the clock has
+   * already caused lands; "gone" was always a wait for the detachment.
+   */
+  const holds = async (expected) => {
+    for (let look = 0; look < 8; look += 1) {
+      if ((await notifications.count()) !== expected) return false;
+      await page.waitForTimeout(50);
+    }
+    return true;
+  };
+
   try {
     await page.goto(`${ORIGIN}/?p=${shareParam({ v: 3, n: nodes, e: [] })}`, {
       waitUntil: 'networkidle',
     });
     await page.locator('[data-testid="node-n7"]').waitFor({ timeout: 15_000 });
+    // Installed once the canvas is up, so the app boots on real time and only
+    // the countdowns that start from here run on the driven clock.
+    await page.clock.install();
 
     const deleteNode = async (id) => {
       await page.locator(`[data-testid="node-${id}"]`).click({ timeout: 10_000 });
@@ -3870,36 +3907,47 @@ async function checkNotifications(browser, label) {
     /* -- The clock stops under the pointer, and only under the pointer ---- */
 
     /*
-     * The hover arrives LATE in the toast's life on purpose. A deletion offers
-     * an Undo and so lives twenty seconds; resting on it from the start and
-     * waiting past twenty proves the freeze but costs the whole twenty again
-     * to prove the thaw. Fourteen seconds in, twelve seconds held, is past the
-     * deadline either way and leaves only the remainder to wait out.
+     * The hover arrives LATE in the toast's life, fourteen seconds into
+     * twenty, and is held for twelve - past the deadline whichever way the
+     * clock is read, with six seconds left to run once the pointer goes.
      */
     await deleteNode('n1');
-    await page.waitForTimeout(14_000);
+    await page.clock.runFor(14_000);
 
     const overToast = await centreOf(notifications.first());
     if (overToast !== null) await page.mouse.move(overToast.x, overToast.y);
-    await page.waitForTimeout(12_000);
+    await page.clock.runFor(12_000);
 
-    const held = await notifications.count();
+    const held = await holds(1);
     check(
       label,
       'a pointer resting on a notification stops its countdown',
-      overToast !== null && held === 1,
-      `${String(held)} on screen 26s into a 20s life`,
+      overToast !== null && held,
+      `still on screen 26s into a 20s life: ${String(held)}`,
     );
 
+    /*
+     * The positive partner of the thaw: at five of the six seconds left it
+     * is still there, so "gone after the pointer left" is the countdown
+     * finishing and not the notification leaving the moment the pointer did.
+     */
     await page.mouse.move(20, 20);
+    await page.clock.runFor(5_000);
+    const early = await holds(1);
+    await page.clock.runFor(1_500);
     const thawed = await notifications
       .first()
-      .waitFor({ state: 'detached', timeout: 15_000 })
+      .waitFor({ state: 'detached', timeout: 5_000 })
       .then(
         () => true,
         () => false,
       );
-    check(label, 'and finishes it once the pointer has left', thawed, '');
+    check(
+      label,
+      'and finishes it once the pointer has left, when its time is up and not before',
+      early && thawed,
+      `on screen 5s after the pointer left: ${String(early)}; gone at 6.5s: ${String(thawed)}`,
+    );
 
     /* -- The bug, with the mouse that caused it --------------------------- */
 
@@ -3920,10 +3968,12 @@ async function checkNotifications(browser, label) {
       );
 
     await deleteNode('n3');
-    const raisedAt = Date.now();
+    await page.clock.runFor(19_000);
+    const beforeItsTime = await holds(1);
+    await page.clock.runFor(1_500);
     const expired = await notifications
       .first()
-      .waitFor({ state: 'detached', timeout: 26_000 })
+      .waitFor({ state: 'detached', timeout: 5_000 })
       .then(
         () => true,
         () => false,
@@ -3931,8 +3981,8 @@ async function checkNotifications(browser, label) {
     check(
       label,
       'a notification raised after one was dismissed by hand still expires on its own',
-      dismissed && expired,
-      `dismissed=${String(dismissed)}, gone after ${String(Date.now() - raisedAt)}ms`,
+      dismissed && beforeItsTime && expired,
+      `dismissed=${String(dismissed)}, on screen at 19s: ${String(beforeItsTime)}, gone at 20.5s: ${String(expired)}`,
     );
 
     /* -- And the stack has a ceiling -------------------------------------- */
@@ -5948,6 +5998,162 @@ async function checkClassAndSubstitution(browser, label) {
 }
 
 /**
+ * ROUND SIXTEEN: THE CENSUS COUNTS WHAT A READER CAN SEE, in two engines.
+ *
+ * The unit suite holds every census note to the pasted-HTML oracle, which is
+ * three engines' pixels committed as a fixture. What it cannot see is that the
+ * notes a real worker produces are the ones drawn - on the tool page, without
+ * a click, and on a node's face, where only a warning goes. So the three false
+ * notes round fifteen found are driven here, each beside a true loss on the
+ * same page so a check that "draws no note" cannot pass on a page that draws
+ * none at all.
+ *
+ * Every settle word is `zebra`, which is in no description the page shows
+ * before a run - see checkClassAndSubstitution for why that matters.
+ */
+async function checkPastedCensus(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  const PRE = '<pre>zebra one\ntwo</pre>';
+  const SPAN = '<p>a <span>zebra</span> word</p>';
+  const DIV = '<div><p>zebra inside</p></div>';
+  const SUP = '<p>zebra = mc<sup>2</sup></p>';
+  const LOOSE = '<div>zebra on a line</div>';
+  const REFUSED =
+    '<p><a href="javascript:alert(1)">zebra</a> or <a href="https://example.com">this</a></p>';
+
+  const runAs = async (text, target, expected) => {
+    await page.goto(`${ORIGIN}/tools/text-convert`, { waitUntil: 'networkidle' });
+    await page
+      .getByRole('heading', { level: 1, name: 'Text convert' })
+      .waitFor({ timeout: 15_000 });
+    // Typed BEFORE either listbox opens: round eleven's rule.
+    await page.getByLabel('Text convert input').fill(text);
+    await page.getByRole('combobox', { name: 'Source format' }).click();
+    await page.getByRole('option', { name: 'HTML', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Target format' }).click();
+    await page.getByRole('option', { name: target, exact: true }).click();
+
+    const typed = await page.getByLabel('Text convert input').inputValue();
+    if (typed !== text) {
+      return {
+        output: null,
+        notes: { drawn: false, text: `HARNESS: typed ${typed.length} of ${text.length}` },
+      };
+    }
+
+    await page.getByRole('button', { name: 'Run' }).click();
+    const output = page.getByLabel('Text convert Converted');
+    await output.waitFor({ timeout: 30_000 });
+    for (let attempt = 0; attempt < 150; attempt += 1) {
+      const value = await output.inputValue();
+      if (value.includes(expected))
+        return { output: value, notes: await drawnNotes(page, 'Text convert Report notes') };
+      await page.waitForTimeout(100);
+    }
+    return { output: null, notes: { drawn: false, text: 'the output never arrived' } };
+  };
+
+  const claimsAnElement = (text) => text.includes('could not carry') || text.includes('invented');
+
+  try {
+    /* -- the three false notes, gone ------------------------------------- */
+    for (const [name, html, target] of [
+      ['a <pre> with no <code>', PRE, 'Markdown'],
+      ['a bare <span>', SPAN, 'Markdown'],
+      ['a <div> around a paragraph', DIV, 'HTML (normalised)'],
+    ]) {
+      const result = await runAs(html, target, 'zebra');
+      check(
+        label,
+        `${name} draws no note about an element, on the tool page`,
+        result.output !== null && !claimsAnElement(result.notes.text),
+        result.output === null ? result.notes.text : result.notes.text.slice(0, 200),
+      );
+    }
+
+    /* -- the true loss beside them, still said ------------------------- */
+    const sup = await runAs(SUP, 'Markdown', 'zebra');
+    check(
+      label,
+      'and a superscript the round trip unwraps is still drawn, naming it',
+      sup.notes.drawn &&
+        sup.notes.text.includes('could not carry') &&
+        sup.notes.text.includes('<sup>'),
+      sup.notes.text.slice(0, 200),
+    );
+
+    /* -- the paragraph, said at the strength it has --------------------- */
+    const loose = await runAs(LOOSE, 'HTML (normalised)', '<p>zebra on a line</p>');
+    check(
+      label,
+      'loose text put in a paragraph is drawn as a note, and not as a lost element',
+      loose.notes.drawn &&
+        loose.notes.text.includes('Loose content was put in a paragraph') &&
+        !claimsAnElement(loose.notes.text),
+      loose.notes.text.slice(0, 200),
+    );
+
+    /* -- a refused link, with the reason that is true ------------------- */
+    const refused = await runAs(REFUSED, 'HTML (sanitised)', 'zebra');
+    check(
+      label,
+      'a link whose address was refused says it became plain text, not that <a> is refused',
+      refused.notes.drawn &&
+        refused.notes.text.includes('1 link became plain text') &&
+        !refused.notes.text.includes('not on the allowed list'),
+      refused.notes.text.slice(0, 220),
+    );
+
+    /* -- on a node's face, where only a warning goes -------------------- */
+    const markdown = { source: 'html', target: 'markdown' };
+    const normalised = { source: 'html', target: 'html' };
+
+    // The normalised target, not Markdown: a face shows the output's first
+    // line, and a Markdown fence's first line is three backticks, which holds
+    // no settle word. The census is the same one on both targets.
+    const preNode = await onNode(page, 'text-convert', normalised, PRE, (text) =>
+      text.includes('zebra'),
+    );
+    check(
+      label,
+      'a node holding a <pre> with no <code> says nothing about loss',
+      preNode !== null &&
+        preNode.drawn &&
+        preNode.spoken.includes('succeeded') &&
+        !preNode.text.includes('Lossy'),
+      JSON.stringify(preNode),
+    );
+
+    const looseNode = await onNode(page, 'text-convert', normalised, LOOSE, (text) =>
+      text.includes('zebra'),
+    );
+    check(
+      label,
+      'nor does one whose text was put in a paragraph - that note is not a loss',
+      looseNode !== null &&
+        looseNode.drawn &&
+        looseNode.spoken.includes('succeeded') &&
+        !looseNode.text.includes('Lossy'),
+      JSON.stringify(looseNode),
+    );
+
+    const supNode = await onNode(page, 'text-convert', markdown, SUP, (text) =>
+      text.startsWith('Lossy'),
+    );
+    check(
+      label,
+      'while one holding a superscript prints the loss on its face',
+      supNode !== null && supNode.drawn && supNode.text.includes('could not carry'),
+      JSON.stringify(supNode),
+    );
+  } finally {
+    await context.close();
+  }
+}
+
+/**
  * CORPUS ROWS 19 AND 20, AND TWO REFUSALS - structured data.
  *
  *   19  a cell holding a tab, written to TSV in quotes: the note names the
@@ -5956,6 +6162,8 @@ async function checkClassAndSubstitution(browser, label) {
  *       presentation census, which is still ONE line on a node.
  *   SD-8   `!!float abc` refused, where it used to become the string "abc".
  *   SD-14b the duplicate column's refusal drawn with the column it is in.
+ *   JSON   a syntax error drawn with the same line and column in both engines
+ *          (round sixteen; the position no longer comes from the engine).
  */
 async function checkTableCellsAndFlow(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
@@ -5994,6 +6202,43 @@ async function checkTableCellsAndFlow(browser, label) {
   };
 
   try {
+    /*
+     * -- a JSON syntax error's position, the same in both engines ------------
+     *
+     * Round sixteen. The position used to be read out of the engine's own
+     * message, and JavaScriptCore's message never has one, so this panel
+     * showed a line and column in Firefox and nothing in WebKit - and no check
+     * typed bad JSON on a tool page to see it. Each document below is one the
+     * old path gave no position for in at least one engine, measured, and each
+     * check asks for the SAME line and column in both: a check that accepted
+     * whatever this engine printed would be the test that hid it.
+     */
+    for (const [text, where] of [
+      ['{"a": }', 'Line 1, column 7'],
+      ['[1, 2,]', 'Line 1, column 7'],
+      ['{\n  "a": tru\n}', 'Line 2, column 8'],
+    ]) {
+      const bad = await runAs(text, 'JSON', 'YAML', (_output, error) => error.drawn);
+      check(
+        label,
+        `a JSON syntax error in ${JSON.stringify(text)} is drawn with its position, ${where}`,
+        bad !== null &&
+          bad.error.text.includes('That is not valid JSON') &&
+          bad.error.text.includes(where),
+        bad === null ? 'did not settle' : bad.error.text.slice(0, 220),
+      );
+    }
+
+    const good = await runAs('{"a": "zebra"}', 'JSON', 'YAML', (output) =>
+      output.includes('zebra'),
+    );
+    check(
+      label,
+      'and valid JSON draws no error and no position',
+      good !== null && !good.error.drawn && !good.error.text.includes('column'),
+      good === null ? 'did not settle' : good.error.text.slice(0, 120),
+    );
+
     /* -- row 19 ------------------------------------------------------------ */
     const tab = await runAs(TAB_CELL, 'JSON', 'TSV', (output) => output.includes('"has\ttab"'));
     check(
@@ -8062,6 +8307,154 @@ const MOBILE_PROBE = () => {
 };
 
 /**
+ * WAITS UNTIL NOTHING THAT CAN CHANGE THE LAYOUT IS STILL HAPPENING - round
+ * sixteen, for the probe below.
+ *
+ * checkMobileLayout used to wait out 56 navigations with `networkidle`, which
+ * is Playwright's 500 ms of silence after the last request, and then a fixed
+ * 250 ms, with 150-500 ms more around every overlay: measured, 54 of its 83
+ * seconds per engine were those windows passing. And a window is not a
+ * guarantee. A tool page draws its options only when `loadTool` resolves, and
+ * a probe taken before that measures less page and finds fewer faults - it
+ * PASSES - so "early" is the dangerous direction and a fixed wait only makes it
+ * unlikely.
+ *
+ * So this waits for the things themselves, all at once:
+ *
+ *   - no request in flight - `inFlight` is fed by the page's own request
+ *     events, so a chunk the page is still fetching holds it;
+ *   - the fonts loaded, because a swap moves every line;
+ *   - no finite animation or transition still running (an infinite one, the
+ *     route bar's sweep or a travelling dash, would never finish);
+ *   - no DOM mutation across two animation frames, which is what a React
+ *     commit after any of the above looks like.
+ *
+ * Measured against the old waits before replacing them: over 112 loads, both
+ * engines, all four widths, the probe read the same at this point as after
+ * `networkidle` and 250 ms, every time. And `loaded` below is the positive
+ * partner that makes being early a FAILURE rather than a pass.
+ *
+ * AND THE PAGE'S OWN WORD THAT IT HAS DRAWN, because the request half is blind
+ * in WebKit. The first full run with this settle failed twice there - base64,
+ * the first tool page each context opens, measured "still loading its
+ * options". Traced: in WebKit a navigation reports only its four entry files;
+ * the route's chunk and the tool's module are dynamic imports the service
+ * worker answers, and they never appear as page requests at all. So "nothing
+ * in flight" was true while the one fetch that draws the options was still
+ * running. `networkidle` cannot see that fetch either - what covered it before
+ * was the 250 ms that followed, which made it unlikely rather than impossible.
+ * So the settle also waits, within its deadline, for what `LOADED_PROBE`
+ * reads; and the check after it still asks, so a settle that gives up fails.
+ */
+async function settle(page, inFlight, deadline = 15_000) {
+  const until = Date.now() + deadline;
+  await page
+    .waitForFunction(
+      () =>
+        document.readyState === 'complete' &&
+        document.fonts.status === 'loaded' &&
+        !document.querySelector('[data-testid="route-progress"][data-pending]'),
+      undefined,
+      { timeout: deadline },
+    )
+    .catch(() => undefined);
+  await page.waitForFunction(DRAWN, undefined, { timeout: deadline }).catch(() => undefined);
+
+  while (Date.now() < until) {
+    if (inFlight.size === 0) {
+      const quiet = await page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            let changed = false;
+            const observer = new MutationObserver(() => {
+              changed = true;
+            });
+            observer.observe(document, {
+              subtree: true,
+              childList: true,
+              attributes: true,
+              characterData: true,
+            });
+            const running = () =>
+              document
+                .getAnimations()
+                .some(
+                  (animation) =>
+                    animation.playState === 'running' &&
+                    animation.effect?.getComputedTiming().iterations !== Infinity,
+                );
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => {
+                observer.disconnect();
+                resolve(!changed && !running());
+              }),
+            );
+          }),
+      );
+      if (quiet && inFlight.size === 0) return true;
+    } else {
+      await page.waitForTimeout(20);
+    }
+  }
+  return false;
+}
+
+/** The requests a page has started and not yet finished, for `settle`. */
+function requestsInFlight(page) {
+  const inFlight = new Set();
+  page.on('request', (request) => inFlight.add(request));
+  page.on('requestfinished', (request) => inFlight.delete(request));
+  page.on('requestfailed', (request) => inFlight.delete(request));
+  return inFlight;
+}
+
+/**
+ * Whether the page a probe is about to measure has finished drawing itself.
+ *
+ * A tool page says "Loading options..." until its tool's module has arrived,
+ * and keeps Run disabled; measured in that state, every assertion below
+ * passes on less than the page. Asked of every scene, so a settle that
+ * returned early fails a check instead of a probe quietly measuring less.
+ */
+/**
+ * The same question as a predicate, for `settle` to wait on.
+ *
+ * On a tool page, drawn means a Run button that is enabled and no "Loading
+ * options...". "No Run button" is NOT drawn there: before the route's own chunk
+ * arrives the page has neither the placeholder nor the button, and the first
+ * version of this predicate read that as finished - which is how the fix for
+ * WebKit's invisible module fetch failed WebKit again, on the same page.
+ */
+const DRAWN = () => {
+  const run = [...document.querySelectorAll('button')].find(
+    (button) => (button.textContent ?? '').trim() === 'Run',
+  );
+  const toolPage = /^\/tools\/[^/]+/.test(location.pathname);
+  if (document.body.innerText.includes('Loading options')) return false;
+  if (toolPage) return run !== undefined && !run.disabled;
+  return run === undefined || !run.disabled;
+};
+
+const LOADED_PROBE = () => {
+  const run = [...document.querySelectorAll('button')].find(
+    (button) => (button.textContent ?? '').trim() === 'Run',
+  );
+  const toolPage = /^\/tools\/[^/]+/.test(location.pathname);
+  const loading = document.body.innerText.includes('Loading options');
+  const missing = toolPage && run === undefined;
+  return {
+    loaded: !loading && !missing && (run === undefined || !run.disabled),
+    detail: loading
+      ? 'still loading its options'
+      : missing
+        ? 'a tool page with no Run button yet'
+        : run?.disabled
+          ? 'Run is disabled'
+          : '',
+  };
+};
+
+/**
  * EVERY ROUTE AND EVERY OVERLAY AT FOUR PHONE WIDTHS, WITH A TOUCH POINTER.
  *
  * `checkTouch` above proves the canvas responds to fingers. This proves the
@@ -8096,6 +8489,22 @@ const MOBILE_PROBE = () => {
 async function checkMobileLayout(engine, label) {
   // Its own browser, for the pointer prefs. See `launchTouchBrowser`.
   const browser = await launchTouchBrowser(engine);
+
+  /**
+   * Settles the page, checks it drew all of itself, and measures it: the one
+   * way every scene below is looked at, so no scene can be measured early.
+   */
+  const measure = async (page, inFlight, width, scene) => {
+    const settled = await settle(page, inFlight);
+    const drawn = await page.evaluate(LOADED_PROBE);
+    check(
+      label,
+      `${scene} at ${String(width)}px had finished drawing when it was measured`,
+      settled && drawn.loaded,
+      settled ? drawn.detail : 'HARNESS: the page never settled in 15s',
+    );
+    assess(width, scene, await page.evaluate(MOBILE_PROBE));
+  };
 
   /** Turns one probe result into pass/fail lines under a scene's name. */
   const assess = (width, scene, probe) => {
@@ -8151,6 +8560,7 @@ async function checkMobileLayout(engine, label) {
         hasTouch: true,
       });
       const page = await context.newPage();
+      const inFlight = requestsInFlight(page);
 
       try {
         await gotoCanvas(page);
@@ -8179,9 +8589,8 @@ async function checkMobileLayout(engine, label) {
 
         /* -- Every route --------------------------------------------------- */
         for (const [path, name] of MOBILE_ROUTES) {
-          await page.goto(`${ORIGIN}${path}`, { waitUntil: 'networkidle' });
-          await page.waitForTimeout(250);
-          assess(width, name, await page.evaluate(MOBILE_PROBE));
+          await page.goto(`${ORIGIN}${path}`, { waitUntil: 'load' });
+          await measure(page, inFlight, width, name);
         }
 
         /* -- Every overlay ------------------------------------------------- */
@@ -8190,9 +8599,7 @@ async function checkMobileLayout(engine, label) {
 
         await page.getByRole('button', { name: 'Add tool' }).click();
         await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
-        await page.waitForTimeout(200);
-        const palette = await page.evaluate(MOBILE_PROBE);
-        assess(width, 'the command palette', palette);
+        await measure(page, inFlight, width, 'the command palette');
         await page.keyboard.press('Escape');
 
         await page
@@ -8201,10 +8608,9 @@ async function checkMobileLayout(engine, label) {
           .click({ position: { x: 30, y: 300 } });
         await page.keyboard.press('?');
         await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
-        await page.waitForTimeout(200);
-        assess(width, 'the shortcuts reference', await page.evaluate(MOBILE_PROBE));
+        await measure(page, inFlight, width, 'the shortcuts reference');
         await page.keyboard.press('Escape');
-        await page.waitForTimeout(150);
+        await settle(page, inFlight);
 
         /*
          * THE OVERFLOW MENU, which is the one overlay that exists ONLY at these
@@ -8224,10 +8630,7 @@ async function checkMobileLayout(engine, label) {
         );
         await more.click();
         await page.locator('[role="menuitem"]').first().waitFor({ timeout: 5_000 });
-        await page.waitForTimeout(200);
-
-        const menu = await page.evaluate(MOBILE_PROBE);
-        assess(width, 'the overflow menu', menu);
+        await measure(page, inFlight, width, 'the overflow menu');
 
         const items = await page.evaluate(() =>
           [...document.querySelectorAll('[role="menuitem"]')].map((el) => {
@@ -8253,8 +8656,7 @@ async function checkMobileLayout(engine, label) {
         await page.getByRole('button', { name: 'Add tool' }).click();
         await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
         await page.getByTestId('dialog-option-diff').click();
-        await page.waitForTimeout(500);
-        assess(width, 'the canvas with a node', await page.evaluate(MOBILE_PROBE));
+        await measure(page, inFlight, width, 'the canvas with a node');
 
         /*
          * THE INSPECTOR SHEET, which is the one region of this app that
@@ -8265,7 +8667,7 @@ async function checkMobileLayout(engine, label) {
          * output view inside 65% of a 780px screen.
          */
         await inspectFirstNode(page);
-        assess(width, 'the inspector sheet', await page.evaluate(MOBILE_PROBE));
+        await measure(page, inFlight, width, 'the inspector sheet');
         await setInspector(page, false);
 
         /*
@@ -8279,7 +8681,7 @@ async function checkMobileLayout(engine, label) {
          */
         await page.locator('[data-node-id]').first().focus();
         await page.keyboard.press('c');
-        await page.waitForTimeout(300);
+        await settle(page, inFlight);
         /*
          * A FAILURE, NOT A SKIP, WHEN IT DOES NOT OPEN.
          *
@@ -8303,16 +8705,16 @@ async function checkMobileLayout(engine, label) {
           '',
         );
         if (opened) {
-          assess(width, 'the connect dialog', await page.evaluate(MOBILE_PROBE));
+          await measure(page, inFlight, width, 'the connect dialog');
           await page.keyboard.press('Escape');
-          await page.waitForTimeout(150);
+          await settle(page, inFlight);
         }
 
         /* -- The theme editor ---------------------------------------------- */
-        await page.goto(`${ORIGIN}/styleguide`, { waitUntil: 'networkidle' });
+        await page.goto(`${ORIGIN}/styleguide`, { waitUntil: 'load' });
+        await settle(page, inFlight);
         await page.getByRole('button', { name: 'Create theme' }).click();
-        await page.waitForTimeout(400);
-        assess(width, 'the theme editor', await page.evaluate(MOBILE_PROBE));
+        await measure(page, inFlight, width, 'the theme editor');
 
         /*
          * The two controls named in the original report, asserted by name so a
@@ -8376,7 +8778,8 @@ async function checkMobileLayout(engine, label) {
         );
 
         /* -- A tool with output, including the notes ----------------------- */
-        await page.goto(`${ORIGIN}/tools/diff`, { waitUntil: 'networkidle' });
+        await page.goto(`${ORIGIN}/tools/diff`, { waitUntil: 'load' });
+        await settle(page, inFlight);
         const boxes = page.locator('textarea:not([readonly])');
         await boxes
           .nth(0)
@@ -8389,10 +8792,10 @@ async function checkMobileLayout(engine, label) {
         await page
           .locator('[aria-label="What this comparison ignored"]')
           .waitFor({ timeout: 20_000 });
-        await page.waitForTimeout(300);
-        assess(width, 'the diff output and its notes', await page.evaluate(MOBILE_PROBE));
+        await measure(page, inFlight, width, 'the diff output and its notes');
 
-        await page.goto(`${ORIGIN}/tools/regex-tester`, { waitUntil: 'networkidle' });
+        await page.goto(`${ORIGIN}/tools/regex-tester`, { waitUntil: 'load' });
+        await settle(page, inFlight);
         await page
           .locator('textarea:not([readonly])')
           .first()
@@ -8403,8 +8806,7 @@ async function checkMobileLayout(engine, label) {
           .fill('(?<user>[\\w.]+)@(?<host>[\\w.]+)');
         await page.getByRole('button', { name: 'Run' }).click();
         await page.locator('[aria-label="Match listing"]').waitFor({ timeout: 20_000 });
-        await page.waitForTimeout(300);
-        assess(width, 'the regex match table', await page.evaluate(MOBILE_PROBE));
+        await measure(page, inFlight, width, 'the regex match table');
 
         /*
          * The match table is five columns of data and DOES scroll sideways on the
@@ -8436,8 +8838,7 @@ async function checkMobileLayout(engine, label) {
         const trigger = page.locator('[role="combobox"]').first();
         await trigger.click();
         await page.locator('[role="option"]').first().waitFor({ timeout: 5_000 });
-        await page.waitForTimeout(200);
-        assess(width, 'an open select', await page.evaluate(MOBILE_PROBE));
+        await measure(page, inFlight, width, 'an open select');
         await page.keyboard.press('Escape');
       } finally {
         await context.close().catch(() => {});
@@ -13702,6 +14103,7 @@ const SECTIONS = [
   checkColourReports,
   checkMarkdownCensus,
   checkClassAndSubstitution,
+  checkPastedCensus,
   checkTableCellsAndFlow,
   checkClaimsAndHue,
   checkSerialisedFaces,

@@ -565,6 +565,13 @@ const IDENTIFIER_PROPERTIES = ['id', 'name', 'ariaDescribedBy', 'ariaLabelledBy'
 export const ID_NAMESPACE = 'user-content-';
 
 /**
+ * Every element name the sanitiser lets through, for the report that says an
+ * element "is not on the allowed list" - so that sentence is checked against
+ * the list rather than inferred from an element having gone.
+ */
+export const ALLOWED_ELEMENTS: ReadonlySet<string> = new Set(SANITISE_SCHEMA.tagNames ?? []);
+
+/**
  * Namespaces author-supplied identifiers, and points in-document links at them.
  *
  * Two real bugs, both found by the semantic-stability property test, both

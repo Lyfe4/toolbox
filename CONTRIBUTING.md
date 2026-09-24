@@ -65,7 +65,7 @@ unable to see most of what that script checks.
 treat that as the run a commit needs:
 
 ```bash
-pnpm check:browsers --list                              # the 52 section names
+pnpm check:browsers --list                              # the 53 section names
 pnpm check:browsers --only=popovers,valuemodel          # a substring of each, `check` optional
 pnpm check:browsers --only=outputviews --engine=webkit  # one engine
 ```

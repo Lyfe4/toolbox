@@ -9,6 +9,7 @@ import {
   type LostClassName,
   type MarkupChange,
 } from '@/lib/markup/changes';
+import { compareRendered, renderedCensusOfHtml } from '@/lib/markup/rendering';
 import { lost, noted, type ToolNote } from '@/lib/notes';
 import { plural } from '@/lib/plural';
 
@@ -94,6 +95,14 @@ export interface NormalisationInput {
    * keep it out of.
    */
   readonly idNamespace: string;
+  /**
+   * The element names the sanitiser permits, passed in for the same reason as
+   * `idNamespace`: the schema lives beside the pipelines, and a static import
+   * would pull the markup library into the graph the dynamic import keeps it
+   * out of. The element note's sentence is "is not on the allowed list", and
+   * this is what makes that sentence checked rather than assumed.
+   */
+  readonly allowedElements: ReadonlySet<string>;
 }
 
 /** An attribute's name as a sentence fragment: `data-*` rather than eleven of them. */
@@ -101,92 +110,11 @@ function attributeLabel(name: string): string {
   return name.startsWith('data-') ? 'data-*' : name;
 }
 
-/**
- * THE TWO ELEMENTS A CENSUS SEES MOVE THAT NOBODY WROTE.
- *
- * `<thead>` and `<tbody>` are inserted by the HTML parser and by the HTML
- * serialiser on their own account: `<table><tr><th>h</th></tr>` parses with
- * the row inside an implied `<tbody>` and no `<thead>` at all, and every
- * table `markdownToHtml` writes has a `<thead>`. So the commonest shape of
- * hand-written table there is - a header row written as a plain `<tr>` of
- * `<th>` - reported `1 element was invented by the round trip` on a document
- * where nothing visible was invented, under a body that said the table had
- * gained an empty header row. It had not.
- *
- * Found by extending the census to the Markdown target, where the note is new
- * and a false one would be the first thing anybody saw. It was already wrong
- * on `HTML → HTML (normalised)`, where it has been shipped since round four;
- * the count there drops by one and TC-13's three invented elements become the
- * two a reader can point at, `<tr>` and `<th>`.
- *
- * FILTERED HERE AND NOT IN `changes.ts`, on purpose. The census is a question
- * with one answer and these elements really are in one document and not the
- * other; what is wrong is SAYING SO to a person. This module is where the
- * sentence is written, so this is where the decision belongs - and
- * `compareMarkup`'s own tests still assert the unfiltered truth.
- */
-const SERIALISER_WRAPPERS: ReadonlySet<string> = new Set(['thead', 'tbody']);
-
-/**
- * FOUR ELEMENTS THE ROUND TRIP RESPELLS, WHICH A CENSUS READS AS A LOSS AND AN
- * INVENTION.
- *
- * Markdown has one spelling for bold, and `<b>` and `<strong>` both come back
- * from it as `<strong>`. The census sees a `<b>` go and a `<strong>` arrive and
- * said so in two notes - `<b>` among the elements the round trip could not
- * carry, `<strong>` among the ones it invented - on every document with a bold
- * word in it, on `HTML → HTML (normalised)` since round four and on the
- * Markdown target since round ten. Found in round thirteen by reading the
- * notes a probe for TC-4 printed for a document with nothing wrong with it.
- *
- * Each pair is two names for one rendering, and that is checked against a
- * reference rather than asserted: the HTML Standard's rendering section
- * (§15.3.4, phrasing content) gives `b, strong` one rule (`font-weight:
- * bolder`), `i, em` one (`font-style: italic`), `s, strike, del` one
- * (`text-decoration: line-through`) and `tt, code` one (`font-family:
- * monospace`). `<mark>` and `<var>` are deliberately NOT here: a highlight is
- * not italics, and `var` is italic where `code` is monospace, so either
- * becoming the other is a change a reader can see.
- *
- * Suppressed only when the counts balance exactly - every `<strong>` gained is
- * accounted for by a `<b>` lost - so a document that ALSO had a `<strong>`
- * invented for some other reason still hears about it.
- */
-const RESPELLINGS: Readonly<Record<string, readonly string[]>> = {
-  strong: ['b'],
-  em: ['i'],
-  del: ['s', 'strike'],
-  code: ['tt'],
-};
-
-function respelled(first: Census, second: Census): ReadonlySet<string> {
-  const quiet = new Set<string>();
-  const count = (census: Census, tag: string): number => census.elements.get(tag) ?? 0;
-
-  for (const [target, sources] of Object.entries(RESPELLINGS)) {
-    const gained = count(second, target) - count(first, target);
-    const went = sources.filter((tag) => count(first, tag) > count(second, tag));
-    const lost = went.reduce((sum, tag) => sum + count(first, tag) - count(second, tag), 0);
-    if (gained > 0 && gained === lost) {
-      quiet.add(target);
-      for (const tag of went) quiet.add(tag);
-    }
-  }
-
-  return quiet;
-}
-
-function named(
-  changes: readonly MarkupChange[],
-  kind: MarkupChange['kind'],
-  quiet: ReadonlySet<string> = new Set(),
-): string[] {
+function named(changes: readonly MarkupChange[], kind: MarkupChange['kind']): string[] {
   return [
     ...new Set(
       changes
         .filter((change) => change.kind === kind)
-        .filter((change) => kind === 'attribute-dropped' || !SERIALISER_WRAPPERS.has(change.name))
-        .filter((change) => kind === 'attribute-dropped' || !quiet.has(change.name))
         .map((change) =>
           kind === 'attribute-dropped' ? attributeLabel(change.name) : `<${change.name}>`,
         ),
@@ -422,8 +350,37 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
   const inputCensus = censusOfHtml(input.input);
   const sanitisedCensus = censusOfHtml(input.sanitised);
   const bySanitiser = compareCensus(inputCensus, sanitisedCensus);
-  const sanitisedAttributes = named(bySanitiser, 'attribute-dropped');
-  const sanitisedElements = named(bySanitiser, 'element-dropped');
+
+  /*
+   * A LINK AND AN IMAGE THE LIST REFUSED, WHICH ARE NOT THE ELEMENTS IT REFUSED.
+   *
+   * `<a>` and `<img>` are on the allowed list. When their ADDRESS is not, the
+   * sanitiser removes the attribute and two steps after it take the element
+   * too - a link to nowhere becomes its words, an image with no source becomes
+   * its alt text - and the name census saw an `<a>` go and said the element
+   * "is not on the allowed list". It is. Found by the pasted-HTML corpus
+   * (`refused-link`, `refused-image`), with the same wrong reason given for
+   * the Google Docs `<b>` that `unwrapFakeBold` removes before the sanitiser
+   * runs, which nothing needs to be told about: that `<b>` asked not to be bold.
+   *
+   * So the element note names only what the list really refuses, which is
+   * what its sentence says, and the two elements that go for their address
+   * say that instead. The attribute note leaves out an `href`, `src` or `alt`
+   * these two already account for: the same loss twice is a list nobody reads.
+   */
+  const deadLinks = inputCensus.linksWithAddress - sanitisedCensus.linksWithAddress;
+  const deadImages = inputCensus.imagesWithSource - sanitisedCensus.imagesWithSource;
+  const sanitisedAttributes = named(bySanitiser, 'attribute-dropped').filter(
+    (name) =>
+      !(name === 'href' && deadLinks > 0) &&
+      !((name === 'src' || name === 'alt') && deadImages > 0),
+  );
+  const sanitisedElements = named(
+    bySanitiser.filter((change) => !input.allowedElements.has(change.name)),
+    'element-dropped',
+  );
+  const addresses =
+    'which keeps http, https, mailto and tel addresses and relative ones and refuses every other scheme - javascript:, data: and blob: among them';
 
   if (sanitisedAttributes.length > 0) {
     notes.push(
@@ -441,6 +398,26 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
       lost(
         `${sanitisedElements.length.toString()} ${plural(sanitisedElements.length, 'element was', 'elements were')} removed by the sanitiser`,
         `${sanitisedElements.join(', ')} ${plural(sanitisedElements.length, 'is', 'are')} not on the allowed list. Scripts, styles and embedded frames are removed outright rather than escaped, because what this tool produces is meant to be safe to paste into a page.`,
+        HUB_AND_OUTPUT,
+      ),
+    );
+  }
+
+  if (deadLinks > 0) {
+    notes.push(
+      lost(
+        `${deadLinks.toString()} ${plural(deadLinks, 'link became', 'links became')} plain text`,
+        `The address of ${plural(deadLinks, 'a link', 'each')} was refused by the allowed list, ${addresses}. A link with no address goes nowhere, so its words are kept and the link is not.`,
+        HUB_AND_OUTPUT,
+      ),
+    );
+  }
+
+  if (deadImages > 0) {
+    notes.push(
+      lost(
+        `${deadImages.toString()} ${plural(deadImages, 'image was', 'images were')} replaced by ${plural(deadImages, 'its', 'their')} alt text`,
+        `The source of ${plural(deadImages, 'an image', 'each')} was refused by the allowed list, ${addresses}. An image with no source could only draw a broken-image icon, so an image with alt text becomes that text and one without is removed.`,
         HUB_AND_OUTPUT,
       ),
     );
@@ -502,7 +479,7 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
    * underneath it was about a different document.
    *
    * Asked of `<tr>` and `<th>`, which is what an invented header row IS - the
-   * `<thead>` around it is filtered out above as the serialiser's own.
+   * `<thead>` around it draws nothing and is not counted (`rendering.ts`).
    */
   const tableRow = (elements: readonly string[]): string =>
     elements.includes('<tr>') || elements.includes('<th>')
@@ -523,12 +500,44 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
       ? ' A list marked reversed counted down; a Markdown list always counts up from its first number, so the same items, in the same order, now count up.'
       : '';
 
+  /*
+   * ATTRIBUTES BY NAME, ELEMENTS BY WHAT THEY DRAW.
+   *
+   * An attribute's name is the thing a reader loses - a stylesheet hook, a
+   * language, a title - so the name census answers the attribute question.
+   * An element's name is not: `<b>` and `<strong>` draw the same bold, a bare
+   * `<span>` draws nothing, and a census of names said all three were losses
+   * or inventions. The elements are compared by `rendering.ts`, which counts
+   * what the HTML Standard's stylesheet makes of each one where it stands,
+   * and is held to three engines' pixels by the pasted-HTML corpus.
+   */
   const normalisedCensus = censusOfHtml(input.normalised);
   const byRoundTrip = compareCensus(sanitisedCensus, normalisedCensus);
-  const quiet = respelled(sanitisedCensus, normalisedCensus);
+  const drawn = compareRendered(
+    renderedCensusOfHtml(input.sanitised),
+    renderedCensusOfHtml(input.normalised),
+  );
   const droppedAttributes = named(byRoundTrip, 'attribute-dropped');
-  const droppedElements = named(byRoundTrip, 'element-dropped', quiet);
-  const added = named(byRoundTrip, 'element-added', quiet);
+  const droppedElements = named(drawn, 'element-dropped');
+  const addedElements = named(drawn, 'element-added');
+
+  /*
+   * AN INVENTED PARAGRAPH IS SAID, AND SAID AT THE STRENGTH IT HAS.
+   *
+   * Markdown holds text in paragraphs, so text that was loose - directly in
+   * the document, in a `<div>` that draws nothing, in a list term - comes back
+   * inside a `<p>`, and a `<p>` has a line of space above and below it. Whether
+   * that space SHOWS depends on its neighbours: measured, it is invisible
+   * after a heading at the end of a document, sixteen pixels in front of a
+   * `<div>` and eight at the top of one, in all three engines. A census
+   * cannot see the neighbours (see `rendering.ts`), so the claim it can
+   * support is the weaker one - the paragraph is there, and it
+   * may move things - and that is an `info`, not a loss on the node's face.
+   * The other inventions stay warnings: a header row, a link a bare URL grew,
+   * are things a reader sees wherever they are.
+   */
+  const paragraphs = addedElements.includes('<p>');
+  const added = addedElements.filter((name) => name !== '<p>');
 
   if (droppedAttributes.length > 0) {
     notes.push(
@@ -572,6 +581,15 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
         `${added.length.toString()} ${plural(added.length, 'element was', 'elements were')} invented by the round trip`,
         `${added.join(', ')} ${plural(added.length, 'is', 'are')} in the result and ${plural(added.length, 'was', 'were')} not in the input.${tableRow(added)}${measured} Choose HTML (sanitised) for a pass that invents nothing.`,
         afterHub(input),
+      ),
+    );
+  }
+
+  if (paragraphs) {
+    notes.push(
+      noted(
+        'Loose content was put in a paragraph',
+        `Something in the input that was not inside a paragraph - text or an image directly in the document, in a <div>, in a list term - is inside a <p> now, because a paragraph is the only way Markdown can hold it. A paragraph has a line of space above and below it, which shows wherever its neighbours do not already have as much.${measured}`,
       ),
     );
   }

@@ -3702,3 +3702,415 @@ a build.
   across four tools with two separators. One helper; not taken.
 - **Wall-clock sites** from the memory note (`performance.test.tsx`'s
   `perOp < 30`, `diff.test.ts`, `malformed.test.ts`) — untouched.
+
+## Round sixteen, done — the census, the JSON position, and two waits
+
+2026-09-24, against `5a58276`. The last fix round before the documentation
+audit, so the audit is not written against notes already known to be false.
+
+|                                              | Before                                   | After                                                        |
+| -------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------ |
+| Pasted-HTML corpus, census checks failing    | **105 of 792**                           | **0 of 1,082**                                               |
+| — documents with an element note nobody sees | **22 of 71**, on both round-trip targets | 0                                                            |
+| — documents naming an element nobody sees go | **26 of 71**                             | 0                                                            |
+| — documents told an allowed element was not  | 3                                        | 0                                                            |
+| JSON syntax error with a position, WebKit    | **0 of 2,165**                           | 2,165 of 2,165                                               |
+| … Chromium (V8)                              | 1,561 of 2,165 (72%)                     | 2,165 of 2,165                                               |
+| … Firefox (Gecko)                            | 2,165 of 2,165                           | 2,165 of 2,165                                               |
+| `checkNotifications`, per engine             | 54.9 s / 54.5 s                          | 3.1 s / 4.1 s                                                |
+| `checkMobileLayout`, per engine              | 82.8 s / 88.7 s                          | 33.8 s / 44.7 s                                              |
+| Unit tests                                   | 5,320                                    | 6,431                                                        |
+| `check:browsers`, full run                   | 1,115 s, 2,864 passed                    | **903 s, 3,082 passed, 0 failed, 10 skipped**, idle (2% CPU) |
+
+### Part one — the corpus first, then the census
+
+**The corpus.** [`spec/pasted-html.corpus.json`](../src/tools/text-convert/spec/pasted-html.corpus.json),
+71 documents, each with where it came from:
+
+- **49 hand-written**, in the shapes people type: no `<p>` where one is
+  optional, `<pre>` with no `<code>`, a `<div>` for a line, `<b>` for bold. Each
+  isolates one construct where it can.
+- **14 export-shapes** — Google Docs' clipboard flavour, Word, Outlook, Gmail,
+  a GitHub README's DOM, MediaWiki, Stack Overflow, MDN, WordPress blocks,
+  Notion, a table-laid-out email, Medium, Confluence. **Reconstructed, not
+  captured**: none of those products can be driven from here, so each entry
+  says which of the format's features it reproduces, around text written for
+  the corpus. Weaker than a capture and marked as such.
+- **8 clipboard captures** — a real Ctrl+C over four pages
+  [`capture-pasted-html.mjs`](../scripts/capture-pasted-html.mjs) serves
+  itself, read back with `navigator.clipboard.read()`, in Chromium and Firefox.
+  Chromium's serialiser writes the whole computed style onto every element.
+  **No WebKit capture**: its async clipboard returns no items to a read in
+  Playwright's build, measured, so there is none rather than an imitation.
+
+There is no rich-paste handler in the app — pasted HTML arrives as source
+text, from devtools, a clipboard viewer, an export or a CMS's HTML view. The
+corpus is that.
+
+**The oracle, which does not read the census.**
+[`generate-pasted-html-oracle.mjs`](../scripts/generate-pasted-html-oracle.mjs)
+runs each document through the tool, renders the pairs in Chromium 153,
+Firefox 155 and WebKit 26.6 under the UA stylesheet, and commits
+[`pasted-html.oracle.json`](../src/tools/text-convert/spec/pasted-html.oracle.json):
+per engine, whether a reader can see the round trip's difference, whether the
+accessibility tree changed, and — for every element name whose count changed —
+whether unwrapping every one of them changes what anybody can see.
+
+"Can see" had to be defined twice before it held:
+
+1. **Pixel identity was wrong both ways.** Chromium re-rasterises a glyph at a
+   fractional offset wherever an element boundary restarts a text run — 21
+   pixels of one `1` when spans are unwrapped inside a `<pre>`, which nobody
+   could see. A strike line through `old` is 16 pixels. No count separates
+   them.
+2. **Ink proximity alone was too kind.** A pixel of ink with no ink within one
+   pixel of it in the other picture forgives the moved glyph — and, in WebKit,
+   the strike, which lies within a pixel of the letters it crosses. The
+   calibration caught it before any corpus document was judged.
+3. **So visible = ink OR layout**: the ink rule, or any visible character
+   placed more than a pixel away or drawn in a different computed style
+   (colour, font, weight, slant, decoration from every ancestor, background),
+   or a replaced box that moved. **Calibrated**: 12 pairs every engine must see
+   (one bold letter, a strike, a dotted underline, a colour, a comma for a full
+   stop, quotation marks…) and 3 it must not (round fifteen's three), in all
+   three engines, or the generator refuses to write. The test asserts the
+   committed calibration rather than the generator's log. Every engine also
+   draws every document twice, identically, before its answer is believed.
+
+**What the corpus read, before.** The unit test holding every census note to
+the oracle — [`pasted-html.test.ts`](../src/tools/text-convert/pasted-html.test.ts)
+— run against the shipped code: **105 of 792 checks failed.**
+
+- **22 of 71 documents** carry an element note on both round-trip targets
+  where no engine draws any difference: every bare `<span>` (Word, Outlook,
+  Stack Overflow, Confluence, both clipboard blog posts…), every `<div>` wrapper,
+  `<section>`, every `<pre>` with no `<code>` (GitHub's README, both clipboard
+  code blocks), and two `<p>` inventions.
+- **26** name an element no engine can see go or arrive: those 22, and four
+  where the rest of the note is true — the `<dt>` beside a definition list's
+  `<dl>` and `<dd>`, the `<span>` beside Google Docs' lost `<br>`, the `<div>`
+  and `<span>` beside MDN's label paragraph, the `<div>` beside a paragraph a
+  line of text became.
+- **3** are told an element "is not on the allowed list" that is on it — see
+  below.
+
+**Whether any of the five turned out to be a real loss.** No. Two of the five
+were not shipping (see the framing); the other three — `<code>` invented in a
+`<pre>`, a bare `<span>`, a `<div>` wrapper — change nothing any of three
+engines draws, in any document in the corpus, with one kind of exception that
+is not a loss either: WebKit kerns differently across a span boundary. The `[`
+of a Wikipedia citation and the full stop after a `<span lang="fr">bonjour</span>`
+sit a pixel over, with a layout box two pixels narrower; 2 and 4 pixels change,
+none of them ink more than a pixel from ink. The oracle's layout rule counts a
+box that moved or resized by more than a pixel as visible, so it calls those
+two visible in WebKit — stricter than a reader, in the direction that calls a
+note true, and deciding no assertion, because the positive half asks for all
+three engines. What does change for two of
+them is the **accessibility tree**: `code` and `p` have roles, `span` and an
+anonymous block do not. 12 documents are pixel-identical and differ only there.
+That is recorded, not turned into notes: no screen reader announces a `code`,
+`paragraph`, `strong` or `emphasis` role by default — a judgement, not a
+measurement — and the respelling filter round thirteen shipped already treats
+`<b>`/`<strong>` the same way. What the `lang` span does lose is its `lang`,
+and the attribute note already says so.
+
+**And the corpus found three false notes nobody had listed.**
+
+- **The sanitiser gave a false reason, three times.** The Google Docs
+  `<b style="font-weight:normal">` is unwrapped by `unwrapFakeBold` before the
+  sanitiser runs; a link whose address is refused is unwrapped by
+  `unwrapDeadLinks` after it; an image whose source is refused becomes its alt
+  text. Each was reported as "`<b>`/`<a>`/`<img>` is not on the allowed list".
+  It is.
+- **Round fifteen's `blockquote → margins` was wrong.** The invented `<p>` in
+  `<blockquote>quoted</blockquote>` is invisible in all three engines: its
+  margins collapse into the quotation's. So is the one after a heading at the
+  end of a document. The same `<p>` moves the next line 16 px in front of a
+  `<div>`, and 8 px at the top of a document, measured in all three — so
+  whether it shows depends on its neighbours.
+
+### The census decision: see enough — and weaken the one claim it cannot see
+
+**Chosen: the census counts what each element contributes to the rendering,
+not its name** — [`src/lib/markup/rendering.ts`](../src/lib/markup/rendering.ts),
+five rules taken from the HTML Standard's rendering section:
+
+1. **One rendering, two names** — `b, strong`; `cite, dfn, em, i, var`;
+   `code, kbd, samp, tt`; `del, s, strike`; `ins, u`. Counted under the rule.
+2. **No rendering of its own** — `span`; `abbr` without a title; `a` without an
+   href. Other attributes are the attribute census's, by name.
+3. **Already in effect** — `code` inside `pre`; an italic inside an italic.
+   Absolute rules only: a bold inside a bold is bolder.
+4. **A block that draws nothing and joins nothing** — `display: block` and
+   nothing else, unless unwrapping it would join two runs of text into a line.
+5. **A row group** — `thead`, `tbody`.
+
+Rules 1 and 5 replace round thirteen's `RESPELLINGS` and round ten's
+`SERIALISER_WRAPPERS`, which are gone; rules 2–4 are the three false notes.
+Element notes on the round trip read this census; attribute, class and
+identifier notes still read names, because for them the name is the loss.
+
+**Why not the other option.** Weakening every element note to what a name
+census supports — "`<span>` is not in the result" — is true, and it is either
+a warning that fires on every paste or an `info` nobody sees. The first cries
+wolf with true sentences. The second takes the caption, the superscript and
+the invented header row off the node's face, and loss-corpus rows 13, 14, 15
+and 17 back to silent. A true note that says less is better than a false one;
+a true note that says nothing about the losses is not the trade the brief
+offered.
+
+**Where the census cannot see, the claim was weakened instead.** Whether an
+invented `<p>` shows depends on its neighbours' margins, and a census cannot
+see neighbours without a tree diff — the instrument `changes.ts` records the
+reasons for not building. So `<p> was invented` is no longer a warning. It is
+an `info`, "Loose content was put in a paragraph", whose body says the space
+"shows wherever its neighbours do not already have as much", which is true of
+every document the corpus holds. That is the one place this round took the
+weaker option, and it is the place where the stronger one would need an
+instrument that does not exist.
+
+**The sanitiser note** names only elements the schema refuses — checked
+against the schema, so its sentence is true by construction — and a refused
+link or image says what happened: `1 link became plain text`, `1 image was
+replaced by its alt text`. `<b>` unwrapped for asking not to be bold says
+nothing: it changes nothing.
+
+**Two-engine proof.** `checkPastedCensus`, a new section: the three false
+notes absent on `/tools` and on a node's face; a superscript still drawn beside
+them, so "draws no note" cannot pass on a page that draws none; the paragraph
+`info` drawn in the report and absent from the node; the refused link's true
+reason.
+
+### Part two — the JSON position
+
+**Measured, per engine.** A sweep generated by
+[`generate-json-syntax-oracle.mjs`](../scripts/generate-json-syntax-oracle.mjs):
+every single-character deletion, substitution and insertion, on a fixed
+stride, of five valid seeds — 2,165 documents all three engines refuse.
+
+| Engine              | Position in its message  |
+| ------------------- | ------------------------ |
+| Firefox 155 (Gecko) | **2,165 of 2,165**       |
+| Chromium 153 (V8)   | **1,561 of 2,165 (72%)** |
+| WebKit 26.6 (JSC)   | **0 of 2,165**           |
+
+V8 has no position for any "Unexpected token" message — `{"a": }`, `[1, 2,]`, a
+misspelled `true`, an empty input. JavaScriptCore has none for anything. **So
+on the tool page, Safari never showed where a JSON document was wrong**, and
+the test that should have noticed ran in the one engine the unit suite has
+(Node's V8) on the one document V8 words with a position. Hand-checked first on
+23 documents in a worker as well as on the main thread: the same answers.
+
+**Verdict: recoverable, so recovered.** JSON's grammar fits in one function.
+[`locateJsonSyntaxError`](../src/lib/jsonSyntax.ts) reads the document against
+RFC 8259 and returns the offset of the first place it breaks; the engine still
+decides WHETHER it is JSON. Iterative, because the document may have been
+refused for depth. **Held to two engines' parsers**: equal to Gecko's offset
+on all 2,165, and to V8's on all 1,487 where V8 gives one and agrees with
+Gecko. They disagree on exactly one class, 74 times, and the generator refuses
+to write if any other kind appears: a misspelled keyword, where Gecko points at
+the word and V8 at the first wrong letter. This follows Gecko — the engine that
+answers every case, and the caret under the start of the word someone
+misspelled.
+
+**The assertion holds in both engines** because it asks for the same line and
+column in both: three documents in `checkTableCellsAndFlow` whose positions the
+old path lost in WebKit, `Line 1, column 7` and `Line 2, column 8`, beside a
+valid document that draws none. **Against the shipped code, all three fail in
+WebKit and pass in Firefox** — which is exactly how it stayed invisible.
+
+The engine's sentence is still the error's detail, because it is the only
+description of the fault there is — so the WORDING differs by engine, and that
+is stated in `convert.ts` rather than hidden.
+
+### Part three — the two waits
+
+**`checkNotifications`: driven, not endured.** 55 s per engine, nearly all of
+it real twenty-second lifetimes. The countdown is one `window.setTimeout` per
+notification and `Date.now()`, both looked up when called (`Toast.tsx`), which
+is exactly what Playwright's `page.clock` replaces — so the check drives the
+page past the deadline with `runFor` while every pointer event stays real.
+**The lifetime is not shortened**: the app's own twenty seconds is what the
+clock passes, and a provider that starts no timer leaves the notification up
+however far it goes. `runFor` rather than `fastForward`, which fires each timer
+at most once and would hide a countdown that ticked. **A positive partner was
+added**: at five of the six seconds left after the pointer goes, the
+notification is still there, so "gone once the pointer left" is the countdown
+finishing and not the notification leaving with the pointer.
+
+**The new check had a defect of its own, found by breaking it.** With the
+pause ignored, "a pointer resting on a notification stops its countdown" failed
+in Firefox and **passed in WebKit**: a count taken the instant `runFor`
+returned read the page before WebKit committed the dismissal the clock had
+just caused. The old version's twelve real seconds hid that race rather than
+avoided it. Every "still there" is now a count that must hold for 400 ms of
+real time.
+
+**`checkMobileLayout`: where its time went, measured.** Instrumented step by
+step, Firefox, 82.8 s:
+
+| Where                                              | Time   |
+| -------------------------------------------------- | ------ |
+| 56 loads with `networkidle` (14 routes × 4 widths) | 35.1 s |
+| … of which Playwright's 500 ms of silence, alone   | ~28 s  |
+| fixed sleeps, 150–500 ms, 250 ms after every route | ~26 s  |
+| the geometry probes themselves                     | 0.7 s  |
+
+So it was not doing a lot. And the waiting was not a guarantee: a tool page
+draws its options only when `loadTool` resolves, and a probe taken before that
+measures less page and finds fewer faults — it **passes**. Early is the
+dangerous direction, and a fixed wait only made it unlikely.
+
+**Changed: a settle on the things themselves** — no request in flight (the
+page's own request events), fonts loaded, no finite animation running, no DOM
+mutation across two frames — and **a check per scene that the page had
+finished drawing** (not "Loading options…", Run enabled), which makes early a
+failure. Validated before it replaced anything: over 112 loads, both engines,
+all widths, the probe read the same at the settle point as after `networkidle`
+and 250 ms, every time. One load fetched after the settle — structured-data's
+worker warm-up chunks, which draw nothing.
+
+**And then the first full run failed it, twice, in WebKit** — base64 at 320
+and 360 px, "still loading its options", the first tool page each context
+opens. The guard did what it was added for: a probe taken early was a red
+check instead of a pass on less page. Traced: **in WebKit a navigation reports
+only its four entry files. The route's chunk and the tool's module are dynamic
+imports the service worker answers, and they never appear as page requests at
+all** — so "nothing in flight" was true while the one fetch that draws the
+options was running, and on a loaded full run it landed after the two quiet
+frames. `networkidle` is blind to that fetch in the same way; what covered it
+before was the fixed 250 ms after it, which made the race unlikely rather than
+impossible, with nothing to say when it was lost. So the settle also waits for
+the page's own word that it has drawn, and the first version of that predicate
+had a hole of its own — "no Run button" read as finished, which is what a tool
+page looks like before its route chunk arrives, and WebKit failed again on the
+same page. On a tool page, drawn now means an enabled Run button and no
+placeholder. Four WebKit runs of the section clean after it, and the break
+below red in both engines.
+
+**Not changed:** the canvas's own `gotoCanvas` at each width keeps
+`networkidle`: it is the first load in a fresh context, the one that installs
+the service worker and precaches 74 files, and 5.9 s of the section.
+
+### Proving test and negative control, per item
+
+Unit breaks were applied one at a time by a script that restores each file
+from its own bytes and asserts it byte-identical before the next; all 19 were
+caught.
+
+| Item                                   | Proving test                                                                           | Negative control, keyed on subject                                                                                            | Break, and what caught it                                                                                     |
+| -------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Rule 1, respellings                    | `rendering.test.ts` — `<b>`→nothing, `<mark>`→`<em>`, `<code>`→`<em>` are changes      | five pairs are no change; round thirteen's five tags say nothing                                                              | the rule gone: **39 red**                                                                                     |
+| Rule 2, no rendering                   | `abbr[title]` and `a[href]` counted; `align`, `hidden` counted                         | bare `span`/`abbr`/`a` not counted; 18 of the corpus's 19 span documents say nothing about a span (the 19th's carries `lang`) | the span rule gone: **65 red**. Attributes never render: **9 red** (the abbreviation)                         |
+| Rule 3, already in effect              | `code` outside `pre` and bold-in-bold counted                                          | `code` in `pre`, italic in italic not counted; five `<pre>` documents say nothing                                             | **19 red**                                                                                                    |
+| Rule 4, a block that draws nothing     | a `<div>` holding the only break between two runs of text is counted                   | a wrapper around blocks, a lone line, a `<section>` not counted; the corpus's wrapper documents say nothing                   | no div a wrapper: **40 red**. Every div a wrapper: **3 red** — `rendering.test.ts` only; see below            |
+| Rule 5, row groups                     | rows still counted                                                                     | `thead`/`tbody` not counted                                                                                                   | **16 red**                                                                                                    |
+| The census on the round trip           | the whole corpus: no element note on an invisible round trip; every named element seen | a round trip every engine sees is never silent; every element all three see go or arrive is named                             | the old name census back: **116 red**                                                                         |
+| The paragraph `info`                   | `<div>` text, the Markdown target's "measured" sentence                                | a paragraph, a quotation holding one, a list item: no paragraph note; corpus-wide it fires iff `<p>` count rises              | a warning again: **11 red**. Never written: **66 red**                                                        |
+| Sanitiser names only what it refuses   | `<article>`, `<center>` still named beside a refused link                              | no allowed element named, over the corpus                                                                                     | the filter gone: **9 red**                                                                                    |
+| `1 link became plain text`             | a `javascript:` link beside a kept one                                                 | a kept link, a relative one, an anchor with no `href`: nothing; corpus-wide count equals a DOM count                          | never written: **3 red**. An anchor counted as a link: **1 red**                                              |
+| `1 image was replaced by its alt text` | a refused `src`, with no `src`/`alt` attribute note beside it                          | a kept image says nothing                                                                                                     | never written: **3 red**                                                                                      |
+| `locateJsonSyntaxError`                | Gecko's offset on 2,165; V8's on 1,487                                                 | every seed and a document with a lone surrogate: `null`; 200,000 `[` does not overflow                                        | V8's keyword convention: **2 red** (74 cases). A no-break space as whitespace: 1. A trailing comma allowed: 2 |
+| The tool's JSON position               | `{"a": }` is line 1 col 7, offset 6; four shapes V8 had none for                       | —                                                                                                                             | the position dropped: **6 red**                                                                               |
+
+**One break was caught by only three tests, and that is the finding it was
+for.** Making every `<div>` a wrapper passes the whole corpus, because a `<div>`
+that keeps two lines apart is always replaced by the paragraphs the round trip
+writes — no corpus document decides rule 4's proviso. So `rendering.test.ts`
+tests each rule directly, and is the only thing holding that one.
+
+**And the two-engine checks were broken, four passes, each built with the
+break and restored:**
+
+| Pass | Broke                                                         | Result                                                                                                                                                                                    |
+| ---- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A    | the shipped `convert.ts` and census, byte for byte; the pause | every census check red in both engines; **the three JSON positions red in WebKit and green in Firefox**; the pause — see Part three                                                       |
+| A2   | the pause, after the fix to the count                         | both pause checks red in both engines                                                                                                                                                     |
+| B    | a provider that starts no timer — the reported bug            | the thaw and the post-dismissal expiry red in both engines                                                                                                                                |
+| C    | a notification that leaves the moment the pointer does        | "when its time is up and not before" red in both engines                                                                                                                                  |
+| D    | a settle that returns at once (the harness itself)            | first version: 40 red in Firefox and **none in WebKit** — which read as WebKit being ready at `load` and was in fact the predicate's hole above. After the fix: **80 red, 40 per engine** |
+
+### What was rejected, and why
+
+- **Weakening every element note to a name.** Above: it either cries wolf with
+  true sentences or silences four loss-corpus rows.
+- **Screenshot identity, and a count of differing pixels, as "visible".** No
+  gap between a re-rasterised glyph (21 px) and a strike (16 px).
+- **Ink proximity alone.** Forgave WebKit's strike; the calibration refused it.
+- **Counting an element for any attribute it carries.** It named a
+  `<div dir="auto">` on the GitHub README, where nobody can see anything; the
+  `dir` is the attribute census's to report, and it does.
+- **Modelling margin collapse between siblings.** It needs a node matched to
+  a node across two trees — the tree diff — and counting a `<p>` as neutral by
+  its neighbours made the count of UNCHANGED paragraphs move (Wikipedia's
+  `[edit]` line), which is a false note of its own.
+- **Downloading JSONTestSuite.** A download this round had no permission for,
+  and for POSITIONS a generated sweep with two engines' offsets is the
+  stronger reference: the suite's must-reject cases carry no expected position.
+- **V8's keyword convention.** Held to V8 alone, 604 of the 2,165 would have
+  no reference at all.
+- **Our own wording for the JSON error.** Worth doing; a message change, not
+  a position one, and not this round's.
+- **A shortened notification lifetime.** Not needed: the real one is driven.
+- **`fastForward`.** Fires each timer at most once.
+- **Dropping widths, routes or scenes from the mobile section.** Coverage.
+- **Keeping `networkidle` for the route loop.** It guaranteed nothing the
+  settle does not, and cost 28 s of silence per engine.
+
+### Looked for and NOT found
+
+- **A real visual loss among the five.** None, in three engines.
+- **A Gecko–V8 disagreement on a JSON position other than a misspelled
+  keyword.** None in 2,165; the generator refuses to write otherwise.
+- **A JSON document one engine refuses and another accepts**, in the sweep.
+  None.
+- **A probe that read differently at the settle than after the old waits.**
+  None in 112 loads.
+- **An engine that drew any corpus document differently twice.** None.
+- **A WebKit clipboard read.** None — no items, recorded rather than faked.
+- **A second lazily drawn region on the mobile routes**, besides a tool's
+  options. The only request after the settle in 112 loads was the worker's
+  warm-up, which draws nothing.
+- **A section that depended on `checkNotifications`' real time.** None; the
+  clock is installed after the canvas boots and the section's own page closes.
+
+### Anything in the framing I think is wrong
+
+1. **"Five are shipping."** Three were. The phantom `<thead>` was fixed in
+   round ten and `<b>`/`<strong>` in round thirteen, both by lists; round
+   fifteen's own probe table shows both producing nothing. The verdict that
+   the tendency was structural still stands — a list per incident was the
+   symptom — and both lists are gone now.
+2. **"The census counts tag names while its notes make claims about
+   content"** is right, and the fix is not only "make the census see more".
+   One note was weakened instead, because what it claims depends on a thing
+   no census sees.
+3. **"A sweep that cannot produce the failing input is not weak evidence, it
+   is none"** applied to round fifteen's probe too. Its "reader sees a
+   difference?" column was a judgement, and it was wrong on the blockquote.
+   The oracle exists so that column is measured.
+4. **"V8, and probably JavaScriptCore, frequently omits one."**
+   JavaScriptCore omits it every time; V8 28% of the time. And the test did
+   not pass on V8's message format by chance alone — it passed because the unit
+   suite has no JavaScriptCore in it at all.
+5. **"Waiting out a real timer is rarely necessary"** — agreed, and the long
+   wait was also hiding a race: twelve real seconds made "still there" true
+   whether or not the commit had landed.
+6. **"It may simply be doing a lot."** It was not: 65% was fixed waiting, and
+   the fixed waits made a too-early probe unlikely rather than impossible, with
+   nothing to say if one happened.
+
+### Still open
+
+- **The accessibility-tree differences**: 12 corpus documents differ only
+  there (`code`, `paragraph`, `strong`, `emphasis` roles). Recorded in the
+  oracle, not reported, by judgement.
+- **The sanitiser note for elements that draw nothing** — `<o:p>`, `<meta>`,
+  `<article>` — is true (the list refuses them) and fires on every Word and
+  Google Docs paste. Whether a true, frequent, harmless removal should be a
+  warning is a question for the note's design, not its truth.
+- **The attribute census is a set per document**: a `lang` lost from one
+  element is silent while another element keeps one. Older than this round.
+- **The JSON error's detail** is still the engine's sentence.
+- **The harness reading the loss corpus**, **`checkLossReports`' 500 ms
+  control**, **`someOf`**, **the wall-clock sites** — round fifteen's, unchanged.

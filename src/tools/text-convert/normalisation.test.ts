@@ -132,8 +132,8 @@ describe('decision 6: HTML sanitised against HTML normalised', () => {
      * on its own account, so it appeared in this note for every table whose
      * header row was written as a plain `<tr>` of `<th>` - a document where
      * nothing was invented at all. The two elements left are the ones a reader
-     * can point at: an extra row, of empty header cells. See
-     * `SERIALISER_WRAPPERS`.
+     * can point at: an extra row, of empty header cells. The filter that did
+     * this was a list until round sixteen; it is rule 5 of `rendering.ts` now.
      */
     const body = notes.find((note) => note.title.includes('invented'))?.body ?? '';
     expect(body).toContain('<tr>');
@@ -213,12 +213,30 @@ describe('decision 6: HTML sanitised against HTML normalised', () => {
   });
 
   it('reports an element the round trip unwraps', async () => {
-    const { notes } = await convert('<div><p>hello</p></div>', {
+    /*
+     * This used to be `<div><p>hello</p></div>`, and asserted that the note
+     * named the `<div>`. That was one of round fifteen's false notes: a wrapper
+     * with nothing on it draws nothing, and no engine draws the document any
+     * differently without it (the pasted-HTML oracle, `div-around-paragraph`).
+     * A superscript is an element the round trip unwraps that a reader SEES
+     * go - the 2 comes down to the line.
+     */
+    const { notes } = await convert('<p>E = mc<sup>2</sup></p>', {
       source: 'html',
       target: 'html',
     });
     expect(losses(notes).join(' ')).toContain('the round trip could not carry');
-    expect(notes.find((note) => note.title.includes('could not carry'))?.body).toContain('<div>');
+    expect(notes.find((note) => note.title.includes('could not carry'))?.body).toContain('<sup>');
+  });
+
+  it('says nothing about a wrapper that draws nothing', async () => {
+    // The negative control, keyed on the same subject the old test asserted.
+    const { output, notes } = await convert('<div><p>hello</p></div>', {
+      source: 'html',
+      target: 'html',
+    });
+    expect(output).toBe('<p>hello</p>');
+    expect(losses(notes)).toEqual([]);
   });
 
   it('says nothing for HTML the round trip leaves alone', async () => {
@@ -624,7 +642,8 @@ describe('an id the author wrote, under a prefix they did not', () => {
  * ceremony: these notes are new on this target, and a note that fires on an
  * ordinary HTML table is one that trains people to ignore the channel. One of
  * them found a false report that had been shipped on the HTML target since
- * round four - see `SERIALISER_WRAPPERS`.
+ * round four - see rule 5 of `rendering.ts`, which replaced the list that
+ * first fixed it.
  */
 describe('the census on the Markdown target', () => {
   const MARKDOWN = { source: 'html', target: 'markdown' } as const;
@@ -695,15 +714,16 @@ describe('the census on the Markdown target', () => {
      * saying that a Markdown table always has a header row. The count was
      * right; the reason under it was about somebody else's document.
      *
-     * Round thirteen removed that substitution (TC-4), so the invention this
-     * test stands on is a different one that is still true: an image at the
-     * top level becomes a paragraph holding it, which really is a `<p>` the
-     * input did not have.
+     * Round thirteen removed that substitution (TC-4), and round sixteen made
+     * an invented `<p>` an `info` of its own (see normalisation.ts), so the
+     * invention this test stands on is a third one that is still true: a URL
+     * written as text comes back from Markdown as a link, which is an `<a>`
+     * the input did not have.
      */
-    const invented = await convert('<img src="https://example.com/a.png" alt="a">', MARKDOWN);
+    const invented = await convert('<p>See https://example.com for more.</p>', MARKDOWN);
     const invention = invented.notes.find((entry) => entry.title.includes('invented'));
 
-    expect(invention?.body).toContain('<p>');
+    expect(invention?.body).toContain('<a>');
     expect(invention?.body).not.toContain('header row');
 
     // And the positive half, so this is not a test that the sentence is gone.
@@ -943,8 +963,10 @@ describe('mark and kbd under the text policy', () => {
 
 /**
  * FOUND BY THE CRY-WOLF SWEEP FOR THE CLASS NOTE: `<b>` reported as a loss and
- * `<strong>` as an invention on every document with a bold word in it. See
- * `RESPELLINGS` for the reference the four pairs rest on.
+ * `<strong>` as an invention on every document with a bold word in it. Round
+ * thirteen fixed it with a list of four pairs; round sixteen replaced the list
+ * with rule 1 of `rendering.ts`, which counts the HTML Standard's rendering
+ * rules rather than names, and these tests are unchanged by the replacement.
  */
 describe('a respelling is not a loss and an invention', () => {
   const MARKDOWN = { source: 'html', target: 'markdown' } as const;

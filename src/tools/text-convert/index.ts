@@ -199,6 +199,7 @@ export const textConvertTool = defineTool({
       markdownAuthorIdentifiers,
       sanitiseHtml,
       ID_NAMESPACE,
+      ALLOWED_ELEMENTS,
     } = await import('@/lib/markup/pipelines');
 
     const toHtmlOptions = { headingIds: options.headingIds, linkify: options.linkify };
@@ -320,6 +321,7 @@ export const textConvertTool = defineTool({
            */
           markdownIdentifiers: source === 'markdown' ? markdownAuthorIdentifiers(text) : null,
           idNamespace: ID_NAMESPACE,
+          allowedElements: ALLOWED_ELEMENTS,
         }),
       ];
 

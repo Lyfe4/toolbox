@@ -717,24 +717,19 @@ describe('JSON parsing', () => {
       /*
        * THE ACTUAL PLACE, NOT MERELY "SOMEWHERE PAST THE FIRST LINE".
        *
-       * `jsonErrorPosition` reads V8's message with two regular expressions and
-       * pulls capture groups out of them by index. Round five's mutation sweep
-       * flipped `lineColumn[1]` to `[0]` and `[2]` to `[3]` with nothing
-       * noticing, because the only thing asserted was that a position existed.
-       * A position that exists and points at the wrong character is worse than
-       * none: it is a caret under innocent text.
+       * Round five's mutation sweep found this test asserting only that a
+       * position existed, when the position came from V8's message read by
+       * two regular expressions. A position that exists and points at the
+       * wrong character is worse than none: it is a caret under innocent text.
        *
        * The document is `{ "a": 1, "b" 2 }` over three lines, and the fault is
        * the missing colon after `"b"` - line 3, column 7.
        *
-       * WHAT THIS CANNOT REACH, SAID RATHER THAN IMPLIED. V8 prints the fault
-       * BOTH ways - "at position 18 (line 3 column 7)" - so the offset arm of
-       * `jsonErrorPosition` is never taken, and its capture index can be
-       * changed without any test noticing. It computes the same answer: offset
-       * 18 in this document IS line 3, column 7. The arm is there because the
-       * wording of that message is not a contract, and there is no way to
-       * exercise it short of stubbing `JSON.parse`, which would be a test of
-       * the stub.
+       * The regular expressions are gone. This document was the one V8 words
+       * with a position, which is why the old path passed here and failed on
+       * `{"a": }`, and why it passed in the one engine the unit suite runs and
+       * never in JavaScriptCore. The position is `locateJsonSyntaxError`'s
+       * now, held to Gecko and V8 over 2,165 documents in its own test.
        */
       expect(result.error.position?.line).toBe(3);
       expect(result.error.position?.column).toBe(7);
@@ -2150,17 +2145,16 @@ describe('tool definition', () => {
   });
 
   /*
-   * NOT "WITH ITS POSITION", which is what this used to be called and never
-   * checked. Asked in round fifteen, `{"a": }` carries NO position: the only
-   * source of one for JSON is `jsonErrorPosition` reading the engine's own
-   * message, and V8 words an unexpected token as `Unexpected token '}', "..."
-   * is not valid JSON`, with neither a line nor an offset in it. The parser
-   * test that does pass (line 3, column 7) uses a fault V8 happens to word
-   * with both. Recorded as an open defect in docs/test-findings.md, round
-   * fifteen; the fix is a position that does not depend on an engine's
-   * wording, which is not a complexity-pass change.
+   * WITH ITS POSITION, AGAIN - and this time it is asserted, and it would hold
+   * in any engine. Round fifteen renamed this test because `{"a": }` had NO
+   * position: the only source of one was the engine's message, and V8 words
+   * an unexpected token with neither a line nor an offset in it. Round sixteen
+   * measured the three engines over 2,165 documents - JavaScriptCore's message
+   * never has one - and now finds it with `locateJsonSyntaxError`, which does
+   * not read the message. The fault is the `}` where a value should be:
+   * offset 6, line 1, column 7, which is also where Gecko puts it.
    */
-  it('surfaces a parse error instead of throwing', async () => {
+  it('surfaces a parse error with its position instead of throwing', async () => {
     const result = await structuredDataTool.run({
       inputs: { input: { type: 'text', text: '{"a": }' } },
       options: { source: 'json' },
@@ -2170,7 +2164,23 @@ describe('tool definition', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe('parse-error');
+      expect(result.error.position).toEqual({ line: 1, column: 7, offset: 6 });
       expect(result.error.detail).toBeDefined();
+    }
+  });
+
+  it.each([
+    // The shapes V8's message had no position for, measured in round sixteen.
+    ['a trailing comma in an array', '[1, 2,]', 1, 7],
+    ['a misspelled keyword', '{"a": tru}', 1, 7],
+    ['nothing after a colon, on a later line', '{\n  "a":\n}', 3, 1],
+    ['a no-break space before the document', '\u00a0{}', 1, 1],
+  ])('reports where %s is, whatever the engine words', (_label, text, line, column) => {
+    const result = parseSource(text, 'json', ',');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.position?.line).toBe(line);
+      expect(result.error.position?.column).toBe(column);
     }
   });
 
