@@ -13,7 +13,14 @@
     // `@/foo` resolves to `src/foo`. Paths without `baseUrl` are resolved
     // relative to this file. Must be kept in sync with the matching
     // `resolve.alias` entry in vite.config.ts - tsc and Vite resolve separately.
-    "paths": { "@/*": ["./src/*"] },
+    //
+    // `react-style-singleton` is the other alias, for the same reason: Vite
+    // redirects it to src/lib/styleSingleton.ts (see vite.config.ts for why),
+    // and a test that imports it by name should be typed as what it gets.
+    "paths": {
+      "@/*": ["./src/*"],
+      "react-style-singleton": ["./src/lib/styleSingleton.ts"],
+    },
 
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
   },

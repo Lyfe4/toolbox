@@ -4027,6 +4027,28 @@ async function checkDeployment(label, rules) {
   );
 
   /*
+   * STYLE-SRC STAYS A LIST OF BYTE SEQUENCES, NOT A CATEGORY.
+   *
+   * The select refusals were fixed by admitting two exact stylesheets and
+   * moving a third onto the CSSOM, and the easier fix was one token:
+   * `'unsafe-inline'`. It was weighed and declined - see docs/architecture.md,
+   * "What the console noise was" - and this is what makes that a decision
+   * rather than a default somebody reverses the next time a library inserts a
+   * `<style>`. `'self'` and exactly three hashes, the count csp-hash.ts
+   * writes; a fourth is a new decision and should arrive with its reason.
+   */
+  const styleSrc = /style-src ([^;]*)/.exec(global['Content-Security-Policy'] ?? '')?.[1] ?? '';
+  const styleSources = styleSrc.trim().split(/\s+/);
+  check(
+    label,
+    "style-src is 'self' and three hashes, with no 'unsafe-inline'",
+    styleSources[0] === "'self'" &&
+      styleSources.length === 4 &&
+      styleSources.slice(1).every((source) => /^'sha256-[A-Za-z0-9+/]+=*'$/.test(source)),
+    styleSrc.slice(0, 90) || 'no style-src found',
+  );
+
+  /*
    * The caching split, which is the part that is easy to get subtly wrong.
    *
    * /fonts/ is the one to watch: those URLs are hand-written and unhashed, so
@@ -8528,6 +8550,444 @@ async function checkMobileLayout(engine, label) {
         await page.waitForTimeout(200);
         assess(width, 'an open select', await page.evaluate(MOBILE_PROBE));
         await page.keyboard.press('Escape');
+      } finally {
+        await context.close().catch(() => {});
+      }
+    }
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
+/**
+ * EVERY RADIX COMPONENT, AT PHONE WIDTHS, UNDER THE REAL CSP.
+ *
+ * Opening a select used to make the policy refuse two stylesheets, every time,
+ * in every engine: react-remove-scroll-bar's body scroll lock (injected through
+ * react-style-singleton) and the `<style>` Radix Select's viewport renders to
+ * hide its own scrollbar. The verification skill filed those refusals as
+ * known noise - "the blocked styles are the popover's collision avoidance,
+ * so it may render off-screen at a narrow width" - on the strength of one
+ * look at 1440x900, and nothing here ever opened a select with a console
+ * listener attached, so the question was never asked in a real engine.
+ *
+ * It was measured before this was written, at 1440, 390, 320 and 568x320 and
+ * with the trigger 40px above the bottom edge, in three engines: the list was
+ * on screen in all 24 arrangements, flipping above the trigger wherever below
+ * had no room. Positioning is Floating UI writing through React's `style`
+ * prop, which is the CSSOM, and the CSSOM is not governed by `style-src` -
+ * `public/_headers` already says so. What the refusals cost was the scroll
+ * lock's stylesheet (the JavaScript half of the lock kept working) and the
+ * list's hidden scrollbar. See docs/architecture.md, "What the console noise
+ * was".
+ *
+ * So both halves are asserted, because either alone would let the other come
+ * back unnoticed:
+ *
+ *   - NOTHING IS REFUSED. A `securitypolicyviolation` recorder is installed
+ *     before any app code, and every console error is kept. Its positive
+ *     partner is a refusal caused on purpose, first, which the recorder has to
+ *     see - an instrument that records nothing passes "zero refusals" in
+ *     exactly the way a broken one does.
+ *   - THE POPOVER IS ON SCREEN. A console check alone would not catch the bug
+ *     that was feared: a list positioned off the edge logs nothing at all. So
+ *     every popover this app draws is measured against the viewport, at the
+ *     widths and in the one arrangement where collision avoidance has work to
+ *     do.
+ *   - WHAT WAS REFUSED NOW ARRIVES. The page is scroll locked while the list is
+ *     open and unlocked after, and the viewport's stylesheet has rules. These
+ *     are the positive partners of "nothing is refused": a fix that stopped the
+ *     refusals by stopping the stylesheets from being inserted at all would
+ *     pass the first assertion and fail these.
+ *   - A LIST THAT DOES NOT FIT SAYS SO. With the scrollbar hidden, the scroll
+ *     buttons are the only sign that a list continues, and a phone on its side
+ *     is where a list stops fitting. The overflow is asserted to have happened
+ *     before the button is asserted to exist.
+ *
+ * Tabs, Tooltip and Toast draw no stylesheet of their own and are driven here
+ * for the "every Radix component, not only the one where it was noticed"
+ * half: the refusal recorder is on for the whole page's life, so anything any
+ * of them inserts is counted.
+ */
+async function checkPopovers(engine, label) {
+  const browser = await launchTouchBrowser(engine);
+
+  /** Installed before any app code runs, and before the policy is enforced on it. */
+  const recordRefusals = () => {
+    window.__cspRefused = [];
+    document.addEventListener('securitypolicyviolation', (event) => {
+      window.__cspRefused.push(
+        `${event.effectiveDirective} from ${event.sourceFile || 'inline'}:${String(event.lineNumber)}`,
+      );
+    });
+  };
+
+  const open = async (options) => {
+    const context = await browser.newContext(options);
+    await context.addInitScript(recordRefusals);
+    const page = await context.newPage();
+    const errors = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text().slice(0, 140));
+    });
+    page.on('pageerror', (error) => errors.push(`pageerror: ${String(error).slice(0, 140)}`));
+    return { context, page, errors };
+  };
+
+  /** What this page's policy refused, and what reached the console, since load. */
+  const assertQuiet = async (page, errors, at) => {
+    const refused = await page.evaluate(() => window.__cspRefused ?? null);
+    check(
+      label,
+      `${at}: the CSP refuses nothing`,
+      Array.isArray(refused) && refused.length === 0,
+      refused === null ? 'the recorder was never installed' : refused.join(' | '),
+    );
+    check(label, `${at}: no console errors`, errors.length === 0, errors.join(' | '));
+  };
+
+  /** The open popover's box, measured against the viewport it has to fit in. */
+  const measurePopover = (page, selector) =>
+    page.evaluate((sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const vw = document.documentElement.clientWidth;
+      const vh = window.innerHeight;
+      return {
+        box: `${r.left.toFixed(0)},${r.top.toFixed(0)} ${r.width.toFixed(0)}x${r.height.toFixed(0)} in ${String(vw)}x${String(vh)}`,
+        sized: r.width > 0 && r.height > 0,
+        inside: r.left >= -0.5 && r.top >= -0.5 && r.right <= vw + 0.5 && r.bottom <= vh + 0.5,
+      };
+    }, selector);
+
+  const assertOnScreen = (at, what, measured) =>
+    check(
+      label,
+      `${at}: ${what} is drawn, and entirely on screen`,
+      measured !== null && measured.sized && measured.inside,
+      measured === null ? 'nothing to measure' : measured.box,
+    );
+
+  /** Reads what the two formerly refused stylesheets are doing right now. */
+  const librarySheets = (page) =>
+    page.evaluate(() => {
+      const viewportStyle = [...document.querySelectorAll('style')].find((s) =>
+        (s.textContent ?? '').includes('[data-radix-select-viewport]'),
+      );
+      let viewportRules = -1;
+      try {
+        viewportRules = viewportStyle?.sheet ? viewportStyle.sheet.cssRules.length : 0;
+      } catch {
+        viewportRules = -2;
+      }
+      return {
+        locked: document.body.hasAttribute('data-scroll-locked'),
+        bodyOverflow: getComputedStyle(document.body).overflowY,
+        viewportRules,
+        // Where the scroll lock's stylesheet lives now: src/lib/styleSingleton.ts.
+        adopted: document.adoptedStyleSheets.length,
+      };
+    });
+
+  try {
+    /* -- The instrument, shown to work before anything relies on it -------- */
+    {
+      const { context, page } = await open({ viewport: { width: 390, height: 844 } });
+      try {
+        await page.goto(`${ORIGIN}/tools`, { waitUntil: 'networkidle' });
+        await page.evaluate(() => {
+          const style = document.createElement('style');
+          style.textContent = 'body { outline: 1px solid red; }';
+          document.head.append(style);
+        });
+        await page.waitForTimeout(200);
+        const refused = await page.evaluate(() => window.__cspRefused ?? null);
+        check(
+          label,
+          'popovers: the refusal recorder sees a <style> injected on purpose',
+          Array.isArray(refused) && refused.length === 1 && refused[0].startsWith('style-src'),
+          JSON.stringify(refused),
+        );
+      } finally {
+        await context.close().catch(() => {});
+      }
+    }
+
+    /* -- The Category filter, where it was noticed ------------------------- */
+    const categoryScenes = [
+      { name: 'desktop', viewport: { width: 1440, height: 900 }, hasTouch: false },
+      { name: 'phone', viewport: { width: 390, height: 844 }, hasTouch: true },
+      { name: 'small phone', viewport: { width: 320, height: 568 }, hasTouch: true },
+      { name: 'phone on its side', viewport: { width: 568, height: 320 }, hasTouch: true },
+      // The arrangement collision avoidance exists for: no room below.
+      {
+        name: 'phone, trigger at the bottom edge',
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+        atBottom: true,
+      },
+    ];
+
+    for (const scene of categoryScenes) {
+      const at = `the Category filter, ${scene.name}`;
+      const { context, page, errors } = await open({
+        viewport: scene.viewport,
+        hasTouch: scene.hasTouch,
+      });
+      try {
+        await page.goto(`${ORIGIN}/tools`, { waitUntil: 'networkidle' });
+        const trigger = page.getByRole('combobox', { name: 'Category' });
+        await trigger.waitFor({ timeout: 15_000 });
+
+        if (scene.atBottom) {
+          // A shorter window rather than a scroll: the filter is near the top
+          // of the document, where there is nothing above it to scroll away.
+          const bottom = await trigger.evaluate((el) => el.getBoundingClientRect().bottom);
+          await page.setViewportSize({
+            width: scene.viewport.width,
+            height: Math.ceil(bottom) + 40,
+          });
+        }
+
+        const idle = await librarySheets(page);
+        await trigger.click();
+        await page.getByRole('listbox').waitFor({ timeout: 10_000 });
+        await page.waitForTimeout(250);
+
+        const measured = await measurePopover(page, '[role="listbox"]');
+        assertOnScreen(at, 'the open list', measured);
+        if (scene.atBottom) {
+          const side = await page.evaluate(
+            () =>
+              document
+                .querySelector('[role="listbox"]')
+                ?.closest('[data-side]')
+                ?.getAttribute('data-side') ?? null,
+          );
+          check(
+            label,
+            `${at}: the list opens above a trigger with no room below`,
+            side === 'top',
+            `data-side=${String(side)}`,
+          );
+        }
+
+        const sheets = await librarySheets(page);
+        check(
+          label,
+          `${at}: the page is scroll locked while the list is open, and not before`,
+          !idle.locked &&
+            idle.bodyOverflow !== 'hidden' &&
+            sheets.locked &&
+            sheets.bodyOverflow === 'hidden' &&
+            sheets.adopted === idle.adopted + 1,
+          `before: ${JSON.stringify(idle)}, open: ${JSON.stringify(sheets)}`,
+        );
+        check(
+          label,
+          `${at}: the list's own stylesheet applies`,
+          sheets.viewportRules === 2,
+          `${String(sheets.viewportRules)} rules`,
+        );
+
+        const overflow = await page.evaluate(() => {
+          const viewport = document.querySelector('[data-radix-select-viewport]');
+          const down = document.querySelector('[data-select-scroll="down"]');
+          return viewport
+            ? {
+                overflows: viewport.scrollHeight > viewport.clientHeight + 1,
+                heights: `${String(viewport.scrollHeight)}/${String(viewport.clientHeight)}`,
+                buttonDrawn: down !== null && down.getBoundingClientRect().height > 0,
+              }
+            : null;
+        });
+        if (scene.name === 'phone on its side') {
+          // The precondition first: a list that happened to fit would make
+          // the affordance check below a statement about nothing.
+          check(
+            label,
+            `${at}: the list is taller than the room it has`,
+            overflow?.overflows === true,
+            overflow?.heights ?? 'no viewport',
+          );
+          check(
+            label,
+            `${at}: and a scroll button says there is more`,
+            overflow?.buttonDrawn === true,
+            JSON.stringify(overflow),
+          );
+        }
+
+        /*
+         * A bounded click, recorded rather than thrown: an option drawn off
+         * the screen cannot be clicked, which is the very failure this check
+         * is for, and it has to arrive as a named FAIL rather than as a
+         * timeout that ends the whole run.
+         */
+        const chose = await page
+          .getByRole('option', { name: 'Hashing', exact: true })
+          .click({ timeout: 10_000 })
+          .then(
+            () => true,
+            (error) => String(error).split('\n')[0],
+          );
+        if (chose !== true) await page.keyboard.press('Escape');
+        await page.getByRole('listbox').waitFor({ state: 'detached', timeout: 10_000 });
+        const hrefs = await page
+          .locator('a[href^="/tools/"]')
+          .evaluateAll((els) => [...new Set(els.map((el) => el.getAttribute('href')))]);
+        check(
+          label,
+          `${at}: choosing Hashing leaves only Hash`,
+          chose === true && hrefs.length === 1 && hrefs[0] === '/tools/hash',
+          chose === true ? hrefs.join(', ') : `could not choose it: ${chose}`,
+        );
+
+        /*
+         * The sheet has to LEAVE, not merely stop matching. Its rules are
+         * scoped to `body[data-scroll-locked]`, so a sheet left behind once
+         * the attribute goes is invisible to every computed style - and one
+         * more would be left behind on every open, for the life of the tab.
+         * Counted, because nothing else can see it.
+         */
+        const closed = await librarySheets(page);
+        check(
+          label,
+          `${at}: closing the list releases the lock and takes its stylesheet away`,
+          !closed.locked && closed.bodyOverflow !== 'hidden' && closed.adopted === idle.adopted,
+          JSON.stringify(closed),
+        );
+        await assertQuiet(page, errors, at);
+      } finally {
+        await context.close().catch(() => {});
+      }
+    }
+
+    /* -- The same Select in the two other containers it lives in ------------ */
+    {
+      const at = 'a tool page select, small phone';
+      const { context, page, errors } = await open({
+        viewport: { width: 320, height: 568 },
+        hasTouch: true,
+      });
+      try {
+        await page.goto(`${ORIGIN}/tools/base64`, { waitUntil: 'networkidle' });
+        await page.getByRole('combobox', { name: 'Mode' }).click();
+        await page.getByRole('listbox').waitFor({ timeout: 10_000 });
+        await page.waitForTimeout(250);
+        assertOnScreen(at, 'the open list', await measurePopover(page, '[role="listbox"]'));
+        await page
+          .getByRole('option', { name: 'Decode', exact: true })
+          .click({ timeout: 10_000 })
+          .catch(() => page.keyboard.press('Escape'));
+        check(
+          label,
+          `${at}: the choice lands`,
+          (await page.getByRole('combobox', { name: 'Mode' }).textContent())?.includes('Decode') ===
+            true,
+          '',
+        );
+        await assertQuiet(page, errors, at);
+      } finally {
+        await context.close().catch(() => {});
+      }
+    }
+
+    {
+      /*
+       * The inspector is a sheet across the bottom of a phone, so its selects
+       * sit low on the screen - the other place a list has no room below.
+       */
+      const at = 'an inspector select on the canvas, phone';
+      const { context, page, errors } = await open({
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+      });
+      try {
+        await gotoCanvas(page);
+        await page.getByRole('button', { name: 'Add tool' }).click();
+        await page.getByTestId('dialog-option-base64').click();
+        await page
+          .locator('[role="dialog"]')
+          .first()
+          .waitFor({ state: 'detached', timeout: 10_000 });
+        await setInspector(page, true);
+        const panel = page.getByTestId('node-inspector');
+        const trigger = panel.getByRole('combobox', { name: 'Mode' });
+        await trigger.scrollIntoViewIfNeeded();
+        await trigger.click();
+        await page.getByRole('listbox').waitFor({ timeout: 10_000 });
+        await page.waitForTimeout(250);
+        assertOnScreen(at, 'the open list', await measurePopover(page, '[role="listbox"]'));
+        await page.keyboard.press('Escape');
+        await assertQuiet(page, errors, at);
+      } finally {
+        await context.close().catch(() => {});
+      }
+    }
+
+    /* -- Tabs, Tooltip and Toast, on the page that shows all of them -------- */
+    {
+      const at = 'the styleguide components, small phone';
+      // No touch: a tooltip is a hover-and-focus affordance, and a coarse
+      // pointer is exactly where Radix declines to open one on hover.
+      const { context, page, errors } = await open({ viewport: { width: 320, height: 568 } });
+      try {
+        await page.goto(`${ORIGIN}/styleguide`, { waitUntil: 'networkidle' });
+
+        const tab = page.getByRole('region', { name: 'Tabs' }).getByRole('tab', { name: 'Output' });
+        await tab.click();
+        check(
+          label,
+          `${at}: a tab switches its panel`,
+          (await tab.getAttribute('aria-selected')) === 'true',
+          '',
+        );
+
+        // The right-hand tooltip: side="right" on a 320px screen has to move.
+        const copy = page
+          .getByRole('region', { name: 'Tooltip' })
+          .getByRole('button', { name: 'Copy output' });
+        await copy.scrollIntoViewIfNeeded();
+        await copy.hover();
+        await page.getByRole('tooltip').first().waitFor({ timeout: 10_000 });
+        await page.waitForTimeout(250);
+        assertOnScreen(
+          at,
+          'a tooltip',
+          await measurePopover(page, '[data-radix-popper-content-wrapper] > *'),
+        );
+        await page.mouse.move(0, 0);
+
+        await page
+          .getByRole('region', { name: 'Toast' })
+          .getByRole('button', { name: 'Warning', exact: true })
+          .click();
+        const toast = page.locator('li[data-state="open"]').first();
+        await toast.waitFor({ timeout: 10_000 });
+        await page.waitForTimeout(300);
+        const toastBox = await toast.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          const vw = document.documentElement.clientWidth;
+          const vh = window.innerHeight;
+          return {
+            box: `${r.left.toFixed(0)},${r.top.toFixed(0)} ${r.width.toFixed(0)}x${r.height.toFixed(0)} in ${String(vw)}x${String(vh)}`,
+            sized: r.width > 0 && r.height > 0,
+            inside: r.left >= -0.5 && r.top >= -0.5 && r.right <= vw + 0.5 && r.bottom <= vh + 0.5,
+          };
+        });
+        assertOnScreen(at, 'a toast', toastBox);
+
+        const trigger = page.getByRole('combobox', { name: 'Encoding' });
+        await trigger.scrollIntoViewIfNeeded();
+        await trigger.click();
+        await page.getByRole('listbox').waitFor({ timeout: 10_000 });
+        await page.waitForTimeout(250);
+        assertOnScreen(at, 'the open list', await measurePopover(page, '[role="listbox"]'));
+        await page.keyboard.press('Escape');
+
+        await assertQuiet(page, errors, at);
       } finally {
         await context.close().catch(() => {});
       }
@@ -13364,6 +13824,7 @@ async function runChecks(engine, label) {
     await checkHead(browser, label);
     await checkTouch(engine, label);
     await checkMobileLayout(engine, label);
+    await checkPopovers(engine, label);
     await checkSoftKeyboard(engine, label);
     await checkBackgroundedTab(browser, label);
     await checkTwoTabs(browser, label);

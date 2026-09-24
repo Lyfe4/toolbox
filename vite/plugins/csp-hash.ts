@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
 import type { Plugin } from 'vite';
@@ -23,8 +24,49 @@ const SCRIPT_PLACEHOLDER = '{{INLINE_SCRIPT_HASHES}}';
  */
 const STYLE_PLACEHOLDER = '{{INLINE_STYLE_HASHES}}';
 
-/** The one stylesheet that hash covers. */
+/** The first stylesheet a style hash covers. */
 const PREVIEW_STYLESHEET = 'src/features/toolrunner/preview.css';
+
+/**
+ * The second: the `<style>` Radix Select's viewport renders beside every open
+ * list, which hides the list's own scrollbar (the component's scroll buttons
+ * stand in for it - see src/components/Select/Select.tsx).
+ *
+ * It is a fixed string in the library, so a hash can pin it exactly, and it is
+ * read OUT OF THE INSTALLED PACKAGE rather than copied here: an upgrade that
+ * changes one byte of it changes the hash with it, instead of turning every
+ * open list back into a CSP refusal that only a browser would notice. Before
+ * this it was refused on every open, and the refusal sat in the verification
+ * skill's list of known console noise.
+ */
+const RADIX_SELECT = '@radix-ui/react-select';
+
+/**
+ * Finds that stylesheet in the package's source, and refuses to guess.
+ *
+ * Exactly one distinct match, and no interpolation in it: a second match would
+ * mean the hash could be pinning the wrong one, and a `${` would mean the text
+ * is computed at runtime and no hash taken here could ever match it.
+ */
+export function radixViewportStylesheet(source: string): string {
+  const found = new Set(
+    [...source.matchAll(/__html:\s*`([^`]*\[data-radix-select-viewport\][^`]*)`/g)].map(
+      (match) => match[1] ?? '',
+    ),
+  );
+  if (found.size !== 1) {
+    throw new Error(
+      `csp-hash: expected one viewport stylesheet in ${RADIX_SELECT}, found ${found.size.toString()}`,
+    );
+  }
+  const [css = ''] = found;
+  if (css.includes('${')) {
+    throw new Error(
+      `csp-hash: the ${RADIX_SELECT} viewport stylesheet is no longer a fixed string`,
+    );
+  }
+  return css;
+}
 
 const sha256 = (body: string): string =>
   `'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`;
@@ -102,7 +144,36 @@ export function cspHash(): Plugin {
         throw new Error(`csp-hash: ${PREVIEW_STYLESHEET} is missing`);
       }
       const canonical = readFileSync(stylesheetPath, 'utf8').replace(/\r\n/g, '\n');
-      const styleHashes = [sha256(canonical)];
+
+      /*
+       * And the library's - which must be the bytes the BUILD ships, not
+       * merely the bytes the package holds: a second copy of Radix, or a
+       * bundler that rewrote the literal, would otherwise produce a hash for a
+       * string the browser never sees.
+       */
+      const radixEntry = createRequire(join(root, 'package.json')).resolve(RADIX_SELECT);
+      const viewportCss = radixViewportStylesheet(readFileSync(radixEntry, 'utf8'));
+      const assetsDir = join(root, outDir, 'assets');
+      const shipped = readdirSync(assetsDir)
+        .filter((name) => name.endsWith('.js'))
+        .some((name) => readFileSync(join(assetsDir, name), 'utf8').includes(viewportCss));
+      if (!shipped) {
+        throw new Error(
+          `csp-hash: the ${RADIX_SELECT} viewport stylesheet is not in the built JavaScript as the package spells it`,
+        );
+      }
+
+      /*
+       * AND THE EMPTY STRING, for one engine's sake. Radix re-renders that
+       * `<style>` on every open and React rewrites its text through
+       * `innerHTML`, which empties the element before refilling it -
+       * and WebKit checks the policy against the empty stylesheet in between.
+       * Measured: two refusals per open in WebKit, none in Gecko, and none in
+       * either with this hash present. What it admits is a stylesheet with no
+       * bytes in it, which can style nothing. `checkPopovers` in
+       * scripts/cross-browser-check.mjs fails in WebKit without it.
+       */
+      const styleHashes = [sha256(canonical), sha256(viewportCss), sha256('')];
 
       // replaceAll, not replace: the placeholders are also named in the file's
       // own comment block, and every occurrence must be substituted.

@@ -11,8 +11,9 @@
 # README - if application code ever tried to phone home, the request would be
 # blocked rather than silently succeed.
 #
-# {{INLINE_SCRIPT_HASHES}} below is replaced at build time by vite/plugins/
-# csp-hash.ts with the sha256 of the theme-bootstrap script in index.html.
+# {{INLINE_SCRIPT_HASHES}} and {{INLINE_STYLE_HASHES}} below are replaced at
+# build time by vite/plugins/csp-hash.ts: the sha256 of each inline script in
+# the built index.html, and of the three stylesheets described under style-src.
 # The placeholder is not a valid CSP source, so a build that somehow skipped
 # the plugin yields an obviously broken policy rather than a silently
 # permissive one.
@@ -21,8 +22,10 @@
   # --- Content Security Policy ------------------------------------------------
   # default-src 'self'        Everything not named below may only load from this
   #                           origin. The catch-all that makes the rest additive.
-  # script-src                Own scripts only, plus the exact hash of the one
-  #                           inline bootstrap script. No 'unsafe-inline', so an
+  # script-src                Own scripts only, plus the exact hashes of the two
+  #                           inline scripts in index.html: the theme bootstrap
+  #                           and the cold open's who-sees-it decision. No
+  #                           'unsafe-inline', so an
   #                           injected <script> or onclick= cannot execute - and
   #                           NO eval-like source of any kind, which now includes
   #                           'wasm-unsafe-eval'. That was set "for the WASM-backed
@@ -35,19 +38,35 @@
   #                           and this one was in the security policy. Re-adding
   #                           it is one token, in a commit that names what needs
   #                           it - which is the right place for that decision.
-  # style-src 'self'          Stylesheets come from our own bundle, plus the
-  #                           exact hash of the preview frame's stylesheet.
-  #                           Still no 'unsafe-inline', so a style="" attribute
-  #                           and any OTHER <style> block are both refused - the
-  #                           hash permits one byte sequence, not a category.
-  #                           The preview needs it because a sandboxed frame has
-  #                           an opaque origin, where 'self' matches nothing.
+  # style-src 'self'          Stylesheets come from our own bundle, plus three
+  #                           exact hashes. Still no 'unsafe-inline', so a
+  #                           style="" attribute and any OTHER <style> block are
+  #                           both refused - a hash permits one byte sequence,
+  #                           not a category. The three:
+  #                             1. the preview frame's stylesheet. A sandboxed
+  #                                frame has an opaque origin, where 'self'
+  #                                matches nothing.
+  #                             2. Radix Select's list rule, which hides the
+  #                                list's scrollbar (its scroll buttons stand in).
+  #                                Read out of the installed package at build.
+  #                             3. the EMPTY stylesheet. React empties that
+  #                                <style> before refilling it on every open and
+  #                                WebKit checks the policy in between; a
+  #                                stylesheet with no bytes can style nothing.
+  #                           2 and 3 were refused on every open of every select
+  #                           until 2026-09, and the refusals were filed as
+  #                           console noise. See vite/plugins/csp-hash.ts.
   #                           NOTE: no style-src-attr exception is needed. React
   #                           applies the `style` prop through the CSSOM
   #                           (element.style.setProperty), which CSP does not
   #                           govern - only style attributes present in parsed
   #                           markup are. Verified against the built app with
-  #                           these exact headers; zero violations.
+  #                           these exact headers; zero violations. The page's
+  #                           scroll lock is the CSSOM too: a constructable
+  #                           stylesheet (src/lib/styleSingleton.ts), because its
+  #                           text carries a measured scrollbar width that no
+  #                           hash could know in advance. Only script can build
+  #                           one, and script-src already decides what runs.
   # img-src 'self' data: blob:  Tool output (previews, generated images) is held
   #                           in memory as data:/blob: URLs, never uploaded.
   # font-src 'self'           Self-hosted fonts only. No Google Fonts, no CDN.

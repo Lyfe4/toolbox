@@ -1,6 +1,6 @@
 import * as RadixSelect from '@radix-ui/react-select';
 
-import { CheckIcon, ChevronDownIcon } from '@/components/Icon';
+import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from '@/components/Icon';
 import { cx } from '@/lib/cx';
 
 import styles from './Select.module.css';
@@ -73,6 +73,19 @@ export function Select({
 
       <RadixSelect.Portal>
         <RadixSelect.Content className={styles.content} position="popper" sideOffset={4}>
+          {/*
+            THE SCROLL BUTTONS ARE THE LIST'S ONLY SCROLLBAR. Radix's viewport
+            hides the native one with a stylesheet of its own - allowed by its
+            hash in public/_headers - and draws these in its place, each only
+            while there is more of the list in its direction. Without them a
+            list that does not fit, which is every list on a phone held
+            sideways, ends at its last visible row with nothing to say that it
+            continues. `data-select-scroll` is the handle check:browsers
+            measures them by.
+          */}
+          <RadixSelect.ScrollUpButton className={styles.scroll} data-select-scroll="up">
+            <ChevronUpIcon size={12} />
+          </RadixSelect.ScrollUpButton>
           <RadixSelect.Viewport className={styles.viewport}>
             {options.map((option) => (
               <RadixSelect.Item
@@ -92,6 +105,9 @@ export function Select({
               </RadixSelect.Item>
             ))}
           </RadixSelect.Viewport>
+          <RadixSelect.ScrollDownButton className={styles.scroll} data-select-scroll="down">
+            <ChevronDownIcon size={12} />
+          </RadixSelect.ScrollDownButton>
         </RadixSelect.Content>
       </RadixSelect.Portal>
     </RadixSelect.Root>

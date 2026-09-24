@@ -43,9 +43,14 @@ export default defineConfig({
   ],
 
   resolve: {
-    // Mirror of the `paths` entry in tsconfig.app.json.
-    alias: {
-      '@': srcPath,
+    /*
+     * An array rather than an object so an entry can be a regular expression:
+     * an object key matches its package AND every deep import under it, which
+     * is right for `@` and wrong for `react-style-singleton` below.
+     */
+    alias: [
+      // Mirror of the `paths` entry in tsconfig.app.json.
+      { find: '@', replacement: srcPath },
 
       /*
        * FORCES `decode-named-character-reference` TO ITS LOOKUP-TABLE BUILD.
@@ -84,10 +89,34 @@ export default defineConfig({
        * sees it and everybody developing the tool does. An alias is one
        * mechanism that reaches the optimiser, the app and the worker alike.
        */
-      'decode-named-character-reference': createRequire(import.meta.url).resolve(
-        'decode-named-character-reference',
-      ),
-    },
+      {
+        find: 'decode-named-character-reference',
+        replacement: createRequire(import.meta.url).resolve('decode-named-character-reference'),
+      },
+
+      /*
+       * `react-style-singleton` IS REPLACED, not configured, because it cannot
+       * be configured.
+       *
+       * react-remove-scroll - which Radix Select wraps around every open list -
+       * uses it to insert the page's scroll lock as a `<style>` element, and
+       * `style-src` refuses every `<style>` it has no hash for. The lock's text
+       * carries the scrollbar's measured width, so no hash can be computed
+       * ahead of time. src/lib/styleSingleton.ts is the same three exports on
+       * a constructable stylesheet, which is the CSSOM and not governed by
+       * `style-src`; its header has the rest.
+       *
+       * Exact match only. `check:browsers` asserts both halves of what this
+       * buys - the policy refuses nothing while a list is open, AND the page
+       * really is scroll locked - so a Radix upgrade that stops importing this
+       * package, or starts inserting its lock some other way, fails there
+       * rather than going quiet.
+       */
+      {
+        find: /^react-style-singleton$/,
+        replacement: fileURLToPath(new URL('./src/lib/styleSingleton.ts', import.meta.url)),
+      },
+    ],
   },
 
   /*

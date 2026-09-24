@@ -235,14 +235,15 @@ injected script.
 
 That is the headline, and here is the rest of the enforcement:
 
-| Mechanism                                                                                                                                          | Where                                                  |
-| -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `connect-src 'none'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'none'`, `frame-ancestors 'none'`                                       | [`public/_headers`](public/_headers)                   |
-| `script-src` with no `'unsafe-inline'` and no `'unsafe-eval'` — the one inline script is allowed by its sha256, computed from the **built** output | [`vite/plugins/csp-hash.ts`](vite/plugins/csp-hash.ts) |
-| Fonts self-hosted from `/fonts/`. No Google Fonts, no CDN, no icon font, no emoji                                                                  | [`scripts/sync-fonts.js`](scripts/sync-fonts.js)       |
-| `eval`, `new Function`, `innerHTML`, `insertAdjacentHTML`, `dangerouslySetInnerHTML` banned by lint rule                                           | [`eslint.config.js`](eslint.config.js)                 |
-| No analytics, no telemetry, no error reporting, no fonts CDN, no third party of any kind                                                           | `package.json` has no such dependency                  |
-| Share links carry pipeline **structure only** — never your input, asserted by test                                                                 | `share.test.ts`                                        |
+| Mechanism                                                                                                                                                | Where                                                  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `connect-src 'none'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'none'`, `frame-ancestors 'none'`                                             | [`public/_headers`](public/_headers)                   |
+| `script-src` with no `'unsafe-inline'` and no `'unsafe-eval'` — the two inline scripts are allowed by their sha256, computed from the **built** output   | [`vite/plugins/csp-hash.ts`](vite/plugins/csp-hash.ts) |
+| `style-src` with no `'unsafe-inline'` — three exact stylesheets allowed by sha256: the preview frame's, Radix Select's scrollbar rule, and the empty one | [`vite/plugins/csp-hash.ts`](vite/plugins/csp-hash.ts) |
+| Fonts self-hosted from `/fonts/`. No Google Fonts, no CDN, no icon font, no emoji                                                                        | [`scripts/sync-fonts.js`](scripts/sync-fonts.js)       |
+| `eval`, `new Function`, `innerHTML`, `insertAdjacentHTML`, `dangerouslySetInnerHTML` banned by lint rule                                                 | [`eslint.config.js`](eslint.config.js)                 |
+| No analytics, no telemetry, no error reporting, no fonts CDN, no third party of any kind                                                                 | `package.json` has no such dependency                  |
+| Share links carry pipeline **structure only** — never your input, asserted by test                                                                       | `share.test.ts`                                        |
 
 **Verified in-browser, not asserted here.** `pnpm check:browsers` drives the
 production build in Firefox and WebKit under the real headers and fails if a
@@ -473,7 +474,7 @@ about.
 
 ## Testing
 
-5,012 tests across 125 files. The count is not the interesting part; what the
+5,327 tests across 131 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Every conversion, with a verdict and the evidence behind it
@@ -1395,6 +1396,48 @@ afterwards, in both engines, in 3.7 s — and `check:browsers` now puts that
 800 ms pause in on purpose, because the version of the check that typed as fast
 as it could was passing for a reason that had nothing to do with the app being
 right.
+
+### The console noise that was two refused stylesheets
+
+Opening the Category filter on `/tools` logged six CSP errors, and the
+verification skill carried them in a list of known console noise: the refused
+styles were "the popover's collision avoidance", verified harmless at 1440×900,
+and likely to put the list off screen at a width nobody tested. **Measured, the
+list was on screen at every width**, in three engines, at 1440, 390, 320 and a
+phone on its side, and with the trigger forty pixels from the bottom edge —
+where it correctly opened upwards. Positioning goes through React's `style`
+prop, which is the CSSOM, and the CSSOM is not governed by `style-src`.
+
+What was refused was two library stylesheets, traced to source by stack: the
+page's scroll lock, which react-remove-scroll inserts behind every open list,
+and a rule Radix Select renders to hide the list's own scrollbar. Neither broke
+anything visible — the lock's JavaScript half kept wheel and touch off the page
+— and the entry that hid them was wrong three ways at once: wrong about the
+mechanism, matching only Chromium's wording so that in Gecko and WebKit the
+"known" noise had never been known, and matching a category, so the next
+refusal of something that mattered would have been filed under it.
+
+**Both now arrive, and the policy is exactly as strict as it was.** The scrollbar
+rule is a fixed string, so it is allowed by its hash, read out of the installed
+package at build time; WebKit also checks the empty stylesheet React leaves for
+an instant while rewriting it, so that is hashed too, and it can style nothing.
+The scroll lock cannot be hashed — its text carries the scrollbar's measured
+width — so `react-style-singleton` is aliased to a
+[small replacement](src/lib/styleSingleton.ts) that builds the same
+stylesheet with `adoptedStyleSheets`, which is the CSSOM. `'unsafe-inline'` was
+the one-token alternative and was declined: it would have let injected markup
+restyle the page — hide the JWT tool's `NOT VERIFIED`, for one — to save a fix
+that turned out to cost nothing visible. The reasoning and the costs of the
+other options are in
+[architecture.md](docs/architecture.md#what-the-console-noise-was).
+
+**And looking at every Radix component at phone width found a real one.** A
+tooltip placed beside its trigger is only ever moved vertically to stay on
+screen, so at 320px a 240px tooltip beside a mid-row button was drawn 40px past
+the left edge, in both engines. It wraps to the room it has now. `checkPopovers`
+holds all of it in two engines — nothing refused, nothing off screen, the lock
+arriving and leaving, a list that does not fit showing a scroll button — and
+every assertion in it was seen failing against a deliberate break first.
 
 ### Whether the assertions could fail at all
 

@@ -160,6 +160,18 @@ export function ToolsIndexPage() {
           itself refuses any attempt to send your input anywhere &mdash; it is enforced, not merely
           promised.
         </p>
+        {/*
+          WHAT ELSE THE POLICY ADMITS, said where the claim is made. The
+          policy grew two stylesheet hashes in 2026-09 (see public/_headers),
+          and a privacy panel that described a policy narrower than the one
+          served would be a claim that had stopped being true.
+        */}
+        <p className={styles.lede}>
+          The same policy decides what may run and what may style the page: this site&rsquo;s own
+          files, plus a handful of inline pieces allowed by their exact fingerprint &mdash; two
+          start-up scripts, the text preview&rsquo;s stylesheet, the rule that hides a list&rsquo;s
+          scrollbar, and an empty stylesheet. Anything else written into the page is refused.
+        </p>
       </Panel>
     </div>
   );

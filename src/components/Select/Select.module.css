@@ -60,6 +60,21 @@
   padding: var(--pb-space-2xs);
 }
 
+/*
+ * An indicator first and a control second: Radix scrolls the list while a
+ * pointer rests on one, and a finger scrolls the list itself. Nothing happens
+ * on a click, so the cursor does not promise one.
+ */
+.scroll {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  block-size: var(--pb-control-height-sm);
+
+  color: var(--pb-ink-muted);
+  cursor: default;
+}
+
 .item {
   display: flex;
   align-items: center;

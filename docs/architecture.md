@@ -4630,6 +4630,112 @@ occurrence, and that the one occurrence anybody did instrument was this. If a
 verdict goes missing again after `00d3352`, that is a new finding and this
 section is wrong.
 
+### What the console noise was
+
+The verification skill kept a list of console errors it tolerated, and it had
+one entry: every "Applying inline style violates" line, logged about six times
+whenever the Category filter on `/tools` opened. Its note said the refused
+styles were the Select popover's collision avoidance — verified harmless at
+1440×900, and likely to put the list off screen wherever it needed moving.
+That is the shape of a skip with a standing excuse, which has hidden real
+coverage here twice, so the symptom was measured before anything was chosen.
+
+**Where the list lands.** Three engines; 1440×900, 390×844, 320×568 and 568×320;
+at rest and with the window cut to leave the trigger 40px above the bottom
+edge. **On screen in all 24**, opening upwards in every arrangement with no room
+below, and the filter worked in every one. Floating UI positions the list
+through React's `style` prop — `element.style`, the CSSOM — and `style-src`
+does not govern the CSSOM, which `public/_headers` already said about the
+`style` prop in general.
+
+**What was refused**, traced to source through the build's own source maps
+rather than inferred from the wording:
+
+| Refused                                                                                                  | Inserted by                                                      | What it would have done                                                         | What refusing it cost                                                                                                                                                          |
+| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `body[data-scroll-locked] { overflow: hidden !important; … margin-right: <scrollbar>px }`, and four more | react-remove-scroll-bar, through react-style-singleton           | hide the page's scrollbar while a list is open, with a margin so nothing shifts | nothing a person would see: the lock's JavaScript half cancels wheel and touch outside the list, and it held in every engine. The page's own scrollbar stayed drawn on desktop |
+| `[data-radix-select-viewport]{scrollbar-width:none} …::-webkit-scrollbar{display:none}`                  | Radix Select's viewport, as a `<style>` rendered beside the list | hide the list's scrollbar, which Radix's scroll buttons stand in for            | nothing in headless engines (overlay scrollbars); a native scrollbar on a list that overflows on a desktop with classic ones                                                   |
+
+The three engines word the refusal three ways — "Applying inline style
+violates", "The page's settings blocked an inline style", "Refused to apply a
+stylesheet" — and the entry matched only the first, so in Gecko and WebKit the
+"known" noise had never been matched at all. It was also a pattern for a
+category rather than a message: the next refusal of something that did matter
+would have been tolerated under it.
+
+**One measurement that nearly misled.** At 568×320 the page appeared to scroll
+190px behind the open list. It was Playwright scrolling the trigger into view
+to click it, read before rather than after the click; measured properly, the
+wheel moved the page 0px in all three engines. Recorded because it is exactly
+the mistake the original entry made in the other direction.
+
+#### The options, and what each costs
+
+The privacy claim rests on `connect-src 'none'` and nothing below touches it.
+The question was only how to stop the refusals.
+
+| Option                                                               | What a person sees                                                                                                             | What it opens                                                                                                                                                                                                                                                                                                                                                                                                              | Build and upkeep                                                                                                                                                                                      | Every Radix component?                                  |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `'unsafe-inline'` in `style-src`                                     | the library behaviour as designed                                                                                              | any `<style>` or `style=""` that reaches the markup applies. `img-src` and `font-src` keep CSS from fetching off-origin, so it is not an exfiltration channel to a third party; it IS a way for injected markup to restyle the page — hide `NOT VERIFIED` on a forged token, lay a fake field over a real one. It also has to replace the preview hash, because a hash in the list makes browsers ignore `'unsafe-inline'` | one token, and the reason in a comment                                                                                                                                                                | yes, and every future library                           |
+| `'unsafe-inline'` in `style-src-elem` only                           | the same                                                                                                                       | the same for `<style>` elements; `style=""` attributes stay refused                                                                                                                                                                                                                                                                                                                                                        | two tokens                                                                                                                                                                                            | yes                                                     |
+| Nonces                                                               | the same                                                                                                                       | nothing, if the nonce is per response                                                                                                                                                                                                                                                                                                                                                                                      | a per-request edge function on a site with no server, and a nonce that has to agree with a document the service worker caches. A fixed nonce is `'unsafe-inline'` with a password printed in the page | yes                                                     |
+| Hashes only                                                          | —                                                                                                                              | exact byte sequences                                                                                                                                                                                                                                                                                                                                                                                                       | cannot work for the scroll lock: its text carries the measured scrollbar width (0 on overlay scrollbars, 15 or 17 on Windows, other values under zoom) and the body's margins                         | the scrollbar rule only                                 |
+| Style the popover so it needs no inline positioning                  | —                                                                                                                              | —                                                                                                                                                                                                                                                                                                                                                                                                                          | the premise is false: positioning was never refused                                                                                                                                                   | —                                                       |
+| Replace the component — a native `<select>`                          | the OS's list instead of the instrument panel's, on every desktop; the native picker on phones, which is arguably better there | nothing                                                                                                                                                                                                                                                                                                                                                                                                                    | eight call sites, the open-list design, and typeahead and keyboard behaviour handed to the platform                                                                                                   | Select only; Tooltip and Toast are untouched either way |
+| **Hash the fixed rule; build the scroll lock on the CSSOM** (chosen) | the library behaviour as designed, plus scroll buttons on a list that does not fit                                             | two more byte sequences: one fixed rule, and the empty string, which styles nothing                                                                                                                                                                                                                                                                                                                                        | an alias to a small module with the package's three exports, and a build step that reads the rule out of the installed package                                                                        | every Radix component in the app — measured, below      |
+
+**Why the chosen one, and not the one-token one.** The trade stated for this
+decision was: keep the stricter policy if it costs little; loosen it if keeping
+it costs something visible while the privacy difference is negligible. Keeping
+it cost nothing visible at all — the refusals were measured as harmless before
+anything changed — so the only question was whether clearing them could be
+done without loosening. It could, and what `'unsafe-inline'` would have given
+up is small but real: this app's integrity against injected markup, in a tool
+whose job includes telling you a signature did not verify. Neither half is
+fragile in the way that matters, because each fails loudly: a Radix upgrade
+that changes the rule changes the hash with it or fails the build, a change to
+how react-remove-scroll imports its singleton fails
+`vite/styleSingletonAlias.test.ts`, and anything that brings a refusal back
+fails `checkPopovers`.
+
+**Why the constructable stylesheet is not a way round the policy.** `style-src`
+exists to stop styles arriving through markup that script did not write. Only
+running script can call `replaceSync`, and `script-src` already decides what
+runs — the same reason React's `style` prop needs no exception.
+[`styleSingleton.ts`](../src/lib/styleSingleton.ts) does nothing where
+`adoptedStyleSheets` does not exist (Safari before 16.4), which is exactly what
+the original achieved under this policy.
+
+**And the scroll buttons, which the hash made necessary.** Once Radix's rule
+applies, the list's native scrollbar is hidden, and the component had never
+rendered the scroll buttons Radix draws in its place. A list that does not fit
+— the Category filter on a phone held sideways is 312px of options in 123px —
+would then have ended at its last visible row with nothing to say it goes on.
+
+#### What looking at every Radix component found
+
+Select in all three places it lives (the index, a tool page's options, the
+canvas inspector's bottom sheet), Tabs, Tooltip and Toast, at phone widths,
+with a refusal recorder on for the page's whole life. Only Select refused
+anything. But the Tooltip was **off screen**: `side="right"` on a 320px screen
+drew a 240px box at x = −40 in both engines. Floating UI shifts a side-placed
+popover along its cross axis only, so a box too wide for either side of its
+trigger has nowhere to go. It is capped at
+`--radix-tooltip-content-available-width` now and wraps into the room it has.
+Every canvas port's tooltip is side-placed; that is the case it matters for.
+
+`checkPopovers` asserts all of it in Gecko and WebKit, and every assertion was
+run against a break first: the unfixed build, collision avoidance off with the
+height clamp removed (the list off screen, "Hashing" unclickable), a scroll-lock
+sheet that is never removed, the empty hash removed (two refusals per open in
+WebKit), a toast viewport too wide for the screen, a filter that ignores its
+select, a tab that will not switch, and the refusal recorder not installed. Two
+of its first assertions did not fail under their breaks and were rewritten
+because of it: "the list is on screen" survived collision avoidance being off,
+because the list is also clamped to the height Radix reports as available, and "closing releases the lock"
+survived a leaked stylesheet, because the leaked rules are scoped to an
+attribute that had already gone. It counts adopted stylesheets now.
+
 ## Build and deployment
 
 ```mermaid
@@ -4639,7 +4745,7 @@ flowchart LR
     pub["public/<br/>_headers, _redirects,<br/>fonts, icons"] -->|copied verbatim| dist
     vite --> dist["dist/"]
     dist --> sw["service-worker plugin<br/>emits sw.js with<br/>the real asset list"]
-    sw --> csp["csp-hash plugin<br/>hashes the inline script<br/>into _headers"]
+    sw --> csp["csp-hash plugin<br/>hashes the inline scripts<br/>and styles into _headers"]
     csp --> out["deployable output"]
 ```
 
@@ -4648,9 +4754,13 @@ Three Vite plugins do work that cannot be done by hand:
 - [`service-worker.ts`](../vite/plugins/service-worker.ts) lists the finished
   build and writes `sw.js` with that list plus a build id derived from it. A
   hand-maintained precache list would be wrong the moment anything was edited.
-- [`csp-hash.ts`](../vite/plugins/csp-hash.ts) hashes the inline theme
-  bootstrap **from the built HTML** and substitutes it into `_headers`. Hashing
-  the source would be hashing something the browser never executes.
+- [`csp-hash.ts`](../vite/plugins/csp-hash.ts) hashes the two inline scripts
+  **from the built HTML** and substitutes them into `_headers`. Hashing the
+  source would be hashing something the browser never executes. It does the
+  same for `style-src`: the preview frame's stylesheet, Radix Select's
+  scrollbar rule read out of the installed package and confirmed present in the
+  built JavaScript, and the empty stylesheet — see
+  [what the console noise was](#what-the-console-noise-was).
 
 - [`index-html.ts`](../vite/plugins/index-html.ts) strips HTML comments from
   the shipped document — the source explains itself at length and none of that

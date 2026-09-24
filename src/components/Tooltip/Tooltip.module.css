@@ -1,6 +1,18 @@
 .content {
   z-index: var(--pb-z-popover);
-  max-inline-size: 240px;
+
+  /*
+   * NO WIDER THAN THE ROOM THERE IS. A tooltip placed beside its trigger
+   * (`side="left"` or `"right"`, which every canvas port uses) is only ever
+   * moved vertically to stay on screen - Floating UI shifts a side placement
+   * along its cross axis and nothing else - so on a 320px screen a 240px box
+   * beside a button in the middle of the row did not fit on either side and
+   * was drawn 40px past the left edge. Measured in both engines by
+   * check:browsers, which is where this is held. Radix publishes the width
+   * left on the side it chose, so the box wraps into it instead.
+   */
+  max-inline-size: min(240px, var(--radix-tooltip-content-available-width, 240px));
+  overflow-wrap: anywhere;
   padding: var(--pb-space-2xs) var(--pb-space-xs);
 
   background-color: var(--pb-surface-overlay);

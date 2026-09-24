@@ -40,9 +40,18 @@ while the app is driven through a real workload in two engines.
 
 ### Pasted input cannot become code
 
-- `script-src` carries no `'unsafe-inline'` and no `'unsafe-eval'`. The single
-  inline bootstrap script is allowed by its sha256, computed from the built
-  output by [`vite/plugins/csp-hash.ts`](vite/plugins/csp-hash.ts).
+- `script-src` carries no `'unsafe-inline'` and no `'unsafe-eval'`. The two
+  inline scripts in `index.html` - the theme bootstrap and the cold open's
+  decision about who sees it - are allowed by their sha256, computed from the
+  built output by [`vite/plugins/csp-hash.ts`](vite/plugins/csp-hash.ts).
+- `style-src` carries no `'unsafe-inline'` either. Three inline stylesheets are
+  allowed by their exact hash: the text preview's, the rule Radix Select uses
+  to hide a list's scrollbar, and the empty stylesheet (WebKit checks one for
+  an instant while React rewrites that rule). Injected markup cannot restyle
+  the page - which matters in a tool that tells you when a signature did not
+  verify. The page's scroll lock is built through the CSSOM instead, which
+  only running script can do; see
+  [docs/architecture.md](docs/architecture.md#what-the-console-noise-was).
 - ESLint bans `eval`, `new Function`, `innerHTML`, `insertAdjacentHTML` and
   `dangerouslySetInnerHTML` across the whole source tree.
 - `object-src 'none'`, `base-uri 'self'`, `form-action 'none'`,

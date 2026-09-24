@@ -49,6 +49,14 @@ export function ChevronDownIcon(props: IconProps) {
   );
 }
 
+export function ChevronUpIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M5 15 L12 8 L19 15" />
+    </IconBase>
+  );
+}
+
 export function ChevronRightIcon(props: IconProps) {
   return (
     <IconBase {...props}>
