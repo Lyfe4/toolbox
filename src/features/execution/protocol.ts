@@ -51,14 +51,6 @@ export interface PreloadRequest {
 
 export type WorkerRequest = ExecuteRequest | CancelRequest | PingRequest | PreloadRequest;
 
-export interface ProgressResponse {
-  readonly kind: 'progress';
-  readonly requestId: string;
-  /** 0 to 1. */
-  readonly fraction: number;
-  readonly label: string | null;
-}
-
 /**
  * Where a run's time actually went, measured inside the worker.
  *
@@ -99,7 +91,7 @@ export interface ReadyResponse {
   readonly kind: 'ready';
 }
 
-export type WorkerResponse = ProgressResponse | StartedResponse | SettledResponse | ReadyResponse;
+export type WorkerResponse = StartedResponse | SettledResponse | ReadyResponse;
 
 /**
  * Collects the ArrayBuffers inside a set of values so they can be TRANSFERRED

@@ -25,7 +25,7 @@ async function run(
   const result = await tool.run({
     inputs: { input: text(input) },
     options: { ...(tool.defaultOptions as Record<string, unknown>), ...options },
-    context: { signal: new AbortController().signal, reportProgress: () => undefined },
+    context: { signal: new AbortController().signal },
   });
 
   if (!result.ok) throw new Error(`${id} failed: ${result.error.message}`);
@@ -72,7 +72,7 @@ describe('text-convert → diff', () => {
     const result = await diff.run({
       inputs: { original: text(a), changed: text(b) },
       options: diff.defaultOptions,
-      context: { signal: new AbortController().signal, reportProgress: () => undefined },
+      context: { signal: new AbortController().signal },
     });
 
     expect(result.ok).toBe(true);
@@ -96,7 +96,7 @@ describe('text-convert → hash', () => {
       const result = await hash.run({
         inputs: { input: text(value) },
         options: { ...(hash.defaultOptions as Record<string, unknown>), algorithm: 'sha-256' },
-        context: { signal: new AbortController().signal, reportProgress: () => undefined },
+        context: { signal: new AbortController().signal },
       });
       if (!result.ok) throw new Error('hash failed');
       return asText((result.value as Record<string, ToolValue>).output);

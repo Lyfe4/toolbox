@@ -61,6 +61,23 @@ worker or anything visual.** jsdom has no layout engine, no Worker, no
 `OffscreenCanvas` and no pointer events, so the unit suite is structurally
 unable to see most of what that script checks.
 
+**While iterating, run only the sections you could have affected** — and never
+treat that as the run a commit needs:
+
+```bash
+pnpm check:browsers --list                              # the 52 section names
+pnpm check:browsers --only=popovers,valuemodel          # a substring of each, `check` optional
+pnpm check:browsers --only=outputviews --engine=webkit  # one engine
+```
+
+A partial run's verdict begins `PARTIAL` and never prints the `OK — Firefox and
+WebKit both pass` line, and a filter that matches no section is an error rather
+than an empty green run. Every run ends with each section's time, slowest first.
+The full run stays the pre-commit gate because the failures this harness is
+most valuable for exist only deep inside one: the lost fill of round eleven
+needed a page reused across a long sequence, and a filtered run removes exactly
+that. Use the filter to get a fix green; then run the whole thing once, idle.
+
 `scripts/mutate.mjs` is the third, and it is not a gate in any sense: it takes
 about an hour, it produces a list to READ rather than a number to pass, and it
 resumes where it stopped. `--report` prints the survivors of an earlier run.

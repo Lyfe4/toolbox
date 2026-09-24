@@ -31,7 +31,6 @@ function deferredEngine() {
       }),
     warmUp: () => undefined,
     prefetch: () => undefined,
-    dispose: () => undefined,
   };
 
   return {

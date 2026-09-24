@@ -126,7 +126,6 @@ export const structuredDataTool = defineTool({
   execution: {
     strategy: 'worker',
     requiresOffscreenCanvas: false,
-    reportsProgress: false,
     timeoutMs: 15_000,
     maxInputBytes: 16 * 1024 * 1024,
   },

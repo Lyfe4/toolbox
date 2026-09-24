@@ -34,8 +34,15 @@ pnpm-debug.log*
 # Note: src/routeTree.gen.ts is generated but IS committed, so that a fresh
 # clone can typecheck before it has ever run a build.
 
-# Editor/agent workspace config (dev-server launch settings, scratch state).
-.claude/
+# Editor/agent workspace config (dev-server launch settings, scratch state) is
+# per machine. The skills are not: .claude/skills/verify-patchbay is how this
+# project proves a change on the deployed site, and a copy that lives on one
+# machine can be lost with it and can drift where no review sees it. What a run
+# of a skill WRITES is still per machine - screenshots and logs, megabytes a
+# round - so every skill's evidence/ stays out.
+.claude/*
+!.claude/skills/
+.claude/skills/*/evidence/
 
 # Written by the Netlify CLI when `netlify dev` is run locally. Neither is
 # configuration - netlify.toml and public/_headers are - and deno.lock is a

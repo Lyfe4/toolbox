@@ -10,7 +10,6 @@ import {
 import { span } from '@/lib/perf';
 
 import {
-  collectTransferables,
   measureInputs,
   type ExecuteRequest,
   type WorkerRequest,
@@ -62,29 +61,11 @@ export function createBrowserWorker(): WorkerHandle {
   };
 }
 
-/**
- * Who owns a binary input's memory once `execute` is called.
- *
- * 'borrow' (the default) structured-clones the input, so the caller's
- * Uint8Array stays intact and can be handed to another run afterwards. That is
- * what makes fan-out possible: on the canvas one output feeds several inputs,
- * and a transferred buffer would be detached by the first consumer, leaving
- * the second with a zero-length view and no error to explain it.
- *
- * 'transfer' moves the buffer to the worker with zero copy, detaching the
- * caller's view. Only pass it when the caller can prove the bytes are consumed
- * exactly once and will never be read again.
- */
-export type InputOwnership = 'borrow' | 'transfer';
-
 export interface ExecuteOptions {
   readonly toolId: ToolId;
   readonly inputs: ToolInputs;
   readonly options: unknown;
   readonly signal?: AbortSignal;
-  readonly onProgress?: (fraction: number, label: string | null) => void;
-  /** Defaults to 'borrow'. See InputOwnership. */
-  readonly ownership?: InputOwnership;
 }
 
 export interface EngineDependencies {
@@ -104,7 +85,6 @@ export interface EngineDependencies {
 
 interface Pending {
   readonly settle: (result: ToolResult<ToolOutputs>) => void;
-  readonly onProgress: ((fraction: number, label: string | null) => void) | undefined;
   timer: number;
   /** Main-thread time the request was posted, for placing the spans. */
   postedAt: number;
@@ -114,14 +94,6 @@ interface Pending {
    * worker after an unrelated request destroyed the old one.
    */
   readonly request: ExecuteRequest;
-  /** Buffers handed over on post. Empty under 'borrow', which is the default. */
-  readonly transfer: Transferable[];
-  /**
-   * False when this request's buffers were TRANSFERRED. The caller's views are
-   * detached, so re-posting would send zero-length data and produce a
-   * confidently wrong answer - much worse than the error it was avoiding.
-   */
-  readonly replayable: boolean;
   /**
    * How many times the worker has told us this request BEGAN RUNNING.
    *
@@ -180,17 +152,18 @@ export interface ExecutionEngine {
    * fetch trades a small latency problem for a large bandwidth one.
    */
   readonly prefetch: (id: ToolId) => void;
-  /** Tears down the worker. Used on teardown and after a timeout. */
-  readonly dispose: () => void;
 }
 
 /**
  * Creates the execution engine.
  *
- * Binary inputs are BORROWED by default: they are structured-cloned into the
- * worker and the caller's buffer stays valid, so the same bytes can feed
- * several runs. Pass `ownership: 'transfer'` to hand the memory over instead,
- * which is free but detaches the caller's view.
+ * Binary inputs are BORROWED: they are structured-cloned into the worker and
+ * the caller's buffer stays valid, so the same bytes can feed several runs.
+ * There used to be an `ownership: 'transfer'` option for a caller that could
+ * prove single consumption. Nothing ever passed it - its one prospective
+ * caller was ffmpeg's MEMFS copy in a transcoder that was never built - and
+ * it carried a replay refusal that only it could reach. Removed in round
+ * fifteen.
  */
 export function createExecutionEngine(dependencies: EngineDependencies): ExecutionEngine {
   const pending = new Map<string, Pending>();
@@ -219,13 +192,6 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
 
       const entry = pending.get(response.requestId);
       if (!entry) return; // A late reply to something already settled.
-
-      if (response.kind === 'progress') {
-        // A cancelled request is kept only to hold its deadline; its caller
-        // has been settled and must not be told about work it walked away from.
-        if (!entry.cancelled) entry.onProgress?.(response.fraction, response.label);
-        return;
-      }
 
       if (response.kind === 'started') {
         entry.starts += 1;
@@ -357,9 +323,8 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
    * They are REPLAYED rather than failed, because a tool is a pure function of
    * its inputs and options: running it again on a fresh worker produces the
    * same answer it would have produced, and reporting a failure the user's
-   * node did not cause is the thing worth avoiding. Replay is refused for a
-   * request whose buffers were transferred - they are detached, so a replay
-   * would silently compute over nothing - and past the budget below.
+   * node did not cause is the thing worth avoiding. Replay is refused past the
+   * budget below.
    *
    * THE BUDGET COUNTS STARTS, NOT REPLAYS, AND THAT IS THE WHOLE POINT.
    *
@@ -409,7 +374,7 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
        * further attempt and then reports.
        */
       const budget = entry.starts === 0 ? MAX_REPLAYS : 1;
-      if (!replay || !entry.replayable || entry.replays >= budget) {
+      if (!replay || entry.replays >= budget) {
         entry.settle(
           fail('internal', 'This run was interrupted before it could finish.', { detail: cause }),
         );
@@ -421,7 +386,7 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
         entry.postedAt = now();
         entry.timer = armTimeout(id, entry.timeoutMs);
         pending.set(id, entry);
-        attachWorker().post(entry.request, entry.transfer);
+        attachWorker().post(entry.request, []);
       } catch (error) {
         dependencies.clearTimer(entry.timer);
         pending.delete(id);
@@ -452,12 +417,7 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
       return await tool.run({
         inputs: options.inputs,
         options: options.options,
-        context: {
-          signal: controller.signal,
-          reportProgress: (fraction, label) => {
-            options.onProgress?.(Math.min(1, Math.max(0, fraction)), label ?? null);
-          },
-        },
+        context: { signal: controller.signal },
       });
     } catch (error) {
       return fail('internal', 'The tool failed unexpectedly.', {
@@ -520,11 +480,6 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
       inputs: options.inputs,
       options: options.options,
     };
-    // Empty transfer list under 'borrow': structured clone copies the bytes and
-    // leaves the caller's buffer usable. Outputs are still transferred the
-    // other way (see worker.ts), where nothing reuses them.
-    const transfer =
-      options.ownership === 'transfer' ? collectTransferables(Object.values(options.inputs)) : [];
 
     return new Promise<ToolResult<ToolOutputs>>((resolve) => {
       let settled = false;
@@ -575,13 +530,10 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
 
       pending.set(requestId, {
         settle,
-        onProgress: options.onProgress,
         timer: armTimeout(requestId, timeoutMs),
         postedAt: now(),
         toolId: options.toolId,
         request,
-        transfer,
-        replayable: transfer.length === 0,
         starts: 0,
         replays: 0,
         cancelled: false,
@@ -590,7 +542,12 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
       });
       options.signal?.addEventListener('abort', onAbort, { once: true });
 
-      handle.post(request, transfer);
+      // Inputs are CLONED, never transferred: on the canvas one output feeds
+      // several inputs, and a transferred buffer is detached by whichever
+      // consumer ran first, leaving the rest a zero-length view and no error.
+      // Outputs are transferred the other way (see worker.ts), where nothing
+      // reuses them. A blob crosses by reference either way.
+      handle.post(request, []);
     });
   }
 
@@ -627,21 +584,6 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
     execute,
     warmUp,
     prefetch,
-    dispose: () => {
-      /*
-       * Settled, not merely forgotten. Dropping the entries left every awaiting
-       * caller with a promise that could never resolve, so a pipeline torn down
-       * mid-run would sit at `running` for the life of the tab.
-       */
-      const abandoned = [...pending.values()];
-      pending.clear();
-      prefetched.clear();
-      replaceWorker();
-      for (const entry of abandoned) {
-        dependencies.clearTimer(entry.timer);
-        entry.settle(fail('cancelled', 'Cancelled.'));
-      }
-    },
   };
 }
 

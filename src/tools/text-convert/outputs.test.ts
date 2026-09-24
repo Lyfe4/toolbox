@@ -28,7 +28,6 @@ import { textConvertDefaultOptions, type TextConvertOptions } from './options';
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 async function run(

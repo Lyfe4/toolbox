@@ -17,7 +17,6 @@ import base64Tool from './index';
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 const DEFAULTS: EncodeOptions = { urlSafe: false, padding: true, wrapAt: 0 };

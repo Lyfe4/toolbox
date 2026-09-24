@@ -73,7 +73,6 @@ export const TOOL_MANIFEST = [
     execution: {
       strategy: 'worker',
       requiresOffscreenCanvas: false,
-      reportsProgress: false,
       timeoutMs: 15_000,
       maxInputBytes: 32 * 1024 * 1024,
     },
@@ -121,7 +120,6 @@ export const TOOL_MANIFEST = [
     execution: {
       strategy: 'worker',
       requiresOffscreenCanvas: false,
-      reportsProgress: false,
       timeoutMs: 15_000,
       maxInputBytes: 16 * 1024 * 1024,
     },
@@ -152,7 +150,6 @@ export const TOOL_MANIFEST = [
     execution: {
       strategy: 'worker',
       requiresOffscreenCanvas: false,
-      reportsProgress: false,
       timeoutMs: 30_000,
       maxInputBytes: 64 * 1024 * 1024,
     },
@@ -192,7 +189,6 @@ export const TOOL_MANIFEST = [
     execution: {
       strategy: 'worker',
       requiresOffscreenCanvas: false,
-      reportsProgress: false,
       timeoutMs: 10_000,
       maxInputBytes: 256 * 1024,
     },
@@ -240,7 +236,6 @@ export const TOOL_MANIFEST = [
     execution: {
       strategy: 'worker',
       requiresOffscreenCanvas: false,
-      reportsProgress: false,
       timeoutMs: 20_000,
       maxInputBytes: 8 * 1024 * 1024,
     },
@@ -282,7 +277,6 @@ export const TOOL_MANIFEST = [
     execution: {
       strategy: 'worker',
       requiresOffscreenCanvas: false,
-      reportsProgress: false,
       timeoutMs: 2_000,
       timeoutMessage:
         'That pattern is too slow on this input and was stopped. It is almost certainly backtracking catastrophically - nested quantifiers like (a+)+ are the usual cause.',
@@ -334,7 +328,6 @@ export const TOOL_MANIFEST = [
     execution: {
       strategy: 'main',
       requiresOffscreenCanvas: false,
-      reportsProgress: false,
       timeoutMs: 5_000,
       maxInputBytes: 4 * 1024,
     },
@@ -372,7 +365,6 @@ export const TOOL_MANIFEST = [
     execution: {
       strategy: 'worker',
       requiresOffscreenCanvas: true,
-      reportsProgress: false,
       timeoutMs: 60_000,
       maxInputBytes: 64 * 1024 * 1024,
     },
@@ -428,7 +420,6 @@ export const TOOL_MANIFEST = [
     execution: {
       strategy: 'worker',
       requiresOffscreenCanvas: false,
-      reportsProgress: false,
       timeoutMs: 30_000,
       // The one tool whose deadline scales with its input, because the one
       // tool that reads its input through a window is the only one whose input
@@ -500,7 +491,6 @@ export const TOOL_MANIFEST = [
     execution: {
       strategy: 'worker',
       requiresOffscreenCanvas: false,
-      reportsProgress: false,
       timeoutMs: 15_000,
       maxInputBytes: 4 * 1024 * 1024,
     },

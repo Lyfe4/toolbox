@@ -474,7 +474,7 @@ about.
 
 ## Testing
 
-5,327 tests across 131 files. The count is not the interesting part; what the
+5,320 tests across 131 files. The count is not the interesting part; what the
 tests caught is.
 
 ### Every conversion, with a verdict and the evidence behind it
@@ -1842,11 +1842,11 @@ pixels and snapped to full, which is nothing to watch. A run shorter than the
 sweep now plays the whole 0-to-100 on completion, over 260ms, after the answer
 is already drawn — a minimum display time for the bar and for nothing else.
 
-The determinate branch was dead the same way — the fraction is written as an
-`inlineSize` on that inline box — and nothing noticed because no tool has ever
-reported one: `reportProgress` is plumbed through the protocol, the worker, the
-engine and the hook, and every caller in the repository is a test stub. So a run
-is honestly indeterminate and the sweep is the right idiom; what it may not do is
+The determinate branch was dead the same way — the fraction was written as an
+`inlineSize` on that inline box — and nothing noticed because no tool ever
+reported one: `reportProgress` was plumbed through the protocol, the worker, the
+engine and the hook, and every caller in the repository was a test stub. Round
+fifteen removed it. So a run is honestly indeterminate and the sweep is the right idiom; what it may not do is
 show nothing. jsdom could not catch this (no layout), axe does not ask whether a
 `progressbar` moves, and no geometric check had ever asked whether this box had a
 size. One does now, over 40 frames, with the size asserted beside the movement

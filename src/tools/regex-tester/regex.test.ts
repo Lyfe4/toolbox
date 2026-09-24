@@ -23,7 +23,6 @@ import {
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 function compile(pattern: string, flags = 'g'): RegExp {

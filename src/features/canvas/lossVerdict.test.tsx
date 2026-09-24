@@ -42,7 +42,7 @@ async function runForReal(options: ExecuteOptions): Promise<ToolResult<ToolOutpu
   return tool.run({
     inputs: options.inputs,
     options: options.options,
-    context: { signal: new AbortController().signal, reportProgress: () => undefined },
+    context: { signal: new AbortController().signal },
   });
 }
 

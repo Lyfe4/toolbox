@@ -481,7 +481,6 @@ wrongness a canvas can have: a node that reports a failure it did not cause.
 | A node beside one that runs away          | **fixed this round** | Was **broken**, and not on a slow machine — on an idle one, 10 runs out of 10 in both engines. See [The bystander](#the-bystander-a-node-failing-for-something-it-did-not-do). |
 | A node downstream of that node            | **fixed this round** | Reported `upstream` for the same reason, on every one of those runs.                                                                                                           |
 | A node whose own tool really did run over | **exact**            | Reports `timeout` with the tool's own message, and the worker is destroyed. Unchanged.                                                                                         |
-| A node whose buffers were transferred     | **lossy, told**      | Refused a replay, because a transferred buffer is detached and a replay would compute over nothing. Told as an interrupted run rather than as a wrong answer.                  |
 
 ### The bystander: a node failing for something it did not do
 

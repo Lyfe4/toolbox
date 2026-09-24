@@ -3352,3 +3352,353 @@ Written down rather than acted on, as asked.
 - **The matrix's Structured data § Writing TSV cell** is the longest cell in
   the file after this round. The measurement table in the tool README says it
   better.
+
+---
+
+## Round fifteen, done — the complexity pass
+
+2026-09-24, against `6b0603d`. Less code doing the same work, before the
+documentation audit, so the audit is written against the shape that stays.
+
+|                                   | Before              | After                       |
+| --------------------------------- | ------------------- | --------------------------- |
+| Source lines, not counting tests  | 53,971              | 53,774                      |
+| Test lines                        | 48,961              | 48,830                      |
+| Unit tests                        | 5,327               | 5,320                       |
+| `scripts/cross-browser-check.mjs` | 17,162              | 17,186                      |
+| `check:browsers` checks passed    | 2,864               | 2,864, 0 failed, 10 skipped |
+| `check:browsers`, full run        | 1,334 s, under load | 1,115 s, idle               |
+
+**The harness is flat on purpose, and the reason is the point.** About 230
+lines of duplicated helpers went and a section filter, a read-back per typed
+field and the reasons for both came in. The measure of this round is not the
+line count, which moved by 0.4% of source; it is how many things are now held
+by one mechanism instead of two, and how many checks can now fail that could
+not.
+
+**The brief's 45 minutes is 19 to 22.** The baseline full run, on this tree at
+`6b0603d`, took 1,334 s — under load, with a game running at 91% CPU, which is
+also why that run's timing is a ceiling: the idle run of the final tree took
+1,115 s, 18½ minutes. Earlier notes said
+40–45; they were measured before rounds eleven to thirteen removed the waits
+that were the bulk of it. It is still the main drag, and the per-section
+times at the end of every run now say where it goes.
+
+### The skill, tracked
+
+`.gitignore` ignores the rest of `.claude/`, un-ignores `.claude/skills/`, and
+ignores each skill's `evidence/`. **A second ignore was in the way and is not in
+the repository**: `.git/info/exclude`, in the block Claude Code's runtime
+writes, held `.claude/skills/verify-*/` — so un-ignoring in `.gitignore` alone
+changed nothing on this machine. The line is removed; SKILL.md says what to do
+if a runtime puts it back (a committed file stays tracked; a NEW file would be
+silently ignored — `git check-ignore -v` names the rule).
+
+The CSP round's three edits were all on disk and are now committed: the empty
+`KNOWN_CONSOLE_NOISE` with its measurement, `probe-popover.mjs`, `probe-search.mjs`
+in the helpers table, and the note that `/maintain-verification-skill` does not
+exist. Prettier now covers the skill, so its files were formatted once.
+
+### Removed, and why each is safe
+
+| What                                                                                                                                                                                                          | Why it is safe                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reportProgress`, `onProgress`, the `progress` message, `ExecutionMeta.reportsProgress` (twenty declarations), the running state's `progress`/`label`, ToolRunner's determinate branch, and the tripwire test | No tool has ever called it, in any commit. `runPipeline` never passed the callback, so the canvas could not have shown it anyway, and `reportsProgress` was written twenty times and read by nothing but the tripwire. **The reason for it was read before removing it**: `docs/video-convert-feasibility.md` made it step 1 of a transcoder that was never built. The one tool that could now want it is `video-remux` on a 4 GiB file; re-adding is a message kind, a callback and the ToolRunner branch, and the comment in `types.ts` says so. The bar's behaviour is unchanged: it was always indeterminate. |
+| `ownership: 'transfer'`, `Pending.transfer`/`replayable`, the replay refusal for a transferred request, and its two tests                                                                                     | Nothing ever passed it. Its prospective caller was ffmpeg's MEMFS output in the same unbuilt transcoder. The remuxer that was built reads a blob, which crosses by reference with nothing to transfer, and OUTPUTS are still transferred back by the worker — a different, live path (`collectTransferables` in `worker.ts`). Borrowing inputs is still asserted: `borrows binary inputs, so nothing is detached` checks the empty transfer list and the caller's buffer, and the fan-out tests check twelve consumers' bytes.                                                                                    |
+| `ExecutionEngine.dispose()`, its test and two fakes' stubs                                                                                                                                                    | No non-test caller has existed in any commit since the engine was written (`git log -S`). Its comment, "Used on teardown and after a timeout", was never true: a timeout uses `replaceWorker`. The engine is a tab-lifetime singleton.                                                                                                                                                                                                                                                                                                                                                                            |
+| `useToolExecution`'s `reset`, `pipelineStore.stateFor`, `viewportStore.setViewport`/`setZoom`, `selectGraph`/`selectSelection`                                                                                | Declared and never called anywhere, tests included.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `hasGroups`, `DIGEST_BYTES`, `SUMMARY_LINES`, `PORT_HIT_RADIUS`, `plainTextOf`, `overrideThemeNames`, `ChevronRightIcon`, `MinusIcon`                                                                         | No caller. Three carried comments claiming one ("used for output-size hints", "Used by the view's hints", "Asserted against the real box" — only the literal `2` is, in the harness). The icons were reachable only through `Icon.test.tsx`'s enumeration; nothing renders the set.                                                                                                                                                                                                                                                                                                                               |
+| `hast-util-to-text` as a direct dependency                                                                                                                                                                    | `plainTextOf` was its last importer. It stays installed, as a dependency of `hast-util-to-mdast`; `pipelines.ts` still names it in a comment about why it is not used alone.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Two private copies of `plural` / `counted`                                                                                                                                                                    | Identical to `src/lib/plural.ts`, whose header exists to stop exactly this.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Three spellings of a path step                                                                                                                                                                                | One `pathStep`, in `lib/jsonNumbers.ts`. See the defect below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Two walks of a report's notes in `notePorts.test.ts` and `lossCorpus.test.ts`                                                                                                                                 | Both now read through the canvas's `lossNotesOf`. See below — this was drift, not only duplication.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Detection's candidate list, written twice                                                                                                                                                                     | `detectionCandidates`, so `untriedDelimiter`'s suggestion cannot name a delimiter detection already tried.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| The smoke check's "shortcuts overlay can scroll"                                                                                                                                                              | It could not fail: see _Disarmed_ below. `checkDialogScroll` holds the shortcuts overlay with a real key and a real wheel.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Four copies of the harness's node helpers, and two of `errorOn`                                                                                                                                               | One `onNode`, `nodeFace`, `drawnNotes` and `drawnError`, used by the loss checks. Every one of the 279 checks in those eight sections passes in both engines, and three families of break were run against them (below).                                                                                                                                                                                                                                                                                                                                                                                          |
+| `truncatedToken` on every UI example                                                                                                                                                                          | Computed at its one use.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+
+### Looked removable, and kept
+
+- **`inGamut`** (round eight's first candidate) — alive since round nine: it
+  is the out-of-gamut note.
+- **`untriedDelimiter`** — round eight's premise was wrong. `looksDelimited`
+  bounds itself to `DETECTION_BUDGET`, so there is no unbounded second pass,
+  and it tries only the delimiters detection did not. Only the duplicated list
+  was cut.
+- **`CsvRow.starts`, `needsQuoting`, `firstMistypedScalar`,
+  `yamlPresentationNotes`** — each has a documented reason and a consolidation
+  that would add as much as it removed. `yamlPresentationNotes` as a table is
+  the same code rearranged: the five sentences share no grammar.
+- **`BinaryHandling`, `SANITISE_NOTE`, `RegexFlag`** — unreferenced, and each
+  sits under the comment that is the explanation of its concept. Deleting the
+  export would delete the explanation or orphan it; kept as the cheapest place
+  for the reasoning to live.
+- **The harness's `dismissColdOpen`/`gotoCanvas` beside the skill's** —
+  deliberately different (different origin, timeouts, return value), and
+  `scripts/` must not import from `.claude/`.
+- **`compareMarkup`**, called only by tests — its tests are "the unfiltered
+  truth" the sentence-layer filters are written against.
+- **`ReportView`'s note decoder** — draws every level, bodies and `hint`s;
+  not the same job as `lossNotesOf`.
+- **The kind loop in `fits the 60 characters…`** — flagged as redundant with
+  the exact-title test beside it, and it is the positive partner of the length
+  assertion in its own test: an empty title is 0 characters.
+- **`keeps the empty document a trailing separator declares`** in both the
+  parser and the tool suite — same input, different layer; the parser one
+  localises the failure.
+- **`does not offer a prefix that would not match under sticky either`** —
+  flagged as possibly vacuous. It is not: its natural break (probing without
+  `y`) produces a prefix note and the loop fails on it, measured.
+
+### Two mechanisms doing one job
+
+1. **The notes a canvas shows, read three ways.** `lossNotesOf` is what the
+   canvas reads; `notePorts.test.ts` and `lossCorpus.test.ts` each had a walk
+   of their own "the same walk `lossSummary` makes" — and they had drifted:
+   neither dropped an empty title or an empty port id, which the canvas does.
+   So a warn note no node would ever draw counted as told. **Survivor: the
+   canvas's reader**, now with `body`, because the question those tests ask is
+   what a person sees.
+2. **The harness does not read the loss corpus.** The largest overlap, and
+   **not** consolidated: `checkValueModel`, `checkMarkdownCensus`,
+   `checkClassAndSubstitution`, `checkTableCellsAndFlow` and
+   `checkColourReports` hard-code the twenty corpus rows a second time, so a
+   new row is two edits. The survivor should be the corpus, looped over by one
+   check — but the harness's controls are sharper than the corpus's `clean`
+   documents (`"2024"` quoted, `" shipped at "`, sibling objects, `zebra`), so
+   they have to move into the corpus first, and every one of the ~20 two-engine
+   checks has to be re-broken afterwards. Estimated 400–500 lines. A round of
+   its own; recorded, not attempted.
+3. **`SERIALISER_WRAPPERS` and `RESPELLINGS`** are two filters for one class
+   of problem — see the census verdict. Both survive for now; the verdict says
+   what should replace them.
+
+### The targeted harness mode, and what a round costs now
+
+`pnpm check:browsers --only=<name>[,…] [--engine=firefox|webkit]`, and
+`--list`. Sections are one list (`SECTIONS`); the smoke block that was the
+inline head of `runChecks` is `checkSmoke` now, so every part of a run has a
+name. A filter that matches nothing exits 2 with the list rather than running
+nothing and passing. **A partial run can never print the full-run verdict**: it
+ends `PARTIAL - n of 52 sections … Not the pre-commit run`, and the build and
+harness guards still run. Every run ends with each section's time.
+
+**What a round costs now, measured on the partial runs this round made.** The
+eight loss sections this round touched took 3 min 30 s in both engines, against
+22 min for everything; one section alone is 5–40 s. The slowest measured are
+`checkValueModel` (36–39 s per engine) and `checkOutputViews` (24–30 s). A
+typical round — iterate on the two or three sections it touches, then one full
+run before the commit — goes from several 22-minute runs to one, plus minutes.
+
+**The full run of the final tree, idle: 1,115 s, 2,864 passed, 0 failed, 10
+skipped** — the same count as the baseline, which is the expected total (one
+smoke line gone and one clipboard read-back added, per engine). Where the time
+goes, from the table every full run now prints:
+
+| Section              | Firefox | WebKit |
+| -------------------- | ------- | ------ |
+| `checkMobileLayout`  | 82.8 s  | 88.7 s |
+| `checkNotifications` | 54.9 s  | 54.5 s |
+| `checkValueModel`    | 29.2 s  | 34.5 s |
+| `checkRunnerLayout`  | 30.8 s  | 33.8 s |
+| `checkImageConvert`  | 17.1 s  | 28.1 s |
+| `checkOutputViews`   | 18.2 s  | 25.9 s |
+
+`checkMobileLayout` alone is 15% of a run, and `checkNotifications` is mostly
+waiting out real 20 s notification lifetimes — the two places a future round
+looking for time should look first. The baseline's 1,334 s was taken with a game
+running; the 17% difference is load, not this round.
+
+### The Radix-window sweep
+
+Every place in the harness and the skill that types or clicks after an overlay
+closes was read, and the app's own overlays were read for where they send
+focus. **Only a Radix Select defers its focus move** (`onUnmountAutoFocus`,
+fired from a `setTimeout`); the palette, the connect dialogs, the inspector,
+the overflow menu and a toast all move focus inside the task that closed them.
+So the window crash B needed exists only after a Select, and three sites typed
+into it unguarded:
+
+| Site                     | Was                                                 | Now                                                                                                  |
+| ------------------------ | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `checkValueModel` §1     | two listboxes, then `run()` fills, no read-back     | the first document typed before either listbox; `run()` types only what is missing and reads it back |
+| `checkMarkdownCensus`    | two listboxes, then `convert()` fills, no read-back | the same                                                                                             |
+| `checkRichTextClipboard` | a listbox, then `fill`, then Run                    | filled first; a check asserts the box holds the document before Run                                  |
+
+Removed by construction — nothing types after a Select closes — and the
+read-back is what would say so if a new site did. Shown: a fill one character
+short in `run()` turns four checks red, each saying
+`HARNESS: the input box holds 11 characters, not the 12 typed` instead of
+blaming the tool. Every other site is safe by order, safe by read-back, or
+followed only by a pointer action. Round eleven's own note that
+`checkValueModel` lost 0 fills in 96 is not a reason to leave it: the
+mechanism was there, and a rate is a fact about a machine.
+
+**And the shared `onNode` now settles on a finished run.** A node shows its
+tool's description until a run lands, so the settle-word lesson of round
+thirteen lived in every caller's memory; it lives in the helper now, and so
+does a deadline that returns a failure rather than whatever the face said when
+time ran out. Three families of break, Firefox, six sections:
+
+| Break                                    | Result                                                                 |
+| ---------------------------------------- | ---------------------------------------------------------------------- |
+| no node ever prints its loss             | all 15 positive node checks red                                        |
+| every node prints an invented loss       | all 9 clean controls red                                               |
+| no node ever runs (a 10-minute debounce) | **all 24** node checks red, controls included, each naming the harness |
+
+The third is the one the old helpers could not pass: a clean control on a node
+that never ran read the description, which says nothing about loss.
+
+### The census verdict: structural
+
+**Both false notes have one cause, and it predicts more.** The census counts
+tag NAMES in two documents made by different machinery — a parser on one side,
+hast → mdast → hast on the other — and the note says something about
+CONTENT: "could not carry", "was invented". Any step in that pipeline that
+changes a name without changing what a reader sees produces a false note, and
+the fixes so far have been lists of such steps (`SERIALISER_WRAPPERS` in round
+ten, `RESPELLINGS` in round thirteen), each added after somebody noticed.
+
+A second structural fact is why each lived for nine rounds: **the cry-wolf
+corpora for this tool are the CommonMark and GFM expected outputs** — HTML
+written by cmark, in exactly the vocabulary this pipeline emits (`<strong>`,
+`<thead>`, `<pre><code>`). Hand-written HTML, the kind people paste, is the one
+input class the sweep cannot contain. Round thirteen said the class-note sweep
+was weak for this reason; it is weak for every census note.
+
+The prediction was tested rather than argued. Hand-written documents through
+`HTML → HTML (normalised)` and `→ Markdown`, on the shipped code:
+
+| Document                                   | Reader sees a difference? | The census says                                               |
+| ------------------------------------------ | ------------------------- | ------------------------------------------------------------- |
+| `<pre>one⏎two</pre>`                       | no                        | **1 element was invented: `<code>`**                          |
+| `<p>a <span>plain</span> word</p>`         | no                        | **`<span>` could not be carried**                             |
+| `<div><p>inside</p></div>`                 | no                        | **`<div>` could not be carried**                              |
+| a Google-Docs-shaped paste                 | no                        | **`<span>` could not be carried** (beside true `style` notes) |
+| `<blockquote>quoted</blockquote>`          | margins                   | `<p>` invented                                                |
+| `<img>` alone, `<h1>` then text            | a paragraph box           | `<p>` invented (round ten judged this true)                   |
+| `<b>`, `<i>`, `<strike>`, headerless table | no                        | nothing — the two lists work                                  |
+| `<caption>`, `<sup>` (controls)            | yes                       | named, correctly                                              |
+
+Three more false notes of the same class, shipping today, on both targets. **So
+the tendency is structural, and a third list entry would be the third
+incident.** What would remove it by construction, as a recommendation for the
+round that takes it: (a) a cry-wolf corpus of hand-written and pasted HTML,
+committed like the others, with every document's census asserted — the thing
+that would have caught all five; (b) count elements by what a reader can
+distinguish (an attribute-less `<span>` or `<div>` wrapper renders as nothing;
+`<pre>` already implies monospace) rather than by tag name. (a) is cheap and
+should come first; (b) is a design question about the disclosure machinery and
+is not a complexity-pass change.
+
+### Disarmed, and weak, in the unit suite
+
+Each was run against a break — and, for the first four, the ORIGINAL test was
+run against the same break, so "could not fail" is measured:
+
+| Test                                                                          | Why it could not fail                                                                                                                                                                                                                                      | Old vs new against the break                                                                                      |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `share.test.ts` — four `never encodes %j`, the filename, the secret option    | Searched a deflated, base64url'd parameter for plaintext. Worse than reported: the decoder-based checks beside them could not catch a leak either, because the decoder parses against a schema with no input field and **drops what leaked**.              | A leak into a stripped field: old **1 of 28** red, new **7 of 28**. The tests now inflate the payload themselves. |
+| `JwtView.test.tsx` — `stamped no clock`                                       | Looked for `ago)`; the fixture's `exp` is an hour ahead, so a clock fallback renders `(in 1 hour)`                                                                                                                                                         | `?? Date.now()`: old passes, new fails                                                                            |
+| `yaml.writer.pyyaml.test.ts` — 32 × `still produces the … shape`              | Asserted the committed FIXTURE, never the writer                                                                                                                                                                                                           | `blockQuote: false`: old 32 of 32 pass, new 69 red                                                                |
+| `index.head.test.ts` — `is imported by no module`                             | Unguarded glob; missed `?inline`                                                                                                                                                                                                                           | `import '../styles/global.css?inline'`: old passes, new fails                                                     |
+| Four `if (output?.type === 'text') expect(…)` in `structured-data` and `hash` | A missing or retyped port skipped the assertion                                                                                                                                                                                                            | output retyped `json`: 4 more tests red than before                                                               |
+| `performance.test.tsx` zoom and drag                                          | A map keyed by an attribute that could collapse to one entry                                                                                                                                                                                               | `data-node-id` renamed: old 1 red, new 3                                                                          |
+| `RegexView.test.tsx` — `expect(container).toBeTruthy()`                       | Always true; removed. The real assertions were beside it                                                                                                                                                                                                   | —                                                                                                                 |
+| **In the harness:** the smoke check's "shortcuts overlay can scroll"          | A synthetic Escape on the canvas root does not close the palette (it listens on its own dialog) and the root ignores `?` while an overlay is open, so it measured the palette twice. Probed: after the `?`, the only dialog was "Add a tool", both engines | replaced by a named palette check; the shortcuts overlay is `checkDialogScroll`'s                                 |
+
+### A defect found by fixing a test
+
+**`surfaces a parse error with its position` never asserted a position, and
+there is none.** For `{"a": }` the tool reports no line or column: the only
+source of one for JSON is `jsonErrorPosition` reading the engine's message, and
+V8 words an unexpected token without either. Gecko's wording always has a line
+and column; JavaScriptCore's, as far as I know, never does. So on the tool page
+a JSON syntax error has a position in Firefox and usually not in Safari or
+Chrome, and nothing said so anywhere. The test is renamed to what it asserts
+and carries the finding; the fix — a position computed from the source, not
+read off an engine's sentence — is recorded as **open**, because it is a
+behaviour change and this round was not for those. Not yet measured in the two
+engines; `check:browsers` does not type bad JSON on a tool page.
+
+**And one defect fixed:** the CSV/TSV writer built its own paths and printed
+`$[0].shipped at` for a nested cell — a third spelling beside the two round
+eleven unified, and one no reader can parse. A test pinned it: TSV's
+line-break test expected `$[0].two`, a real line break, and `lines`. Both now
+bracket, `$[0]["two\nlines"]`, shown failing first.
+
+### The skill against a build that has not shipped
+
+**Worth having, and it cost nothing.** Every script already takes its origin
+from `PATCHBAY_ORIGIN`, and `scripts/serve-dist.mjs` serves `dist/` under the
+real `_headers`. Against `node scripts/serve-dist.mjs 4331` the doctor passes,
+including "the deploy matches the local build", and `drive.mjs all` passes all
+five drives. SKILL.md documents it, with its one real constraint: that mode
+reads `dist/` and binds a port, so it must not overlap a `check:browsers` run or
+a build.
+
+### Every doc mismatch found, classified
+
+| Mismatch                                                                                                                                                                                                | Where                                         | Class                                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `reportProgress` is a "No-op for tools that declare reportsProgress: false"                                                                                                                             | `types.ts` (removed)                          | **Never true** — nothing read the flag.                                                                                   |
+| `dispose()` "Used on teardown and after a timeout"                                                                                                                                                      | `engine.ts` (removed)                         | **Never true**, in any commit.                                                                                            |
+| The determinate `inlineSize` is written "by OutputPanel"                                                                                                                                                | `architecture.md`, `runner.module.css`        | **Never true** — it was ToolRunner. Corrected with the removal.                                                           |
+| "buffers are transferred rather than copied"                                                                                                                                                            | `README.md` §Architecture, "Worker execution" | **Never true** of inputs, which were always cloned; true of outputs. Left for the audit.                                  |
+| `hasGroups` "Used by the view's hints"; `DIGEST_BYTES` "used for output-size hints"; `SUMMARY_LINES` "Asserted against the real box"; `plainTextOf` "for tests and for callers that want no formatting" | the code (removed)                            | **Aspirational** — intentions nobody implemented.                                                                         |
+| `untriedDelimiter` "re-runs `looksDelimited` over the whole source"                                                                                                                                     | this file, round eight's candidates           | **Never true** — a belief written while reading.                                                                          |
+| `notePorts` reads notes "the way the canvas reads one"; `lossCorpus`'s walk is "The same walk `lossSummary` … make[s]"                                                                                  | the two tests (fixed)                         | **Drift** — true once; the canvas started dropping empty titles and ids, the copies did not.                              |
+| "the compressed bytes are checked as well as the structure"                                                                                                                                             | `share.test.ts` (fixed)                       | **Never true.**                                                                                                           |
+| "a writer that stopped emitting root block scalars … turns this file red"                                                                                                                               | `yaml.writer.pyyaml.test.ts` (fixed)          | **Never true** — the writer was not run.                                                                                  |
+| "surfaces a parse error with its position"                                                                                                                                                              | `structured-data.test.ts` (renamed)           | **Never true** of this input; see the defect.                                                                             |
+| `check:browsers` is "~45 minutes"                                                                                                                                                                       | the brief; earlier memory notes               | **Drift** — 22 minutes now.                                                                                               |
+| `This skill is not in the repository`; "`.claude/` is gitignored"                                                                                                                                       | `SKILL.md` (fixed)                            | **Deliberate** change, this round; recorded here.                                                                         |
+| The skill drives "the deployed site", "no port, no dist"                                                                                                                                                | `SKILL.md` (fixed)                            | **Never true as a limit** — the override always worked; nobody had pointed it at a local build.                           |
+| "Two `jwtVerdict`-shaped helpers"                                                                                                                                                                       | this file, round eight                        | **Never true** — three: `checkClaimsAndHue`'s `decode` avoids the listbox on purpose.                                     |
+| "`firstMistypedScalar` is a fourth `visit`"                                                                                                                                                             | this file, round thirteen                     | **Never true** — up to six visits on a successful read.                                                                   |
+| Hash's output handle "`Hash Digest`" in the skill's table                                                                                                                                               | `SKILL.md`                                    | Not checked; the port was renamed `output` in round three. For the audit.                                                 |
+| `docs/video-convert-feasibility.md` step 1, "wire `onProgress` … retire the tripwire"                                                                                                                   | that document                                 | **Deliberate** — a snapshot by its own header, left as the record; the removal is recorded here and in `architecture.md`. |
+
+### Anything in the framing I think is wrong
+
+1. **"Around 45 minutes."** 22, under load. The drag is real; its size had
+   halved without anyone re-measuring it.
+2. **"reportProgress is the known example" read as simply dead.** It is dead
+   code with a live reason: `video-remux` on 4 GiB is exactly where a fraction
+   would help. It was removed because unexercised plumbing is not an asset and
+   the tool that wants it should bring it; but that is a judgement, and the
+   comment at the old site says so.
+3. **"Round eleven fixed the one function it measured failing. Nothing has
+   swept the rest."** Right, and the sweep's answer is narrower than the
+   framing suggests: only a Select defers its focus move, so "listbox, dialog
+   or popover" is one component, not three.
+4. **"A test that cannot fail is worse than no test."** True of the share
+   tests. Not true of one flagged loop, which was the only positive partner in
+   its test — the sweep's redundancy call would have removed a guard.
+5. **The census question as posed — "structural, or two independent
+   mistakes"** — has a third half: the two mistakes are one mechanism AND the
+   instrument that should have caught them was structurally blind to it.
+
+### Looked for and NOT found
+
+- Another deferred focus move among the app's overlays — none but Radix Select.
+- A section that depends on an earlier one — none; `failures` and `skipped`
+  are the only module-level state.
+- Any non-test caller of the removed items in `scripts/`, `vite/` or the skill.
+- A disarmed assertion in the jsdom-geometry tests — every one is commentary
+  or a real mock.
+- A second static server — `serve-dist.mjs` is the only one; `vite preview`
+  serves without the real headers, documented.
+
+### Still open
+
+- **The JSON position defect** above.
+- **The census's structural tendency** — (a) and (b) above; (a) first.
+- **The harness reading the corpus** — the largest overlap, a round of its own.
+- **`checkLossReports`' tool-page negative control** waits a fixed 500 ms and
+  asserts no note: satisfied by a run that has not finished. Same shape as the
+  settle word; not changed this round.
+- **`someOf`**, "the first five, and N more", is written out eleven times
+  across four tools with two separators. One helper; not taken.
+- **Wall-clock sites** from the memory note (`performance.test.tsx`'s
+  `perOp < 30`, `diff.test.ts`, `malformed.test.ts`) — untouched.

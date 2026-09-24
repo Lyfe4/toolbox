@@ -67,7 +67,6 @@ export const hashTool = defineTool({
   execution: {
     strategy: 'worker',
     requiresOffscreenCanvas: false,
-    reportsProgress: false,
     timeoutMs: 30_000,
     maxInputBytes: 64 * 1024 * 1024,
   },

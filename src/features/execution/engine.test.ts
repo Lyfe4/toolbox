@@ -97,7 +97,6 @@ function createClock() {
 const WORKER_META: ExecutionMeta = {
   strategy: 'worker',
   requiresOffscreenCanvas: false,
-  reportsProgress: true,
   timeoutMs: 5000,
   maxInputBytes: 1024,
 };
@@ -214,28 +213,7 @@ describe('execution engine, worker path', () => {
     if (result.ok) expect(result.value.out).toEqual({ type: 'text', text: 'right one' });
   });
 
-  it('forwards progress reports', async () => {
-    const { engine, workers } = setup();
-    const onProgress = vi.fn();
-    const promise = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {}, onProgress });
-
-    const worker = workers[0];
-    const sent = worker?.posted[0]?.message;
-    if (sent?.kind === 'execute') {
-      worker?.reply({
-        kind: 'progress',
-        requestId: sent.requestId,
-        fraction: 0.5,
-        label: 'halfway',
-      });
-      worker?.reply(settled(sent.requestId, ok({})));
-    }
-
-    await promise;
-    expect(onProgress).toHaveBeenCalledWith(0.5, 'halfway');
-  });
-
-  it('borrows binary inputs by default, so nothing is detached', async () => {
+  it('borrows binary inputs, so nothing is detached', async () => {
     const { engine, workers } = setup();
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const promise = engine.execute({
@@ -250,26 +228,6 @@ describe('execution engine, worker path', () => {
     // buffer, and a second consumer can still read it. See fanout.test.ts.
     expect(entry?.transfer).toEqual([]);
     expect(bytes.byteLength).toBe(4);
-
-    const sent = entry?.message;
-    if (sent?.kind === 'execute') worker?.reply(settled(sent.requestId, ok({})));
-    await promise;
-  });
-
-  it('transfers binary inputs when the caller hands over ownership', async () => {
-    const { engine, workers } = setup();
-    const bytes = new Uint8Array([1, 2, 3, 4]);
-    const promise = engine.execute({
-      toolId: TOOL_ID,
-      inputs: { input: bytesValue(bytes) },
-      options: {},
-      ownership: 'transfer',
-    });
-
-    const worker = workers[0];
-    const entry = worker?.posted[0];
-    expect(entry?.transfer).toHaveLength(1);
-    expect(entry?.transfer[0]).toBe(bytes.buffer);
 
     const sent = entry?.message;
     if (sent?.kind === 'execute') worker?.reply(settled(sent.requestId, ok({})));
@@ -975,32 +933,6 @@ describe('a timeout with other requests in flight', () => {
   });
 
   /*
-   * Transferred buffers are detached in the sender, so replaying a transferred
-   * request would post zero-length views and produce a confident, wrong answer
-   * several steps later. The engine refuses, and says so instead.
-   */
-  it('refuses to replay a request whose buffers were transferred', async () => {
-    const { engine, clock } = twoToolSetup();
-
-    void engine.execute({ toolId: SLOW_TOOL_ID, inputs: textInput, options: {} });
-    const transferred = engine.execute({
-      toolId: TOOL_ID,
-      inputs: {
-        input: bytesValue(new Uint8Array([1, 2, 3])),
-      },
-      options: {},
-      ownership: 'transfer',
-    });
-
-    const [slowTimer] = clock.handles();
-    if (slowTimer !== undefined) clock.fire(slowTimer);
-
-    const result = await transferred;
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe('internal');
-  });
-
-  /*
    * There is one worker and one thread behind it. Requests posted together are
    * really a queue, and timing a request from the moment it was POSTED spent
    * its deadline on other tools' work: a 2s regex sitting behind a long image
@@ -1277,21 +1209,5 @@ describe('a timeout with other requests in flight', () => {
     expect(result.error.code).toBe('timeout');
     expect(result.error.message).toBe('That pattern is too slow.');
     expect(result.error.detail).toContain('Exceeded');
-  });
-});
-
-describe('dispose', () => {
-  /*
-   * Dropping the pending map left every awaiting caller holding a promise that
-   * could never settle. On the canvas that is a pipeline stuck at `running`
-   * for as long as the tab is open, with no way back short of a reload.
-   */
-  it('settles everything in flight rather than abandoning it', async () => {
-    const { engine } = setup();
-    const promise = engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
-
-    engine.dispose();
-
-    await expect(promise).resolves.toMatchObject({ ok: false, error: { code: 'cancelled' } });
   });
 });

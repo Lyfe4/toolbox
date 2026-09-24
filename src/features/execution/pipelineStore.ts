@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 import { useAttachmentStore } from '@/features/canvas/attachmentStore';
-import type { GraphData, NodeId } from '@/features/canvas/types';
+import type { GraphData } from '@/features/canvas/types';
 import type { ToolOutputs, ToolResult } from '@/features/registry/types';
 import { appendAnnouncement, EMPTY_ANNOUNCEMENTS, type AnnouncementSlice } from '@/lib/announce';
 import { counted } from '@/lib/plural';
@@ -10,9 +10,7 @@ import {
   CycleError,
   DEFAULT_CONCURRENCY,
   DEFAULT_MAX_NODES,
-  idleState,
   runPipeline,
-  type NodeRunState,
   type PipelineCache,
   type PipelineState,
   type PipelineSummary,
@@ -47,7 +45,6 @@ export interface PipelineStore extends AnnouncementSlice {
   readonly schedule: (graph: GraphData) => void;
   readonly cancel: () => void;
   readonly reset: () => void;
-  readonly stateFor: (nodeId: NodeId) => NodeRunState;
 }
 
 export const usePipelineStore = create<PipelineStore>()((set, get) => {
@@ -86,8 +83,6 @@ export const usePipelineStore = create<PipelineStore>()((set, get) => {
     summary: null,
     ...EMPTY_ANNOUNCEMENTS,
     execute: (options) => getSharedEngine().execute(options),
-
-    stateFor: (nodeId) => get().states[nodeId] ?? idleState(),
 
     run: async (graph) => {
       controller?.abort();

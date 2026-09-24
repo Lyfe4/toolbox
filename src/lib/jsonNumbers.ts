@@ -66,6 +66,21 @@ const LONG_RUN = /\d{16,}/;
 const PLAIN_INTEGER = /^-?\d+$/;
 
 /** True when the literal denotes something other than the double it parses to. */
+/**
+ * One step of a path for an object key: `.name`, or `["shipped at"]` when the
+ * key is not a bare identifier.
+ *
+ * ONE FUNCTION, BECAUSE THREE SPELLINGS SHIPPED. `toJsonValue` appended
+ * `.${key}` unconditionally until round eleven, so `$.shipped at` was a path no
+ * reader could parse; round eleven gave `convert.ts` a `pathStep` and left an
+ * inline copy of the same test here; and the CSV writer kept writing
+ * `$[0].shipped at` for a nested cell until round fifteen. Every path a report
+ * prints is built from this.
+ */
+export function pathStep(key: string): string {
+  return /^[A-Za-z_$][\w$]*$/.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`;
+}
+
 export function isRounded(literal: string): boolean {
   if (!PLAIN_INTEGER.test(literal)) return false;
   const value = Number(literal);
@@ -225,9 +240,7 @@ export function scanJsonSource(
         const key = readString();
         skipSpace();
         if (source[index] === ':') index += 1;
-        // A key that is not a bare identifier is printed in brackets, which is
-        // the spelling `toJsonValue`'s refusals already use for awkward keys.
-        stack.push(/^[A-Za-z_$][\w$]*$/.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`);
+        stack.push(pathStep(key));
         /*
          * The value's own extent, so a duplicate can quote the literal that
          * lost. `skipSpace` first, or the slice opens with the whitespace

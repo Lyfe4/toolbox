@@ -308,9 +308,6 @@ describe('data flow', () => {
       [1, 2, 3, 4],
       [1, 2, 3, 4],
     ]);
-    for (const call of execute.mock.calls) {
-      expect(call[0].ownership).toBe('borrow');
-    }
   });
 });
 
@@ -778,14 +775,6 @@ describe('a file as a node input', () => {
       [1, 2, 3, 4],
       [1, 2, 3, 4],
     ]);
-  });
-
-  it('is borrowed rather than transferred, so nothing can detach it', async () => {
-    const { execute, calls } = recordingExecutor();
-
-    await runPipeline(graphOf([fileNode('a', 'hash')]), { execute, fileInput: () => fileValue() });
-
-    expect(calls[0]?.ownership).toBe('borrow');
   });
 });
 

@@ -161,17 +161,6 @@ export function semanticTokenNames(): readonly string[] {
   return names;
 }
 
-/** Theme names discovered from the `[data-theme='...']` blocks in themes.css. */
-export function overrideThemeNames(): readonly string[] {
-  const names: string[] = [];
-  for (const block of parseBlocks(themesCss)) {
-    const match = block.selector.startsWith(THEME_SELECTOR_PREFIX) ? block.selector : null;
-    if (match === null) continue;
-    names.push(match.slice(THEME_SELECTOR_PREFIX.length, match.lastIndexOf(THEME_SELECTOR_SUFFIX)));
-  }
-  return names;
-}
-
 /** Token names declared inside each theme override block in themes.css. */
 export function themeOverrideTokens(): ReadonlyMap<string, readonly string[]> {
   const result = new Map<string, readonly string[]>();

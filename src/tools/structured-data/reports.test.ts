@@ -39,7 +39,6 @@ import { structuredDataOptionFields } from './options';
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 interface Note {
@@ -200,6 +199,25 @@ describe('decision 2: what a table cell cannot hold', () => {
     expect(output).toContain('{""name"":""ada""}');
     expect(losses(report)).toContain(
       'The nested value at $[0].user was written into the cell as JSON',
+    );
+  });
+
+  /*
+   * The CSV writer built its own path, `$[0].${column}`, and printed
+   * `$[0].shipped at` - a third spelling of a path, beside the two
+   * `pathStep` unified in round eleven, and not one any reader can parse. Every
+   * other report in this tool brackets an awkward key.
+   */
+  it('brackets a column name that is not a bare identifier, as every other path here does', async () => {
+    const { report } = await convert('[{"shipped at": {"on": 1}, "id": 1}]', { target: 'csv' });
+
+    expect(losses(report)).toContain(
+      'The nested value at $[0]["shipped at"] was written into the cell as JSON',
+    );
+    // And the ordinary spelling where the name is an identifier.
+    const plain = await convert('[{"shipped": {"on": 1}}]', { target: 'csv' });
+    expect(losses(plain.report)).toContain(
+      'The nested value at $[0].shipped was written into the cell as JSON',
     );
   });
 
@@ -1331,7 +1349,9 @@ describe('SD-6: TSV quotes only what a reader would otherwise get wrong', () => 
     const note = warnings(report).find((entry) => entry.title.includes('tab'));
     expect(note?.title).toBe('2 cells hold a tab or a line break');
     expect(note?.body).toContain('the header "two\\nlines"');
-    expect(note?.body).toContain('$[0].two\nlines');
+    // Bracketed, and so escaped: this expected `$[0].two` + a real line break
+    // + `lines` until round fifteen, which pinned the unparseable spelling.
+    expect(note?.body).toContain('$[0]["two\\nlines"]');
   });
 
   it.each([

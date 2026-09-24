@@ -43,7 +43,6 @@ const CYRILLIC_A = '\u0430';
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 const settings = (overrides: Partial<DiffSettings> = {}): DiffSettings => ({

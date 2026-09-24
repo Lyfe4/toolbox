@@ -99,8 +99,14 @@ describe('the stylesheet', () => {
    * dev behaviour above, because the module copy is the one dev serves.
    */
   it('is imported by no module', () => {
+    // The glob is the subject, and an empty one has no offenders either.
+    expect(Object.keys(sources).length).toBeGreaterThan(100);
+    // A bare import, a named one, and a query-suffixed one (`?inline`, `?url`)
+    // are all a module owning the stylesheet; the pattern missed the last two.
     const offenders = Object.entries(sources)
-      .filter(([, source]) => /import\s+['"][^'"]*styles\/global\.css['"]/.test(source))
+      .filter(([, source]) =>
+        /import\s+(?:[\w{}*\s,]+\s+from\s+)?['"][^'"]*global\.css(?:\?[^'"]*)?['"]/.test(source),
+      )
       .map(([path]) => path);
 
     expect(offenders).toEqual([]);

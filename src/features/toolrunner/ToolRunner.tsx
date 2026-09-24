@@ -101,11 +101,6 @@ export function comparisonFor(file: LoadedFile | null): ImageComparison | null {
   };
 }
 
-function busyLabel(state: ExecutionState): string {
-  if (state.status !== 'running') return '';
-  return state.label ?? 'Running';
-}
-
 export interface ToolRunnerProps {
   readonly entry: ToolManifestEntry;
 }
@@ -169,8 +164,6 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
    */
   const sweepOnCompletion = state.status === 'success' && state.durationMs < 260;
 
-  /** The reported fraction, or null when the run is indeterminate or over. */
-  const fraction = state.status === 'running' ? state.progress : null;
   const announced = useRef<ExecutionState | null>(null);
 
   // The tool module is imported here for its options schema and field
@@ -466,23 +459,12 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
                       the finished bar 8px right of the Run button above it,
                       against a left edge every other control in the rail shares.
                     */}
-                    {state.status === 'running' ? <span>{busyLabel(state)}</span> : null}
-                    <span
-                      className={styles.progressTrack}
-                      role="progressbar"
-                      aria-label="Progress"
-                      {...(fraction === null
-                        ? {}
-                        : {
-                            'aria-valuenow': Math.round(fraction * 100),
-                            'aria-valuemin': 0,
-                            'aria-valuemax': 100,
-                          })}
-                    >
+                    {state.status === 'running' ? <span>Running</span> : null}
+                    <span className={styles.progressTrack} role="progressbar" aria-label="Progress">
                       <span
                         className={[
                           styles.progressBar ?? '',
-                          fraction === null ? (styles.progressIndeterminate ?? '') : '',
+                          styles.progressIndeterminate ?? '',
                           // Applied ALONGSIDE the indeterminate class rather
                           // than instead of it: dropping that class would
                           // revert the transform to its base for a frame, so
@@ -492,11 +474,6 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
                         ]
                           .filter(Boolean)
                           .join(' ')}
-                        style={
-                          fraction === null
-                            ? undefined
-                            : { inlineSize: `${(fraction * 100).toString()}%` }
-                        }
                       />
                     </span>
                   </>

@@ -479,8 +479,8 @@ export async function runPipeline(
        * The value was built and validated against this port at the moment it
        * was chosen, so there is nothing to decode or refuse here.
        *
-       * It is handed over BY REFERENCE and the executor is called with
-       * `ownership: 'borrow'`, so every consumer gets a structured clone. One
+       * It is handed over BY REFERENCE and the engine clones every input
+       * rather than transferring it, so every consumer gets a structured clone. One
        * file feeding two nodes is the same fan-out as one output feeding two
        * inputs, and it is safe for the same reason.
        */
@@ -535,10 +535,6 @@ export async function runPipeline(
         toolId: node.toolId,
         inputs: buildInputs(node),
         options: node.options,
-        // Borrow, always: on a canvas one output can feed several inputs, and
-        // a transferred buffer would be detached by whichever consumer ran
-        // first.
-        ownership: 'borrow',
         ...(deps.signal ? { signal: deps.signal } : {}),
       });
     } catch (error) {

@@ -110,7 +110,6 @@ export const colorConvertTool = defineTool({
   execution: {
     strategy: 'main',
     requiresOffscreenCanvas: false,
-    reportsProgress: false,
     timeoutMs: 5_000,
     // A colour is a few dozen characters. The cap is generous for a pasted
     // list that turns out to be one line, and absurd for anything else.

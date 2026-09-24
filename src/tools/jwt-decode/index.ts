@@ -85,7 +85,6 @@ export const jwtDecodeTool = defineTool({
   execution: {
     strategy: 'worker',
     requiresOffscreenCanvas: false,
-    reportsProgress: false,
     timeoutMs: 10_000,
     // A JWT in a header is a few kB at most; anything far past that is not a
     // token and should be refused before a parser sees it.

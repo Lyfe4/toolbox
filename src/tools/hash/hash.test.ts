@@ -11,7 +11,6 @@ import { createMd5, md5 } from './md5';
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 const hex = (bytes: Uint8Array): string => toHex(bytes, 'lower');
@@ -230,6 +229,7 @@ describe('tool surface', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       const digest = result.value.output;
+      expect(digest?.type).toBe('text');
       if (digest?.type === 'text') expect(digest.text).toHaveLength(32);
     }
   });

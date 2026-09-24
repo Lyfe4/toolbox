@@ -281,7 +281,6 @@ describe('the wire and the clipboard', () => {
       toolId: 'hash',
       inputs: { input: { type: 'text', text: converted.text } },
       options: { algorithm: 'sha-256', encoding: 'hex' },
-      ownership: 'borrow',
     });
 
     expect(pasted.ok).toBe(true);

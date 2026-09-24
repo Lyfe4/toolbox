@@ -82,7 +82,6 @@ export const imageConvertTool = defineTool({
     strategy: 'worker',
     /** Downgrades to the main thread when the browser lacks OffscreenCanvas. */
     requiresOffscreenCanvas: true,
-    reportsProgress: false,
     timeoutMs: 60_000,
     // Generous, because a raw camera-sized PNG is genuinely tens of megabytes.
     // The limit that actually protects memory is the pixel cap in convert.ts.

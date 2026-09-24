@@ -97,7 +97,6 @@ export const videoRemuxTool = defineStreamingTool({
   execution: {
     strategy: 'worker',
     requiresOffscreenCanvas: false,
-    reportsProgress: false,
     /*
      * Thirty seconds of fixed budget, plus time per megabyte of input.
      *

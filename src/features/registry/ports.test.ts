@@ -27,7 +27,6 @@ import { DATA_TYPES, type DataType, type ToolRunContext, type ToolValue } from '
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 const ids = TOOL_MANIFEST.map((entry) => entry.id);

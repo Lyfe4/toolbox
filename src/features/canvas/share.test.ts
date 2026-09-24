@@ -16,6 +16,30 @@ import {
 
 import type { CanvasNode, GraphData } from './types';
 
+/**
+ * The JSON a share link really carries, inflated here rather than by the app.
+ *
+ * NOT `decodeParamToGraph`, and that is the point. The payload is deflated and
+ * then base64url'd, so a plaintext search of the parameter cannot find a
+ * leaked string whether it is there or not - three assertions in this file did
+ * exactly that until round fifteen. And the decoder is the wrong instrument
+ * too: it parses against a schema with no field for input, so it discards
+ * whatever the encoder leaked, and a check made through it passes against an
+ * encoder that put everything in the link.
+ */
+async function carried(param: string): Promise<string> {
+  const binary = atob(param.replaceAll('-', '+').replaceAll('_', '/'));
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  // By hand, as share.ts does: jsdom's Blob has no stream().
+  const source = new ReadableStream<BufferSource>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+  return new Response(source.pipeThrough(new DecompressionStream('deflate-raw'))).text();
+}
+
 function node(
   id: string,
   toolId: 'base64' | 'structured-data' | 'hash',
@@ -112,9 +136,11 @@ describe('user data never enters a share link', () => {
 
     const param = await encodeGraphToParam(withSecret);
 
-    // The compressed form must not contain it, and neither must what it
-    // decompresses back to.
-    expect(param).not.toContain(secret);
+    // What the link carries must not contain it - and must be a real payload,
+    // or the absence proves nothing.
+    const json = await carried(param);
+    expect(json).toContain('"base64"');
+    expect(json).not.toContain(secret);
     const decoded = await decodeParamToGraph(param);
     expect(decoded.status).toBe('ok');
     if (decoded.status === 'ok') {
@@ -134,8 +160,8 @@ describe('user data never enters a share link', () => {
    * a document: `Q3-layoffs.xlsx` says something a pipeline's SHAPE does not.
    * The recipient has no file and would gain nothing but the name.
    *
-   * Driven through the real encoder rather than through `toSharePayload`, so
-   * the compressed bytes are checked as well as the structure they came from.
+   * Driven through the real encoder rather than through `toSharePayload`, and
+   * the payload is inflated here rather than by the decoder - see `carried`.
    */
   it('never encodes the name of a chosen file into the URL', async () => {
     const graph = pipeline();
@@ -158,7 +184,9 @@ describe('user data never enters a share link', () => {
     };
 
     const param = await encodeGraphToParam(withFile);
-    expect(param).not.toContain('Q3-layoffs');
+    const json = await carried(param);
+    expect(json).toContain(`"${target.toolId}"`);
+    expect(json).not.toContain('Q3-layoffs');
 
     const decoded = await decodeParamToGraph(param);
     expect(decoded.status).toBe('ok');
@@ -218,13 +246,16 @@ describe('secret options never enter a share link', () => {
     const param = await encodeGraphToParam(withKey);
     const url = await buildShareUrl(withKey, 'https://patchbay.test');
 
-    // The payload is compressed, so decode it back rather than searching the
-    // ciphertext-looking base64 for a substring that could never appear.
+    // Inflated here, not by the decoder: the decoder is where a leak would be
+    // thrown away. And the URL is the same parameter, not a second copy of it.
+    const json = await carried(param);
+    expect(json).toContain('clockToleranceSec');
+    expect(json).not.toContain('super-secret');
+    expect(url).toContain(param);
     const restored = await decodeParamToGraph(param);
     expect(restored.status).toBe('ok');
     if (restored.status !== 'ok') return;
     expect(restored.graph.nodes.n1?.options).not.toHaveProperty('key');
-    expect(url).not.toContain('super-secret');
   });
 
   it('does not disturb the options of a tool with no secrets', () => {

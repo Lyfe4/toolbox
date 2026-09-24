@@ -21,15 +21,6 @@ export function isBroken(algorithm: HashAlgorithm): boolean {
   return BROKEN_ALGORITHMS.includes(algorithm);
 }
 
-/** Digest length in bytes, used for output-size hints. */
-export const DIGEST_BYTES: Record<HashAlgorithm, number> = {
-  md5: 16,
-  'sha-1': 20,
-  'sha-256': 32,
-  'sha-384': 48,
-  'sha-512': 64,
-};
-
 /** WebCrypto's spelling of the SHA family. MD5 is not among them. */
 const SUBTLE_NAMES: Partial<Record<HashAlgorithm, string>> = {
   'sha-1': 'SHA-1',

@@ -1,7 +1,6 @@
 import { phrasing } from 'hast-util-phrasing';
 import { toHtml } from 'hast-util-to-html';
 import { defaultHandlers } from 'hast-util-to-mdast';
-import { toText } from 'hast-util-to-text';
 import rehypeParse from 'rehype-parse';
 import rehypeRaw from 'rehype-raw';
 import rehypeRemark from 'rehype-remark';
@@ -1741,9 +1740,4 @@ function renderText(
   if (BLOCK.has(tag)) return `\n${indent}${inner.trim()}\n`;
 
   return inner;
-}
-
-/** Text of a hast tree, for tests and for callers that want no formatting. */
-export function plainTextOf(tree: HastNodes): string {
-  return toText(tree);
 }

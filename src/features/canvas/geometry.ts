@@ -53,8 +53,6 @@ export const BODY_PADDING = 8;
  */
 export const SUMMARY_HEIGHT = 32;
 
-/** Lines the summary box is sized for. Asserted against the real box. */
-export const SUMMARY_LINES = 2;
 export const FOOTER_HEIGHT = 24;
 
 /*
@@ -86,9 +84,6 @@ export const PORT_STACK_GAP = 8;
  * terminating cleanly at the edge.
  */
 export const PORT_GLYPH_INSET = 14;
-
-/** The invisible grab area around a port, measured from the glyph's centre. */
-export const PORT_HIT_RADIUS = 18;
 
 /**
  * How far from a port a drop may land and still connect.

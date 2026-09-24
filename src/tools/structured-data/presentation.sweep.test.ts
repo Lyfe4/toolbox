@@ -46,7 +46,6 @@ import suite from './spec/yaml-test-suite.json';
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 interface SuiteCase {

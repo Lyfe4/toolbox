@@ -145,28 +145,26 @@ describe('the PyYAML fixture itself', () => {
   });
 });
 
+/**
+ * The writer's output for a fixture case, driven from the VALUE rather than
+ * re-derived from the document - the read is a different claim and it has its
+ * own corpus.
+ */
+function write(entry: (typeof cases)[number]): string {
+  const parsed = parseSource(JSON.stringify(entry.value), 'json', ',');
+  if (!parsed.ok) throw new Error(`${entry.id}: the fixture value did not parse`);
+  const written = serialise(parsed.value, 'yaml', { indent: 2, delimiter: ',' });
+  if (!written.ok) throw new Error(`${entry.id}: the writer refused the value`);
+  return written.value;
+}
+
 describe('writing, against PyYAML', () => {
   it.each(
     cases
       .filter((entry) => entry.pyyaml.agrees)
       .map((entry) => [`${entry.id} ${entry.label}`, entry] as const),
   )('still writes %s as the bytes PyYAML read back to the same value', (_name, entry) => {
-    const parsed = parseSource(
-      // The fixture carries the VALUE, so the writer is driven from the value
-      // rather than re-derived from the document - the read is a different
-      // claim and it has its own corpus.
-      JSON.stringify(entry.value),
-      'json',
-      ',',
-    );
-    expect(parsed.ok).toBe(true);
-    if (!parsed.ok) return;
-
-    const written = serialise(parsed.value, 'yaml', { indent: 2, delimiter: ',' });
-    expect(written.ok).toBe(true);
-    if (!written.ok) return;
-
-    expect(written.value).toBe(entry.yaml);
+    expect(write(entry)).toBe(entry.yaml);
   });
 
   /*
@@ -177,6 +175,11 @@ describe('writing, against PyYAML', () => {
    * shape the group describes, so a writer that stopped emitting root block
    * scalars - or a regeneration that quietly dropped the cases - turns this
    * file red rather than green.
+   *
+   * THE WRITER IS RUN, and until round fifteen it was not: these asserted the
+   * shape of `entry.yaml`, which is the committed fixture, so a writer change
+   * on these 32 documents was invisible and only a regeneration could fail
+   * them. The output is held to the fixture's bytes AND to the shape now.
    */
   it.each(
     Object.entries(PYYAML_DIFFERENCES).flatMap(([group, ids]) =>
@@ -189,15 +192,17 @@ describe('writing, against PyYAML', () => {
 
     expect(entry.pyyaml.agrees).toBe(false);
 
+    const written = write(entry);
+    expect(written).toBe(entry.yaml);
     if (group === 'root block scalar, content at column 0') {
-      expect(entry.yaml).toMatch(/^[|>][-+]?\n/);
+      expect(written).toMatch(/^[|>][-+]?\n/);
     } else if (group === 'root block scalar with an explicit indentation indicator') {
-      expect(entry.yaml).toMatch(/^[|>]\d/);
+      expect(written).toMatch(/^[|>]\d/);
     } else {
       // The 1.1 group is about the READER, so what is asserted is that our
       // output holds no block scalar at the root at all - it is ordinary YAML,
       // and PyYAML still answers differently.
-      expect(entry.yaml).not.toMatch(/^[|>]/);
+      expect(written).not.toMatch(/^[|>]/);
     }
   });
 

@@ -269,6 +269,8 @@ export function summariseValue(
 export interface LossNote {
   /** The one line written for a person. */
   readonly title: string;
+  /** The rest of the explanation. Not drawn on a node; the corpus reads it. */
+  readonly body: string;
   /**
    * The ids of THIS tool's output ports the loss is in.
    *
@@ -291,10 +293,14 @@ export interface LossNote {
 /**
  * Every `warn` note a node's run produced, read off its `report` ports.
  *
- * ONE READER FOR TWO QUESTIONS. `lossSummary` asks "what does this node print
- * on its own face" and `lossTrace` asks "what leaves it along a wire", and a
- * second walk of the same payload is a second thing to keep in step with the
- * shape - which is the mistake `lib/notes.ts` exists to have stopped making.
+ * ONE READER FOR EVERY QUESTION. `lossSummary` asks "what does this node print
+ * on its own face", `lossTrace` asks "what leaves it along a wire", and
+ * `notePorts.test.ts` and `lossCorpus.test.ts` ask whether a loss is told at
+ * all. Both tests had their own walk until round fifteen, and both had
+ * drifted: neither dropped an empty title or an empty port id, which this
+ * does - so a warn note no canvas would ever show counted as told. A second
+ * walk of the same payload is a second thing to keep in step with the shape,
+ * which is the mistake `lib/notes.ts` exists to have stopped making.
  */
 export function lossNotesOf(
   entry: ToolManifestEntry,
@@ -322,6 +328,7 @@ export function lossNotesOf(
       const reaches: JsonValue | undefined = note.reaches;
       found.push({
         title,
+        body: typeof note.body === 'string' ? note.body : '',
         reaches:
           reaches !== undefined && isJsonArray(reaches)
             ? reaches.filter((id): id is string => typeof id === 'string' && id !== '')

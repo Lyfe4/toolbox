@@ -853,8 +853,9 @@ textarea.result {
  * perfectly, which is why it read as "the bar is just empty".
  *
  * The determinate path was dead in the same way and for the same reason: the
- * `inlineSize` written onto `style` by OutputPanel is a length on an inline
- * box. Nothing reported progress to it, so nothing ever noticed.
+ * `inlineSize` ToolRunner wrote onto `style` for a reported fraction was a
+ * length on an inline box. Nothing ever reported one, so nothing noticed, and
+ * round fifteen removed that branch with the plumbing behind it.
  *
  * This is the affordance-without-behaviour rule CONTRIBUTING names, in its
  * quietest form - the control was not wired to nothing, it was wired to
@@ -883,9 +884,8 @@ textarea.result {
  * again - one press, one fill, by construction rather than by bookkeeping.
  *
  * AND IT STOPS AT 92%, WHICH IS THE HONEST PART. Nothing in this application
- * reports a fraction: `reportProgress` is plumbed through the protocol, the
- * worker, the engine and the hook, and every caller in the repository is a test
- * stub. A bar that reached the end while the work continued would be claiming a
+ * reports a fraction - there is no channel for one since round fifteen, and
+ * before that the channel had never been called. A bar that reached the end while the work continued would be claiming a
  * completion it cannot know about, which is the affordance-for-behaviour-that-
  * does-not-exist rule. Stopping short claims only "still going"; the run's
  * actual end is the bar being replaced by `Done in N ms`.

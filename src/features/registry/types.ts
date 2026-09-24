@@ -507,8 +507,6 @@ export interface ExecutionMeta {
    * that lack the API - Safari before 16.4, Firefox before 105.
    */
   readonly requiresOffscreenCanvas: boolean;
-  /** True when run() calls context.reportProgress, so the UI can show a bar. */
-  readonly reportsProgress: boolean;
   /** Worker is terminated and replaced if a run exceeds this. */
   readonly timeoutMs: number;
   /**
@@ -541,8 +539,15 @@ export interface ExecutionMeta {
 export interface ToolRunContext {
   /** Aborted on user cancellation or timeout. Long loops should check it. */
   readonly signal: AbortSignal;
-  /** `fraction` is 0-1. No-op for tools that declare reportsProgress: false. */
-  readonly reportProgress: (fraction: number, label?: string) => void;
+  /*
+   * There was a `reportProgress(fraction, label)` here, plumbed through the
+   * protocol, the worker, the engine and the runner's hook, and no tool ever
+   * called it; it was built for a transcoding video tool that was never
+   * shipped (docs/video-convert-feasibility.md). Removed in round fifteen
+   * rather than kept for a caller that does not exist. The one tool with runs
+   * long enough to want a fraction is `video-remux`; wiring one back is a
+   * message kind, a callback here and the determinate branch in ToolRunner.
+   */
 }
 
 export const TOOL_CATEGORIES = ['encoding', 'data', 'text', 'colour', 'time', 'hashing'] as const;

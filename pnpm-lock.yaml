@@ -41,9 +41,6 @@ importers:
       hast-util-to-mdast:
         specifier: 10.1.2
         version: 10.1.2
-      hast-util-to-text:
-        specifier: 4.0.2
-        version: 4.0.2
       react:
         specifier: ^19.2.8
         version: 19.2.8

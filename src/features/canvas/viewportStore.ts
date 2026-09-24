@@ -22,10 +22,8 @@ export interface Viewport {
 export interface ViewportStore {
   readonly viewport: Viewport;
   readonly isPanning: boolean;
-  readonly setViewport: (viewport: Viewport) => void;
   readonly panBy: (delta: Point) => void;
   readonly zoomAt: (factor: number, pointer: Point) => void;
-  readonly setZoom: (zoom: number, centre: Point) => void;
   readonly resetZoom: (centre: Point) => void;
   readonly fitToContent: (graph: GraphData, size: { width: number; height: number }) => void;
   readonly setPanning: (panning: boolean) => void;
@@ -101,10 +99,6 @@ export const useViewportStore = create<ViewportStore>()((set, get) => ({
   viewport: DEFAULT_VIEWPORT,
   isPanning: false,
 
-  setViewport: (viewport) => {
-    set({ viewport });
-  },
-
   panBy: (delta) => {
     const { viewport } = get();
     set({ viewport: { ...viewport, x: viewport.x + delta.x, y: viewport.y + delta.y } });
@@ -113,11 +107,6 @@ export const useViewportStore = create<ViewportStore>()((set, get) => ({
   zoomAt: (factor, pointer) => {
     const { viewport } = get();
     set({ viewport: zoomAbout(viewport, viewport.zoom * factor, pointer) });
-  },
-
-  setZoom: (zoom, centre) => {
-    const { viewport } = get();
-    set({ viewport: zoomAbout(viewport, zoom, centre) });
   },
 
   resetZoom: (centre) => {

@@ -21,7 +21,6 @@ import structuredDataTool from './index';
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 function parsed(source: string, format: Parameters<typeof parseSource>[1] = 'json'): JsonValue {
@@ -2102,7 +2101,7 @@ describe('tool definition', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       const output = result.value.output;
-      if (output?.type === 'text') expect(output.text).toBe('{"a":1,"b":2}');
+      expect(output).toEqual({ type: 'text', text: '{"a":1,"b":2}' });
     }
   });
 
@@ -2150,7 +2149,18 @@ describe('tool definition', () => {
     }
   });
 
-  it('surfaces a parse error with its position instead of throwing', async () => {
+  /*
+   * NOT "WITH ITS POSITION", which is what this used to be called and never
+   * checked. Asked in round fifteen, `{"a": }` carries NO position: the only
+   * source of one for JSON is `jsonErrorPosition` reading the engine's own
+   * message, and V8 words an unexpected token as `Unexpected token '}', "..."
+   * is not valid JSON`, with neither a line nor an offset in it. The parser
+   * test that does pass (line 3, column 7) uses a fault V8 happens to word
+   * with both. Recorded as an open defect in docs/test-findings.md, round
+   * fifteen; the fix is a position that does not depend on an engine's
+   * wording, which is not a complexity-pass change.
+   */
+  it('surfaces a parse error instead of throwing', async () => {
     const result = await structuredDataTool.run({
       inputs: { input: { type: 'text', text: '{"a": }' } },
       options: { source: 'json' },
@@ -2180,7 +2190,7 @@ describe('tool definition', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       const output = result.value.output;
-      if (output?.type === 'text') expect(output.text).toBe('[{"a":"1","b":"2"}]');
+      expect(output).toEqual({ type: 'text', text: '[{"a":"1","b":"2"}]' });
     }
   });
 
@@ -2209,7 +2219,7 @@ describe('tool definition', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       const output = result.value.output;
-      if (output?.type === 'text') expect(output.text).toBe('[{"name":"ada","age":"36"}]');
+      expect(output).toEqual({ type: 'text', text: '[{"name":"ada","age":"36"}]' });
     }
   });
 

@@ -117,7 +117,6 @@ const JWS_UI_EXAMPLES = (() => {
       key,
       keyEncoding,
       tamperedToken: `${header}.${payload}.${jwsToText(flipped)}`,
-      truncatedToken: `${header}.${payload}.${jwsToText(jwsToBytes(signature).subarray(0, 32))}`,
       /** A key of another kind entirely: nothing should even import. */
       wrongKindKey,
       /** A key of the RIGHT kind and the wrong value: a check happens and fails. */
@@ -4683,17 +4682,6 @@ async function checkLossReports(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   const page = await context.newPage();
 
-  /** The visible text of a notes list, and whether it occupies any space. */
-  const notesOn = async (name) => {
-    const list = page.getByRole('list', { name });
-    if ((await list.count()) === 0) return { drawn: false, text: '' };
-    const box = await list.first().boundingBox();
-    return {
-      drawn: box !== null && box.width > 0 && box.height > 0,
-      text: ((await list.first().innerText()) ?? '').replace(/\s+/g, ' ').trim(),
-    };
-  };
-
   try {
     /* -- 1 and 3: the tool page ------------------------------------------- */
     await page.goto(`${ORIGIN}/tools/structured-data`, { waitUntil: 'networkidle' });
@@ -4705,7 +4693,7 @@ async function checkLossReports(browser, label) {
     await page.getByRole('button', { name: 'Run' }).click();
     await page.getByLabel('Structured data Converted').waitFor({ timeout: 30_000 });
 
-    const lossy = await notesOn('Structured data Detected notes');
+    const lossy = await drawnNotes(page, 'Structured data Detected notes');
     check(
       label,
       'a rounded integer is drawn on the tool page without opening anything',
@@ -4724,7 +4712,7 @@ async function checkLossReports(browser, label) {
     await page.getByLabel('Structured data input').fill('{"id": 42}');
     await page.getByRole('button', { name: 'Run' }).click();
     await page.waitForTimeout(500);
-    const clean = await notesOn('Structured data Detected notes');
+    const clean = await drawnNotes(page, 'Structured data Detected notes');
     check(
       label,
       'a conversion that loses nothing draws no note at all',
@@ -4733,55 +4721,13 @@ async function checkLossReports(browser, label) {
     );
 
     /* -- 2 and 3: a canvas node ------------------------------------------- */
-    const nodeLink = (options) =>
-      `${ORIGIN}/?p=${shareParam({
-        v: 3,
-        n: [['n1', 'structured-data', 0, 0, options]],
-        e: [],
-      })}`;
-
-    /**
-     * The summary a node prints, and whether it takes up any room.
-     *
-     * Both, because `textContent` is satisfied by a node drawn at zero height
-     * behind the inspector, and the whole claim here is that somebody standing
-     * in front of the canvas can read it.
-     */
-    const summaryOf = () =>
-      page.evaluate(() => {
-        const box = document.querySelector('[data-testid="node-n1"] [class*="nodeSummary"]');
-        if (box === null) return null;
-        const rect = box.getBoundingClientRect();
-        return {
-          text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
-          drawn: rect.width > 0 && rect.height > 0,
-        };
-      });
-
-    const typeInto = async (value) => {
-      await page.locator('[data-testid="node-n1"]').focus();
-      await page.keyboard.press('Enter');
-      const field = page.locator('[data-inspector-input]').first();
-      await field.waitFor({ timeout: 15_000 });
-      await field.fill(value);
-    };
-
-    const untilSummary = async (predicate, timeout) => {
-      const deadline = Date.now() + timeout;
-      for (;;) {
-        const summary = await summaryOf();
-        if ((summary !== null && predicate(summary.text)) || Date.now() > deadline) return summary;
-        await page.waitForTimeout(100);
-      }
-    };
-
-    await page.goto(nodeLink({ source: 'auto', target: 'csv', indent: 2, delimiter: 'comma' }), {
-      waitUntil: 'networkidle',
-    });
-    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
-
-    await typeInto('[{"user": {"name": "ada"}, "id": 1}]');
-    const lossyNode = await untilSummary((text) => text.startsWith('Lossy'), 30_000);
+    const lossyNode = await onNode(
+      page,
+      'structured-data',
+      { source: 'auto', target: 'csv', indent: 2, delimiter: 'comma' },
+      '[{"user": {"name": "ada"}, "id": 1}]',
+      (text) => text.startsWith('Lossy'),
+    );
     check(
       label,
       'a canvas node prints what the conversion lost on its own face',
@@ -4805,19 +4751,19 @@ async function checkLossReports(browser, label) {
     );
 
     // The negative control on the canvas: a flat table loses nothing.
-    await page.goto(nodeLink({ source: 'auto', target: 'csv', indent: 2, delimiter: 'comma' }), {
-      waitUntil: 'networkidle',
-    });
-    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
-
-    await typeInto('[{"a": 1, "b": 2}, {"a": 3, "b": 4}]');
     /*
      * `2 items`, not `a,b`. This waited on the CSV HEADER until round seven,
      * because the header was what a node drew for every table it ever
      * produced - and for the same reason two of these documents with different
      * numbers of rows were the same node. See `checkSerialisedFaces`.
      */
-    const cleanNode = await untilSummary((text) => text.includes('2 items'), 30_000);
+    const cleanNode = await onNode(
+      page,
+      'structured-data',
+      { source: 'auto', target: 'csv', indent: 2, delimiter: 'comma' },
+      '[{"a": 1, "b": 2}, {"a": 3, "b": 4}]',
+      (text) => text.includes('2 items'),
+    );
     check(
       label,
       'a node whose conversion lost nothing says nothing about loss',
@@ -4870,44 +4816,40 @@ async function checkValueModel(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   const page = await context.newPage();
 
-  /** The visible text of a notes list, and whether it occupies any space. */
-  const notesOn = async () => {
-    const list = page.getByRole('list', { name: 'Structured data Detected notes' });
-    if ((await list.count()) === 0) return { drawn: false, text: '' };
-    const box = await list.first().boundingBox();
-    return {
-      drawn: box !== null && box.width > 0 && box.height > 0,
-      text: ((await list.first().innerText()) ?? '').replace(/\s+/g, ' ').trim(),
-    };
-  };
-
   /**
    * The error panel, DRAWN. `textContent` is satisfied by a panel of zero
    * height, and a refusal nobody can read is the failure this whole round is
    * about.
    */
-  const errorOn = () =>
-    page.evaluate(() => {
-      const box = document.querySelector('[class*="error"]');
-      if (box === null) return { drawn: false, text: '' };
-      const rect = box.getBoundingClientRect();
-      return {
-        drawn: rect.width > 0 && rect.height > 0,
-        text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
-      };
-    });
-
-  /** Runs one document and waits for the panel to settle on an answer. */
+  /**
+   * Runs one document and waits for the panel to settle on an answer.
+   *
+   * TYPES ONLY WHAT IS NOT ALREADY THERE, AND READS IT BACK. The first run
+   * follows two listboxes, and a fill landing while Radix returns focus to a
+   * trigger is discarded - crash B, round eleven. So the first document is
+   * typed before either listbox opens, this skips typing text the box already
+   * holds, and a box that does not hold the text is reported as the harness's
+   * failure rather than as the tool's.
+   */
   const run = async (text, settled) => {
-    await page.getByLabel('Structured data input').fill(text);
+    const field = page.getByLabel('Structured data input');
+    if ((await field.inputValue()) !== text) await field.fill(text);
+    const typed = await field.inputValue();
+    if (typed !== text) {
+      const lost = `HARNESS: the input box holds ${typed.length.toString()} characters, not the ${text.length.toString()} typed`;
+      return { error: { drawn: false, text: lost }, notes: { drawn: false, text: lost } };
+    }
     await page.getByRole('button', { name: 'Run' }).click();
     for (let attempt = 0; attempt < 150; attempt += 1) {
-      const error = await errorOn();
-      const notes = await notesOn();
+      const error = await drawnError(page);
+      const notes = await drawnNotes(page, 'Structured data Detected notes');
       if (settled(error, notes)) return { error, notes };
       await page.waitForTimeout(100);
     }
-    return { error: await errorOn(), notes: await notesOn() };
+    return {
+      error: await drawnError(page),
+      notes: await drawnNotes(page, 'Structured data Detected notes'),
+    };
   };
 
   try {
@@ -4917,6 +4859,8 @@ async function checkValueModel(browser, label) {
       timeout: 15_000,
     });
 
+    // Typed BEFORE the listboxes; see `run`.
+    await page.getByLabel('Structured data input').fill('a_nan: .nan\n');
     await page.getByRole('combobox', { name: 'Source format' }).click();
     await page.getByRole('option', { name: 'YAML', exact: true }).click();
     await page.getByRole('combobox', { name: 'Target format' }).click();
@@ -4998,48 +4942,11 @@ async function checkValueModel(browser, label) {
     );
 
     /* -- 6: both of them on a canvas node ---------------------------------- */
-    const nodeLink = (options) =>
-      `${ORIGIN}/?p=${shareParam({
-        v: 3,
-        n: [['n1', 'structured-data', 0, 0, options]],
-        e: [],
-      })}`;
-
-    const summaryOf = () =>
-      page.evaluate(() => {
-        const box = document.querySelector('[data-testid="node-n1"] [class*="nodeSummary"]');
-        if (box === null) return null;
-        const rect = box.getBoundingClientRect();
-        return {
-          text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
-          drawn: rect.width > 0 && rect.height > 0,
-        };
-      });
-
-    const typeInto = async (value) => {
-      await page.locator('[data-testid="node-n1"]').focus();
-      await page.keyboard.press('Enter');
-      const field = page.locator('[data-inspector-input]').first();
-      await field.waitFor({ timeout: 15_000 });
-      await field.fill(value);
-    };
-
-    const untilSummary = async (predicate, timeout) => {
-      const deadline = Date.now() + timeout;
-      for (;;) {
-        const summary = await summaryOf();
-        if ((summary !== null && predicate(summary.text)) || Date.now() > deadline) return summary;
-        await page.waitForTimeout(100);
-      }
-    };
-
     const yamlToYaml = { source: 'yaml', target: 'yaml', indent: 2, delimiter: 'comma' };
 
-    await page.goto(nodeLink(yamlToYaml), { waitUntil: 'networkidle' });
-    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
-
-    await typeInto('a_nan: .nan\n');
-    const refusedNode = await untilSummary((text) => text.includes('value model'), 30_000);
+    const refusedNode = await onNode(page, 'structured-data', yamlToYaml, 'a_nan: .nan\n', (text) =>
+      text.includes('value model'),
+    );
     check(
       label,
       'a node prints the refusal on its own face, in the words the panel used',
@@ -5050,11 +4957,9 @@ async function checkValueModel(browser, label) {
       JSON.stringify(refusedNode),
     );
 
-    await page.goto(nodeLink(yamlToYaml), { waitUntil: 'networkidle' });
-    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
-
-    await typeInto('2024: launched\n');
-    const keyNode = await untilSummary((text) => text.startsWith('Lossy'), 30_000);
+    const keyNode = await onNode(page, 'structured-data', yamlToYaml, '2024: launched\n', (text) =>
+      text.startsWith('Lossy'),
+    );
     check(
       label,
       'and prints the key that became text, which is corpus row 10 on a node',
@@ -5066,11 +4971,13 @@ async function checkValueModel(browser, label) {
     );
 
     // The control on the canvas: the quoted key loses nothing, so no `Lossy`.
-    await page.goto(nodeLink(yamlToYaml), { waitUntil: 'networkidle' });
-    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
-
-    await typeInto('"2024": launched\n');
-    const cleanNode = await untilSummary((text) => text.includes('1 key'), 30_000);
+    const cleanNode = await onNode(
+      page,
+      'structured-data',
+      yamlToYaml,
+      '"2024": launched\n',
+      (text) => text.includes('1 key'),
+    );
     check(
       label,
       'a node whose keys were already text says nothing about a key',
@@ -5141,7 +5048,10 @@ async function checkValueModel(browser, label) {
       await converted.waitFor({ timeout: 30_000 });
       await expectValue(converted, expected);
 
-      return { error: await errorOn(), notes: await notesOn() };
+      return {
+        error: await drawnError(page),
+        notes: await drawnNotes(page, 'Structured data Detected notes'),
+      };
     };
 
     /* -- 7a: the four YAML presentation losses, as one note ---------------- */
@@ -5252,14 +5162,9 @@ async function checkValueModel(browser, label) {
     );
 
     /* -- 7d: all three on a canvas node ------------------------------------ */
-    const onNode = async (options, text, predicate) => {
-      await page.goto(nodeLink(options), { waitUntil: 'networkidle' });
-      await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
-      await typeInto(text);
-      return untilSummary(predicate, 30_000);
-    };
-
-    const richNode = await onNode(yamlToYaml, RICH, (text) => text.startsWith('Lossy'));
+    const richNode = await onNode(page, 'structured-data', yamlToYaml, RICH, (text) =>
+      text.startsWith('Lossy'),
+    );
     check(
       label,
       'the presentation census reaches a node face, which is where nobody opens a panel',
@@ -5271,8 +5176,12 @@ async function checkValueModel(browser, label) {
       JSON.stringify(richNode),
     );
 
-    const cleanYamlNode = await onNode(yamlToYaml, 'retries: 3\n', (text) =>
-      text.includes('1 key'),
+    const cleanYamlNode = await onNode(
+      page,
+      'structured-data',
+      yamlToYaml,
+      'retries: 3\n',
+      (text) => text.includes('1 key'),
     );
     check(
       label,
@@ -5282,8 +5191,12 @@ async function checkValueModel(browser, label) {
     );
 
     const csvToJson = { source: 'csv', target: 'json', indent: 2, delimiter: 'comma' };
-    const trimmedNode = await onNode(csvToJson, 'alpha, shipped at \n1,2\n', (text) =>
-      text.startsWith('Lossy'),
+    const trimmedNode = await onNode(
+      page,
+      'structured-data',
+      csvToJson,
+      'alpha, shipped at \n1,2\n',
+      (text) => text.startsWith('Lossy'),
     );
     check(
       label,
@@ -5295,8 +5208,12 @@ async function checkValueModel(browser, label) {
     );
 
     const jsonToJson = { source: 'json', target: 'json', indent: 2, delimiter: 'comma' };
-    const duplicateNode = await onNode(jsonToJson, '{"retries": 3, "retries": 5}', (text) =>
-      text.startsWith('Lossy'),
+    const duplicateNode = await onNode(
+      page,
+      'structured-data',
+      jsonToJson,
+      '{"retries": 3, "retries": 5}',
+      (text) => text.startsWith('Lossy'),
     );
     check(
       label,
@@ -5307,8 +5224,12 @@ async function checkValueModel(browser, label) {
       JSON.stringify(duplicateNode),
     );
 
-    const cleanJsonNode = await onNode(jsonToJson, '{"retries": 5}', (text) =>
-      text.includes('1 key'),
+    const cleanJsonNode = await onNode(
+      page,
+      'structured-data',
+      jsonToJson,
+      '{"retries": 5}',
+      (text) => text.includes('1 key'),
     );
     check(
       label,
@@ -5351,16 +5272,6 @@ async function checkColourReports(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   const page = await context.newPage();
 
-  const notesOn = async (name) => {
-    const list = page.getByRole('list', { name });
-    if ((await list.count()) === 0) return { drawn: false, text: '' };
-    const box = await list.first().boundingBox();
-    return {
-      drawn: box !== null && box.width > 0 && box.height > 0,
-      text: ((await list.first().innerText()) ?? '').replace(/\s+/g, ' ').trim(),
-    };
-  };
-
   /** Every ratio the contrast table is showing, in row order. */
   const ratiosOn = () =>
     page.evaluate(() =>
@@ -5396,7 +5307,7 @@ async function checkColourReports(browser, label) {
     await page.getByRole('heading', { level: 1, name: 'Colour' }).waitFor({ timeout: 15_000 });
 
     const gamutRan = await convert('oklch(0.7 0.4 150)', '#00d600');
-    const gamut = await notesOn('Colour Report notes');
+    const gamut = await drawnNotes(page, 'Colour Report notes');
     check(
       label,
       'an out-of-gamut colour is drawn on the tool page without opening anything',
@@ -5408,7 +5319,7 @@ async function checkColourReports(browser, label) {
     );
 
     const clampRan = await convert('hsl(361 110% -5%)', '#000000');
-    const clamp = await notesOn('Colour Report notes');
+    const clamp = await drawnNotes(page, 'Colour Report notes');
     check(
       label,
       'a clamped hsl() names the components it clamped and the colour it produced',
@@ -5422,7 +5333,7 @@ async function checkColourReports(browser, label) {
 
     /* -- 3: the negative control, on the same page ------------------------ */
     const cleanRan = await convert('#aabbcc', '#aabbcc');
-    const clean = await notesOn('Colour Report notes');
+    const clean = await drawnNotes(page, 'Colour Report notes');
     check(
       label,
       'an ordinary colour draws no note at all',
@@ -5495,46 +5406,13 @@ async function checkColourReports(browser, label) {
     );
 
     /* -- 2 and 3: a canvas node ------------------------------------------- */
-    const nodeLink = (options) =>
-      `${ORIGIN}/?p=${shareParam({
-        v: 3,
-        n: [['n1', 'color-convert', 0, 0, options]],
-        e: [],
-      })}`;
-
-    const summaryOf = () =>
-      page.evaluate(() => {
-        const box = document.querySelector('[data-testid="node-n1"] [class*="nodeSummary"]');
-        if (box === null) return null;
-        const rect = box.getBoundingClientRect();
-        return {
-          text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
-          drawn: rect.width > 0 && rect.height > 0,
-        };
-      });
-
-    const typeInto = async (value) => {
-      await page.locator('[data-testid="node-n1"]').focus();
-      await page.keyboard.press('Enter');
-      const field = page.locator('[data-inspector-input]').first();
-      await field.waitFor({ timeout: 15_000 });
-      await field.fill(value);
-    };
-
-    const untilSummary = async (predicate, timeout) => {
-      const deadline = Date.now() + timeout;
-      for (;;) {
-        const summary = await summaryOf();
-        if ((summary !== null && predicate(summary.text)) || Date.now() > deadline) return summary;
-        await page.waitForTimeout(100);
-      }
-    };
-
-    await page.goto(nodeLink({ target: 'hex', precision: 5 }), { waitUntil: 'networkidle' });
-    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
-
-    await typeInto('oklch(0.7 0.4 150)');
-    const lossyNode = await untilSummary((text) => text.startsWith('Lossy'), 30_000);
+    const lossyNode = await onNode(
+      page,
+      'color-convert',
+      { target: 'hex', precision: 5 },
+      'oklch(0.7 0.4 150)',
+      (text) => text.startsWith('Lossy'),
+    );
     check(
       label,
       'a canvas node prints what the colour conversion changed on its own face',
@@ -5555,11 +5433,13 @@ async function checkColourReports(browser, label) {
       spoken.replace(/\s+/g, ' ').slice(0, 160),
     );
 
-    await page.goto(nodeLink({ target: 'hex', precision: 5 }), { waitUntil: 'networkidle' });
-    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
-
-    await typeInto('#aabbcc');
-    const cleanNode = await untilSummary((text) => text.includes('#aabbcc'), 30_000);
+    const cleanNode = await onNode(
+      page,
+      'color-convert',
+      { target: 'hex', precision: 5 },
+      '#aabbcc',
+      (text) => text.includes('#aabbcc'),
+    );
     check(
       label,
       'a colour node that changed nothing says nothing about loss',
@@ -5606,16 +5486,6 @@ async function checkMarkdownCensus(browser, label) {
   // a table, converted by the same pass, that loses nothing.
   const CLEAN = '<table><tr><th>Region</th></tr><tr><td>North</td></tr></table>';
 
-  const notesOn = async () => {
-    const list = page.getByRole('list', { name: 'Text convert Report notes' });
-    if ((await list.count()) === 0) return { drawn: false, text: '' };
-    const box = await list.first().boundingBox();
-    return {
-      drawn: box !== null && box.width > 0 && box.height > 0,
-      text: ((await list.first().innerText()) ?? '').replace(/\s+/g, ' ').trim(),
-    };
-  };
-
   /**
    * Runs one document and waits for the ANSWER rather than for the click.
    *
@@ -5623,9 +5493,17 @@ async function checkMarkdownCensus(browser, label) {
    * waiting on the button would read the old panel - and this check is
    * entirely about which panel is on screen. The predicate is on the output
    * text, because that is the one thing that is different per document.
+   *
+   * And it types only what the box does not already hold, then reads it back:
+   * the first document is typed before the two listboxes rather than after
+   * them, because a fill landing while Radix returns focus to a trigger is
+   * discarded (crash B). A box that does not hold the text returns null, which
+   * every caller's check reports.
    */
   const convert = async (text, settled) => {
-    await page.getByLabel('Text convert input').fill(text);
+    const field = page.getByLabel('Text convert input');
+    if ((await field.inputValue()) !== text) await field.fill(text);
+    if ((await field.inputValue()) !== text) return null;
     await page.getByRole('button', { name: 'Run' }).click();
     const output = page.getByLabel('Text convert Converted');
     await output.waitFor({ timeout: 30_000 });
@@ -5644,13 +5522,15 @@ async function checkMarkdownCensus(browser, label) {
       .getByRole('heading', { level: 1, name: 'Text convert' })
       .waitFor({ timeout: 15_000 });
 
+    // Typed BEFORE the listboxes; see `convert`.
+    await page.getByLabel('Text convert input').fill(CAPTION);
     await page.getByRole('combobox', { name: 'Source format' }).click();
     await page.getByRole('option', { name: 'HTML', exact: true }).click();
     await page.getByRole('combobox', { name: 'Target format' }).click();
     await page.getByRole('option', { name: 'Markdown', exact: true }).click();
 
     const captionOut = await convert(CAPTION, (value) => value.includes('Region'));
-    const caption = await notesOn();
+    const caption = await drawnNotes(page, 'Text convert Report notes');
     check(
       label,
       'a dropped table caption is drawn on the tool page without opening anything',
@@ -5663,7 +5543,7 @@ async function checkMarkdownCensus(browser, label) {
     );
 
     const listOut = await convert(CELL_LIST, (value) => value.includes('South'));
-    const list = await notesOn();
+    const list = await drawnNotes(page, 'Text convert Report notes');
     check(
       label,
       'a table cell that was a list is reported, and names the elements that went',
@@ -5681,7 +5561,7 @@ async function checkMarkdownCensus(browser, label) {
     );
 
     const headerlessOut = await convert(HEADERLESS, (value) => value.includes('North'));
-    const headerless = await notesOn();
+    const headerless = await drawnNotes(page, 'Text convert Report notes');
     check(
       label,
       'an invented header row is reported, and says it is a header row',
@@ -5694,7 +5574,7 @@ async function checkMarkdownCensus(browser, label) {
 
     /* -- 3: the negative control, on the same page ------------------------ */
     const cleanOut = await convert(CLEAN, (value) => value.includes('Region'));
-    const clean = await notesOn();
+    const clean = await drawnNotes(page, 'Text convert Report notes');
     check(
       label,
       'an ordinary table draws no note at all on the way to Markdown',
@@ -5703,46 +5583,13 @@ async function checkMarkdownCensus(browser, label) {
     );
 
     /* -- 4: a canvas node ------------------------------------------------- */
-    const nodeLink = () =>
-      `${ORIGIN}/?p=${shareParam({
-        v: 3,
-        n: [['n1', 'text-convert', 0, 0, { source: 'html', target: 'markdown' }]],
-        e: [],
-      })}`;
-
-    const summaryOf = () =>
-      page.evaluate(() => {
-        const box = document.querySelector('[data-testid="node-n1"] [class*="nodeSummary"]');
-        if (box === null) return null;
-        const rect = box.getBoundingClientRect();
-        return {
-          text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
-          drawn: rect.width > 0 && rect.height > 0,
-        };
-      });
-
-    const typeInto = async (value) => {
-      await page.locator('[data-testid="node-n1"]').focus();
-      await page.keyboard.press('Enter');
-      const field = page.locator('[data-inspector-input]').first();
-      await field.waitFor({ timeout: 15_000 });
-      await field.fill(value);
-    };
-
-    const untilSummary = async (predicate, timeout) => {
-      const deadline = Date.now() + timeout;
-      for (;;) {
-        const summary = await summaryOf();
-        if ((summary !== null && predicate(summary.text)) || Date.now() > deadline) return summary;
-        await page.waitForTimeout(100);
-      }
-    };
-
-    await page.goto(nodeLink(), { waitUntil: 'networkidle' });
-    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
-
-    await typeInto(CAPTION);
-    const lossyNode = await untilSummary((text) => text.startsWith('Lossy'), 30_000);
+    const lossyNode = await onNode(
+      page,
+      'text-convert',
+      { source: 'html', target: 'markdown' },
+      CAPTION,
+      (text) => text.startsWith('Lossy'),
+    );
     check(
       label,
       'a canvas node prints what the Markdown conversion could not carry on its own face',
@@ -5763,11 +5610,13 @@ async function checkMarkdownCensus(browser, label) {
       spoken.replace(/\s+/g, ' ').slice(0, 200),
     );
 
-    await page.goto(nodeLink(), { waitUntil: 'networkidle' });
-    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
-
-    await typeInto(CLEAN);
-    const cleanNode = await untilSummary((text) => text.includes('Region'), 30_000);
+    const cleanNode = await onNode(
+      page,
+      'text-convert',
+      { source: 'html', target: 'markdown' },
+      CLEAN,
+      (text) => text.includes('Region'),
+    );
     check(
       label,
       'a text node whose table lost nothing says nothing about loss',
@@ -5780,13 +5629,13 @@ async function checkMarkdownCensus(browser, label) {
 }
 
 /* ========================================================================== *
- * Round thirteen
+ * Reading a report and a canvas node
  * ========================================================================== */
 
 /**
- * The drawn text of a notes list, and whether it occupies any space. Shared by
- * the three round-thirteen checks, which all ask the same two questions of a
- * report: is it there, and could a person see it.
+ * The drawn text of a notes list, and whether it occupies any space - the two
+ * questions every loss check asks of a report: is it there, and could a person
+ * see it without clicking anything.
  */
 async function drawnNotes(page, name) {
   const list = page.getByRole('list', { name });
@@ -5798,7 +5647,12 @@ async function drawnNotes(page, name) {
   };
 }
 
-/** A node's summary box, drawn, and its accessible name. */
+/**
+ * A node's summary box, whether it is drawn, its accessible name and its run
+ * status. Both the box and the name, because `textContent` is satisfied by a
+ * node drawn at zero height behind the inspector, and a chain readable by eye
+ * and not by ear is not one a keyboard user can follow.
+ */
 async function nodeFace(page) {
   return page.evaluate(() => {
     const node = document.querySelector('[data-testid="node-n1"]');
@@ -5809,15 +5663,45 @@ async function nodeFace(page) {
       text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
       drawn: rect.width > 0 && rect.height > 0,
       spoken: node?.getAttribute('aria-label') ?? '',
+      status: node?.getAttribute('data-status') ?? '',
     };
   });
 }
 
+/** The error panel a tool page draws, and whether it occupies any space. */
+async function drawnError(page) {
+  return page.evaluate(() => {
+    const box = document.querySelector('[class*="error"]');
+    if (box === null) return { drawn: false, text: '' };
+    const rect = box.getBoundingClientRect();
+    return {
+      drawn: rect.width > 0 && rect.height > 0,
+      text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    };
+  });
+}
+
+/** What a run ends as. `blocked` is where an empty node starts, not an answer. */
+const FINISHED = new Set(['ok', 'error', 'upstream-failed']);
+
 /**
  * Loads one node of `tool` with `options`, types `text` into it through the
- * inspector, and waits for the face to satisfy `settled` - which each caller
- * makes something only THIS run can have produced, so a control cannot pass
- * on an empty node before the conversion has landed.
+ * inspector, and waits for the face to satisfy `settled` ON A FINISHED RUN.
+ *
+ * ONE HELPER FOR EVERY LOSS CHECK, since round fifteen: four checks each
+ * carried a word-for-word copy of the same load, type and poll, and the one
+ * lesson that had to be in all of them was in none. A node shows its tool's
+ * DESCRIPTION until a run lands, so a control that settles on a word the
+ * description also contains passes before anything has run - round thirteen
+ * found one waiting for `plain` on a node that said "Convert between Markdown,
+ * HTML and plain text", with the accessible name reading `running`. Settling on
+ * a finished `data-status` as well as the caller's text makes that impossible
+ * for every caller at once, rather than for the ones that remembered.
+ *
+ * And the typed text is read back, because a fill can be discarded without an
+ * error (round eleven), and a node that ran on nothing reports that faithfully
+ * as a fact about the tool. A lost fill returns a face saying so, which every
+ * caller's check prints.
  */
 async function onNode(page, tool, options, text, settled) {
   await page.goto(`${ORIGIN}/?p=${shareParam({ v: 3, n: [['n1', tool, 0, 0, options]], e: [] })}`, {
@@ -5829,11 +5713,27 @@ async function onNode(page, tool, options, text, settled) {
   const field = page.locator('[data-inspector-input]').first();
   await field.waitFor({ timeout: 15_000 });
   await field.fill(text);
+  const typed = await field.inputValue();
+  if (typed !== text) {
+    const lost = `HARNESS: the inspector holds ${typed.length.toString()} characters, not the ${text.length.toString()} typed`;
+    return { text: lost, drawn: false, spoken: lost, status: '' };
+  }
 
+  /*
+   * A DEADLINE IS NOT AN ANSWER. Returning the face as it stood when time ran
+   * out would hand a control the tool's description on a node that never ran,
+   * and "says nothing about loss" is true of a description. So an unfinished
+   * run comes back as undrawn, with its status in the text, and every check -
+   * positive or control - fails on it and says why.
+   */
   const deadline = Date.now() + 30_000;
   for (;;) {
     const face = await nodeFace(page);
-    if ((face !== null && settled(face.text)) || Date.now() > deadline) return face;
+    if (face !== null && FINISHED.has(face.status) && settled(face.text)) return face;
+    if (Date.now() > deadline) {
+      const why = `HARNESS: no finished run settled in 30s - status ${face?.status ?? 'none'}, face ${JSON.stringify(face?.text ?? null)}`;
+      return { text: why, drawn: false, spoken: why, status: face?.status ?? '' };
+    }
     await page.waitForTimeout(100);
   }
 }
@@ -6066,17 +5966,6 @@ async function checkTableCellsAndFlow(browser, label) {
   const FLOW = 'a: {b: 1}\nc: [1, 2]\n';
   const BLOCK = 'a:\n  b: 7\n';
 
-  const errorOn = () =>
-    page.evaluate(() => {
-      const box = document.querySelector('[class*="error"]');
-      if (box === null) return { drawn: false, text: '' };
-      const rect = box.getBoundingClientRect();
-      return {
-        drawn: rect.width > 0 && rect.height > 0,
-        text: (box.textContent ?? '').replace(/\s+/g, ' ').trim(),
-      };
-    });
-
   /** As in checkValueModel: typed first, read back, settled on this run's own answer. */
   const runAs = async (text, source, target, settled) => {
     await page.goto(`${ORIGIN}/tools/structured-data`, { waitUntil: 'networkidle' });
@@ -6096,7 +5985,7 @@ async function checkTableCellsAndFlow(browser, label) {
     for (let attempt = 0; attempt < 150; attempt += 1) {
       const converted = page.getByLabel('Structured data Converted');
       const output = (await converted.count()) > 0 ? await converted.inputValue() : '';
-      const error = await errorOn();
+      const error = await drawnError(page);
       if (settled(output, error))
         return { output, error, notes: await drawnNotes(page, 'Structured data Detected notes') };
       await page.waitForTimeout(100);
@@ -9844,11 +9733,22 @@ async function checkRichTextClipboard(browser, label) {
       '',
     ].join('\n');
 
+    // Typed BEFORE the listbox and read back after it: a fill landing while
+    // Radix returns focus to the select trigger is discarded (crash B), and a
+    // copy of an empty box would fail below as the clipboard's fault.
+    const editor = page.locator('textarea').first();
+    await editor.fill(source);
     await page.getByRole('combobox', { name: 'Target format' }).click();
     // The normalised target by its full name: since round three there are two
     // whose label begins "HTML", and a prefix match resolves to both.
     await page.getByRole('option', { name: 'HTML (normalised)', exact: true }).click();
-    await page.locator('textarea').first().fill(source);
+    const typed = await editor.inputValue();
+    check(
+      label,
+      'the harness typed the document it is about to copy',
+      typed === source,
+      `${typed.length.toString()} of ${source.length.toString()} characters in the box`,
+    );
     await page.getByRole('button', { name: 'Run' }).click();
 
     const richCopy = page.getByRole('button', { name: 'Copy as rich text' });
@@ -11857,7 +11757,10 @@ async function checkOutputViews(browser, label) {
       );
 
       /* And the tool's own verdict for the same bytes, through the worker. */
-      const truncated = await jwtVerdict(es256.key, es256.truncatedToken);
+      // Half a P-256 signature: 32 bytes where the algorithm needs 64.
+      const [header, payload, signature] = es256.token.split('.');
+      const truncatedToken = `${header}.${payload}.${jwsToText(jwsToBytes(signature).subarray(0, 32))}`;
+      const truncated = await jwtVerdict(es256.key, truncatedToken);
       check(
         label,
         'a truncated ES256 signature reaches a verdict rather than an unhandled error',
@@ -13283,9 +13186,14 @@ async function checkColdOpen(browser, label) {
   }
 }
 
-async function runChecks(engine, label) {
-  console.log(`\n${label}`);
-  const browser = await engine.launch();
+/**
+ * THE SMOKE CHECK: the canvas loads, the tokens resolve, a node drags, a tool
+ * runs in a real worker, nothing leaves the origin, and a real PNG converts.
+ *
+ * It was the inline head of `runChecks` until round fifteen, which made it the
+ * one part of a run no section filter could name.
+ */
+async function checkSmoke(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
 
@@ -13616,73 +13524,42 @@ async function runChecks(engine, label) {
       imported ? `${imported.duration} ms inside the run` : 'no import span',
     );
 
-    /* -- Every overlay scrolls when its content overflows ----------------- */
-    const overlayScroll = await page.evaluate(async () => {
-      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-      const results = [];
-
-      const openAndMeasure = async (name, open, close) => {
-        open();
-        await wait(250);
-        const region = document.querySelector('[role="dialog"] [data-scroll-region]');
-        if (!region) {
-          results.push({ name, ok: false, why: 'no scroll region' });
-        } else {
-          const overflows = region.scrollHeight > region.clientHeight + 1;
-          region.scrollTop = region.scrollHeight;
-          await wait(60);
-          const scrolled = region.scrollTop > 0;
-          const style = getComputedStyle(region).overflowY;
-          results.push({
-            name,
-            ok: style === 'auto' || style === 'scroll',
-            overflows,
-            scrolled,
-            overflowY: style,
-          });
-        }
-        close();
-        await wait(200);
+    /* -- The palette scrolls when its content overflows ------------------- */
+    /*
+     * THE PALETTE ONLY, since round fifteen. This block also claimed "the
+     * shortcuts overlay can scroll", opened with a synthetic `?` after closing
+     * the palette with a synthetic Escape - and neither key did anything. The
+     * palette listens for Escape on its own dialog, not on the canvas root the
+     * event was sent to, and the root ignores keys while an overlay is open, so
+     * the palette stayed open and the "shortcuts" line measured the palette a
+     * second time. Probed in both engines: the only dialog on screen after the
+     * `?` was "Add a tool". The shortcuts overlay is held more strongly than
+     * this ever held it by `checkDialogScroll`, which opens it with a real key
+     * and scrolls it with a real wheel. The dialog measured here is named, so
+     * a different one cannot stand in for it again.
+     */
+    await page.getByRole('button', { name: 'Add tool' }).click();
+    const palette = page.getByRole('dialog', { name: 'Add a tool' });
+    await palette.waitFor({ timeout: 10_000 });
+    const paletteScroll = await palette.evaluate((dialog) => {
+      const region = dialog.querySelector('[data-scroll-region]');
+      if (!region) return null;
+      return {
+        overflowY: getComputedStyle(region).overflowY,
+        overflows: region.scrollHeight > region.clientHeight + 1,
       };
-
-      const key = (k) => {
-        const root = document.querySelector('[role="application"]');
-        root.focus();
-        root.dispatchEvent(
-          new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }),
-        );
-      };
-
-      await openAndMeasure(
-        'palette',
-        () => {
-          [...document.querySelectorAll('button')]
-            .find((b) => /Add tool/i.test(b.textContent))
-            ?.click();
-        },
-        () => key('Escape'),
-      );
-
-      await openAndMeasure(
-        'shortcuts',
-        () => {
-          key('?');
-        },
-        () => key('Escape'),
-      );
-
-      return results;
     });
-
-    for (const overlay of overlayScroll) {
-      check(
-        label,
-        `the ${overlay.name} overlay can scroll`,
-        overlay.ok === true,
-        overlay.why ??
-          `overflow-y ${overlay.overflowY ?? '?'}, overflowing ${String(overlay.overflows)}, scrolled ${String(overlay.scrolled)}`,
-      );
-    }
+    check(
+      label,
+      'the palette overlay can scroll',
+      paletteScroll !== null &&
+        (paletteScroll.overflowY === 'auto' || paletteScroll.overflowY === 'scroll'),
+      paletteScroll === null
+        ? 'no scroll region in the palette'
+        : `overflow-y ${paletteScroll.overflowY}, overflowing ${String(paletteScroll.overflows)}`,
+    );
+    await page.keyboard.press('Escape');
+    await palette.waitFor({ state: 'detached', timeout: 10_000 });
 
     /* -- Zero network: nothing may leave the page ------------------------ */
     /*
@@ -13793,59 +13670,99 @@ async function runChecks(engine, label) {
   } finally {
     await context.close();
   }
+}
+
+/*
+ * EVERY SECTION OF A RUN, IN THE ORDER A FULL RUN DRIVES THEM.
+ *
+ * One list, so that `--only` can name a section and a full run and a partial
+ * one cannot disagree about what exists. Every section opens its own context,
+ * so none depends on another having run - but the order is kept, because the
+ * lost fill of round eleven needed a page reused deep into a long run, and a
+ * full run is the only place that condition exists.
+ */
+const SECTIONS = [
+  checkSmoke,
+  checkColdOpen,
+  checkChromeWidths,
+  checkCanvasGrid,
+  checkRunnerLayout,
+  checkInspector,
+  checkInspectorMotion,
+  checkInspectorTouch,
+  checkDialogScroll,
+  checkRouteFeedback,
+  checkOffline,
+  checkAxe,
+  checkConsoleSilence,
+  checkDeepLinks,
+  checkStructuredData,
+  checkLossReports,
+  checkValueModel,
+  checkColourReports,
+  checkMarkdownCensus,
+  checkClassAndSubstitution,
+  checkTableCellsAndFlow,
+  checkClaimsAndHue,
+  checkSerialisedFaces,
+  checkLossAlongWires,
+  checkDiff,
+  checkRegex,
+  checkOutputViews,
+  checkHead,
+  checkTouch,
+  checkMobileLayout,
+  checkPopovers,
+  checkSoftKeyboard,
+  checkBackgroundedTab,
+  checkTwoTabs,
+  checkRichTextClipboard,
+  checkTruncation,
+  checkOptionNotes,
+  checkRunProgress,
+  checkWorkerWarmth,
+  checkToolIndex,
+  checkNodeSummaryBox,
+  checkPreviewSandbox,
+  checkPipeline,
+  checkWireFidelity,
+  checkCanvasFileInput,
+  checkFileInputTouch,
+  checkImageConvert,
+  checkOffscreenFallback,
+  checkVideoRemux,
+  checkLargeVideo,
+  checkThemeEditor,
+  checkNotifications,
+];
+
+/** The sections that launch their own browser, for touch or a phone viewport. */
+const ON_ENGINE = new Set([
+  checkInspectorTouch,
+  checkTouch,
+  checkMobileLayout,
+  checkPopovers,
+  checkSoftKeyboard,
+  checkFileInputTouch,
+]);
+
+/** Seconds each section took, per engine, printed at the end of the run. */
+const timings = [];
+
+async function runChecks(engine, label, sections) {
+  console.log(`\n${label}`);
+  const browser = await engine.launch();
 
   try {
-    await checkColdOpen(browser, label);
-    await checkChromeWidths(browser, label);
-    await checkCanvasGrid(browser, label);
-    await checkRunnerLayout(browser, label);
-    await checkInspector(browser, label);
-    await checkInspectorMotion(browser, label);
-    await checkInspectorTouch(engine, label);
-    await checkDialogScroll(browser, label);
-    await checkRouteFeedback(browser, label);
-    await checkOffline(browser, label);
-    await checkAxe(browser, label);
-    await checkConsoleSilence(browser, label);
-    await checkDeepLinks(browser, label);
-    await checkStructuredData(browser, label);
-    await checkLossReports(browser, label);
-    await checkValueModel(browser, label);
-    await checkColourReports(browser, label);
-    await checkMarkdownCensus(browser, label);
-    await checkClassAndSubstitution(browser, label);
-    await checkTableCellsAndFlow(browser, label);
-    await checkClaimsAndHue(browser, label);
-    await checkSerialisedFaces(browser, label);
-    await checkLossAlongWires(browser, label);
-    await checkDiff(browser, label);
-    await checkRegex(browser, label);
-    await checkOutputViews(browser, label);
-    await checkHead(browser, label);
-    await checkTouch(engine, label);
-    await checkMobileLayout(engine, label);
-    await checkPopovers(engine, label);
-    await checkSoftKeyboard(engine, label);
-    await checkBackgroundedTab(browser, label);
-    await checkTwoTabs(browser, label);
-    await checkRichTextClipboard(browser, label);
-    await checkTruncation(browser, label);
-    await checkOptionNotes(browser, label);
-    await checkRunProgress(browser, label);
-    await checkWorkerWarmth(browser, label);
-    await checkToolIndex(browser, label);
-    await checkNodeSummaryBox(browser, label);
-    await checkPreviewSandbox(browser, label);
-    await checkPipeline(browser, label);
-    await checkWireFidelity(browser, label);
-    await checkCanvasFileInput(browser, label);
-    await checkFileInputTouch(engine, label);
-    await checkImageConvert(browser, label);
-    await checkOffscreenFallback(browser, label);
-    await checkVideoRemux(browser, label);
-    await checkLargeVideo(browser, label);
-    await checkThemeEditor(browser, label);
-    await checkNotifications(browser, label);
+    for (const section of sections) {
+      const started = performance.now();
+      await section(ON_ENGINE.has(section) ? engine : browser, label);
+      const seconds = (performance.now() - started) / 1000;
+      timings.push({ engine: label, section: section.name, seconds });
+      // A measurement for whoever is choosing what to run, and never asserted:
+      // how long a section takes is a fact about this machine.
+      console.log(`  time ${section.name} ${seconds.toFixed(1)}s`);
+    }
   } finally {
     await browser.close();
   }
@@ -17107,6 +17024,92 @@ async function checkBuildIsCurrent(label, when) {
 
 /* ========================================================================== */
 
+/*
+ * WHAT TO RUN, FOR ITERATION ONLY.
+ *
+ *   --only=<name>[,<name>...]   the sections whose function name contains any
+ *                               of these, case-insensitively, `check` optional:
+ *                               `--only=popovers,valuemodel`
+ *   --engine=firefox|webkit     one engine rather than both
+ *   --list                      the section names, and exit
+ *
+ * A full run is ~2,900 checks in both engines and every round runs it several
+ * times, so a round iterating on one section paid for fifty-one it could not
+ * have affected; the CSP round built a throwaway runner outside the tree to
+ * get round that. This is that runner, in the tree.
+ *
+ * IT IS NOT THE PRE-COMMIT RUN, AND IT SAYS SO. The findings this harness is
+ * proudest of came from failures that exist only deep in a FULL run - the lost
+ * fill needed a page reused across a long sequence and sixty-four iterations -
+ * and a filtered run removes exactly that condition. So a partial run can fail,
+ * and can pass, but it never prints the line a full run prints on success: its
+ * verdict begins `PARTIAL` and names the command a commit still needs.
+ *
+ * A filter that matches nothing is an error rather than an empty run, because
+ * an empty run has no failures and would otherwise read as a pass.
+ */
+const ENGINES = {
+  firefox: [firefox, 'Firefox (Gecko)'],
+  webkit: [webkit, 'WebKit - the engine behind Safari, not Safari itself'],
+};
+
+function sectionsToRun(argv) {
+  const flags = new Map();
+  for (const arg of argv) {
+    const match = /^--(only|engine|list)(?:=(.*))?$/.exec(arg);
+    if (!match) {
+      console.error(`cross-browser: unknown argument ${arg} - use --only=, --engine= or --list`);
+      process.exit(2);
+    }
+    flags.set(match[1], match[2] ?? '');
+  }
+
+  if (flags.has('list')) {
+    console.log(SECTIONS.map((section) => section.name).join('\n'));
+    process.exit(0);
+  }
+
+  const engineName = flags.get('engine');
+  if (engineName !== undefined && !(engineName in ENGINES)) {
+    console.error(`cross-browser: --engine=${engineName} - use firefox or webkit`);
+    process.exit(2);
+  }
+
+  let sections = SECTIONS;
+  const only = flags.get('only');
+  if (only !== undefined) {
+    const terms = only.split(',').map((term) =>
+      term
+        .trim()
+        .toLowerCase()
+        .replace(/^check/, ''),
+    );
+    const unmatched = terms.filter(
+      (term) =>
+        term === '' || !SECTIONS.some((section) => section.name.toLowerCase().includes(term)),
+    );
+    if (unmatched.length > 0) {
+      console.error(
+        `cross-browser: --only matched no section for ${unmatched.map((term) => `"${term}"`).join(', ')}. Sections:\n  ${SECTIONS.map((section) => section.name).join('\n  ')}`,
+      );
+      process.exit(2);
+    }
+    sections = SECTIONS.filter((section) =>
+      terms.some((term) => section.name.toLowerCase().includes(term)),
+    );
+  }
+
+  const engines = engineName === undefined ? ['firefox', 'webkit'] : [engineName];
+  return { sections, engines, partial: sections.length < SECTIONS.length || engines.length < 2 };
+}
+
+const selection = sectionsToRun(process.argv.slice(2));
+if (selection.partial) {
+  console.log(
+    `cross-browser: PARTIAL run - ${selection.sections.map((section) => section.name).join(', ')} in ${selection.engines.join(' and ')}`,
+  );
+}
+
 const before = await checkBuildIsCurrent('start', 'no older than');
 if (before.stale) {
   console.error('cross-browser: refusing to drive a stale build.');
@@ -17125,8 +17128,10 @@ try {
   // Engine-independent: these are assertions about the files the build emits.
   await checkDeployment('Build output', await readHeaders());
 
-  await runChecks(firefox, 'Firefox (Gecko)');
-  await runChecks(webkit, 'WebKit - the engine behind Safari, not Safari itself');
+  for (const name of selection.engines) {
+    const [engine, label] = ENGINES[name];
+    await runChecks(engine, label, selection.sections);
+  }
 } finally {
   server.close();
 }
@@ -17146,13 +17151,32 @@ check(
 );
 
 console.log('');
+console.log(
+  `cross-browser: time per section, slowest first\n  ${[...timings]
+    .sort((a, b) => b.seconds - a.seconds)
+    .map(
+      (entry) =>
+        `${entry.seconds.toFixed(1).padStart(6)}s  ${entry.section}  (${entry.engine.split(' ')[0]})`,
+    )
+    .join('\n  ')}`,
+);
+console.log('');
 if (skipped.length > 0) {
   console.log(`cross-browser: ${skipped.length} skipped\n  ${skipped.join('\n  ')}`);
   console.log('');
 }
+const scope = selection.partial
+  ? `PARTIAL - ${selection.sections.length.toString()} of ${SECTIONS.length.toString()} sections in ${selection.engines.join(' and ')}. Not the pre-commit run: \`pnpm check:browsers\` with no arguments still has to pass before a commit.`
+  : null;
 if (failures.length > 0) {
-  console.error(`cross-browser: ${failures.length} failure(s)\n  ${failures.join('\n  ')}`);
+  console.error(
+    `cross-browser: ${failures.length} failure(s)\n  ${failures.join('\n  ')}${scope === null ? '' : `\ncross-browser: ${scope}`}`,
+  );
   process.exitCode = 1;
+} else if (scope !== null) {
+  console.log(
+    `cross-browser: ${scope} Nothing failed${skipped.length > 0 ? `, ${skipped.length} skipped` : ''}.`,
+  );
 } else {
   console.log(
     `cross-browser: OK - Firefox and WebKit both pass${

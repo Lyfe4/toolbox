@@ -20,7 +20,6 @@ import textConvertTool from './index';
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 interface Note {

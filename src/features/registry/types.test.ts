@@ -24,7 +24,6 @@ const schema = z.object({ upper: z.boolean().default(false) });
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 function textValue(text: string): ToolValue {
@@ -66,7 +65,6 @@ defineTool({
   execution: {
     strategy: 'main',
     requiresOffscreenCanvas: false,
-    reportsProgress: false,
     timeoutMs: 1000,
     maxInputBytes: 1024,
   },
@@ -96,7 +94,6 @@ defineTool({
   execution: {
     strategy: 'main',
     requiresOffscreenCanvas: false,
-    reportsProgress: false,
     timeoutMs: 1000,
     maxInputBytes: 1024,
   },
@@ -118,7 +115,6 @@ defineTool({
   execution: {
     strategy: 'main',
     requiresOffscreenCanvas: false,
-    reportsProgress: false,
     timeoutMs: 1000,
     maxInputBytes: 1024,
   },
@@ -220,7 +216,6 @@ describe('eraseTool', () => {
     execution: {
       strategy: 'main',
       requiresOffscreenCanvas: false,
-      reportsProgress: false,
       timeoutMs: 1000,
       maxInputBytes: 1024,
     },
@@ -294,7 +289,6 @@ describe('a tool is handed what its class declared, whatever arrived', () => {
     execution: {
       strategy: 'worker',
       requiresOffscreenCanvas: false,
-      reportsProgress: false,
       timeoutMs: 1000,
       maxInputBytes: 1024 * 1024,
     },

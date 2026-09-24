@@ -50,17 +50,7 @@ async function execute(request: Extract<WorkerRequest, { kind: 'execute' }>): Pr
     result = await tool.run({
       inputs: request.inputs,
       options: request.options,
-      context: {
-        signal: controller.signal,
-        reportProgress: (fraction, label) => {
-          post({
-            kind: 'progress',
-            requestId: request.requestId,
-            fraction: Math.min(1, Math.max(0, fraction)),
-            label: label ?? null,
-          });
-        },
-      },
+      context: { signal: controller.signal },
     });
   } catch (error) {
     // A tool is contractually forbidden from throwing. If one does anyway, the

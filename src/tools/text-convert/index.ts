@@ -143,7 +143,6 @@ export const textConvertTool = defineTool({
      */
     strategy: 'worker',
     requiresOffscreenCanvas: false,
-    reportsProgress: false,
     timeoutMs: 15_000,
     maxInputBytes: 4 * 1024 * 1024,
   },

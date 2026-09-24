@@ -76,7 +76,7 @@ async function decode(token: string, overrides: Partial<JwtOptions> = {}): Promi
   const result = await jwtTool.run({
     inputs: { input: { type: 'text', text: token } },
     options: { ...jwtDefaultOptions, ...overrides },
-    context: { signal: new AbortController().signal, reportProgress: () => undefined },
+    context: { signal: new AbortController().signal },
   });
 
   if (!result.ok) throw new Error(result.error.message);
@@ -245,7 +245,10 @@ describe('JwtView: failing closed', () => {
 
     expect(document.querySelector('[data-validity]')).toHaveAttribute('data-validity', 'live');
     expect(screen.getByText('1788699600')).toBeInTheDocument();
-    expect(screen.queryByText(/ago\)/)).not.toBeInTheDocument();
+    // Either direction. This matched only `ago)`, and the payload's `exp` is
+    // an hour AFTER the pinned clock, so a fallback to Date.now() renders
+    // `(in 1 hour)` and the assertion could not fail.
+    expect(screen.queryByText(/\((in .+|.+ ago)\)/)).not.toBeInTheDocument();
   });
 
   it('says nothing to show rather than throwing on a shape it does not know', () => {

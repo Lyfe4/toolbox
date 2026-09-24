@@ -10,6 +10,7 @@ import {
   type MarkupChange,
 } from '@/lib/markup/changes';
 import { lost, noted, type ToolNote } from '@/lib/notes';
+import { plural } from '@/lib/plural';
 
 import type { SourceFormat, TargetFormat } from './detect';
 
@@ -217,10 +218,6 @@ function afterHub(input: NormalisationInput): readonly string[] {
   const outputIsHub =
     input.target === 'html-sanitised' || (input.target === 'html' && input.normalised === null);
   return input.target === 'markdown' || outputIsHub ? HUB_AND_OUTPUT : ['output'];
-}
-
-function plural(count: number, one: string, many: string): string {
-  return count === 1 ? one : many;
 }
 
 /**

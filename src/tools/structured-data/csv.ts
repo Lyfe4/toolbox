@@ -6,6 +6,7 @@ import {
   type SourcePosition,
   type ToolResult,
 } from '@/features/registry/types';
+import { pathStep } from '@/lib/jsonNumbers';
 import { lost, noted, type ToolNote } from '@/lib/notes';
 import { setOwnProperty } from '@/lib/safeObject';
 import { positionFromOffset } from '@/lib/textPosition';
@@ -638,10 +639,11 @@ export function writeCsv(data: JsonValue, delimiter: string): ToolResult<Written
             if (!present) missing.add(column);
             const value = present ? record[column] : undefined;
             if (value !== undefined && value !== null && typeof value === 'object') {
-              nested.push(`$[${index.toString()}].${column}`);
+              nested.push(`$[${index.toString()}]${pathStep(column)}`);
             }
             const cell = cellToString(value);
-            if (tsv && hasNoTsvSpelling(cell)) unspellable.push(`$[${index.toString()}].${column}`);
+            if (tsv && hasNoTsvSpelling(cell))
+              unspellable.push(`$[${index.toString()}]${pathStep(column)}`);
             return quoteField(cell, delimiter);
           })
           .join(delimiter),

@@ -1,18 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
+import { lossNotesOf, type LossNote } from '@/features/canvas/resultSummary';
+
 import { loadTool } from './loader';
 import { TOOL_MANIFEST, type ToolId, type ToolManifestEntry } from './manifest';
 import corpus from './spec/loss-corpus.json';
-import {
-  isJsonArray,
-  isJsonObject,
-  type JsonValue,
-  type ToolOutputs,
-  type ToolRunContext,
-} from './types';
+import matrixDoc from '../../../docs/conversion-matrix.md?raw';
+
+import type { ToolOutputs, ToolRunContext } from './types';
 // The document itself, as text. `?raw` rather than `node:fs`, because the
 // browser project deliberately has no Node types - see tsconfig.app.json.
-import matrixDoc from '../../../docs/conversion-matrix.md?raw';
 
 /**
  * THE INSTRUMENT THE SILENT-LOSS COUNT NEVER HAD.
@@ -52,7 +49,6 @@ import matrixDoc from '../../../docs/conversion-matrix.md?raw';
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 interface Expectation {
@@ -116,35 +112,12 @@ const VERDICTS = {
 type Verdict = (typeof VERDICTS)[keyof typeof VERDICTS];
 
 /**
- * Every `warn` note a run produced, read off its `report` ports.
- *
- * The same walk `lossSummary` and `notePorts.test.ts` make, for the same
- * reason: a note the canvas cannot see is not a note the user was told.
+ * Every `warn` note a run produced, read by the canvas's own reader - a note
+ * the canvas cannot see is not a note the user was told.
  */
-function warnNotes(
-  toolId: string,
-  outputs: ToolOutputs,
-): readonly { title: string; body: string }[] {
+function warnNotes(toolId: string, outputs: ToolOutputs): readonly LossNote[] {
   const entry = MANIFEST.find((tool) => tool.id === toolId);
-  if (!entry) return [];
-
-  const found: { title: string; body: string }[] = [];
-  for (const port of entry.outputs) {
-    if (port.presentation !== 'report') continue;
-    const value = outputs[port.id];
-    if (value?.type !== 'json' || !isJsonObject(value.data)) continue;
-    const notes: JsonValue | undefined = value.data.notes;
-    if (notes === undefined || !isJsonArray(notes)) continue;
-
-    for (const note of notes) {
-      if (!isJsonObject(note) || note.level !== 'warn') continue;
-      found.push({
-        title: typeof note.title === 'string' ? note.title : '',
-        body: typeof note.body === 'string' ? note.body : '',
-      });
-    }
-  }
-  return found;
+  return entry ? lossNotesOf(entry, outputs) : [];
 }
 
 async function run(entry: CorpusCase, text: string): Promise<ToolOutputs> {

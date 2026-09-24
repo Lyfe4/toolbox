@@ -84,13 +84,12 @@ describe('binary fan-out', () => {
     expect(bytes.byteLength).toBe(3);
   });
 
-  it('defaults to borrow, so no caller has to know about ownership', async () => {
+  it('leaves the caller its bytes, with no option to ask for it', async () => {
     const engine = makeEngine();
     const bytes: Bytes = new Uint8Array([7, 7, 7]);
 
     await engine.execute({
       toolId: BASE64,
-      // No `ownership` given at all.
       inputs: { input: bytesValue(bytes) },
       options: { mode: 'encode' },
     });

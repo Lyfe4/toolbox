@@ -575,20 +575,19 @@ it would have produced, and reporting a failure on a node the user did nothing
 to is the outcome worth avoiding. A base64 node beside a runaway regex used to
 sit there for its own full 15 seconds and then report a timeout it never had.
 
-Replay is refused in exactly two cases, both deliberate:
+Replay is refused in one case, deliberately: **its budget is spent.** The
+budget counts **starts, not replays**, and that distinction is the whole of it:
+a request still queued behind a wedged worker has not executed one instruction,
+so it cannot be the poison the cap exists to contain. A request that has never
+started keeps its budget however many times a neighbour destroys the worker
+underneath it; one that ran and was killed anyway gets a single further attempt
+and then reports. There is an absolute ceiling above both, because a worker
+death is cheap to cause and a worker boot is not.
 
-- **The request's buffers were transferred.** They are detached in the sender,
-  so a replay would post zero-length views and compute a confident wrong answer
-  — worse than the error it was avoiding. In practice nothing in the app
-  transfers (see below), so this is a guard rather than a live path.
-- **Its budget is spent.** The budget counts **starts, not replays**, and that
-  distinction is the whole of it: a request still queued behind a wedged worker
-  has not executed one instruction, so it cannot be the poison the cap exists to
-  contain. A request that has never started keeps its budget however many times
-  a neighbour destroys the worker underneath it; one that ran and was killed
-  anyway gets a single further attempt and then reports. There is an absolute
-  ceiling above both, because a worker death is cheap to cause and a worker boot
-  is not.
+There used to be a second case — a request whose buffers had been transferred,
+and so detached — which this section described as "a guard rather than a live
+path". It went in round fifteen with the transfer option it guarded; see
+[the worker boundary](#the-worker-boundary).
 
 **The ceiling is what the starts rule is bought with, and nothing was holding
 it.** Raising `MAX_REPLAYS` to infinity failed no test in this repository until
@@ -781,8 +780,14 @@ so moving ownership is free. **Inputs are borrowed** — structured cloned — f
 every call site in the app, because on a canvas one output feeds several
 inputs, and a transferred buffer would be detached by whichever consumer ran
 first, leaving the rest with a zero-length view and no error to explain it.
-`ownership: 'transfer'` exists for a caller that can prove single consumption;
-nothing currently passes it.
+There used to be an `ownership: 'transfer'` option for a caller that could
+prove single consumption. Nothing ever passed it: its one prospective caller was
+the ffmpeg-based transcoder that
+[the feasibility study](video-convert-feasibility.md) proposed, which would have
+handed MEMFS's copy of a large output across without cloning it. The transcoder
+was never built, the remuxer that was built reads a blob — which crosses by
+reference, with nothing to transfer — and the option went in round fifteen,
+with the replay refusal only it could reach.
 
 A detached buffer produces a zero-length result several steps later, which is a
 miserable thing to debug, so the fan-out case is asserted on the actual bytes
@@ -2935,8 +2940,8 @@ labelling it needs room the node does not have.
 ### One file feeding two nodes
 
 Binary payload ownership has bitten before, which is why inputs are **borrowed**
-(structured cloned) by default and transferred only on an explicit opt-in: a
-fan-out to two consumers detaches the second. A file is a second source of one
+(structured cloned), always: a transfer to two consumers would detach the
+second. A file is a second source of one
 buffer reaching several tools, so the same guarantee is asserted for it —
 `fanout.test.ts` holds the line for a wired output, `attachments.test.tsx` and
 `graph.test.ts` hold it for a file, and `check:browsers` crosses a real
@@ -3541,11 +3546,12 @@ shipped build over 40 frames of a real run:
 states, a 39x4 marker sweeping from -39 to +96.
 
 **The determinate path was dead in the same way**, and nobody could have noticed:
-`OutputPanel` writes `inlineSize` onto the marker's `style` when a fraction is
-known, which is a length on an inline box. No tool has ever reported a fraction,
-so the branch has never run — `reportProgress` is plumbed through the protocol,
-the worker, the engine and the hook, and the only callers in the repository are
-test stubs.
+`ToolRunner` wrote `inlineSize` onto the marker's `style` when a fraction was
+known, which is a length on an inline box. No tool ever reported a fraction, so
+the branch never ran — `reportProgress` was plumbed through the protocol, the
+worker, the engine and the hook, and the only callers in the repository were
+test stubs. Round fifteen removed the branch and the plumbing; see
+[known limitations](#known-limitations).
 
 **The shape it settled on, after three tries.** A block sweeping across left the
 track entirely for most of its cycle and read as a pulse. A looping fill fixed
@@ -3970,18 +3976,16 @@ storage as it fills, and what the writer indexes afterwards is a source over
 it. The measuring pass survives, not to size an allocation but as the bound on
 how much a hostile file may cause to be gathered.
 
-**Progress is not reported through a pipeline.** `runPipeline` passes no
-`onProgress`, so a tool that reports progress shows none on the canvas. No
-shipped tool declares `reportsProgress: true`, so nothing is currently lost;
-adding one would need this wiring first.
-
-"Nothing is currently lost" is a statement about the manifest, and the manifest
-changes — so it is asserted rather than written down. `registry.test.ts` fails
-if any entry declares `reportsProgress: true`, with a message saying what has to
-be wired. Left as prose, the day somebody adds such a tool is the day this
-paragraph quietly becomes wrong and the canvas quietly starts discarding
-progress, with nothing failing, because a callback nobody passes raises no
-error.
+**No tool reports progress, on either route.** There was a channel for it —
+`reportProgress` on a tool's run context, a `progress` message, an `onProgress`
+on the engine and a fraction on the runner's state — and a test that failed the
+build if a tool declared `reportsProgress: true`, because `runPipeline` never
+passed the callback and the canvas would have dropped it. No tool ever called
+it. Round fifteen removed the channel, the flag and the tripwire together. The
+one tool whose runs are long enough to want a fraction is `video-remux`, on a
+multi-gigabyte file; putting one back is a message kind, a callback on the run
+context and the determinate branch in `ToolRunner`, and it should arrive with
+the tool that uses it.
 
 **Nothing here has seen a backgrounded tab, but the thing a backgrounded tab
 does is now measured.** Playwright cannot produce one: bringing another page in

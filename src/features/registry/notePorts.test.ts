@@ -1,13 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  isJsonArray,
-  isJsonObject,
-  type JsonValue,
-  type ToolInputs,
-  type ToolOutputs,
-  type ToolRunContext,
-} from '@/features/registry/types';
+import { lossNotesOf, type LossNote } from '@/features/canvas/resultSummary';
+import { type ToolInputs, type ToolOutputs, type ToolRunContext } from '@/features/registry/types';
 
 import { loadTool } from './loader';
 import { getManifestEntry, TOOL_MANIFEST, type ToolId, type ToolManifestEntry } from './manifest';
@@ -46,7 +40,6 @@ function base64url(text: string): string {
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 /** Ports a loss could legitimately be in: everything but the report itself. */
@@ -56,36 +49,12 @@ function dataPortIds(toolId: ToolId): readonly string[] {
     .map((port) => port.id);
 }
 
-interface ReadNote {
-  readonly title: string;
-  readonly reaches: readonly string[];
-}
-
-/** Every warn note in a result, read the way the canvas reads one. */
-function warnNotes(toolId: ToolId, outputs: ToolOutputs): readonly ReadNote[] {
-  const found: ReadNote[] = [];
-
-  for (const port of getManifestEntry(toolId).outputs) {
-    if (port.presentation !== 'report') continue;
-    const value = outputs[port.id];
-    if (value?.type !== 'json' || !isJsonObject(value.data)) continue;
-    const notes: JsonValue | undefined = value.data.notes;
-    if (notes === undefined || !isJsonArray(notes)) continue;
-
-    for (const note of notes) {
-      if (!isJsonObject(note) || note.level !== 'warn') continue;
-      const reaches: JsonValue | undefined = note.reaches;
-      found.push({
-        title: typeof note.title === 'string' ? note.title : '',
-        reaches:
-          reaches !== undefined && isJsonArray(reaches)
-            ? reaches.filter((id): id is string => typeof id === 'string')
-            : [],
-      });
-    }
-  }
-
-  return found;
+/**
+ * Every warn note in a result, read by the canvas's own reader - which is what
+ * `reaches` is FOR. A second walk here had drifted from it.
+ */
+function warnNotes(toolId: ToolId, outputs: ToolOutputs): readonly LossNote[] {
+  return lossNotesOf(getManifestEntry(toolId), outputs);
 }
 
 async function run(

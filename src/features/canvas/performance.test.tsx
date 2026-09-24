@@ -158,6 +158,9 @@ describe(`canvas with ${NODE_COUNT.toString()} nodes`, () => {
     });
 
     const after = nodeElements();
+    // Keyed by data-node-id, so a lost attribute collapses the map to one
+    // entry and the loop would compare one node. The size is the subject.
+    expect(before.size).toBe(NODE_COUNT);
     for (const [id, element] of before) {
       expect(after.get(id)).toBe(element);
     }
@@ -188,6 +191,9 @@ describe(`canvas with ${NODE_COUNT.toString()} nodes`, () => {
      * the very same element it was.
      */
     const after = nodeElements();
+    // Keyed by data-node-id, so a lost attribute collapses the map to one
+    // entry and the loop would compare one node. The size is the subject.
+    expect(before.size).toBe(NODE_COUNT);
     for (const [id, element] of before) {
       expect(after.get(id)).toBe(element);
     }

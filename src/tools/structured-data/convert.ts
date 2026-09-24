@@ -32,7 +32,9 @@ import {
   type DuplicateKey,
   type RoundedNumber,
 } from '@/lib/jsonNumbers';
+import { pathStep } from '@/lib/jsonNumbers';
 import { lost, noted, type ToolNote } from '@/lib/notes';
+import { counted } from '@/lib/plural';
 import { setOwnProperty } from '@/lib/safeObject';
 import { positionFromLineColumn, positionFromOffset, stripBom } from '@/lib/textPosition';
 
@@ -299,20 +301,6 @@ interface ModelWalk {
   total: number;
   /** The first path past `MAX_DEPTH`, which stops the walk where it is. */
   tooDeepAt: string | null;
-}
-
-/**
- * One step of a path for an object key.
- *
- * Bracketed when the key is not a bare identifier, which is the spelling
- * `yamlPath` and `lib/jsonNumbers.ts` both already use. It was `.${key}`
- * unconditionally here, so `$.shipped at` was a path no reader could parse and
- * the two halves of the same report disagreed about how to write one -
- * jsonNumbers' own comment claims this spelling was already shared, and until
- * now it was not.
- */
-function pathStep(key: string): string {
-  return /^[A-Za-z_$][\w$]*$/.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`;
 }
 
 /** Records one value outside the model, and stands a null in its place. */
@@ -663,9 +651,7 @@ export function detectSource(source: string, configuredDelimiter: string): Detec
    * every input - `| a | b |` markdown tables have perfectly consistent pipe
    * counts and would be read as five-column CSV.
    */
-  const candidates = [DELIMITERS.tab, configuredDelimiter, DELIMITERS.comma, DELIMITERS.semicolon];
-
-  for (const delimiter of new Set(candidates)) {
+  for (const delimiter of detectionCandidates(configuredDelimiter)) {
     if (looksDelimited(body, delimiter)) {
       /*
        * VERIFY, RATHER THAN GUESS, BEFORE CALLING TWO LINES A TABLE.
@@ -699,6 +685,15 @@ export function detectSource(source: string, configuredDelimiter: string): Detec
   }
 
   return { format: 'yaml', delimiter: configuredDelimiter, fellBack: true };
+}
+
+/**
+ * The delimiters detection tries, in order. One list, because
+ * `untriedDelimiter` asks which of the offered delimiters are NOT on it, and
+ * two copies could disagree about which one to suggest.
+ */
+function detectionCandidates(configuredDelimiter: string): ReadonlySet<string> {
+  return new Set([DELIMITERS.tab, configuredDelimiter, DELIMITERS.comma, DELIMITERS.semicolon]);
 }
 
 /**
@@ -739,12 +734,7 @@ function parsesAsYamlMapping(text: string): boolean {
  * is set wrong. So when the fallback fails, say which one.
  */
 function untriedDelimiter(source: string, configuredDelimiter: string): DelimiterName | null {
-  const tried = new Set([
-    DELIMITERS.tab,
-    configuredDelimiter,
-    DELIMITERS.comma,
-    DELIMITERS.semicolon,
-  ]);
+  const tried = detectionCandidates(configuredDelimiter);
 
   for (const [name, delimiter] of Object.entries(DELIMITERS) as [DelimiterName, string][]) {
     if (tried.has(delimiter)) continue;
@@ -1484,11 +1474,6 @@ const STANDARD_TAG = /^tag:yaml\.org,2002:(.+)$/u;
 function tagAsWritten(tag: string): string {
   const standard = STANDARD_TAG.exec(tag);
   return standard === null ? tag : `!!${standard[1] ?? ''}`;
-}
-
-/** `2 comments`, `1 anchor`. */
-function counted(howMany: number, what: string): string {
-  return `${howMany.toString()} ${what}${howMany === 1 ? '' : 's'}`;
 }
 
 /** Up to `limit` of them named, and the rest counted. The bargain every note here strikes. */

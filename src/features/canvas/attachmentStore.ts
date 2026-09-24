@@ -35,7 +35,7 @@ import type { FileInputRef, NodeId } from './types';
  * limits in the kilobytes.
  *
  * ONE FILE CAN FEED SEVERAL NODES. The value is handed out by reference and the
- * pipeline executes with `ownership: 'borrow'`, so each consumer gets a
+ * engine always clones its inputs rather than transferring them, so each consumer gets a
  * structured clone - and where the value is a blob, the clone is a second
  * reference to the same immutable bytes rather than a copy of them. A blob
  * cannot be detached, so the failure this rule was written to prevent is not

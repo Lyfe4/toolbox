@@ -24,7 +24,6 @@ import {
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 const b64url = (text: string): string =>

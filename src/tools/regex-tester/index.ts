@@ -90,7 +90,6 @@ export const regexTesterTool = defineTool({
   execution: {
     strategy: 'worker',
     requiresOffscreenCanvas: false,
-    reportsProgress: false,
     /*
      * Two seconds. Short on purpose: measured, every honest pattern tried
      * against the largest subject this tool accepts - two million characters

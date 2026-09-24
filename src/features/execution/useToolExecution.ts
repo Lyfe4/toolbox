@@ -16,7 +16,7 @@ import type { ExecutionEngine } from './engine';
  */
 export type ExecutionState =
   | { readonly status: 'idle' }
-  | { readonly status: 'running'; readonly progress: number | null; readonly label: string | null }
+  | { readonly status: 'running' }
   | { readonly status: 'success'; readonly outputs: ToolOutputs; readonly durationMs: number }
   | { readonly status: 'error'; readonly error: ToolError };
 
@@ -32,7 +32,6 @@ export interface UseToolExecutionResult {
   readonly state: ExecutionState;
   readonly run: (inputs: ToolInputs, options: unknown) => void;
   readonly cancel: () => void;
-  readonly reset: () => void;
   readonly isBusy: boolean;
 }
 
@@ -57,11 +56,6 @@ export function useToolExecution(toolId: ToolId): UseToolExecutionResult {
     controllerRef.current?.abort();
   }, []);
 
-  const reset = useCallback(() => {
-    controllerRef.current?.abort();
-    setState({ status: 'idle' });
-  }, []);
-
   const run = useCallback(
     (inputs: ToolInputs, options: unknown) => {
       // A new run supersedes whatever was in flight.
@@ -69,7 +63,7 @@ export function useToolExecution(toolId: ToolId): UseToolExecutionResult {
       const controller = new AbortController();
       controllerRef.current = controller;
 
-      setState({ status: 'running', progress: null, label: null });
+      setState({ status: 'running' });
       const startedAt = performance.now();
 
       void engine
@@ -78,10 +72,6 @@ export function useToolExecution(toolId: ToolId): UseToolExecutionResult {
           inputs,
           options,
           signal: controller.signal,
-          onProgress: (progress, label) => {
-            if (!mountedRef.current || controller.signal.aborted) return;
-            setState({ status: 'running', progress, label });
-          },
         })
         .then((result) => {
           if (!mountedRef.current) return;
@@ -111,7 +101,7 @@ export function useToolExecution(toolId: ToolId): UseToolExecutionResult {
   );
 
   return useMemo(
-    () => ({ state, run, cancel, reset, isBusy: state.status === 'running' }),
-    [state, run, cancel, reset],
+    () => ({ state, run, cancel, isBusy: state.status === 'running' }),
+    [state, run, cancel],
   );
 }

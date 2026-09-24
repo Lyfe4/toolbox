@@ -109,7 +109,6 @@ export const diffTool = defineTool({
   execution: {
     strategy: 'worker',
     requiresOffscreenCanvas: false,
-    reportsProgress: false,
     // Myers is O(ND); two large and wholly different files are the slow case,
     // and the row cap in compute.ts stops the pathological end of it.
     timeoutMs: 20_000,

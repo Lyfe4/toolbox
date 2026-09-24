@@ -851,7 +851,6 @@ describe('what the user is told', () => {
 describe('the tool', () => {
   const context: ToolRunContext = {
     signal: new AbortController().signal,
-    reportProgress: () => undefined,
   };
 
   const run = (bytes: Bytes, filename: string | null, options: Partial<ImageOptions> = {}) =>
@@ -1069,7 +1068,7 @@ describe('the options panel', () => {
         },
       },
       options: { ...imageDefaultOptions, format: 'image/jpeg', quality: 0.4 },
-      context: { signal: new AbortController().signal, reportProgress: () => undefined },
+      context: { signal: new AbortController().signal },
     });
     expect(result.ok).toBe(true);
   });

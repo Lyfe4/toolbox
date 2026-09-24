@@ -594,7 +594,3 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
     },
   };
 });
-
-/** Convenience selectors, so components subscribe to as little as possible. */
-export const selectGraph = (state: CanvasStore): GraphData => state.graph;
-export const selectSelection = (state: CanvasStore): Selection => state.selection;

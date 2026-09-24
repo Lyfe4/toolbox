@@ -18,7 +18,6 @@ import { colorDefaultOptions, MAX_PRECISION } from './options';
 
 const context: ToolRunContext = {
   signal: new AbortController().signal,
-  reportProgress: () => undefined,
 };
 
 function parse(input: string): ColorPayload {

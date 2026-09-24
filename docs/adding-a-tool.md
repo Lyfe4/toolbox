@@ -94,7 +94,6 @@ export const caseConvertTool = defineTool({
     // would cost more in postMessage than the work itself.
     strategy: 'main',
     requiresOffscreenCanvas: false,
-    reportsProgress: false,
     timeoutMs: 5_000,
     maxInputBytes: 2 * 1024 * 1024,
   },
@@ -201,7 +200,7 @@ unit-tested without going near the registry.
   ],
   outputs: [{ id: 'output', label: 'Converted', types: ['text'] }],
   execution: {
-    strategy: 'main', requiresOffscreenCanvas: false, reportsProgress: false,
+    strategy: 'main', requiresOffscreenCanvas: false,
     timeoutMs: 5_000, maxInputBytes: 2 * 1024 * 1024,
   },
 },

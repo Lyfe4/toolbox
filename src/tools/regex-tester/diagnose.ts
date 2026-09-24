@@ -2,7 +2,6 @@ import {
   analyseRisk,
   parsePattern,
   prefixesOf,
-  walkTerms,
   type ParsedPattern,
   type RiskReport,
 } from './pattern';
@@ -656,9 +655,4 @@ function unusedGroupNote(
         ? `${idle.length === 1 ? 'That group' : 'Those groups'} took no part in any of the matches found - an alternative that was never taken, or an optional part that was never present.`
         : `${idle.length === 1 ? 'That group' : 'Those groups'} took no part in any of the ${report.matches.length.toLocaleString('en')} matches described above - but there are more matches than that, and they were not examined.`,
   });
-}
-
-/** True when the pattern contains a group at all. Used by the view's hints. */
-export function hasGroups(parsed: ParsedPattern): boolean {
-  return [...walkTerms(parsed.alternatives)].some((term) => term.atom.kind === 'group');
 }

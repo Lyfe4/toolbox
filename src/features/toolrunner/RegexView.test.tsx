@@ -14,7 +14,7 @@ async function reportFor(subject: string, overrides: Partial<RegexOptions>): Pro
   const result = await regexTool.run({
     inputs: { input: { type: 'text', text: subject } },
     options: { ...regexDefaultOptions, ...overrides },
-    context: { signal: new AbortController().signal, reportProgress: () => undefined },
+    context: { signal: new AbortController().signal },
   });
 
   if (!result.ok) throw new Error(result.error.message);
@@ -163,12 +163,11 @@ describe('RegexView', () => {
      * invisible to jsdom - so the rule is asserted here and the geometry is
      * checked in a real engine.
      */
-    const { container } = await renderReport('a1 b22', { pattern: '\\d+' });
+    await renderReport('a1 b22', { pattern: '\\d+' });
 
     for (const label of ['Subject text with matches highlighted', 'Match listing']) {
       expect(screen.getByRole('group', { name: label })).toHaveAttribute('tabindex', '0');
     }
-    expect(container).toBeTruthy();
   });
 
   it('gives the table a caption and column headers', async () => {

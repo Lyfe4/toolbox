@@ -49,7 +49,6 @@
     "hast-util-phrasing": "3.0.1",
     "hast-util-to-html": "9.0.5",
     "hast-util-to-mdast": "10.1.2",
-    "hast-util-to-text": "4.0.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "rehype-parse": "9.0.1",

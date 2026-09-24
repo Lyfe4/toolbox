@@ -306,7 +306,6 @@ function deferredEngine(): ExecutionEngine {
       }),
     warmUp: () => undefined,
     prefetch: () => undefined,
-    dispose: () => undefined,
   };
 }
 
