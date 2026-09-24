@@ -45,7 +45,7 @@ Deeper probes, run on their own when the feature they cover changes:
 
 | Probe               | Covers                                                                                                                                                                                                         | Command                                                 |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `probe-search.mjs`  | `/tools` search across all three match sources, against a manifest-derived oracle                                                                                                                              | `node .claude/skills/verify-patchbay/probe-search.mjs`  |
+| `probe-search.mjs`  | `/tools` search across all four match sources, against a manifest-derived oracle                                                                                                                               | `node .claude/skills/verify-patchbay/probe-search.mjs`  |
 | `probe-popover.mjs` | The Category select at 1440, 390, 320 and 568x320 and with no room below: the list's box against the viewport, the flip, the scroll lock, and every `securitypolicyviolation`, in chromium, firefox and webkit | `node .claude/skills/verify-patchbay/probe-popover.mjs` |
 
 ## Known uncovered ground

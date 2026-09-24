@@ -20,7 +20,7 @@ is why:
   actually checked cryptographically against a key you supplied.
 - `state` carries the same answer as a token rather than as prose — `verified`,
   `invalid`, `rejected`, `no-key` or `unsupported`. `verified: false` covers
-  five different situations, and the difference between "nobody checked" and
+  four of those five states, and the difference between "nobody checked" and
   "this is forged" is most of the content of this output; anything drawing it
   should not have to sniff a sentence for the word INVALID.
 - Every other outcome says `NOT VERIFIED` in capitals, with a sentence
@@ -35,7 +35,7 @@ one line above a `header` object nobody scrolls past. The caveat was said, and
 nobody was going to read it — which is the same failure the ordering above
 exists to prevent, reintroduced one level up.
 
-### One output, and no separate `payload` port
+### One envelope, and no separate `payload` port
 
 The [port audit](../../../docs/architecture.md#the-port-set) considered adding
 one. A port carrying just the claims is the thing somebody would want
@@ -44,6 +44,8 @@ entire effect would be to hand the claims onward with the signature verdict
 detached from them, which is the one outcome everything below exists to
 prevent. The whole envelope goes out on one port, verdict first, and a
 downstream tool that wants only the claims can reach into `payload` itself.
+The `report` port added since carries notes about the token (a claim number
+that had to be rounded, say), never the claims themselves.
 
 The input stays `text` only, and it is one of just two ports in the set that
 still refuses `bytes`. A compact token is a short literal a person pastes out
@@ -56,8 +58,9 @@ The `output` port therefore declares `presentation: 'jwt'`, and
    with a word, a rule, an icon and a sentence, at heading size above claims
    set at value size. `check:browsers` measures that, because "louder" is a
    claim about computed font size and box position that jsdom cannot evaluate.
-2. **"Not verified" is never quiet and never neutral.** Five of the six
-   outcomes mean the claims cannot be relied on and all five are drawn as a
+2. **"Not verified" is never quiet and never neutral.** Five of the view's six
+   outcomes — the four states other than `verified`, and a `state` it does not
+   recognise — mean the claims cannot be relied on, and all five are drawn as a
    warning or as danger; there is one calm state and it is the one where a real
    signature was checked against a real key. The no-key case — the common one,
    because most people paste a token simply to read it — is a **warning**
@@ -152,8 +155,12 @@ options that are **not** listed there. The manifest carries the same list
 eagerly, so the encoder knows what to omit without loading any tool code, and
 `registry.test.ts` asserts the two copies agree.
 
-The key field also renders as a password input, which is not security so much as
-courtesy: it keeps a secret off a shared screen and out of a screenshot.
+This README used to say the key field also renders as a password input, to
+keep a secret off a shared screen and out of a screenshot. It never did, and it
+is not built: the field is a multi-line text area because a PEM key is several
+lines long, and a password input would flatten its line breaks. Nor is the
+courtesy owed to every key the field holds — a PEM public key is not a secret;
+only an HMAC secret is.
 
 ## Options
 

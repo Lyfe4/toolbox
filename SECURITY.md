@@ -124,9 +124,11 @@ from being introduced through our own source — but a compromised package could
 still read what you paste, corrupt a result, write to `localStorage`, or wait
 for a future version that relaxes a header. `connect-src 'none'` raises the
 cost of exfiltration considerably; it does not make a supply-chain compromise
-harmless. Dependencies are pinned, the lockfile is committed and CI installs
-with `--frozen-lockfile`, which means a change is reviewable — not that it will
-be reviewed.
+harmless. `package.json` declares caret ranges, not exact versions; what pins
+them is the committed lockfile, which CI installs with `--frozen-lockfile`, so
+the gate fails rather than resolving a newer version. That means a change is
+reviewable — not that it will be reviewed. (This said "dependencies are pinned", which read as exact versions in
+`package.json`; they never were.)
 
 **A malicious browser extension.** Extensions run with the page's privileges
 and above its CSP. An extension can read every value in every field, exfiltrate
@@ -148,8 +150,11 @@ system clipboard, which other applications can read. Saving output writes it to
 disk unencrypted. Both are you asking for it, which is fine — just be aware
 that the guarantee ends at the edge of the page.
 
-**Cryptographic correctness for adversarial use.** The hash and JWT tools use
-the platform's `SubtleCrypto`, but Patchbay is a debugging aid. It is not
+**Cryptographic correctness for adversarial use.** The SHA digests and JWT
+verification use the platform's `SubtleCrypto`; MD5, which `SubtleCrypto` does
+not offer, is written by hand in `md5.ts` and checked against published vectors
+and `node:crypto` digests. (This used to say the hash tool used `SubtleCrypto`
+without that exception.) Either way, Patchbay is a debugging aid. It is not
 audited, it is not constant-time in its surrounding code, and it should not be
 the thing standing between an attacker and a signature decision.
 

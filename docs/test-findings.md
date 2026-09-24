@@ -1245,6 +1245,13 @@ see [the corpus and the ratio](conversion-matrix.md#the-corpus-the-ratio-and-why
 in the conversion matrix, which is generated and compared by a gate. Rows 1 to
 3 are told as of round nine; the other fourteen are not.
 
+> _Round seventeen, 2026-09-25:_ the table stays frozen at what round eight
+> measured, on purpose. The corpus under it has since grown to twenty: rows 18
+> to 20 — a reversed list renumbered on the Markdown target, a TSV cell holding
+> a tab, a YAML flow collection written back as a block — were added after this
+> table, and all twenty are told as of [round thirteen](#round-thirteen-done).
+> The live answer is the matrix's generated table, not this one.
+
 Seventeen, of which **five are cells the matrix already carries as
 `lossy, told`** — one in Colour and four inside one row of Structured data.
 That is the finding, and it is not the one the brief expected: the problem is
@@ -4114,3 +4121,220 @@ break and restored:**
 - **The JSON error's detail** is still the engine's sentence.
 - **The harness reading the loss corpus**, **`checkLossReports`' 500 ms
   control**, **`someOf`**, **the wall-clock sites** — round fifteen's, unchanged.
+
+---
+
+## Round seventeen, done — the documentation audit
+
+2026-09-25, against `07666fd`. The last round of the consolidation: every
+Markdown file in the repository including the skill's, and the prose inside
+comments and test names, read against the settled code — and a gate, so that the
+part of this that can be checked stays checked.
+
+|                                                      | Result                                                     |
+| ---------------------------------------------------- | ---------------------------------------------------------- |
+| False claims found and classified                    | **about 160**, in 143 ledger entries and the fixes         |
+| … never-true / drift / aspirational / deliberate     | roughly 75 / 60 / 8 / 3, and about 15 settled as unsure    |
+| … that revealed a defect in the app                  | **9**, all fixed or recorded as not built                  |
+| … that revealed a check that could not fail          | **3**, re-armed and each shown red against its break       |
+| Documentation rules in `pnpm test`                   | links → links, names, harness sections, counts, test count |
+| Deliberate breaks each new rule was shown failing on | **13 of 13**                                               |
+| Unit tests                                           | 6,431 → 6,617 _(the last number written by hand)_          |
+| `check:browsers`, full run, idle                     | 3,082 → **3,090 passed, 0 failed, 10 skipped**             |
+
+### The mechanism, and what it covers
+
+[`vite/docClaims.test.ts`](../vite/docClaims.test.ts), beside `docLinks.test.ts`,
+in `pnpm test`. The convention for everything it cannot check is in CONTRIBUTING,
+[Claims in documents](../CONTRIBUTING.md#claims-in-documents).
+
+| Rule                             | Holds                                                                                                                                                                                                                           | Would have caught, this round                                                                                                                                                         |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A name is a name in the code** | every backticked file, identifier and `patchbay:…:vN` key in every current document; every backticked name and every `*.test.ts` in every code comment — against the code with comments stripped, and the dependencies' `.d.ts` | `checkInspectorState`, `prepareContext`, `reconstructDecodeTimes`, `nalsOf`, `themeStore`, commands.test.ts, tokenGroups.test.ts, palette.test.ts — none ever existed under that name |
+| **A harness section exists**     | any `check…` name, in a document or a comment                                                                                                                                                                                   | the same, for the harness's vocabulary                                                                                                                                                |
+| **A count is counted**           | `COUNTS`: inline scripts, style hashes, bundle budgets, gates, harness sections, tools, resident tools. Every phrase, docs and code alike; a pattern that matches nothing fails                                                 | "the one inline script" in two more comments, "shipping no inline scripts", "this filters eight tools", "prefetching eight tools"                                                     |
+| **No hand-written test count**   | `\d+ tests` in a current document                                                                                                                                                                                               | README's "5,320 tests across 131 files"                                                                                                                                               |
+| **Markers resolve**              | an `asserted` marker must name a file containing its title; an `unverified` marker must give a reason                                                                                                                           | — (new; seven `asserted` markers written this round — six in the README and CONTRIBUTING's example — all resolving)                                                                   |
+
+Exemptions are a table in the test, each with its reason — somebody else's name
+(`AdvanceStringIndex`, a Wycheproof group, a container field such as
+`CodecPrivate`), or history (`jsonErrorPosition`) — and **an exemption nobody
+needs any more fails**, so the table cannot become a place things hide. Dated
+documents (this file and the video feasibility snapshot) are exempt from the name
+and count rules, not from file references: a record of a removal names what was
+removed.
+
+**Proving test, per rule.** Each break applied to the real tree by a script that
+restored the file from its own bytes and compared hashes before the next:
+
+| Break                                            | Caught by                                                                     |
+| ------------------------------------------------ | ----------------------------------------------------------------------------- |
+| a file that does not exist, in CONTRIBUTING      | `CONTRIBUTING.md names only files and identifiers that exist`                 |
+| an identifier that does not exist                | the same                                                                      |
+| a storage key the app never writes               | the same                                                                      |
+| a harness section that does not exist            | `names only harness sections that exist, in every document and every comment` |
+| "the seven gates"                                | `is the true count everywhere it is stated`                                   |
+| every "the 53 section names" removed             | `is stated somewhere, so this check has not silently retired`                 |
+| `6,431 tests`                                    | `CONTRIBUTING.md writes no test count by hand`                                |
+| an `unverified` marker whose reason is one word  | `gives every unverified claim its reason`                                     |
+| an `asserted` marker naming a title nobody wrote | `points every asserted claim at a test that exists`                           |
+| a comment naming perf.spans.test.ts              | `names only files and identifiers that exist, in every comment`               |
+| a comment naming `` `readSpans()` ``             | the same                                                                      |
+| "the one inline script" back in `vite.config.ts` | `is the true count everywhere it is stated`                                   |
+| an exemption no document uses                    | `keeps no exemption nobody needs`                                             |
+
+The first run of the "every phrase removed" break was not caught, and the
+reason was the break: the phrase appeared twice and the script replaced one.
+Removing both turned it red.
+
+**What it cannot do**, which is most of the job: it cannot tell whether a
+sentence about behaviour is true. Of this round's findings it would have caught
+about twenty-five — every dangling name and every wrong structural count. The
+rest were found by reading a sentence and then the code. What changes is that
+those twenty-five cannot come back, and that a behaviour claim now has two
+honest spellings instead of one indistinguishable one.
+
+**Considered and rejected:** requiring every backticked multi-word string (UI
+text, note titles) to appear in the code. Measured: 29 of 114 such spans are
+composed at run time (`Ports by 6px`, `Not carried over: 2 comments, …`) and
+would need exemptions — a rule whose exemption list is a quarter of its subjects
+teaches people to exempt. And generating numbers into the documents: a checked
+number is as true on `main` as a generated one, and a generator is one more
+thing to remember to run.
+
+### Defects in the app that a claim revealed
+
+| Claim                                                                                    | The defect                                                                                                                                                                              | Fixed, and held by                                                                                                                                                       |
+| ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| skill: "an inline bootstrap script applies the stored theme before first paint"          | For a custom theme it read `customThemes` beside the selection — the library moved to `patchbay:themes:v1` in 26b6fdf. Every custom theme's first frame was the system preset           | reads the library, then the legacy place, and applies base **and** overrides. `checkColdOpen`, red in both engines against the old script                                |
+| matrix: the BOM "all four document ports now say so"                                     | five ports; `regex-tester` removed a dropped file's BOM in silence                                                                                                                      | an `info` note, as the others; `regex.test.ts`                                                                                                                           |
+| matrix: Markdown → HTML "the note names what was really removed"                         | `[x](javascript:…)` lost its link with no note; `<irc://host>` was told "`<a>` is not on the allow-list"                                                                                | the HTML source's refused-address notes, from both sources; `normalisation.test.ts`, 8 red against shipped code                                                          |
+| the note itself: "a README's `<details>` block does not survive"                         | a false sentence shown to users; it survives                                                                                                                                            | removed; the same test file                                                                                                                                              |
+| matrix: Markdown → Markdown "each is named"; code: "applies to every target"             | the allow-list report never ran for a Markdown target — `<foo>bar</foo>` came back `bar` under "the meaning is unchanged"                                                               | runs, and the reformatted note qualifies itself                                                                                                                          |
+| matrix: JSON → CSV "every value becomes text", "reported by path"                        | nothing reported it; a `null` became `""` indistinguishable from `""` and an absent key                                                                                                 | nulls reported by path; numbers and booleans deliberately not (the flat-table control); `reports.test.ts`                                                                |
+| README: the key map "generated from the same array the canvas binds, so it cannot drift" | `Ctrl+Y` and `Backspace` bound and unlisted; `Ctrl+0` — the browser's zoom reset — taken, against the code's own rule for `+`/`-`; so were Ctrl with K, ?, Space, Enter, Escape, arrows | listed; Ctrl/Cmd left to the browser but A/D/Z/Y; `shortcuts.bindings.test.tsx` presses every key and compares both ways, 28 unlisted presses against the shipped canvas |
+| skill: "one of the registry's categories" (five)                                         | `TOOL_CATEGORIES` had a sixth, `time`, from the first commit; `/tools` offered a filter that could only show nothing                                                                    | removed; `ports.test.ts` › the categories                                                                                                                                |
+| `/tools`: "Matches names, summaries and keywords"; text-convert: "Tab-separated rows"    | two false sentences on screen — search also matches the category; tables are aligned columns since 3bd124c                                                                              | both corrected; `registry.test.ts` › a category-only query                                                                                                               |
+
+**And one not built, recorded:** jwt-decode's README said the key field
+"renders as a password input". It never did, and it should not be made to: a PEM
+key has line breaks a password input would flatten, and a PEM public key is not a
+secret. The README says so now. Whether an HMAC secret deserves a show/hide mask
+is a design question left open.
+
+### Checks that could not fail
+
+| Check                                                                                                          | Why it could not fail                                                                                                                                                                | Now                                                                                                                                                                                                                              |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `checkPipeline` › "the run after a cancelled one is not left queued behind the worker it wedged"               | a 10 s bound sized to the defect's 10.8 s in WebKit, over the 26-branch pattern that JSC now abandons in 1.5 s; the defect's Gecko figure, 4.1 s, was under the bound from the start | asserts the next run starts on a **new** worker and the runaway's was terminated, over `WEDGE_PATTERN`. Against the reintroduced defect: red in both (the old bound would have passed Gecko at 5.3 s and caught WebKit by 0.1 s) |
+| `checkColdOpen` › the "never paints it" checks, "read at `domcontentloaded`, before the module script has run" | module scripts are deferred, and deferred scripts run **before** DOMContentLoaded; and a share link was only ever checked after boot                                                 | every frame painted during the parse and the first after, from an init script, with a positive partner that sees the panel on a first visit. A broken share-link rule: new check red in both, the old one green                  |
+| `hash.test.ts` › MD5 at 55–120 bytes, "tested" per the README                                                  | compared `md5(x)` with `md5(x)`                                                                                                                                                      | against `node:crypto`'s digests; an off-by-one at the 56-byte spill is caught by these alone — every RFC vector passes it                                                                                                        |
+
+Weaker than their names, and now asserting them: `graph.test.ts` (five of seven
+command kinds; now a `Record` keyed by the union, so a missing kind is a type
+error), the JWT rounding test (no key, so no verdict), `overlays.test.tsx`
+(focus never checked), `ToolRunner.test.tsx` (tone never checked),
+`tools.test.tsx` (two of ten links), and SHA-384/512, whose comment claimed a
+two-block vector they did not have.
+
+### Every false claim, classified, and what was done
+
+The fixes are the diff; each correction that changed a claim about behaviour
+says in place what it used to say. By document:
+
+| Where                                                                   | Found | Mostly                 | Notable                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------------------------------------------------------- | ----: | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `docs/conversion-matrix.md`                                             |   ~40 | never-true, then drift | 22 of the 28 CommonMark failures are raw HTML, not all 28; five JSON-payload vectors, not four; "Wycheproof signs `foo`" (it signs `123400`); "All 38 reproduce" (36 at the default); 59 block styles "on both targets" (34 on YAML) and "in the gate" (only the zeros are); EXIF removal "told" (only GPS reaches a node; the reason for the split is **not recorded**) |
+| `docs/architecture.md`                                                  |   ~35 | drift                  | the protocol's message kinds; the cache key without file inputs; `WIRE_SAMPLES` 96 not 48; a 65% sheet not 60%; a one-second scan budget not two; the 300 ms debounce written as 500; three storeless keys not one; the skips table, reconstructed from 2853062                                                                                                          |
+| `README.md`, `SECURITY.md`                                              |   ~20 | never-true             | inputs "transferred" (cloned; outputs are); seven output views not five; "scores 475/652" (fails 475); bundle figures now labelled with the commit they were measured at; "dependencies are pinned" (caret ranges; the lockfile pins); MD5 is not `SubtleCrypto`                                                                                                         |
+| tool READMEs, `clipboard-check.md`                                      |   ~40 | drift, then never-true | diff: "There was no such test" — there was, `applyPatch` since d2e8e90, **before** the paragraph; text-convert's conformance table two rounds stale; structured-data's detection steps and yaml-suite numbers; the clipboard check's test document claimed a no-break space and curly quotes it did not contain                                                          |
+| skill docs                                                              |    ~8 | never-true             | tab names; "a card may carry more than one link" (one); a drive for `Target format` that drives `Category`; the search oracle missing category                                                                                                                                                                                                                           |
+| `CONTRIBUTING`, `adding-a-tool`, `theming`, `video-convert-feasibility` |   ~10 | drift                  | "No `any`, no `!`" credited to `tsc` (ESLint enforces it); a verdict quoted with the wrong dash; ~165 MB (≈500 MB on disk); an example manifest that failed `ports.test.ts`; 36 colours (38)                                                                                                                                                                             |
+| comments and test names                                                 |   ~30 | never-true             | the eight names that never existed (table above); `spans()` "used by the perf harness" (never called — removed); "sixteen times the next largest limit" (64); "diff is the only consumer that accepts text and json"; `textPosition`'s CRLF rule, stated and not implemented (implemented, with its first test)                                                          |
+
+**The fourth category earned its place again.** Roughly half of everything was
+never-true — a sentence written while reading something, not an intention and
+not drift. Its signature is consistent: a name that is almost right
+(`nalsOf`/`nalsIn`, `reconstructDecodeTimes`/`decodeTimes`, `registry.test.ts`
+for `ports.test.ts` three times), a count taken once (`seven` for eight, `five`
+views for seven), or a test described by its title rather than its body.
+
+**Deliberate, and where recorded:** tables became aligned columns (3bd124c's
+message); the stream written as a stream (the matrix's round-three decision);
+the progress channel removed (round fifteen, above). **Deliberate, and not
+recorded anywhere:** image metadata as `warn` only when it holds a GPS location.
+
+### Claims judged unverifiable, and why
+
+Marked with an `unverified` marker in place, sparingly — hash's behaviour above
+512 MB and theming's Zod-versus-budget arithmetic, the only two. The larger
+classes are left unmarked on purpose, because they already say what they are:
+
+- **Measurements with a date**: every timing, pixel count and "measured at"
+  figure. They are records of a machine on a day, which is the one thing a
+  gate must not assert. Where one read as current — the bundle tables, the
+  765 mutants — it now names its commit.
+- **Judgements**: "no screen reader announces a `code` role by default", the
+  WCAG-adjacent reasoning in the theming notes. Not measurements, and written as
+  judgements.
+- **Upstream behaviour**: "SpiderMonkey throws on stack exhaustion at ~5 s",
+  "WebKit tags every encode with a Skia profile" — held where they matter by a
+  check that would change if they did, not by a sentence.
+- **Netlify**: `PNPM_FLAGS` replaced `NPM_FLAGS`, which pnpm never read. Not
+  seen in a deploy log; the next deploy is the check.
+
+### Looked for and NOT found
+
+- A dangling name in a comment beyond the eight listed — after the rule ran over
+  every comment, with dependency declarations as the external inventory.
+- A wrong count among the structural facts `COUNTS` covers, beyond the four
+  listed.
+- A second custom-theme path that misses the library — hydration and the store
+  both read `patchbay:themes:v1`.
+- A browser-zoom chord the canvas still takes, in 248 presses.
+- A document port besides regex that drops a BOM silently.
+- A category-only search the index gets wrong, once the oracle knew categories.
+- An `asserted` marker, of the seven written, that resolves to the wrong test —
+  each was read.
+
+### Still open
+
+- **Image metadata level.** EXIF, ICC, XMP, IPTC and comments are `info` and never
+  reach a node; only GPS is `warn`. The matrix's own definition says a `warn`
+  is something that went in and did not come out. A warning on every phone photo
+  may be exactly why it is not — but nobody wrote that down. A decision, not a fix.
+- **`null` → CSV is not a loss-corpus row**, and the harness does not drive it.
+  Unit-tested only.
+- **The CI workflow's bundle comment** still says it guards "the initial
+  (non-lazy) JS payload"; there are four budgets. Not edited: this machine's
+  token cannot push a change to `.github/workflows/`.
+- **`TOUCH_ROUTES`** is held to the overlay, not to the controls it names.
+- **`checkPopovers`** never opens the theme editor's two Selects.
+- **`OptionField.secret`** has no user.
+- Round fifteen's and sixteen's, unchanged: the harness reading the loss corpus,
+  `checkLossReports`' 500 ms control, `someOf`, the wall-clock sites.
+
+### Anything in the framing I think is wrong
+
+1. **"Every claim in every document should be true, and stay true without
+   somebody remembering to check."** The second half is achievable for about a
+   sixth of the claims — names and structural counts — and this round made it
+   so. For the rest, the honest version is that a claim is either held by a test
+   the document names, marked as not held, or a dated record. A gate cannot read
+   prose for truth, and pretending the new check does would be the eighth time a
+   document described a guarantee that did not exist.
+2. **"Hand-edited numbers should be generated or gone."** Checked, not
+   generated. A number a gate compares with the code is as true on `main` as a
+   generated one, and needs nothing run by hand; a generator is itself a thing to
+   remember. The test count is gone, because it changes on every commit that
+   adds a test and a gate that failed on every one of them would be deleted.
+3. **"The docs are good and I do not want them flattened."** Agreed, and that is
+   why the conventions are HTML comments. But the audit's most useful finding
+   is that roughly half of the false sentences were in the docs' best passages —
+   the long explanations of why — because those are where somebody wrote down what
+   they believed while reading. The reasoning is right to keep; the facts inside
+   it are the ones that rot.
+4. **The four classes.** A fifth kept appearing: a claim true of the panel and
+   not of the node, or of one engine and not the other, or of one target and not
+   its sibling. "True somewhere" is not drift and not never-true, and it is the
+   shape of most of the matrix's mistakes.

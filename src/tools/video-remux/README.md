@@ -63,7 +63,7 @@ argument for the payload:
   the guards are ours to write and ours to test — which is what
   [`malformed.test.ts`](malformed.test.ts) does.
 
-The result is **68.2 kB raw, 23.6 kB gzipped**, in a lazy chunk. That is about
+The result is **69.3 kB raw, 23.9 kB gzipped**, in a lazy chunk (measured on the round-seventeen build; it said 68.2 and 23.6 before). That is about
 one three-hundredth of the compressed payload, it needs no CSP exception of any
 kind, no service worker, and no `wasm-unsafe-eval` — which has been removed
 from the policy along with it.

@@ -29,7 +29,7 @@ const KEEP = ['[if ', '[endif]'];
  * Removes HTML comments, leaving anything inside <script> or <style> alone.
  *
  * Scanning rather than a regex, because `<!--` is legal inside a script's text
- * content and stripping it there would corrupt the one inline script whose
+ * content and stripping it there would corrupt the two inline scripts whose
  * bytes are hashed into the CSP.
  */
 export function stripHtmlComments(html: string): string {

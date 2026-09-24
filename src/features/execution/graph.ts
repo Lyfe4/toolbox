@@ -292,9 +292,11 @@ function settle(
 /**
  * Executes the graph.
  *
- * Independent branches run concurrently up to `concurrency`; the bound exists
- * so that wiring twenty consumers to one source spawns four workers' worth of
- * work rather than twenty at once.
+ * Independent branches run concurrently up to `concurrency`. There is one
+ * worker, so the bound is not parallelism: it keeps the worker's queue from
+ * running dry while capping how many nodes' inputs are cloned into it at once.
+ * This comment used to call it "four workers' worth of work", which
+ * docs/architecture.md records as simply wrong.
  */
 export async function runPipeline(
   graph: GraphData,

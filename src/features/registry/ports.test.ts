@@ -8,7 +8,13 @@ import { textToBytes } from '@/lib/base64';
 
 import { loadTool } from './loader';
 import { getManifestEntry, TOOL_MANIFEST, type ToolId, type ToolManifestEntry } from './manifest';
-import { DATA_TYPES, type DataType, type ToolRunContext, type ToolValue } from './types';
+import {
+  DATA_TYPES,
+  TOOL_CATEGORIES,
+  type DataType,
+  type ToolRunContext,
+  type ToolValue,
+} from './types';
 
 /**
  * THE PORT SET, JUDGED AS A SET.
@@ -268,6 +274,24 @@ describe('the data types', () => {
       entry.inputs.some((port) => (port.types as readonly DataType[]).includes(type)),
     );
     expect({ produced, accepted }).toEqual({ produced: true, accepted: true });
+  });
+});
+
+/*
+ * THE SAME RULE, FOR A CATEGORY. `time` was a category from the first commit
+ * with no tool in it, so the Category select on `/tools` offered a filter that
+ * could only show nothing, and the palette carried an empty group it hid.
+ */
+describe('the categories', () => {
+  it.each(TOOL_CATEGORIES)('%s holds at least one tool', (category) => {
+    expect(TOOL_MANIFEST.some((entry) => entry.category === category)).toBe(true);
+  });
+
+  it('files every tool under a category that exists', () => {
+    const known: readonly string[] = TOOL_CATEGORIES;
+    expect(
+      TOOL_MANIFEST.filter((entry) => !known.includes(entry.category)).map((entry) => entry.id),
+    ).toEqual([]);
   });
 });
 

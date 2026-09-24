@@ -24,8 +24,9 @@ import type { CanvasEdge, CanvasNode, EdgeId, GraphData, NodeId, Point } from '.
  *     rather than sixty.
  *
  * The cost is that each command must be written with a correct inverse, and
- * that is what the tests in commands.test.ts check: apply-then-revert must
- * return the graph to a deeply equal state, for every command kind.
+ * that is what `graph.test.ts` checks: apply-then-revert must return the
+ * graph to a deeply equal state, for every command kind - including the two it
+ * used to leave out, `add-subgraph` and `remove-edges`.
  */
 
 export type Command =

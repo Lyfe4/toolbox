@@ -77,10 +77,25 @@
     -->
     <link rel="stylesheet" href="/src/styles/global.css" />
 
+    <!--
+      THE THEME BOOTSTRAP: the stored theme, on the document, before first
+      paint - a preset by its name, a custom theme by its base AND its
+      overrides, which is what applyTheme does later and what a custom theme is.
+
+      A custom theme is looked up in the library, patchbay:themes:v1, and then
+      in the old place beside the selection, which hydration still adopts.
+      Until round seventeen only the old place was read: the theme editor had
+      moved the library to its own key, so every custom theme fell back to the
+      system preset for first paint and flashed to itself when the app loaded.
+      src/features/canvas/coldOpen.test.ts holds the keys to the constants, and
+      check:browsers loads a custom theme and reads the document in the first
+      frames it paints. The colour test is applyTheme's own gate, repeated.
+    -->
     <script>
       (function () {
         var root = document.documentElement;
         var theme = null;
+        var custom = null;
         try {
           var stored = window.localStorage.getItem('patchbay:theme:v1');
           if (stored) {
@@ -89,20 +104,38 @@
             if (selection && selection.kind === 'preset') {
               theme = selection.name;
             } else if (selection && selection.kind === 'custom') {
-              var list = state.customThemes || [];
-              for (var i = 0; i < list.length; i++) {
-                if (list[i] && list[i].id === selection.id) theme = list[i].base;
+              var library = JSON.parse(window.localStorage.getItem('patchbay:themes:v1') || 'null');
+              var lists = [(library && library.themes) || [], state.customThemes || []];
+              for (var l = 0; l < lists.length && !custom; l++) {
+                for (var i = 0; i < lists[l].length; i++) {
+                  if (lists[l][i] && lists[l][i].id === selection.id) {
+                    custom = lists[l][i];
+                    break;
+                  }
+                }
               }
+              if (custom) theme = custom.base;
             }
           }
         } catch (error) {
           theme = null;
+          custom = null;
         }
         if (!theme) {
           var light = window.matchMedia('(prefers-color-scheme: light)').matches;
           theme = light ? 'vellum' : 'graphite';
         }
         root.setAttribute('data-theme', theme);
+        var overrides = (custom && custom.overrides) || {};
+        for (var token in overrides) {
+          var value = overrides[token];
+          if (
+            /^[a-z0-9-]+$/.test(token) &&
+            /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value)
+          ) {
+            root.style.setProperty('--pb-' + token, value);
+          }
+        }
       })();
     </script>
   </head>

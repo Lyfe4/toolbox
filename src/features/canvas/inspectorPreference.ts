@@ -23,7 +23,7 @@
  * is the conservative one. That is what makes a second storage key affordable
  * here where `graphStore`'s needed Zod and five versions of migration.
  *
- * Hand-written rather than Zod for the same reason `themeStore`'s reader is:
+ * Hand-written rather than Zod for the same reason `useThemeStore`'s reader is:
  * this is read during the first render, so it is in the initial payload, and
  * `z.boolean()` is not worth a byte of it.
  */

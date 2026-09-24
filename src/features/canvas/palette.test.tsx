@@ -450,8 +450,9 @@ describe('where a new node lands', () => {
     id = query,
   ): Promise<void> {
     const search = await openPalette(user);
-    // Narrow the list first, then pick the exact row - searching matches names,
-    // summaries and keywords, so a query alone can leave several rows standing.
+    // Narrow the list first, then pick the exact row - `fuzzyFilter` matches a
+    // name, a summary and a group name, so a query alone can leave several rows
+    // standing.
     await user.type(search, query);
     await user.click(await screen.findByTestId(`dialog-option-${id}`));
   }

@@ -5,9 +5,9 @@ import {
   type ErasedTool,
   type JsonValue,
 } from '@/features/registry/types';
-import { decodeDocument } from '@/lib/text';
+import { decodeDocument, hasByteOrderMark } from '@/lib/text';
 
-import { diagnose, type Diagnosis } from './diagnose';
+import { diagnose, type Diagnosis, type Note } from './diagnose';
 import { flagsFor, regexDefaultOptions, regexOptionFields, regexOptionsSchema } from './options';
 import { capturingGroupNames, parsePattern } from './pattern';
 import { compilePattern, DEFAULT_LIMITS, runRegex, toJson, toSummary } from './run';
@@ -108,6 +108,12 @@ export const regexTesterTool = defineTool({
     const arrived = inputs.input;
     const subject = arrived.type === 'text' ? ok(arrived.text) : decodeDocument(arrived.bytes);
     if (!subject.ok) return subject;
+    /*
+     * The decoder removes a byte order mark and the box keeps one, so the same
+     * file has two subjects depending on how it arrived. Every other document
+     * port says so; this one did not, and the matrix said it did.
+     */
+    const removedMark = arrived.type === 'bytes' && hasByteOrderMark(arrived.bytes);
 
     const flags = flagsFor(options);
     const compiled = compilePattern(options.pattern, flags);
@@ -129,7 +135,7 @@ export const regexTesterTool = defineTool({
     );
     const elapsedMs = DEFAULT_LIMITS.now() - startedAt;
 
-    const diagnosis = diagnose({
+    const diagnosed = diagnose({
       pattern: options.pattern,
       flags,
       subject: subject.value,
@@ -138,6 +144,9 @@ export const regexTesterTool = defineTool({
       replacement: options.replacement,
       elapsedMs,
     });
+    const diagnosis: Diagnosis = removedMark
+      ? { ...diagnosed, notes: [MARK_REMOVED, ...diagnosed.notes] }
+      : diagnosed;
 
     return ok({
       output: {
@@ -157,6 +166,13 @@ export const regexTesterTool = defineTool({
     });
   },
 });
+
+/** Said when a dropped file's byte order mark was removed by the decoder. */
+const MARK_REMOVED: Note = {
+  level: 'info',
+  title: 'A byte order mark was removed',
+  body: 'The file began with a BOM, which declares the encoding rather than being part of the document. It is dropped when bytes are decoded at a document port, here and everywhere else, so the subject starts at the first real character. Pasting the same file into the box keeps it, because nothing decodes anything there.',
+};
 
 /** The diagnosis, flattened into the JSON payload the view reads. */
 function diagnosisJson(diagnosis: Diagnosis): Readonly<Record<string, JsonValue>> {

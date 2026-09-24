@@ -608,10 +608,11 @@ describe('writing, against js-yaml', () => {
       expect(written.ok).toBe(true);
       if (!written.ok) return;
 
-      // `load` refuses a multi-document stream, which is right: this tool
-      // never writes one (a stream becomes a sequence, which the matrix names
-      // as its own loss), so a document js-yaml refuses here would be a real
-      // finding rather than an API mismatch.
+      // `load` refuses a multi-document stream, which is right: every case here
+      // is one document, and this tool writes a stream only when it was given
+      // one (since round three - it used to become a sequence), so a document
+      // js-yaml refuses here would be a real finding rather than an API
+      // mismatch.
       const readBack: unknown = load(written.value);
       expect(readBack).toEqual(parsed.value);
     },

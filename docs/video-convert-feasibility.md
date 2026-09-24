@@ -16,8 +16,10 @@ deleted; every figure below can be reproduced from the method given.
 > - **`@ffmpeg/core` is not shipped at all.** The recommendation was for a
 >   remuxer that could also transcode, and taking only the first half removes
 >   the argument for the payload: 30.7 MiB of encoders for an operation that
->   runs none. Both containers are parsed and the MP4 written in TypeScript, in
->   35.6 kB. The Cache Storage result stands and was not needed.
+>   runs none. All four containers it reads (the MP4 family, Matroska, MPEG-TS
+>   and AVI) are parsed and the MP4 written in TypeScript, in 69.3 kB; this box
+>   said both, in 35.6 kB, when there were two. The Cache Storage result stands
+>   and was not needed.
 > - **`requiresWasm` and `wasmModules` were deleted rather than given a job**,
 >   on the reasoning this document offered for exactly that case. So was
 >   `'wasm-unsafe-eval'`, which is the same defect one layer down and was in

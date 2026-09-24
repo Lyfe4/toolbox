@@ -35,7 +35,7 @@ import { remux } from './remux';
  * bytes around each coded picture are rewritten by design.
  *
  * What is still exactly true, and what is therefore asserted below, is one
- * level down: EVERY NAL UNIT'S PAYLOAD IS IDENTICAL. `nalsOf` pulls the units
+ * level down: EVERY NAL UNIT'S PAYLOAD IS IDENTICAL. `nalsIn` pulls the units
  * back out of the finished MP4 through their length prefixes and compares them
  * to the ones that went in. That is the real claim - nothing was decoded and
  * no coefficient moved - and it is a stronger assertion than comparing whole

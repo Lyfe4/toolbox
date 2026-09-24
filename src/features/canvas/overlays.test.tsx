@@ -144,13 +144,18 @@ describe.each(OVERLAYS)('the $name overlay', ({ open }) => {
     expect(tall).not.toBeNull();
   });
 
-  it('is bounded, so overflowing content has somewhere to go', async () => {
+  /*
+   * NAMED FOR WHAT IT CHECKS. This was "is bounded, so overflowing content has
+   * somewhere to go", and it asserted a class name: jsdom lays nothing out, so
+   * it cannot see a height cap. The cap itself is `checkDialogScroll`'s, in
+   * two engines with a real wheel; this only holds that the element wearing
+   * the capped class is the dialog.
+   */
+  it('wears the dialog class, whose height cap check:browsers measures', async () => {
     const user = userEvent.setup();
     renderCanvas();
     await open(user);
 
-    // The dialog caps its own height; without that the scroller would simply
-    // grow and the page would scroll instead.
     const dialog = screen.getByRole('dialog');
     expect(dialog.className).toMatch(/dialog/);
   });
@@ -165,6 +170,9 @@ describe.each(OVERLAYS)('the $name overlay', ({ open }) => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
+    // The half the name promised and the test did not check until round
+    // seventeen: focus is somewhere inside the canvas, not on <body>.
+    expect(screen.getByRole('application').contains(document.activeElement)).toBe(true);
   });
 
   it('has no axe violations while open', async () => {

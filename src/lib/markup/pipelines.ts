@@ -1084,7 +1084,7 @@ function unsupportedHandlers(
    * This branch used to return nothing, on the stated ground that upstream's
    * default is "the wrapper goes, the words inside it stay". For most of the
    * list it is (`span`, `sub`, `abbr` pass their children through; `div`,
-   * `figure` pass them through as blocks). For seven it is not, and upstream
+   * `figure` pass them through as blocks). For eight it is not, and upstream
    * substitutes something the source never had (hast-util-to-mdast@10.1.2,
    * lib/handlers/index.js):
    *

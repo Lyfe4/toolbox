@@ -1,16 +1,20 @@
 /**
- * Does the /tools search actually match names, summaries AND keywords?
+ * Does the /tools search actually match names, summaries, categories AND
+ * keywords?
  *
  * The mapped `tools-index` drive proves one query ("sha") and clearing. The
- * feature map claims three match sources, so this closes the other two.
+ * feature map claims four match sources, so this closes the other three.
  *
  * THE ORACLE IS THE MANIFEST, not the page. `src/features/registry/manifest.ts`
  * is the source data the index is built from; for a given query this file works
- * out which tools contain it in their name, summary or keywords, and the page
- * is required to return exactly that set. That is the product's stated contract
- * ("Matches names, summaries and keywords" - the Search field's own
- * description), so checking against it is a proof rather than a restatement of
- * whatever the page happens to do.
+ * out which tools contain it in their name, summary, category or keywords, and
+ * the page is required to return exactly that set. That is the product's stated
+ * contract ("Matches names, summaries, categories and keywords" - the Search
+ * field's own description), so checking against it is a proof rather than a
+ * restatement of whatever the page happens to do. Until round seventeen both
+ * this oracle and that description left the category out, and `searchTools`
+ * has read it since the first commit - so the oracle agreed with the sentence
+ * and not with the code, and a query like `data` would have shown it.
  *
  *   node .claude/skills/verify-patchbay/probe-search.mjs
  */
@@ -43,6 +47,7 @@ for (let m = entryRe.exec(body); m !== null; m = entryRe.exec(body)) {
     id: m[1],
     name: m[2],
     summary: m[3],
+    category: m[4],
     keywords: m[5]
       .split(',')
       .map((s) => s.trim().replace(/^'|'$/g, ''))
@@ -62,6 +67,7 @@ function expected(query) {
     (t) =>
       t.name.toLowerCase().includes(q) ||
       t.summary.toLowerCase().includes(q) ||
+      t.category.includes(q) ||
       t.keywords.some((k) => k.toLowerCase().includes(q)),
   ).map((t) => t.id);
 }
@@ -72,6 +78,7 @@ function via(query) {
   for (const t of TOOLS) {
     if (t.name.toLowerCase().includes(q)) sources.add('name');
     if (t.summary.toLowerCase().includes(q)) sources.add('summary');
+    if (t.category.includes(q)) sources.add('category');
     if (t.keywords.some((k) => k.toLowerCase().includes(q))) sources.add('keyword');
   }
   return [...sources].join('+') || 'nothing';
@@ -87,6 +94,10 @@ const QUERIES = [
   { q: 'highlighting', why: 'summary only - the word is in no name and no keyword' },
   { q: 'repackage', why: 'summary only' },
   { q: 'checksum', why: 'keyword only' },
+  {
+    q: 'hashing',
+    why: 'category only - searchTools reads the category, which this oracle did not until round seventeen',
+  },
   { q: 'jwt', why: 'keyword reaches a tool whose name and summary never say it (base64)' },
   { q: 'convert', why: 'multi-match across four tools' },
   { q: 'SHA', why: 'case-insensitivity - same set as lowercase sha' },

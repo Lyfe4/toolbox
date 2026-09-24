@@ -96,19 +96,21 @@ import type {
  * Written out rather than derived, because the alternative is the order the
  * manifest happens to be written in - which is how "encoding" ended up as
  * three separate sections. `satisfies` ties every entry to a real category,
- * and palette.test.ts asserts this is a permutation of TOOL_CATEGORIES, so
+ * and palette.test.tsx asserts this is a permutation of TOOL_CATEGORIES, so
  * adding a category to the registry and forgetting it here is a test failure
  * rather than a group that quietly never renders.
  *
  * Ordered by how often they are reached for, not alphabetically.
  */
+/** The keys the canvas takes with Ctrl or Cmd held: select all, duplicate, undo and redo. */
+const CHORD_KEYS: ReadonlySet<string> = new Set(['a', 'd', 'z', 'y']);
+
 export const PALETTE_CATEGORY_ORDER = [
   'encoding',
   'text',
   'data',
   'colour',
   'hashing',
-  'time',
 ] as const satisfies readonly ToolCategory[];
 
 /** Pipelines lead, then the tool categories. */
@@ -183,8 +185,8 @@ const INSPECTOR_RAIL = '(min-width: 1000px)';
  *
  * The minimum is what the output views are already held to at the narrow end
  * by `checkMobileLayout`; the maximum stops the rail eating a canvas that no
- * longer has room for a graph. The step is the grid, so a keyboard resize
- * lands on the same 8px baseline everything else does.
+ * longer has room for a graph. The step is two grid cells, 16px, so a
+ * keyboard resize lands on the same 8px baseline everything else does.
  */
 const RAIL_MIN = 320;
 const RAIL_MAX = 640;
@@ -359,7 +361,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
    * and `closed` are the resting states and the two others are the animation.
    *
    * Read from storage in the INITIALISER rather than in an effect, for the
-   * reason `themeStore` reads the theme at module load: an effect would paint
+   * reason `useThemeStore` reads the theme at module load: an effect would paint
    * one frame of the wrong state, and here that frame would also start the
    * enter animation on a panel that was supposed to be simply present.
    */
@@ -1952,6 +1954,17 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
     const focused = focusedNodeId();
     const targets = focused ? [focused] : state.selection.nodes;
     const meta = event.ctrlKey || event.metaKey;
+
+    /*
+     * CTRL AND CMD BELONG TO THE BROWSER, apart from the four editing chords
+     * the keyboard map lists. The `+`/`-` branch below already said why -
+     * "Ctrl/Cmd with these keys is the BROWSER's zoom, and taking that would be
+     * worse than not having this" - and `0` was taking Ctrl+0, the browser's
+     * own zoom reset, all the same. So were Ctrl with K, `?`, Space, Enter,
+     * Escape and the arrows, none of them in the map. Found by
+     * `shortcuts.bindings.test.tsx`, which presses every key and compares.
+     */
+    if (meta && !CHORD_KEYS.has(event.key.toLowerCase())) return;
 
     if (event.key === ' ' && !spacePressed) {
       setSpacePressed(true);

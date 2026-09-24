@@ -90,8 +90,10 @@ const NEVER: readonly string[] = [
  * THE ATTRIBUTE ANALYSIS, which is the part that was missing before. Not one
  * of these needs an attribute added: `title`, `dateTime` and `align` are
  * already in the schema's wildcard list, and that list contains no event
- * handler and no fetchable URL. So this is a change to the TAG list only, and
- * the attribute surface is exactly what it was.
+ * handler and no fetchable URL. So THIS change was to the tag list only, and
+ * left the attribute surface exactly as it was. (It has grown once since, on
+ * purpose: `reversed` on `<ol>`, below, which is the one attribute this file
+ * adds to the default schema.)
  *
  * Element by element:
  *

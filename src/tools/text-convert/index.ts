@@ -27,7 +27,7 @@ import {
  * source list would put two unrelated jobs behind one control, which is the
  * mistake this merge exists to undo. See the README.
  *
- * THREE OUTPUTS, AND THE TWO TEXT ONES COINCIDE FOR EXACTLY ONE TARGET.
+ * THREE OUTPUTS, AND THE TWO TEXT ONES COINCIDE FOR THREE COMBINATIONS.
  *
  * `output` is the conversion, in whichever format `target` names. `rendered` is
  * always sanitised HTML, which is what makes `presentation: 'html'` a fact
@@ -35,8 +35,9 @@ import {
  * `detected` reports what auto-detection concluded and how sure it was, so a
  * wrong guess is visible rather than silent.
  *
- * With `target: 'html'` and a Markdown source the first two are the SAME
- * STRING, and they have to be: converting a document to HTML and rendering it
+ * With a Markdown source and either HTML target, or an HTML source and the
+ * sanitised HTML target, the first two are the SAME STRING (outputs.test.ts
+ * holds all three), and for Markdown they have to be: converting a document to HTML and rendering it
  * are the same operation, so no definition of `rendered` can differ from
  * `output` there. The alternatives were weighed and both cost more:
  *
@@ -95,7 +96,7 @@ export const textConvertTool = defineTool({
       label: 'Rendered HTML',
       types: ['text'],
       description:
-        'Always HTML, sanitised - the preview and Copy as rich text. Identical to Converted when Markdown becomes HTML.',
+        'Always HTML, sanitised - the preview and Copy as rich text. Identical to Converted when Markdown becomes HTML, and when HTML becomes HTML (sanitised).',
       presentation: 'html',
     },
     {
@@ -301,14 +302,18 @@ export const textConvertTool = defineTool({
           sanitised: html,
           normalised,
           /*
-           * Only for a Markdown source, and only when the document contains a
-           * `<` at all - which is what keeps an ordinary README from being
-           * converted twice. It is a CENSUS rather than a document: a set of
-           * tag and attribute names, with nothing in it to render. See
-           * `markdownMarkupBeforeSanitising`.
+           * Only for a Markdown source, and only when the document contains
+           * something the allowed list could refuse - a `<`, or a link or
+           * image destination - which keeps a README of plain prose from
+           * being converted twice. It is a CENSUS rather than a document: a
+           * set of tag and attribute names, with nothing in it to render. See
+           * `markdownMarkupBeforeSanitising`. A destination is `](` or a
+           * reference definition's `]:`; before round seventeen only `<` was
+           * asked about, and `[x](javascript:alert(1))` lost its link in
+           * silence.
            */
           unsanitised:
-            source === 'markdown' && text.includes('<')
+            source === 'markdown' && /<|\]\(|\]:/.test(text)
               ? markdownMarkupBeforeSanitising(text, toHtmlOptions)
               : null,
           linkify: options.linkify,

@@ -47,7 +47,7 @@ export const hashTool = defineTool({
    * ordering is load-bearing: `resultSummary` shows the FIRST declared output
    * on a node because "the first port is the tool's answer and the rest are
    * its working". One tool spelling it differently made that a per-tool lookup
-   * instead of a structural fact, and `registry.test.ts` now asserts the
+   * instead of a structural fact, and `ports.test.ts` now asserts the
    * convention for every tool at once. The LABEL stays "Digest" - the id is
    * the wiring identity, the label is the human word for the value.
    */

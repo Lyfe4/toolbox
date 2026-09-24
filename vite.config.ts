@@ -141,8 +141,9 @@ export default defineConfig({
   },
 
   build: {
-    // The security posture depends on shipping no inline scripts, so never let
-    // Rollup inline an asset back into the HTML as a data: URL.
+    // The policy admits the two inline scripts it holds hashes for and nothing
+    // else inline, so never let Rollup inline an asset back into the HTML as a
+    // data: URL.
     assetsInlineLimit: 0,
     sourcemap: true,
   },
@@ -166,14 +167,14 @@ export default defineConfig({
      * timeout, never an assertion.
      *
      * Raising it does not hide a hang: something genuinely stuck still fails,
-     * 15 seconds later.
+     * at the timeout below.
      */
     // Above `asyncUtilTimeout` in vitest.setup.ts, or a slow wait is killed
     // before it can report which assertion was still failing.
     testTimeout: 60_000,
     /*
      * `vite/` as well as `src/`: the build plugins are real code with real
-     * consequences - the comment stripper runs over the one inline script
+     * consequences - the comment stripper runs over the two inline scripts
      * whose bytes are hashed into the CSP - and a plugin that is never tested
      * is a plugin whose failure only shows up in a deployed browser.
      */

@@ -109,7 +109,7 @@ declaration was written when that tool was written and never read beside the
 others. The canvas can now show a node's output, which makes the ports the
 thing a person reasons about while wiring — so they were audited as a set.
 These are the rules that came out of it, and the reasoning is here rather than
-in nine files because every one of them is about the set rather than about a
+in ten files because every one of them is about the set rather than about a
 tool.
 
 ### The whole set, as it stands
@@ -500,6 +500,7 @@ Statuses are deliberately distinct:
 | Status            | Means                                                                                                                   |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `blocked`         | A required input has neither a wire nor typed text. This is the normal state while you are still wiring, not an error.  |
+| `running`         | In flight: its tool has been started and has not settled yet.                                                           |
 | `error`           | This node failed. It shows why.                                                                                         |
 | `upstream-failed` | Something this node depends on failed. It points back at the node that actually broke, rather than repeating the error. |
 | `ok`              | Ran, produced output.                                                                                                   |
@@ -678,12 +679,23 @@ image conversion. A pipeline that appears to hang for a quarter of a minute
 with nothing running does not read as a slow tool. It reads as a broken app.
 
 So a cancelled request keeps its deadline. The caller is settled and hears
-nothing further — not even progress — but the entry stays until either the
+nothing further — when this was written that included progress messages, and
+the progress channel has since been removed altogether — but the entry stays until either the
 worker answers for it or its time runs out, and if the time runs out the worker
 is replaced and the innocent requests beside it are replayed, exactly as for
 any other timeout. A cancelled request is never itself replayed: nobody is
 waiting for its answer, and on the canvas replaying one is a whole superseded
 pipeline executing a second time.
+
+`checkPipeline` holds this by **which worker** the next run starts on: the
+runaway's worker has to be among those terminated, and the base64 run after it
+has to start on a different one. Until round seventeen it asserted a time
+instead — the next run finished inside 10 s — and that could not fail in
+either engine: the pattern it drove gave up by itself in about 1.5 s in
+JavaScriptCore, and the defect's own Gecko figure, 4.1 s, was under the bound
+from the start. The check now drives `WEDGE_PATTERN` (see [the two engines and
+catastrophic backtracking](#known-limitations) below), and
+against the defect put back it is red in both engines.
 
 No new number was introduced for this, deliberately. The guarantee is the one
 the tool already declares: **a request cannot hold the worker past its own
@@ -765,7 +777,8 @@ cannot arrive.
 ## The worker boundary
 
 Tools with `strategy: 'worker'` run off the main thread. The protocol is a
-small tagged union — request, result, error — and the engine owns a single
+small pair of tagged unions — `execute`, `cancel`, `ping` and `preload` in,
+`started`, `settled` and `ready` out — and the engine owns a single
 shared worker rather than spawning one per run.
 
 Binary payloads are `Uint8Array` or `Blob`, never base64 strings internally.
@@ -850,7 +863,8 @@ Each node has a cache key built from:
 
 - its tool id,
 - its options,
-- its typed input, and
+- its typed input,
+- its file inputs — per port a name, a size and a token, never the bytes — and
 - **for each wire arriving at it: which input port it arrives at, which output
   port it leaves from, and the upstream node's cache key — never its value.**
 
@@ -961,6 +975,16 @@ so the round scales are reachable rather than lucky. `+` and `-` walk the same
 ladder two notches at a time, which is three presses per doubling; before them
 there was no way to zoom from the keyboard at all, only `0` to reset and `F` to
 fit.
+
+**With Ctrl or Cmd held, all three belong to the browser**, because they are
+its page zoom and taking them would be worse than not having these. `+` and `-`
+always stood down for that reason; `0` did not, and took `Ctrl+0`, the
+browser's zoom reset, until round seventeen. So did Ctrl with `K`, `?`, Space,
+Enter, Escape and the arrows. The canvas now takes only four chords — `Ctrl+A`,
+`Ctrl+D`, `Ctrl+Z` and `Ctrl+Y` (`CHORD_KEYS`) — and `shortcuts.bindings.test.tsx`
+presses every key bare and with Shift, Ctrl and Ctrl+Shift on a real canvas and compares what it
+took with `SHORTCUTS`, both ways, which is how the `0` case, and two bindings
+the list did not name, `Ctrl+Y` and `Backspace`, were found.
 
 **Notches accumulate; the pointer does not.** The pending buffer used to hold a
 factor and be _assigned_ on every event, so of the several events that arrive
@@ -1194,8 +1218,9 @@ colour problem.
 against the backdrop by `grid.contrast.test.ts`: a grid rule can fail by being
 too loud as easily as by being too quiet, which is the one contrast assertion in
 this repo that is not "at least". `GridLayer` reads them back out of the cascade
-rather than hard-coding them, so `themes.css` stays the only place a grid colour
-is written.
+rather than hard-coding them, so the stylesheets stay the only place a grid
+colour is written — `semantic.css` for the default theme, `themes.css` for the
+other three.
 
 A pointerdown on the toolbar or the status readout no longer clears the
 selection. Both render inside the canvas root, so a press on either arrived as
@@ -1210,7 +1235,10 @@ to the change rather than to the graph, a drag coalesces into one step — and s
 does a run of typing into an option, for [the same reason](#typing-an-option-is-one-undo-step) — and
 each entry can describe itself for the live region ("Undid move 3 nodes").
 The price is that every command needs a correct inverse, which `graph.test.ts`
-checks by applying and reverting each kind and asserting deep equality.
+checks by applying and reverting each kind and asserting deep equality. All
+seven, since round seventeen, and keyed by `Command['kind']` so a new kind
+without a case is a type error; until then the cases were an array and two of
+the seven — `add-subgraph` and `remove-edges` — were missing.
 
 **Accessibility** is structural rather than added: the canvas is a
 `role="application"` region so single letters reach it, each node is a
@@ -1391,8 +1419,8 @@ gesture a one-finger press already starts, which is a pan.
 
 **At the top, under the toolbar, and it was measured there rather than
 assumed.** The bar was built at the bottom first, above the readout, which is
-better for a thumb. On a phone the inspector is a **sheet** covering the bottom
-60% of the canvas root, and the root spans the whole workspace behind it — so
+better for a thumb. On a phone the inspector is a **sheet** covering up to the bottom
+65% of the canvas root, and the root spans the whole workspace behind it — so
 the bar and the readout both sat underneath it, present in the DOM, 300px below
 the sheet's top edge, invisible and unpressable. For the readout that is an old
 and survivable cost. For the only control that can delete anything it is the
@@ -1470,8 +1498,11 @@ Three things had to be true, and only the first was.
    slightly further away than it is. A property test walking points off the
    drawn path across the whole addressable plane failed at 24 segments with a
    worst case of 1.0px, which is small but is not the "well under a pixel" the
-   first version of the comment claimed; it is 48 now, and this runs once per
-   press rather than once per frame.
+   first version of the comment claimed. It went to 48, and then to 96, when a
+   denser sweep put 48's worst case at 0.62px against the half-pixel the test
+   asserted — so the property failed on about one run in six, whenever the
+   random walk reached that corner. Ninety-six measures 0.084px, and this runs
+   once per press rather than once per frame.
 
    **And the press has to be converted to a world point by the one converter
    that already exists.** The first version did it inside the wire layer,
@@ -1794,6 +1825,17 @@ because by the time an effect runs a frame has already been painted — and the
 failure being avoided is precisely a **flash of the wrong first screen**, not a
 leftover element.
 
+So that is what `checkColdOpen` reads: the **first frames**, through a frame
+recorder installed as an init script, not the document at `domcontentloaded`.
+A share link never paints the panel, not even for a frame; a first visit
+paints it, and the recorder has to see it do so, which is the partner that
+stops the first assertion passing on a recorder that saw nothing. Until round
+seventeen the check read the document at `domcontentloaded` on the stated
+grounds that the module script had not run yet — which was never so, because a
+module script is deferred and deferred scripts run before `DOMContentLoaded` —
+and the only share-link assertion looked after boot. Against a broken inline
+script the old checks stayed green and the new one is red in both engines.
+
 Removing rather than hiding is a different argument: a hidden panel is state,
 and the app would have to know about it, agree with it, and keep agreeing. A
 removed one cannot come back on a later render.
@@ -1879,8 +1921,9 @@ restored save leaves the plane on the identity transform.
 
 ### Two empty states, deliberately
 
-The canvas keeps its own `Empty canvas — choose Add tool, or press K`, and does
-not draw it while the panel is up. They are not duplicates: one is an
+The canvas keeps its own `Empty canvas` — "Choose Add tool to place a module,
+or press K. Shortcuts lists every key and every gesture." — and does not draw
+it while the panel is up. They are not duplicates: one is an
 introduction for somebody who does not yet know there is a canvas, and the other
 is operational, for somebody who has one and has just cleared it.
 
@@ -2087,12 +2130,12 @@ had it stopped existing.
 A node is 224px wide with two clamped lines. Its summary box already switched
 between the tool's description, the reason it is blocked and the error that
 broke it; once a node has run, its **result** is its situation, so that is the
-fourth case. Only the first declared output is summarised — six of the nine
+fourth case. Only the first declared output is summarised — nine of the ten
 tools have more than one, and the manifest's order is not arbitrary: the first
 port is the tool's answer and the rest are its working. Since the [port
 audit](#the-port-set) that first port is called `output` on every tool, and
-`registry.test.ts` asserts it, so "the first output" and "the tool's answer"
-are the same thing by construction rather than by nine separate decisions.
+`ports.test.ts` asserts it, so "the first output" and "the tool's answer"
+are the same thing by construction rather than by ten separate decisions.
 
 For three tools the answer is a document written out as text, and those nodes
 print the **measurement** of the document rather than the first line of the
@@ -2267,7 +2310,7 @@ are now drawn in three characters:
 - **`47 replaced`, not `47 matches`, when it was replacing.** The tool does two
   things and only one of them is a search.
 - **`5000+ matches` when the scan did not finish.** `count` is a total when the
-  scan ran to the end and a **lower bound** when the two-second budget cut it
+  scan ran to the end and a **lower bound** when the one-second budget cut it
   off. `truncated` is a different claim — the listing was shortened and the
   count is still exact — and conflating the two is the shape of mistake this
   summary was already fixed for once.
@@ -2452,7 +2495,7 @@ selected off the plane. See
 including why it does not go through the selection.
 
 The rail's size handle is the ARIA window-splitter pattern: a **focusable**
-separator with a value, arrow keys that resize by one grid step, and Home/End
+separator with a value, arrow keys that resize by two grid steps (16px), and Home/End
 for the extremes. A handle only a pointer can move is a preference only a
 pointer user has, and the reason the rail is resizable at all is that a diff
 wants more width than a colour swatch does. It is built on a real `<button>` so
@@ -2542,9 +2585,11 @@ edge in both engines.
 
 `--pb-motion-base` and `--pb-ease` — 150ms on the sharp curve, the same pair
 every other transition in the app uses. Reduced motion needs no media query
-here: `global.css` collapses every duration to 1ms wholesale, and its own
-comment says 1ms rather than 0 precisely so `animationend` still fires and a
-state machine cannot stall. This is that state machine.
+here: `global.css` collapses every animation and transition duration to 1ms
+wholesale, and its own comment says 1ms rather than 0 precisely so that
+`transitionend` still fires and no state machine stalls. The same holds for
+`animationend`, which is the event this panel waits for, because the animation
+duration is collapsed to 1ms too. This is that state machine.
 
 **The panel has four states, of which two are the animation.** `closed` and
 `open` are the resting pair; `entering` and `closing` exist because the element
@@ -2654,7 +2699,9 @@ would sit behind the keyboard and its internal scrolling could not help.
 difference from `visualViewport` and the sheet sits that far up — on a coarse
 pointer only, because a panel that jumped whenever a window resized would be
 worse than the bug being fixed. The arithmetic is unit-tested, the wiring is
-driven in both engines by shrinking the window, and **the keyboard itself is
+driven in both engines by shadowing `visualViewport`'s height and firing its
+real `resize` event — it used to be driven by shrinking the window, which moves
+both viewports and so left the inset at zero whatever the size — and **the keyboard itself is
 still not tested anywhere**, for the reason in the limitations below.
 
 ### What was rejected
@@ -3021,7 +3068,7 @@ and made the second worse, so none of them is used. Two tests hold the line:
 `ToolRunner.layout.test.tsx` asserts the heading order, the tab order and that
 the stylesheet contains no reordering property at all; `checkRunnerLayout` in
 `cross-browser-check.mjs` measures the four regions at 320, 390, 768, 999,
-1000, 1280 and 1920 px and asserts that sorting them by (top, left) reproduces
+1000, 1280, 1439, 1440 and 1920 px and asserts that sorting them by (top, left) reproduces
 their DOM order.
 
 ### The decisions, and why
@@ -3064,7 +3111,7 @@ has to.** It spans both content rows, so `sticky` has somewhere to travel; it
 stops at the bottom of the output, because below that you are reading the ports
 footnote rather than the result. `grid-template-rows: minmax(0, 1fr) auto` puts
 the scroll on the options and never on the run button — the tallest options
-panel in the set (regex, with a pattern, a mode, a replacement and five flags)
+panel in the set (regex, with a pattern, a mode, a replacement and six flags)
 is taller than a 460px window. Below the breakpoint it is neither sticky nor a
 scroller: a pinned rail on a phone spends viewport the result needs, and a
 nested scrollbar inside a document that already scrolls is a defect this
@@ -3174,9 +3221,10 @@ that one closes itself the moment there is a result.
 things for a structural reason.** At 1000px the panel is row two of a grid the
 rail spans, so any surplus the rail creates is ENCLOSED - it sits between the
 result and the ports footnote, and without `align-self: stretch` it is a hole in
-the middle of the page. In three columns nothing encloses it: the panels are
-siblings in one row and the surplus is simply the end of a shorter column, with
-the full-width Ports panel below all three.
+the middle of the page. In three columns nothing encloses it: the Output panel
+has its column to itself, spanning both rows, and the surplus is simply the end
+of a shorter column. Ports is not below all three, as it was when this was
+first written; it sits under Input in the first column.
 
 So stretching buys nothing there and costs the rule the reserved viewport height
 was deleted for - the result panel would be sized by how many option fields are
@@ -3192,9 +3240,12 @@ really did move.
 
 **What did not change.** The rail is still sticky, still capped at the viewport,
 still the only thing on the page that pins, and its containing block is still
-the grid it was already in — one row instead of two, so its travel is unchanged.
-Ports is still a sibling of that grid. `.output` keeps `align-self: stretch`, so
-a short result fills the row rather than leaving a gap inside the grid under it.
+the grid it was already in — two rows instead of three, and it spans them all,
+so its travel is unchanged. Ports is inside that grid, in the first column
+only: it was a sibling of the grid for a while, and came back into the content
+column so that the rail shares no horizontal band with it (see below). At
+1000px `.output` keeps `align-self: stretch`, so a short result fills the row
+rather than leaving a gap inside the grid under it.
 
 `checkRunnerLayout` measures nine widths now — 320, 390, 768, 999, 1000, 1280,
 1439, 1440 and 1920 — and the two new sides of the breakpoint assert the three
@@ -3326,9 +3377,11 @@ blocks are. Stated that way it costs nothing to keep the footnotes inside the
 grid — which is where the space is, because a tall options rail leaves several
 hundred pixels of nothing beside a short input.
 
-So Ports and the route's Privacy panel are one stack in the content column now,
-and the rule is asserted from both ends: `ToolRunner.layout.test.tsx` checks the
-stack is declared into column 1 and never into the rail's or across it, and
+So Ports is in the content column now — with the route's Privacy panel beneath
+it when this was written, until that panel [left tool
+pages](#the-footnote-that-was-the-tallest-thing-in-the-column) — and the rule
+is asserted from both ends: `ToolRunner.layout.test.tsx` checks the stack is
+declared into column 1 and never into the rail's or across it, and
 `checkRunnerLayout` measures that the rail overlaps no section at rest, **with
 the page scrolled to its foot** — the state the 52px overlap appeared in and the
 one "at rest" cannot see — and beside a 2400px options panel at six scroll
@@ -3409,7 +3462,7 @@ the reserved height had put it below. Two mechanisms, the second compensating
 for the first.
 
 **Both are gone. The grid is as tall as its tallest column and no taller**, and
-`checkRunnerLayout` asserts exactly that at seven widths, along with the options
+`checkRunnerLayout` asserts exactly that at nine widths, along with the options
 scroller being exactly its content whenever the options fit.
 
 **The consequence is that Run moves again, and that is the trade.** The rail is
@@ -3633,11 +3686,13 @@ arithmetic, because jsdom can see an attribute and cannot see a height;
 `checkRunnerLayout` holds the height.
 
 **An output port is named only where the name distinguishes something.** Base64
-declares its single output as "Output", under a panel heading that says
-"Output" — two labels for one value, and the same duplication on five of the
-nine tools. The input editors already followed this rule. Colour and diff
-declare two outputs each and keep their labels, because there the name is the
-only thing telling the swatch from the converted string. Nothing is lost by
+declared its single output as "Output", under a panel heading that says
+"Output" — two labels for one value, and when this was written the same
+duplication sat on five of the nine tools. The input editors already followed
+this rule. Since then every tool but `hash` has come to declare more than
+one output, a `report` on most of them, so the rule now drops one label on one of ten: hash's
+"Digest". A tool with two or more outputs keeps their labels, because there
+the name is the only thing telling the swatch from the converted string. Nothing is lost by
 dropping the rest: the Ports footnote names every port on the page, and the
 accessible name of the output box is built from the port label whether or not it
 is drawn above it.
@@ -3779,8 +3834,9 @@ output port.
 The example used to be `base64 → regex`, and the [port
 audit](#the-port-set) took it away: every port that reads a document accepts
 `bytes` now, so the only ports left that can refuse a value at runtime are the
-two that take a short literal — a compact token and a colour. That is the
-shape to expect. The static check is loose where a tool can genuinely read
+two that take a short literal — a compact token and a colour — and the two that
+take only a media file, image and video, which refuse the `text` half of a
+union like base64's. That is the shape to expect. The static check is loose where a tool can genuinely read
 several kinds of value and tight where it cannot, so a runtime refusal is
 increasingly a sign that somebody wired a picture into a colour box rather than
 a hazard of the model.
@@ -4015,13 +4071,14 @@ node that plainly succeeded.
 
 Timers under 100 ms are left alone so Playwright's own injected polling keeps
 working; every deadline this is about is far above that — 2 s for regex, 15 s
-for base64, 500 ms for the re-run debounce. A genuinely hidden tab is two
+for base64, 300 ms for the re-run debounce (`RERUN_DEBOUNCE_MS`). A genuinely hidden tab is two
 minutes of manual work: see
 [manual-checks.md](manual-checks.md#3-a-backgrounded-tab).
 
 **The two engines disagree about catastrophic backtracking**, which matters for
 any test that wants to wedge a worker on purpose. SpiderMonkey runs until it
-exhausts its stack — about seven seconds — and throws. JavaScriptCore bounds
+exhausts its stack — about seven seconds when first measured, about five on the
+wide pattern below — and throws. JavaScriptCore bounds
 the backtracking **count**, not the time, and gives up quietly: under a second
 for the familiar `(a+)+$`, and around two for `(a*)*(b*)*c`. A check that
 assumes the Firefox behaviour passes in WebKit while proving nothing.
@@ -4033,9 +4090,18 @@ up at about the same moment — so `(a*)*(b*)*c` over 40 characters sat within a
 few hundred milliseconds of the regex tool's 2s deadline and drifted onto the
 wrong side of it, reporting `ok` for a node that was supposed to wedge. What
 raises the cost is making each backtrack step more expensive, so the pattern
-`scripts/cross-browser-check.mjs` uses now alternates over the whole lower-case
-alphabet: about 6.8s in WebKit and 7.0s in Firefox, better than three times the
-deadline in both.
+`scripts/cross-browser-check.mjs` uses alternates over a wide set of branches.
+It first alternated over the lower-case alphabet, 26 branches, measured at
+about 6.8s in WebKit and 7.0s in Firefox. That did not last: the same 26
+branches were down to 1.5s in JavaScriptCore by the time it was measured again,
+under the deadline, so the node meant to wedge reported `ok`. The width is the
+dial, and in JavaScriptCore the cost is close to linear in it. `WEDGE_BRANCHES`
+is 138 now — both cases of the alphabet, the digits, sixteen punctuation marks
+and sixty two-character branches — for about 9.0s in JavaScriptCore, 4.5 times
+the deadline. SpiderMonkey throws on stack exhaustion at about 5s at every
+width past 52, so it is the tighter margin, at 2.5 times, and widening does
+nothing for it. A faster engine is what breaks this, and the number to raise
+when it does is the width.
 
 ### What was looked at and found sound
 
@@ -4212,14 +4278,26 @@ Five Zustand stores, split by what invalidates them:
 | `viewportStore`   | pan and zoom                             | no                                        |
 | `pipelineStore`   | per-node run status and results          | no                                        |
 | `attachmentStore` | the bytes behind each node's file inputs | no                                        |
-| `themeStore`      | selection, authored themes, draft        | `patchbay:theme:v1`, `patchbay:themes:v1` |
+| `useThemeStore`   | selection, authored themes, draft        | `patchbay:theme:v1`, `patchbay:themes:v1` |
 
-One more key belongs to no store: `patchbay:inspector:v1`, a single boolean for
-whether the inspector is showing. It is read in a `useState` initialiser rather
-than through a store because it is needed for the first render — an effect would
-paint one frame of the wrong state, and here that frame would also start the
-enter animation on a panel that was supposed to be simply present. See
-[the node inspector](#the-node-inspector) for why it persists at all.
+Three more keys belong to no store:
+
+- `patchbay:inspector:v1`, a single boolean for whether the inspector is
+  showing. `Canvas.tsx` reads it through `loadInspectorOpen` in a `useState`
+  initialiser rather than through a store because it is needed for the first
+  render — an effect would paint one frame of the wrong state, and here that
+  frame would also start the enter animation on a panel that was supposed to be
+  simply present. See [the node inspector](#the-node-inspector) for why it
+  persists at all.
+- `patchbay:option-notes:v1`, whether an option's description is painted under
+  its label. `optionNotes.ts` reads it on first use and serves it through
+  `useSyncExternalStore` to `OptionsPanel`, on a tool page and in the inspector
+  alike. One boolean, like the inspector's, and for the same reason no schema:
+  anything unreadable means the default, which is off.
+- `patchbay:cold-open:v1`, that the introduction has been read. `coldOpen.ts`
+  writes it when the panel comes down; what reads it is the inline script in
+  `index.html`, in the parse, before any module exists — which is why
+  `coldOpen.test.ts` holds that script's literal to the constant.
 
 `attachmentStore` is not persisted for the same reason `pipelineStore` is not
 part of the document — plus one of its own: a `File` cannot be serialised into
@@ -4233,11 +4311,22 @@ on a reload.
 than a callback because a message must survive React's batching, and it is
 bounded because a tab can stay open for days.
 
-`themeStore` is the one that reads storage at MODULE LOAD rather than in an
+`useThemeStore` is the one that reads storage at MODULE LOAD rather than in an
 effect: the first paint has to already be wearing the right theme, and an
 effect running afterwards would show one frame of the wrong one. That is also
 why its reader is hand-written rather than Zod — it is in the initial payload.
 See [theming.md](theming.md).
+
+The frame before the module is the theme bootstrap's, the inline script in
+`index.html`: it puts the stored theme on the document before first paint — a
+preset by its name, a custom theme by its base (`data-theme`) **and** its
+`--pb-*` overrides, behind the same hex gate `applyTheme` uses. A custom theme
+is looked up in `patchbay:themes:v1` and then in the legacy place beside the
+selection. Until round seventeen only the legacy place was read, although the
+theme editor had moved the library to its own key, so every custom theme's
+first frame was the system preset and it flashed to itself when the app
+loaded. `checkColdOpen` now reads the first frame for a custom theme, base and
+overrides, and was red against the old script in both engines.
 
 Its `draftTheme` is the theme currently being edited. It outranks the selection
 on screen and is never persisted, because it is what the page is showing rather
@@ -4393,8 +4482,8 @@ reader looking for what was special about the ten.
 **The fix is shape, not cleverness.** The wrapper assigns `window.__clipboard`
 exactly once and only when the outcome is known, so a non-null read is always a
 settled read and `refusal` can never mean "not yet". The harness waits for it
-with `waitForFunction` — which is what the image-jump check forty lines away in
-the same file already did — instead of reading on the way past. The wait has a
+with `waitForFunction` — which is what the image-jump check some two thousand lines
+further down the same file already did — instead of reading on the way past. The wait has a
 timeout rather than being unbounded, because "the copy button never reaches the
 clipboard API" is a real defect this check must still be able to fail on; it now
 fails as one named line instead of as eight assertions about an empty string.
@@ -4476,17 +4565,27 @@ has no X" — and a harness claim goes stale silently: the browser gains the
 feature, the skip keeps printing, and nothing restores the coverage it was
 standing in for.
 
-So each was put to the engines directly rather than taken from the text beside
-it. Playwright 1.63, Firefox 155 and WebKit 26.6:
+The nine were the skip lines a full run printed, not call sites: six `skip(`
+calls, three of them reached in both engines and three in WebKit only. The
+first six rows below are those six, and were audited. The harness has eight
+`skip(` call sites now; the last two rows were added after the audit and were
+not put to it. A full run on an idle machine prints ten — the three
+both-engine skips twice, and four in WebKit only — and one more in either
+engine when the machine is too loaded to sample the inspector's slide.
 
-| Skip                                 | Engines | Claim                               | Measured                                                                                                                                                                                                                                                     |
-| ------------------------------------ | ------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Reloading with the network off       | WebKit  | the driver cannot navigate offline  | Confirmed: `page.reload` throws "WebKit encountered an internal error". Firefox does it, and does not skip.                                                                                                                                                  |
-| A real on-screen keyboard            | both    | neither engine can open one         | Confirmed by construction. The geometry is produced instead, by shadowing `visualViewport`.                                                                                                                                                                  |
-| A genuinely hidden tab               | both    | `visibilityState` stays `visible`   | Confirmed: with a second page fronted, both engines still report `visible` on the first.                                                                                                                                                                     |
-| Pasting into Word, Docs and Outlook  | both    | no harness can open them            | Confirmed by construction.                                                                                                                                                                                                                                   |
-| A two-flavour `ClipboardItem`        | WebKit  | this build refuses the write        | Confirmed: `NotAllowedError`, from a real click on a secure origin. **And the suggested way out is not available** — Playwright's `grantPermissions` does not know `clipboard-write` for either engine and throws on the context. Firefox accepts the write. |
-| The worker path for image conversion | WebKit  | this build has no `OffscreenCanvas` | Confirmed: `typeof OffscreenCanvas` is `undefined`, in the page and in a worker. **Converted, in part** — see below.                                                                                                                                         |
+So each of the six was put to the engines directly rather than taken from the
+text beside it. Playwright 1.63, Firefox 155 and WebKit 26.6:
+
+| Skip                                           | Engines | Claim                                                | Measured                                                                                                                                                                                                                                                     |
+| ---------------------------------------------- | ------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Reloading with the network off                 | WebKit  | the driver cannot navigate offline                   | Confirmed: `page.reload` throws "WebKit encountered an internal error". Firefox does it, and does not skip.                                                                                                                                                  |
+| A real on-screen keyboard                      | both    | neither engine can open one                          | Confirmed by construction. The geometry is produced instead, by shadowing `visualViewport`.                                                                                                                                                                  |
+| A genuinely hidden tab                         | both    | `visibilityState` stays `visible`                    | Confirmed: with a second page fronted, both engines still report `visible` on the first.                                                                                                                                                                     |
+| Pasting into Word, Docs and Outlook            | both    | no harness can open them                             | Confirmed by construction.                                                                                                                                                                                                                                   |
+| A two-flavour `ClipboardItem`                  | WebKit  | this build refuses the write                         | Confirmed: `NotAllowedError`, from a real click on a secure origin. **And the suggested way out is not available** — Playwright's `grantPermissions` does not know `clipboard-write` for either engine and throws on the context. Firefox accepts the write. |
+| The worker path for image conversion           | WebKit  | this build has no `OffscreenCanvas`                  | Confirmed: `typeof OffscreenCanvas` is `undefined`, in the page and in a worker. **Converted, in part** — see below.                                                                                                                                         |
+| A real decoder playing the video tool's file   | WebKit  | this engine will not play the source clip either     | Added after the audit, not measured in it. It skips only when the engine refuses the source clip, so it cannot judge ours; Gecko plays it.                                                                                                                   |
+| The inspector caught part way across its slide | either  | the machine was too loaded to sample the 150ms slide | Added after the audit. Not an engine claim: it skips only when the first frame lands more than 150ms after the keystroke.                                                                                                                                    |
 
 **Eight of the nine are genuinely unavoidable**, and what each leaves untested
 is now stated in the skip's own text rather than left to be inferred.
@@ -4699,7 +4798,7 @@ The question was only how to stop the refusals.
 | Nonces                                                               | the same                                                                                                                       | nothing, if the nonce is per response                                                                                                                                                                                                                                                                                                                                                                                      | a per-request edge function on a site with no server, and a nonce that has to agree with a document the service worker caches. A fixed nonce is `'unsafe-inline'` with a password printed in the page | yes                                                     |
 | Hashes only                                                          | —                                                                                                                              | exact byte sequences                                                                                                                                                                                                                                                                                                                                                                                                       | cannot work for the scroll lock: its text carries the measured scrollbar width (0 on overlay scrollbars, 15 or 17 on Windows, other values under zoom) and the body's margins                         | the scrollbar rule only                                 |
 | Style the popover so it needs no inline positioning                  | —                                                                                                                              | —                                                                                                                                                                                                                                                                                                                                                                                                                          | the premise is false: positioning was never refused                                                                                                                                                   | —                                                       |
-| Replace the component — a native `<select>`                          | the OS's list instead of the instrument panel's, on every desktop; the native picker on phones, which is arguably better there | nothing                                                                                                                                                                                                                                                                                                                                                                                                                    | eight call sites, the open-list design, and typeahead and keyboard behaviour handed to the platform                                                                                                   | Select only; Tooltip and Toast are untouched either way |
+| Replace the component — a native `<select>`                          | the OS's list instead of the instrument panel's, on every desktop; the native picker on phones, which is arguably better there | nothing                                                                                                                                                                                                                                                                                                                                                                                                                    | five call sites in four files, the open-list design, and typeahead and keyboard behaviour handed to the platform                                                                                      | Select only; Tooltip and Toast are untouched either way |
 | **Hash the fixed rule; build the scroll lock on the CSSOM** (chosen) | the library behaviour as designed, plus scroll buttons on a list that does not fit                                             | two more byte sequences: one fixed rule, and the empty string, which styles nothing                                                                                                                                                                                                                                                                                                                                        | an alias to a small module with the package's three exports, and a build step that reads the rule out of the installed package                                                                        | every Radix component in the app — measured, below      |
 
 **Why the chosen one, and not the one-token one.** The trade stated for this
@@ -4732,8 +4831,10 @@ would then have ended at its last visible row with nothing to say it goes on.
 
 #### What looking at every Radix component found
 
-Select in all three places it lives (the index, a tool page's options, the
-canvas inspector's bottom sheet), Tabs, Tooltip and Toast, at phone widths,
+Select in the three places a reader meets it (the index, a tool page's options,
+the canvas inspector's bottom sheet) and on the styleguide — not in the theme
+editor, which holds the other two of its five call sites and which
+`checkPopovers` does not open — Tabs, Tooltip and Toast, at phone widths,
 with a refusal recorder on for the page's whole life. Only Select refused
 anything. But the Tooltip was **off screen**: `side="right"` on a 320px screen
 drew a 240px box at x = −40 in both engines. Floating UI shifts a side-placed

@@ -1,10 +1,13 @@
 /**
  * The canvas keyboard map, in one place.
  *
- * This array is the single source for the `?` overlay, the canvas's own
- * hidden description, and the README. If a binding is not listed here it does
- * not exist, and if it is listed here the overlay shows it - so the reference
- * cannot drift away from the behaviour.
+ * This array is the single source for the `?` overlay and the canvas's own
+ * hidden description. It is NOT what binds the keys - `Canvas.tsx` does that,
+ * in a switch - so the two can disagree, and did: until round seventeen this
+ * comment said "if a binding is not listed here it does not exist" while
+ * `Ctrl+Y` redid and `Backspace` deleted from outside it.
+ * `shortcuts.bindings.test.tsx` now presses every key on a real canvas and
+ * holds this list to what was taken, both ways.
  */
 export interface Shortcut {
   readonly keys: readonly string[];
@@ -40,8 +43,10 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: ['Ctrl', 'A'], action: 'Select every node', group: 'Editing' },
   { keys: ['Ctrl', 'D'], action: 'Duplicate the selection', group: 'Editing' },
   { keys: ['Delete'], action: 'Delete the selection', group: 'Editing' },
+  { keys: ['Backspace'], action: 'Delete the selection', group: 'Editing' },
   { keys: ['Ctrl', 'Z'], action: 'Undo', group: 'Editing' },
   { keys: ['Ctrl', 'Shift', 'Z'], action: 'Redo', group: 'Editing' },
+  { keys: ['Ctrl', 'Y'], action: 'Redo', group: 'Editing' },
 
   { keys: ['K'], action: 'Open the tool palette', group: 'Building' },
   {

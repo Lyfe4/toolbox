@@ -41,11 +41,9 @@ export function span(name: string, startTime: number, duration: number): void {
   }
 }
 
-/** Reads back the spans this module recorded. Used by the perf harness. */
-export function spans(name?: string): readonly PerformanceEntry[] {
-  if (typeof performance === 'undefined') return [];
-
-  const all = performance.getEntriesByType('measure');
-  const wanted = name === undefined ? PREFIX : `${PREFIX}${name}`;
-  return all.filter((entry) => entry.name.startsWith(wanted));
-}
+/*
+ * There is no reader here. One sat in this spot from the first commit that
+ * wrote the module, "Used by the perf harness", and nothing ever called it:
+ * the harness reads `performance.getEntriesByType('measure')` itself.
+ * Removed in round seventeen, when the documentation audit read the comment.
+ */

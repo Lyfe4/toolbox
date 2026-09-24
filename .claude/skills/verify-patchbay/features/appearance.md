@@ -6,12 +6,12 @@ Patchbay ships four themes and a theme editor, all hosted on `/styleguide` along
 
 - `preset` — four built-in themes: Graphite (dark/amber), Vellum (light/vermilion), Phosphor (dark/green), Blueprint (dark/cyan).
 - `system` — the default option, which follows the OS light/dark preference.
-- `persistence` — the choice is written to `localStorage` under `patchbay:theme:v1` and restored on load.
-- `editor` — build a custom theme: `Create theme`, then the seven token-group tabs (`Surfaces`, `Ink`, `Borders`, `Accent`, `Controls`, `Signal`, `Focus`) and their fields.
+- `persistence` — the choice is written to `localStorage` under `patchbay:theme:v1` and restored on load; the custom themes themselves are a library under `patchbay:themes:v1`.
+- `editor` — build a custom theme: `Create theme`, then the seven token-group tabs (`Surfaces`, `Ink`, `Borders`, `Accent`, `Controls`, `Signal states`, `Focus and selection`) and their fields.
 - `contrast-report` — the editor reports which token pairs fail WCAG AA.
 - `live-preview` — a switch that applies the draft as you edit it.
 - `styleguide` — the component reference the themes are demonstrated on.
-- `no-flash` — an inline bootstrap script in `index.html` applies the stored theme before first paint.
+- `no-flash` — an inline bootstrap script in `index.html` applies the stored theme before first paint — for a custom theme, its base and its overrides, read from `patchbay:themes:v1`.
 
 ## How to get to it (user POV)
 

@@ -83,7 +83,7 @@ theme its author never designed. Never apply a partially valid theme.
 neither can quietly become the other.
 
 There is a bundle argument underneath as well. The startup reader is in the
-initial payload; Zod is 87 kB raw, measured, against 52 kB of remaining budget.
+initial payload; Zod is 87 kB raw, measured, against 52 kB of remaining budget. <!-- unverified: a one-off measurement, and the budget moves -->
 It would not fit, and it would mean every visitor downloading a validation
 library to answer a question three `typeof` checks answer. But the two would
 still be separate functions if Zod were free, because they are not being asked
@@ -188,9 +188,10 @@ that you can always get out:
 Pipelines are shareable by link. Themes are not, and the recommendation is to
 leave it that way for now.
 
-**It would work.** A theme is 36 short colours; the existing share machinery —
-bounded parameter, versioned payload, deflate, schema — would carry one in a
-few hundred characters, and `themeFile.ts` already has the validator.
+**It would work.** A theme is at most 38 short colours, one per entry of
+`THEMED_TOKENS`; the existing share machinery — bounded parameter, versioned
+payload, deflate, schema — would carry one in a few hundred characters, and
+`themeFile.ts` already has the validator.
 
 **The value is low.** Themes are personal in a way pipelines are not. A
 pipeline link is how you show somebody a problem; a theme is how you like your

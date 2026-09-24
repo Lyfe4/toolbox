@@ -20,7 +20,7 @@
  * |                 |          |          | `output`, which makes "the first   |
  * |                 |          |          | port is the tool's answer" a       |
  * |                 |          |          | structural fact instead of a       |
- * |                 |          |          | per-tool lookup. `registry.test`   |
+ * |                 |          |          | per-tool lookup. `ports.test.ts`   |
  * |                 |          |          | asserts it for every tool.         |
  * | `image-convert` | `info`   | `report` | The port declares                  |
  * |                 |          |          | `presentation: 'report'` and is    |

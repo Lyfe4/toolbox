@@ -139,11 +139,23 @@ describe('Converted against Rendered HTML', () => {
    * targets where it differs is the ports-that-come-and-go model the type
    * system rejected on purpose.
    */
-  it('is the same string for a markdown source with an html target', async () => {
-    const { output, rendered } = await run(text('# Title\n\nBody with *emphasis*.\n'), {
-      source: 'markdown',
-      target: 'html',
-    });
+  /*
+   * THREE COMBINATIONS, NOT ONE. The port's description said "identical when
+   * Markdown becomes HTML" and this file checked one of the two HTML targets;
+   * the documentation audit of round seventeen probed all eight and found a
+   * third - an HTML source to HTML (sanitised), where `output` is the
+   * sanitiser's answer and so is `rendered`.
+   */
+  it.each<[TextConvertOptions['source'], TextConvertOptions['target']]>([
+    ['markdown', 'html'],
+    ['markdown', 'html-sanitised'],
+    ['html', 'html-sanitised'],
+  ])('is the same string for a %s source with a %s target', async (source, target) => {
+    const document =
+      source === 'markdown'
+        ? '# Title\n\nBody with *emphasis*.\n'
+        : '<h1>Title</h1><div><p>Body</p></div>';
+    const { output, rendered } = await run(text(document), { source, target });
 
     expect(rendered).toBe(output);
   });

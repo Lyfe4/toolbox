@@ -57,7 +57,7 @@ export function ToolsIndexPage() {
       </header>
 
       <div className={styles.filters}>
-        <Field label="Search" description="Matches names, summaries and keywords.">
+        <Field label="Search" description="Matches names, summaries, categories and keywords.">
           {(control) => (
             <TextInput
               {...control}

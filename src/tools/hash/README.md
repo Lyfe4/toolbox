@@ -28,7 +28,8 @@ first output `output`, and a node summarises its first declared output on the
 grounds that "the first port is the tool's answer" — a rule that was a per-tool
 lookup while one tool spelled it differently. The
 [port audit](../../../docs/architecture.md#the-port-set) renamed it and
-`registry.test.ts` now asserts the convention for every tool at once. The
+`ports.test.ts` now asserts the convention for every tool at once (this line
+said `registry.test.ts`, which checks each tool against its own entry). The
 LABEL is still Digest: the id is the wiring identity, the label is the human
 word for the value.
 
@@ -97,17 +98,21 @@ bytes, so applying the case option to it would silently corrupt the value.
 ## Edge cases handled
 
 - **Empty input** hashes correctly (`d41d8cd9…` for MD5, `e3b0c442…` for SHA-256).
-- **Block boundaries** — 55, 56, 63, 64 and 65-byte inputs are tested, because
-  56 is where MD5's padding has to spill into a second block.
+- **Block boundaries** — 55, 56, 57, 63, 64, 65, 119 and 120-byte inputs are
+  checked against `node:crypto`'s digests, because 56 is where MD5's padding
+  has to spill into a second block. Until round seventeen the test compared the
+  function with itself, so this line described a test that could not fail.
 - **Any chunking** gives the same digest as hashing the whole buffer; asserted
   as a property over arbitrary inputs and arbitrary chunk sizes.
 - **Text and bytes agree** — hashing the string "abc" and the UTF-8 bytes of
   "abc" produce the same digest.
 - **Inputs above 512 MB** still record the correct 64-bit length in the padding.
+  <!-- unverified: no test hashes half a gigabyte -->
 - **Reuse after digesting** throws rather than returning a wrong answer.
 
 ## Tests
 
-`hash.test.ts` covers the RFC 1321 vectors, published SHA-1/SHA-256 vectors,
-digest lengths, formatting, the broken-algorithm labelling, and a property test
+`hash.test.ts` covers the RFC 1321 vectors, MD5 at the block boundaries
+against `node:crypto`, FIPS 180-4's published examples for all four SHA
+algorithms, digest lengths, formatting, the broken-algorithm labelling, and a property test
 asserting that chunked and whole-buffer hashing always agree.

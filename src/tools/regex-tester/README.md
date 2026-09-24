@@ -18,7 +18,7 @@ half of the question. Most of this file is about the other half.
 - [The hazard, and the only defence that works](#the-hazard-and-the-only-defence-that-works)
 - [Warning before it is too late](#warning-before-it-is-too-late)
 - [Zero-length matches](#zero-length-matches)
-- [The four numbers, and why each is what it is](#the-four-numbers-and-why-each-is-what-it-is)
+- [The five numbers, and why each is what it is](#the-five-numbers-and-why-each-is-what-it-is)
 - [When a pattern will not compile](#when-a-pattern-will-not-compile)
 - [When a pattern found nothing](#when-a-pattern-found-nothing)
 - [Flags](#flags)
@@ -99,8 +99,9 @@ directions"_ in as many words, because a heuristic sold as a guarantee is worse
 than no heuristic.
 
 The check is deliberately quiet on ordinary work — there is a test that runs it
-over an email pattern, an IPv4 pattern, an HTML-scraping pattern, a log pattern
-and a lookahead-based password rule and asserts it says nothing. A warning that
+over an email pattern, an IPv4 pattern, an HTML-scraping pattern, a
+`key=value` pattern, a log pattern and a lookahead-based password rule and
+asserts it says nothing. A warning that
 fires on an email pattern is a warning nobody reads.
 
 ## Zero-length matches
@@ -137,7 +138,7 @@ a note appears when every match is empty. That note distinguishes a pattern that
 _could_ have consumed something and did not (`x*` — probably meant `+`, a
 warning) from one made only of anchors (`^` under `m` — exactly right, a note).
 
-## The four numbers, and why each is what it is
+## The five numbers, and why each is what it is
 
 | Bound                   | Value    | What it caps                                      |
 | ----------------------- | -------- | ------------------------------------------------- |
@@ -276,7 +277,7 @@ advice worthless is to give it every time.
 
 **Two of those notes used to describe the listing and call it the run.** The
 count and the listing are deliberately separate numbers — that split is the
-whole of [the four numbers](#the-four-numbers-and-why-each-is-what-it-is) — but
+whole of [the five numbers](#the-five-numbers-and-why-each-is-what-it-is) — but
 the notes were computed over `report.matches`, which stops at the cap, and
 phrased as facts about every match found:
 

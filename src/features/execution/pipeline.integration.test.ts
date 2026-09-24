@@ -39,7 +39,7 @@ function makeEngine() {
  * Every node in this file is fed by typed text or by a wire, so none of them
  * has a file - and spelling `fileInputs: {}` out twenty times would say
  * nothing except that the field exists. The tests that are ABOUT a file input
- * set it deliberately; see `attachments.test.ts`.
+ * set it deliberately; see `attachments.test.tsx`.
  */
 function graphFrom(
   nodes: readonly (Omit<CanvasNode, 'fileInputs'> & Partial<Pick<CanvasNode, 'fileInputs'>>)[],

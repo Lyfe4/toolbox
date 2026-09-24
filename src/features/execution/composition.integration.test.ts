@@ -448,9 +448,9 @@ describe('type boundaries between tools', () => {
           { source: 'auto', target: 'yaml', indent: 2 },
           { input: '{"a":1}' },
         ),
-        // diff is the only consumer that accepts text AND json, so it is the
-        // only place the two ports can be compared without a type refusal
-        // getting in the way first.
+        // diff is the only consumer with TWO inputs that each accept text and
+        // json, so it is the one place the two ports can be compared side by
+        // side without a type refusal getting in the way first.
         node('fromText', 'diff', {}, { changed: 'nothing' }),
         node('fromJson', 'diff', {}, { changed: 'nothing' }),
       ],

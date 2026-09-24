@@ -35,13 +35,27 @@ describe('MD5', () => {
     expect(hex(md5(textToBytes(input)))).toBe(expected);
   });
 
-  it('handles a message that lands exactly on a block boundary', () => {
-    // 56 bytes is the worst case: padding must spill into a second block.
-    for (const length of [55, 56, 57, 63, 64, 65, 119, 120]) {
-      const bytes = new Uint8Array(length).fill(0x61);
-      expect(hex(md5(bytes))).toBe(hex(md5(bytes)));
-      expect(hex(md5(bytes))).toHaveLength(32);
-    }
+  /*
+   * 56 bytes is the worst case: padding must spill into a second block. Until
+   * round seventeen this compared md5 with itself and checked the length, so a
+   * wrong digest at every boundary passed - the README said these lengths were
+   * "tested". The expected digests are another implementation's, run as an
+   * oracle and pasted in:
+   *
+   *   node -e "const c=require('crypto');for(const n of [55,56,57,63,64,65,119,120])
+   *     console.log(n,c.createHash('md5').update('a'.repeat(n)).digest('hex'))"
+   */
+  it.each([
+    [55, 'ef1772b6dff9a122358552954ad0df65'],
+    [56, '3b0c8ac703f828b04c6c197006d17218'],
+    [57, '652b906d60af96844ebd21b674f35e93'],
+    [63, 'b06521f39153d618550606be297466d5'],
+    [64, '014842d480b571495a4a0363793f7367'],
+    [65, 'c743a45e0d2e6a95cb859adae0248435'],
+    [119, '8a7bd0732ed6a28ce75f6dabc90e1613'],
+    [120, '5f61c0ccad4cac44c75ff505e1f1e537'],
+  ])('agrees with node:crypto on %i bytes, either side of a block boundary', (length, expected) => {
+    expect(hex(md5(new Uint8Array(length).fill(0x61)))).toBe(expected);
   });
 
   it('gives the same digest whether fed whole or in chunks', () => {
@@ -104,12 +118,18 @@ describe('SHA family via WebCrypto', () => {
    *
    * `sha-384` and `sha-512` were checked for producing 48 and 64 bytes, which
    * every wrong answer of the right size satisfies. These are the published
-   * digests for the empty message and for "abc", plus the 448-bit message the
-   * standard uses to exercise the second block.
+   * digests for the empty message and for "abc", plus - for SHA-1 and SHA-256 -
+   * the 448-bit message, and for SHA-384 and SHA-512 the 896-bit one, which is
+   * what the standard uses to exercise their second block. Until round
+   * seventeen this comment claimed the long message for all four and the two
+   * wider ones had none.
    *
    * https://csrc.nist.gov/projects/cryptographic-standards-and-guidelines/example-values
    */
   const LONGER = 'abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq';
+  /** FIPS 180-4's 896-bit message, for the two members with a 1024-bit block. */
+  const LONGEST =
+    'abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu';
 
   it.each([
     [
@@ -131,6 +151,16 @@ describe('SHA family via WebCrypto', () => {
       'sha-512',
       'abc',
       'ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f',
+    ],
+    [
+      'sha-384',
+      LONGEST,
+      '09330c33f71147e83d192fc782cd1b4753111b173b3b05d22fa08086e3b0f712fcc7c71a557e2db966c3e9fa91746039',
+    ],
+    [
+      'sha-512',
+      LONGEST,
+      '8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909',
     ],
     ['sha-256', LONGER, '248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1'],
     ['sha-1', LONGER, '84983e441c3bd26ebaae4aa1f95129e5e54670f1'],

@@ -108,13 +108,15 @@
  */
 @media (min-width: 1000px) {
   /*
-   * TWO COLUMNS, TWO ROWS, AND NOTHING ELSE IN HERE.
+   * TWO COLUMNS, AND NOTHING IN THE RAIL'S BUT THE RAIL.
    *
    * Ports used to be a third row of this grid, spanning both columns. That is
-   * what let the rail paint over it: see the note on `.controls` below. It is
-   * a sibling of this grid now, in the page's own flow, so the only things
-   * inside the rail's containing block are the two content rows it travels
-   * beside.
+   * what let the rail paint over it: see the note on `.controls` below. It
+   * left the grid for a while, and is back in it now in the content column
+   * only - row three, column one, see `.notes` and the third track on
+   * `.layout` - so the rail shares no horizontal band with it however far it
+   * travels. This paragraph said "a sibling of this grid now" for a round
+   * after that stopped being true.
    *
    * `min-content minmax(0, 1fr)` RATHER THAN TWO AUTO ROWS, and the difference
    * is visible. The rail spans both rows, so its height is distributed across
@@ -316,8 +318,10 @@
  * round number clear of it. Everything above 1440 goes to the output, which is
  * the same decision the single breakpoint made and the same place it sends it.
  *
- * ONE ROW, so the rail's containing block is the grid it already was and its
- * travel is unchanged. `align-items: start` on `.layout` still gives the input
+ * TWO ROWS, the content and the Ports footnote under the input, with the rail
+ * spanning both - so the rail's containing block is the grid it already was
+ * and its travel is unchanged. (This said "one row" for a round after Ports
+ * came back into the grid.) `align-items: start` on `.layout` still gives the input
  * and the rail their content heights; `.output` keeps `align-self: stretch` so
  * a short result fills the row rather than leaving a gap under it inside the
  * grid.
@@ -368,7 +372,7 @@
    *
    * In three columns there is no enclosed surplus. The panels are siblings in
    * one row and whatever is left is simply the end of a shorter column, with
-   * the full-width Ports panel below all three. So stretching here buys
+   * the Ports footnote under the input in the first column. So stretching here buys
    * nothing and costs the thing this page already decided once: the Output
    * panel would be sized by HOW MANY OPTIONS THE TOOL DECLARES. Measured on
    * the shipped build at 1920, idle: text-convert draws eight fields, so its

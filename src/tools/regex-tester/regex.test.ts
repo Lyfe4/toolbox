@@ -2,7 +2,8 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import { getManifestEntry } from '@/features/registry';
-import type { ToolRunContext } from '@/features/registry/types';
+import { bytesValue, type ToolRunContext, type ToolValue } from '@/features/registry/types';
+import type { Bytes } from '@/lib/binary';
 
 import regexTool from './index';
 import { flagsFor, regexDefaultOptions, regexOptionsSchema, type RegexOptions } from './options';
@@ -732,6 +733,40 @@ describe('the tool', () => {
     const matches = result.value.matches;
     if (matches?.type !== 'json') throw new Error('expected a JSON report');
     expect(matches.data).toMatchObject({ pattern: 'z+', flags: 'gi', count: 0 });
+  });
+
+  describe('a byte order mark on a dropped file', () => {
+    const MARK = [0xef, 0xbb, 0xbf];
+    const bytesOf = (text: string, mark: boolean): Bytes =>
+      new Uint8Array([...(mark ? MARK : []), ...new TextEncoder().encode(text)]);
+    const notesOf = async (input: ToolValue): Promise<readonly string[]> => {
+      const result = await regexTool.run({
+        inputs: { input },
+        options: { ...regexDefaultOptions, pattern: '^name' },
+        context,
+      });
+      if (!result.ok) throw new Error('expected a result');
+      const matches = result.value.matches;
+      if (matches?.type !== 'json') throw new Error('expected a JSON report');
+      const notes = (matches.data as { notes: readonly { title: string }[] }).notes;
+      return notes.map((note) => note.title);
+    };
+
+    it('says the decoder removed it, as every other document port does', async () => {
+      const titles = await notesOf(bytesValue(bytesOf('name,age', true)));
+      expect(titles).toContain('A byte order mark was removed');
+      // And it WAS removed: the anchored pattern matched, so nothing explains a miss.
+      expect(titles.join(' ')).not.toContain('begins with a byte order mark');
+    });
+
+    it('says nothing of the kind for a file without one, or for typed text', async () => {
+      const plain = await notesOf(bytesValue(bytesOf('name,age', false)));
+      const typed = await notesOf({ type: 'text', text: '﻿name,age' });
+      expect(plain).not.toContain('A byte order mark was removed');
+      expect(typed).not.toContain('A byte order mark was removed');
+      // Typed, the mark is still there, in front of position 0 - the other note.
+      expect(typed.join(' ')).toContain('begins with a byte order mark');
+    });
   });
 
   it('never throws, whatever pattern and subject it is given', async () => {

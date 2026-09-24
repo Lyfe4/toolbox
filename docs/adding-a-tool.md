@@ -123,9 +123,10 @@ export default erased;
 
 ### The rules the port set holds itself to
 
-`ports.test.ts` asserts all of these for every tool at once, so a new tool that
-breaks one fails the suite rather than the reviewer's memory. The reasoning for
-each is in
+`ports.test.ts` asserts most of these for every tool at once, so a new tool that
+breaks one fails the suite rather than the reviewer's memory; the two that it
+holds only for a named list are marked. (This paragraph used to say all of
+them, for every tool.) The reasoning for each is in
 [architecture.md](architecture.md#the-conventions-and-what-each-one-is-worth).
 
 - **The first output is `output`.** A node summarises its first declared output
@@ -137,6 +138,10 @@ each is in
   writes its answer out from a value it also puts on another port, name that
   port with `measuredBy` and the node prints its summary instead. See
   [architecture.md](architecture.md#a-summary-that-could-not-tell-two-results-apart).
+  _Not generic:_ `ports.test.ts` checks that every `measuredBy` names a real,
+  text-only, unmeasured port, and pins the exact list of the three that declare
+  one — so adding one means editing that list, and leaving one out fails
+  nothing.
 - **One input is called `input`; several are each named.**
 - **Every port carries a description.** It is the only documentation of a port
   that reaches a person: an input's is its editor's placeholder — or, on a port
@@ -149,7 +154,9 @@ each is in
 - **A port that reads a document accepts `bytes` as well as `text`**, and
   decodes them through [`lib/text.ts`](../src/lib/text.ts) — strictly, so bytes
   that are not text say so instead of being processed as mojibake. A port that
-  takes a short literal (a token, a colour) does not.
+  takes a short literal (a token, a colour) does not. _Not generic:_ the
+  assertion names the six tools whose ports read a document, so a new one is
+  held to it only once it is added to that list.
 - **A data type earns its place when a port carries it.** Adding a member to
   `DATA_TYPES` for a tool you are about to write is fine; leaving one there for
   a tool nobody wrote is a permanent tax on every switch over `ToolValue`.
@@ -198,7 +205,10 @@ unit-tested without going near the registry.
     { id: 'input', label: 'Text', types: ['text'], required: true,
       description: 'The text to convert.' },
   ],
-  outputs: [{ id: 'output', label: 'Converted', types: ['text'] }],
+  outputs: [
+    { id: 'output', label: 'Converted', types: ['text'],
+      description: 'The text, in the chosen case.' },
+  ],
   execution: {
     strategy: 'main', requiresOffscreenCanvas: false,
     timeoutMs: 5_000, maxInputBytes: 2 * 1024 * 1024,
@@ -248,7 +258,7 @@ describe('convert', () => {
     ['hello world', 'upper', 'HELLO WORLD'],
     ['Hello World', 'snake', 'hello_world'],
     ['hello world', 'kebab', 'hello-world'],
-  ])('%s -> %s', (input, target, expected) => {
+  ] as const)('%s -> %s', (input, target, expected) => {
     expect(convert(input, target)).toBe(expected);
   });
 

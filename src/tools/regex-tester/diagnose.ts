@@ -345,10 +345,11 @@ function noMatchNotes(input: DiagnoseInput, parsed: ParsedPattern | null, notes:
    * first line than on every other one, and a pattern that works everywhere
    * else finds nothing here with no explanation at all.
    *
-   * It survives to be seen because a DROPPED FILE arrives as bytes and this
-   * tool's subject port decodes them, which removes a BOM - and a subject typed
-   * into the box keeps one. The two routes differ; whichever one the character
-   * came in by, this is where it gets named.
+   * Only a subject TYPED into the box can carry one here. A dropped file
+   * arrives as bytes, the port decodes them, and the decoder removes the mark -
+   * which `run` says in a note of its own, as every document port does. So the
+   * two routes get two different sentences: this one for a mark that is still
+   * in front of position 0, that one for a mark that was taken away.
    */
   if (input.subject.charCodeAt(0) === 0xfeff) {
     notes.push({

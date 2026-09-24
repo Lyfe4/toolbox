@@ -724,7 +724,7 @@ describe('RFC 7515’s JWT-shaped examples, end to end', () => {
    * A.4's signature is checkable and this tool declines to check it, because
    * `decodeToken` refuses the payload before `verifySignature` is ever called.
    * That is defensible for a tool called JWT - RFC 7519 requires a JSON payload
-   * - and it is the reason nine of the twelve algorithms are settled through
+   * - and it is the reason eight of the twelve algorithms are settled through
    * `verifySignature` above and cannot be settled through `run`. It is asserted
    * here so that a change to it is a failing test and a decision, rather than
    * something that quietly starts or stops happening.
@@ -1244,6 +1244,37 @@ describe('a numeric claim past 2^53', () => {
      */
     expect(payload !== undefined && isJsonObject(payload) ? payload.sub : null).toBe(
       12345678901234567000,
+    );
+  });
+
+  /*
+   * THE VERDICT HALF, which the test above is named for and did not check until
+   * round seventeen: it passed no key, so there was no verdict to compare. A
+   * token signed over the issuer's twenty digits verifies, with the rounding
+   * note beside it - the signature was checked over the bytes, not over what
+   * `JSON.parse` made of them.
+   */
+  it('verifies a genuine signature over a claim it had to round', async () => {
+    const signingInput = `${b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))}.${b64url('{"sub":12345678901234567890}')}`;
+    const token = `${signingInput}.${await signHs256(signingInput, 'topsecret')}`;
+    const result = await jwtTool.run({
+      inputs: { input: { type: 'text', text: token } },
+      options: { key: 'topsecret' },
+      context,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const output = result.value.output;
+    if (output?.type !== 'json' || !isJsonObject(output.data))
+      throw new Error('expected the decoded token');
+    const signature = output.data.signature;
+    expect(signature !== undefined && isJsonObject(signature) ? signature.state : null).toBe(
+      'verified',
+    );
+    const report = result.value.report;
+    expect(report?.type === 'json' ? JSON.stringify(report.data) : '').toContain(
+      'The claim at payload.sub was rounded',
     );
   });
 });

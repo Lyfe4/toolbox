@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { CUSTOM_THEME_STORAGE_KEY, isCanonicalColour } from '@/features/theme/customThemes';
+import { THEME_STORAGE_KEY } from '@/features/theme/storage';
+
 import { COLD_OPEN_ID, COLD_OPEN_START_ID, COLD_OPEN_STORAGE_KEY } from './coldOpen';
 import { snapToGrid } from './geometry';
 import { GRAPH_STORAGE_KEY } from './persistence';
@@ -190,6 +193,43 @@ describe('the inline bootstrap', () => {
 
   it('reads the dismissal flag under the key the app writes it to', () => {
     expect(indexHtml).toContain(`'${COLD_OPEN_STORAGE_KEY}'`);
+  });
+
+  /*
+   * THE THEME'S TWO KEYS. The bootstrap read custom themes from beside the
+   * selection for a whole round after the editor moved them to a key of their
+   * own, and nothing noticed, because nothing held the literal to the
+   * constant. This does; check:browsers holds what the script DOES with them.
+   */
+  it('reads the theme selection and the custom theme library under the keys the app writes them to', () => {
+    expect(indexHtml).toContain(`getItem('${THEME_STORAGE_KEY}')`);
+    expect(indexHtml).toContain(`getItem('${CUSTOM_THEME_STORAGE_KEY}')`);
+  });
+
+  it("holds a custom theme's overrides to the colour gate applyTheme keeps", () => {
+    const body =
+      [...indexHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+        .map((match) => match[1] ?? '')
+        .find((script) => script.includes(THEME_STORAGE_KEY)) ?? '';
+    expect(body).toContain("root.style.setProperty('--pb-' + token, value)");
+    // The script's colour test, read out of it and run beside isCanonicalColour.
+    const source = /\/(\^#\(\?:[^/]+\$)\/i/.exec(body)?.[1] ?? '';
+    const gate = new RegExp(source, 'i');
+    const values = [
+      '#abc',
+      '#abcd',
+      '#aabbcc',
+      '#aabbccdd',
+      '#ABC',
+      'red',
+      'url(x)',
+      '#ab',
+      '#abcde',
+      'var(--x)',
+      '',
+    ];
+    expect(values.map((value) => gate.test(value))).toEqual(values.map(isCanonicalColour));
+    expect(values.filter((value) => gate.test(value)).length).toBe(5);
   });
 
   it('makes the app inert rather than leaving it tabbable behind the panel', () => {

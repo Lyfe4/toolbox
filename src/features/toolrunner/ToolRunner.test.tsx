@@ -361,7 +361,12 @@ describe('a run in flight', () => {
 
       // "Cancelled", not "Base64 failed": a cancellation is something the user
       // asked for, and reporting it as a failure is how a tool cries wolf.
-      expect(await screen.findByText('Cancelled')).toBeInTheDocument();
+      const cancelled = await screen.findByText('Cancelled');
+      // AS A WARNING, which the name said and nothing checked until round
+      // seventeen: the notification wears the warn tone's class, not info's.
+      const toast = cancelled.closest('li');
+      expect(toast?.className).toMatch(/warn/);
+      expect(toast?.className).not.toMatch(/error|info/);
       await waitFor(() => {
         expect(screen.getByRole('button', { name: 'Run' })).toBeEnabled();
       });

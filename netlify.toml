@@ -29,8 +29,10 @@
 
   # Install exactly what the lockfile says, the same as CI. A deploy that
   # silently resolved different versions than the ones that were reviewed is
-  # not the thing that was tested.
-  NPM_FLAGS = "--frozen-lockfile"
+  # not the thing that was tested. PNPM_FLAGS, not NPM_FLAGS: Netlify passes
+  # the latter only to npm, so until round seventeen this line asked pnpm for
+  # nothing. Not yet seen in a deploy log - the next deploy is the check.
+  PNPM_FLAGS = "--frozen-lockfile"
 
 # `pnpm build` runs `tsc -b` first, so a type error fails the deploy rather
 # than shipping. The rest of the gate (lint, format, tests, bundle budget)

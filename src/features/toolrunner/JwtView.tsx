@@ -32,7 +32,8 @@ import { ViewToggle } from './ViewToggle';
  *     line of small print under the claims.
  *
  *  2. "NOT VERIFIED" IS NEVER QUIET AND NEVER NEUTRAL. Five of the six
- *     outcomes mean the claims cannot be relied on, and all five are drawn as
+ *     outcomes this view draws - the four unverified states and a state it
+ *     does not recognise - mean the claims cannot be relied on, and all five are drawn as
  *     a warning or as danger. There is exactly one calm state, and it is the
  *     one where a real signature was checked against a real key. The no-key
  *     case in particular - overwhelmingly the common one, because most people

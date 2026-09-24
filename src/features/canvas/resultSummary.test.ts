@@ -312,12 +312,12 @@ describe('the sixty characters a summary is allowed', () => {
 
 describe('which output a node summarises', () => {
   /*
-   * THE FIRST DECLARED OUTPUT, and only that one. Seven of the ten tools have
+   * THE FIRST DECLARED OUTPUT, and only that one. Nine of the ten tools have
    * more than one, and the manifest's order is not arbitrary: the first port
    * is the tool's answer and the rest are its working. This asserts the
-   * property the summary relies on rather than the summary itself, so a tool
-   * added later that puts its working first fails here rather than quietly
-   * making every one of its nodes report the wrong thing.
+   * ordering rule through one tool; the rule for every tool, including one
+   * added later, is `ports.test.ts`'s "%s calls its first output `output`" -
+   * which this comment used to claim for itself.
    */
   it('summarises the first declared output', () => {
     /*

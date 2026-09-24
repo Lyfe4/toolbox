@@ -919,8 +919,9 @@ const isPrintableAscii = (bytes) => /^[\x20-\x7e]*$/.test(bytes.toString('latin1
  * `decodeToken` requires the payload to be JSON, because the tool is a JWT
  * decoder and RFC 7519 requires a JWT's payload to be a JSON object. Most
  * published JOSE examples are JWS rather than JWT - the cookbook signs a line
- * of prose, RFC 7515 A.4 signs the ASCII string "Payload", Wycheproof signs
- * "foo" - so this is recorded per case rather than assumed, and the tests
+ * of prose, RFC 7515 A.4 signs the ASCII string "Payload", and Wycheproof's
+ * tokens sign short byte strings - `123400`, "a", an empty payload - so this
+ * is recorded per case rather than assumed, and the tests
  * assert what the tool does in each direction.
  */
 function payloadIsJwtShaped(payloadSegment) {

@@ -763,7 +763,7 @@
  *
  * WHY THE TOP, WHICH IS NOT WHERE A THUMB IS. The selection bar was built at
  * the bottom first, above the readout, and it was measured there: on a phone
- * the inspector is a SHEET that covers the bottom 60% of the canvas root, and
+ * the inspector is a SHEET that covers up to the bottom 65% of the canvas root, and
  * the root spans the whole workspace behind it. The bar and the readout both
  * sat underneath it - present in the DOM, 300px below the sheet's top edge,
  * invisible and unpressable. For the readout that is an old and survivable

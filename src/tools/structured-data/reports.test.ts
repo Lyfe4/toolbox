@@ -261,6 +261,40 @@ describe('decision 2: what a table cell cannot hold', () => {
     const { report } = await convert('[{"a": 1, "b": ""}, {"a": 3, "b": "x"}]', { target: 'csv' });
     expect(losses(report)).toEqual([]);
   });
+
+  /*
+   * A NULL, the third thing an empty cell can mean. The matrix said every
+   * value becoming text was "reported by path"; none of it was. A number or a
+   * boolean keeps its digits and stays unsaid (the flat-table control above);
+   * a null does not, and is said.
+   */
+  it('reports a null by path, as the empty cell it became', async () => {
+    const { output, report } = await convert('[{"a": 1, "b": null}, {"a": 3, "b": "x"}]', {
+      target: 'csv',
+    });
+    expect(output).toBe('a,b\n1,\n3,x');
+    expect(losses(report)).toContain('The null at $[0].b became an empty cell');
+  });
+
+  it('counts nulls and names the first few, on TSV as well', async () => {
+    const rows = Array.from(
+      { length: 7 },
+      (_, index) => `{"id": ${index.toString()}, "gone": null}`,
+    );
+    const { report } = await convert(`[${rows.join(',')}]`, { target: 'tsv' });
+    const note = report.notes.find((entry) => entry.title.includes('null values'));
+    expect(note?.title).toBe('7 null values became empty cells');
+    expect(note?.body).toContain(
+      '$[0].gone, $[1].gone, $[2].gone, $[3].gone, $[4].gone, and 2 more',
+    );
+  });
+
+  it('says nothing about nulls for a table that has none', async () => {
+    const { report } = await convert('[{"a": 0, "b": false}, {"a": "", "b": "null"}]', {
+      target: 'csv',
+    });
+    expect(titles(report).join(' ')).not.toContain('null');
+  });
 });
 
 /* ========================================================================== *

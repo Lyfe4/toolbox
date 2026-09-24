@@ -261,7 +261,7 @@ already been chosen and cannot be changed.
 The two branches are genuinely different APIs — `convertToBlob` returns a
 promise, `toBlob` takes a callback — which is why they are not unified behind
 one variable. Everything that decides what the pixels _are_ lives in one
-`prepareContext`, so the two cannot drift in what they paint, and that is
+`paint`, so the two cannot drift in what they paint, and that is
 asserted rather than assumed:
 
 - `image.test.ts` runs the same conversion down both branches and asserts the
@@ -469,7 +469,8 @@ Each conversion goes through the whole product, and the produced file is
 
 - a PNG round trip reproduces all sixteen swatch colours with a worst channel
   error of **0**;
-- WebP and JPEG stay within 3 and 8 levels respectively;
+- WebP and JPEG are held within 8 and 16 levels respectively (this line said 3
+  and 8, which the check has never asserted — most likely one run's reading);
 - transparency converted to JPEG comes back `rgb(255, 255, 255)`, and to WebP
   comes back with `alpha 0`;
 - a sideways photograph comes out upright, with its axes swapped and its EXIF

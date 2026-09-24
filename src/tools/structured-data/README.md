@@ -47,7 +47,7 @@ valid YAML string, and a Markdown table is a consistent grid of pipes. So the
 tests run from most specific to least, and the last one is the most permissive:
 
 1. Empty input → **JSON**, so the error says "nothing to parse".
-2. A leading `{` or `[` → **JSON** (with two fallbacks; see below).
+2. A leading `{` or `[` → **JSON** (with three fallbacks; see below).
 3. A leading `---` or `%YAML` → **YAML**.
 4. A leading `- ` (a block sequence item) → **YAML**.
 5. **Delimited text**, if at least **two** records agree on a field count above
@@ -55,7 +55,7 @@ tests run from most specific to least, and the last one is the most permissive:
    semicolon. Tab wins the format name **TSV**; anything else is **CSV**.
 6. Otherwise → **YAML**.
 
-Four things about step 5 are load-bearing:
+Five things about step 5 are load-bearing:
 
 - **Quoting is tracked across the whole document, not within a line.** A cell
   containing a newline — an address, a note field, anything a spreadsheet
@@ -71,26 +71,37 @@ Four things about step 5 are load-bearing:
 - **Pipe is only tried when it is the configured delimiter.** A Markdown table
   has perfectly consistent pipe counts and would be read as a table with a
   `---` row in it. Choosing Pipe in the options is how you ask.
+- **A head that also reads as a YAML mapping is YAML.** `tags: a, b` over
+  `names: c, d` is two records with one comma each, and used to come back as a
+  one-row table with columns `tags: a` and `b`. When the same 64 kB detection
+  reads also parses as a YAML mapping with no errors, the answer is YAML; a
+  genuine CSV folds to a plain scalar instead. (This list said four things and
+  omitted this one.)
 
 Excel's **`sep=;` first line** is consumed and obeyed, for CSV, whether or not
 the format was auto-detected. Without that the directive becomes the header and
 the result has a column literally named `sep=`.
 
-### The two fallbacks after a leading bracket
+### The three fallbacks after a leading bracket
 
-A document opening with `{` or `[` is committed to JSON, and two very common
+A document opening with `{` or `[` is committed to JSON, and three very common
 things open with a bracket without being one JSON document. Under **Auto-detect
-only**, if the JSON parse fails on syntax:
+only**, if the JSON parse fails on syntax, in this order:
 
 - **JSON Lines** — one JSON value per line, which is what a log export or a
   streaming API response is — becomes an array of documents. This is the same
   call the YAML reader makes for a `---`-separated stream, for the same reason:
   it is what the file says, and an array is its only JSON-representable form.
+- **JSONC** — `//` and block comments and a comma before a closing bracket,
+  which is what `tsconfig.json`, VS Code settings and most JSON an LLM writes
+  contain. They are removed as comments, string-aware, and the document is
+  parsed as JSON with a `Read as JSONC` note saying what was removed. This step
+  was added in the twelve-losses pass; before it this list had two entries.
 - **YAML** gets a turn, because YAML 1.2 reads flow style, trailing commas,
   single quotes and unquoted keys — between them, every object literal ever
   copied out of source code.
 
-If neither works, the **JSON** error is reported: it is the more specific of the
+If none works, the **JSON** error is reported: it is the more specific of the
 two and names the real problem.
 
 **The cost, stated.** `{"a": }` is broken JSON and legal YAML, where it means
@@ -123,6 +134,11 @@ Only folding is caught: `|` and `>` blocks are the author writing several lines
 on purpose, and the unquoted keys, single quotes and trailing commas the
 fallback exists for are all single-line constructs, so every one of them still
 works.
+
+The first example no longer reaches YAML at all: the JSONC step runs in front of
+it, removes the comment as a comment, and reads `{ "a": 1 }` with a note. That
+ordering is the safety argument — by the time YAML sees the document there is no
+comment left to fold into a key. The guard still stands for the second.
 
 **Rejected: reporting ambiguity instead of choosing.** There is nowhere to
 report it to. A tool result is a value or an error, so "probably CSV" would have
@@ -175,7 +191,7 @@ unchanged — see the schema notes below.
 | Case                                                | What happens                                               |
 | --------------------------------------------------- | ---------------------------------------------------------- |
 | Nested value in a CSV cell                          | Written as compact JSON in the cell. **Lossy**, on purpose |
-| `null` in a CSV cell                                | Written as an empty field, indistinguishable from `""`     |
+| `null` in a CSV cell                                | Written as an empty field, and reported by path            |
 | CSV target, top level is not an array               | Refused, naming what was found                             |
 | CSV target, a row is not an object                  | Refused, naming the row                                    |
 | CSV target, every row is `{}`                       | Refused: there are no columns to write                     |
@@ -256,10 +272,12 @@ type every tool returns, carried across the worker protocol and rendered in two
 UIs. Out of scope for a hardening pass on one tool, and worth doing properly.
 
 **Taken instead: a `report`-shaped OUTPUT PORT on this tool alone**, the way
-`text-convert` has `Detected`. It carries this note and four others that used to
-be silent - the format and delimiter that were detected, a nested value written
-into a cell, a key absent from some rows, a stream that became an array - and it
-is additive, so no share link and no saved canvas changed.
+`text-convert` has `Detected`. It was added carrying this note and four others
+that used to be silent - the format and delimiter that were detected, a nested
+value written into a cell, a key absent from some rows, a stream that became an
+array - and every note since (the presentation census, a discarded duplicate
+JSON key, a trimmed header cell, JSONC, a `null` written as an empty cell) has
+gone on it too. It is additive, so no share link and no saved canvas changed.
 
 A port is drawn on `/tools` and is invisible on a canvas node, where a node
 summarises its first output and nothing else. So the node reads the report's
@@ -324,10 +342,10 @@ what its author meant.
   collection keys can flatten onto each other. Refused, consistently with
   `!!set`, `!!omap` and `!!binary`.
 
-### Four more that are told rather than closed
+### Five more that are told rather than closed
 
 **Round twelve.** A comment, an anchor, a tag and a scalar style are all YAML
-**presentation**, and the value model holds none of them. They cannot be closed
+**presentation** — and so, since round thirteen, is flow style, below — and the value model holds none of them. They cannot be closed
 without a second value model that only `YAML → YAML` would use, which round
 eleven considered and rejected — so the remaining honest thing is to say so,
 which nothing did.
@@ -338,8 +356,8 @@ They are reported as **one** note whose title is a census:
 Not carried over: 2 comments, 1 anchor, 1 tag, 2 block styles
 ```
 
-One note rather than four because a realistic manifest has all four in it, a
-canvas node prints one line, and the four share a cause and a non-remedy. The
+One note rather than five because a realistic manifest has most of them in it,
+a canvas node prints one line, and they share a cause and a non-remedy. The
 body names each instance, and says what actually happens to each:
 
 - **An anchor is EXPANDED, not dropped.** An alias becomes a full copy of the
@@ -354,12 +372,14 @@ body names each instance, and says what actually happens to each:
   with no line break left in it (`|-` on one line), and a block used as a
   mapping key.
 
-**What is not covered:** flow style. `a: {b: 1}` comes back as a block mapping
-and nothing says so. Including it would fire on a large share of ordinary
-Kubernetes-shaped YAML for a difference few people would call a loss; it is
-recorded as a silent loss in
-[docs/conversion-matrix.md](../../../docs/conversion-matrix.md) rather than
-folded in quietly.
+**Flow style was left out in round twelve, and taken in round thirteen.**
+`a: {b: 1}` comes back as a block mapping, and this paragraph used to say
+nothing says so: including it would fire on a large share of ordinary
+Kubernetes-shaped YAML for a difference few people would call a loss. Measured,
+that ground was narrower than it looked — the note is one line whichever kinds
+it holds — so it is now the census's fifth kind, `flow collection`, on a YAML
+target only. A document written entirely in flow is not counted, and a flow run
+nested inside another counts once. See known limitation 15.
 
 ### A duplicate JSON key is a note, where a duplicate YAML key is a refusal
 
@@ -377,26 +397,34 @@ $.retries discarded `3`
 
 ### Streams
 
-`---`-separated documents are read as an **array**, one element per document. A
-trailing `---` does not add a `null`, and a single-document stream stays an
-object rather than becoming a one-element array. Kubernetes manifests are the
-reason: previously a stream was refused with the library's own message, which
-named an API the person reading it has no access to, about a file that is not
-wrong.
+`---`-separated documents are read as an **array**, one element per document,
+and a single-document stream stays an object rather than becoming a one-element
+array. Kubernetes manifests are the reason: previously a stream was refused with
+the library's own message, which named an API the person reading it has no
+access to, about a file that is not wrong.
 
-The asymmetry is documented rather than hidden: converting that array **to**
-YAML writes a sequence, not a stream. Emitting documents instead would mean any
-array became a multi-document file, which is worse.
+**This section used to say a trailing `---` does not add a `null`. It does now.**
+`---` starts a document and an empty one is `null`: the yaml-test-suite (PUW8),
+js-yaml and PyYAML all read `---\na: b\n---\n` as `[{a: b}, null]`, and dropping
+it made a five-document stream come back as a four-element array with nothing
+said. What survives of the old rule is the empty box: a document with no `---`
+and nothing in it is not a document, so an empty input, or one of nothing but
+comments, still says "nothing to parse".
 
-**And a trailing `---` is not the only document that disappears.** "A trailing
-`---` does not add a `null`" is the comfortable half of a broader rule: ANY
-document with no content — a bare `---`, a lone comment, a `%YAML` directive on
-its own — is dropped, wherever it is in the stream. In the single-document case
-that is right, and it is why an empty box says "nothing to parse" instead of
-producing `null`. In a stream it means **the array can be shorter than the
-file**, with nothing said. Five cases in the yaml-test-suite land on it, and
-they are listed by id in
-[`yaml.oracle.test.ts`](yaml.oracle.test.ts) rather than filtered out.
+The asymmetry this section used to document is gone too: a stream converted
+**to** YAML is written back as a stream, with a `---` in front of each document,
+and the report says so. An array that was never a stream is still written as a
+sequence — emitting documents for it would mean any array became a
+multi-document file, which is worse.
+
+**The paragraph that stood here recorded the loss that rule caused**: any
+document with no content, a bare `---` among them, was dropped wherever it was
+in the stream, so **the array could be shorter than the file**, with nothing
+said. That was twelve of the yaml-test-suite's divergences, and the fix
+above is what closed them; [`yaml.oracle.test.ts`](yaml.oracle.test.ts) asserts
+each of the twelve now agrees. The five cases still listed there are streams
+with no document in them at all, which this tool answers with "nothing to
+parse".
 
 ### Held to the yaml-test-suite, both ways
 
@@ -405,18 +433,21 @@ rests on the corpus every YAML implementation is measured against, committed as
 [`spec/yaml-test-suite.json`](spec/yaml-test-suite.json) from the suite's own
 `data-2022-01-17` release:
 
-- **402 cases.** 94 the suite marks as errors, all refused. 279 carry the value
-  a conforming parser must produce, and 258 match exactly. The 21 that do not
+- **402 cases.** 94 the suite marks as errors, all refused. 292 carry the value
+  a conforming parser must produce — 279 as the suite's own `in.json`, 13
+  composed from its event stream — and 283 match exactly. The 9 that do not
   are named with a reason and asserted to **still** differ, so a behaviour
-  change arrives with the list edited rather than silently.
+  change arrives with the list edited rather than silently. (This line said
+  279, 258 and 21 before the empty-document fix and the composed cases.)
 - **They are three groups and no others.** A value JSON cannot hold, refused by
-  path (`!!set`, `!!omap`, `!!binary`); an empty document dropped, as above; and
-  one case where the suite prints a mapping in a different order from the
-  document, which JSON does not make meaningful either way.
+  path (`!!set`, `!!omap`, `!!binary`); a stream with no document in it at all,
+  answered "nothing to parse"; and one case where the suite prints a mapping in
+  a different order from the document, which JSON does not make meaningful
+  either way.
 - **And the writer is read by somebody else.** Every document the tool can read
   is re-serialised and handed to **js-yaml**, a separate implementation with a
   separate ancestry, as a dev-only oracle that reaches no chunk the browser
-  loads. 278 of 279 come back as the same value. The one that does not is a
+  loads. 283 of the 284 it can read come back as the same value. The one that does not is a
   string of nothing but newlines; CPython's PyYAML reads our spelling of it
   correctly, so it is recorded as js-yaml's limit rather than as our defect.
 
@@ -645,7 +676,9 @@ fixed by a patch to this tool:
    and reported by path, which is the part that was in this list's gift.
 2. **CSV formula injection is not escaped.** Described above. Deliberate.
 3. **`null` and `""` are the same cell.** CSV has no null. Round-tripping JSON
-   through CSV turns every null into an empty string.
+   through CSV turns every null into an empty string. Reported by path since
+   round seventeen — `The null at $[0].b became an empty cell` — where numbers
+   and booleans becoming text are still deliberately not.
 4. **Nested values in CSV cells do not come back.** They are written as compact
    JSON and read back as the string containing that JSON. Keeping them beats
    refusing a whole document over one nested field, and it is one-way. Reported
@@ -705,7 +738,7 @@ abc`, `!!int 1.5`, and under YAML 1.2 `!!bool yes`, used to become strings
 ## Tests
 
 `structured-data.test.ts` covers detection, each format pair, every edge case
-above, the security properties of the YAML parser, and seven property-based
+above, the security properties of the YAML parser, and eight property-based
 invariants: YAML and JSON round trips for arbitrary JSON values; a round trip
 over control characters, lone surrogates and astral text; CSV round trips for
 tables of strings, across all four delimiters; that sorting keys is idempotent

@@ -76,8 +76,12 @@ identical is the worst thing this tool can do, because nobody reports it.**
 
 ### Line endings
 
-CRLF and lone CR are collapsed to LF before anything else happens. This is not
-an option.
+CRLF and lone CR are collapsed to LF before anything else happens — by default.
+This line used to say "This is not an option", and it has been one since the
+twelve-losses pass: **Line endings** set to `Compare them` puts the terminators
+back in the comparison, because two files differing only in them were otherwise
+unreachable (see [Held to `git diff` itself](#held-to-git-diff-itself)).
+Ignoring them stays the default, for the reason below.
 
 The same file saved on Windows and on Linux used to report **every line** as
 removed and re-added, and each `-foo` sat directly above an identical-looking
@@ -140,6 +144,7 @@ mangling.
 | Whitespace              | `Compare it` / `Ignore leading and trailing` / `Ignore all whitespace`.                      |
 | Ignore case             | Comparison folds case; the output does not.                                                  |
 | Highlight changed words | Word-level `<ins>`/`<del>` within edited lines.                                              |
+| Line endings            | `Ignore them` (the default) / `Compare them` — whether CRLF, CR and LF take part.            |
 | Context lines           | Unchanged lines kept either side of each change — in the patch **and** in the rendered view. |
 
 ### Why whitespace became a three-way choice
@@ -323,11 +328,15 @@ themselves are correct as written**.
 ### Held to `git diff` itself
 
 This README used to say the hunks were asserted "by applying our own patches
-with jsdiff's independent applier". **There was no such test.** jsdiff exports
-no applier this file ever called, and what the suite actually contained were
-assertions about the SHAPE of the output — that a marker appears, that a line
-appears on both sides — every one of them written by reading this module and
-agreeing with it.
+with jsdiff's independent applier", and then, for a while, that **there was no
+such test**. That correction was itself wrong, and is reversed here: `diff.test.ts`
+imports jsdiff's `applyPatch` and its `the patch applies` group round-trips an
+insertion, a deletion and an edit at context 0, 1, 3 and 10, plus a property over
+arbitrary line sets. It was added in the diff hardening pass, ten days before
+the paragraph saying it did not exist. What is true is narrower: jsdiff's
+applier only asks whether the patch means the right thing, never whether it is
+spelled the way `git diff` spells it, and every other expected value for the
+unified output was written by reading this module and agreeing with it.
 
 [`unified.oracle.test.ts`](unified.oracle.test.ts) is the real thing.
 [`spec/git-unified.json`](spec/git-unified.json) holds the hunks real
@@ -344,8 +353,10 @@ separately:
   against the reference a judgement call instead of an equality. Of the six
   that remain, four differ only in the order of the lines inside one hunk and
   two are the line-ending disagreement below.
-- **Does it mean the same?** All 38 reproduce the changed file exactly when
-  applied. The applier is written for the test and shares no line with this
+- **Does it mean the same?** At the default setting, all 36 that have hunks
+  reproduce the changed file exactly when applied; the other two are the
+  `crlf against lf` pair, which at the default has no hunk to apply (below). At
+  `compare` all 38 are git's own spelling, so all 38 apply. The applier is written for the test and shares no line with this
   module, and it is trusted because it is run over GIT'S OWN patches for all 38
   cases first — if it were wrong, that is where it would fail. The four spelled
   differently are the terminator cases, where git groups the removals and then
@@ -417,7 +428,10 @@ led to the terminated comparison text above.
 - **`bytes` input strips a BOM, typed text does not.** `TextDecoder` removes a
   leading BOM by default, so the same file compared as a dropped file and as
   pasted text can disagree about its first line. The `invisible` marker is what
-  makes the pasted case legible rather than baffling.
+  makes the pasted case legible rather than baffling, and since the
+  twelve-losses pass `notes.byteOrderMark` records a BOM on either side however
+  it arrived, and the view names it in a sentence, so the dropped case is said
+  too. The comparison itself still sees the stripped text.
 - **Runs of unequal length are never refined**, even when they clearly
   correspond. Pairing by position across unequal runs misaligns everything after
   the first difference, and a similarity search across the whole block is a much

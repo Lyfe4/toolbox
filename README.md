@@ -111,9 +111,17 @@ HTML to the app, so the joins are asserted instead — see
 - `pnpm check:browsers` loads `/` **with JavaScript disabled** and asserts the
   panel is there, styled by the stylesheet, with three real `href`s — which is
   the claim about crawlers, made in a browser that will not run a line of our
-  code. It also asserts the reverse: that a reload, a share link and a saved
-  graph each reach `domcontentloaded` with the panel already absent, because
-  the failure worth ruling out is a flash rather than a leftover.
+  code. It also asserts the reverse: that a reload, a saved graph and a share
+  link each load without **a single frame** painted with the panel in it — read
+  by a frame recorder installed before the document parses, which is also seen
+  to catch the panel on a first visit — because the failure worth ruling out is
+  a flash rather than a leftover. Until round seventeen this said the three
+  reached `domcontentloaded` with the panel absent, which is later than it
+  sounds — a module script is deferred, and deferred scripts run before
+  `DOMContentLoaded` — and the share link was never checked at all before the
+  app booted; the check that now reads its first frames fails against a broken
+  inline script in both engines, where the old one stayed green.
+  <!-- asserted: cross-browser-check.mjs › a share link never paints the panel, not even for a frame -->
 
 ## The tools
 
@@ -166,7 +174,9 @@ visitor with neither a link nor a saved graph gets instead.
 
 **On the canvas, a node's input, options and output are one panel.** Select a
 node and the inspector shows all three, using the same options panel and the
-same five output views the tool page uses — so a chain runs on the settings you
+same output views the tool page uses — diff, HTML, JWT, regex, report, image and
+colour, where this said "five" from the day the inspector shipped with seven —
+so a chain runs on the settings you
 chose and you can read what it produced, including the last node's. The node
 itself keeps a short summary of its result — `47 matches`, `2.1 MB PNG image`,
 `+12 −3`, `2 items` — so a pipeline can be scanned without opening anything.
@@ -280,7 +290,14 @@ data type in the system is carried by a port somewhere.
 
 **Worker execution.** Heavy tools run off the main thread behind a small tagged
 message protocol. Binary payloads are `Uint8Array` or `Blob` — never base64
-strings internally — and buffers are transferred rather than copied. Execution
+strings internally. A result's buffers are **transferred** back rather than
+copied, because nothing on the worker's side reuses them; a tool's inputs are
+**cloned** in, never transferred, because on the canvas one output feeds several
+inputs and a transferred buffer is detached by whichever consumer ran first. A
+blob crosses by reference either way. This used to say buffers were transferred
+in both directions, which was never true of inputs: the one way to ask for it,
+an `ownership: 'transfer'` option, was never passed by anything and went in
+round fifteen. <!-- asserted: engine.test.ts › borrows binary inputs, so nothing is detached --> Execution
 never throws across the boundary: a tool returns a result describing success or
 failure, and bad input is a result, not an exception.
 
@@ -321,11 +338,24 @@ The canvas has a complete keyboard path. It is not a fallback view, and there
 is no "use the list instead" — `/tools` is a different affordance for the same
 tools, not an accessible alternative to an inaccessible thing.
 
-Press `?` on the canvas for the full map; it is generated from the same array
-the canvas binds, so it cannot drift. `K` opens the palette, `I` shows and
+Press `?` on the canvas for the full map. It is rendered from one list in code,
+and the canvas binds its keys in a hand-written switch beside it, so the two
+_can_ disagree — what stops them is a test that presses every key, alone and
+with `Shift`, `Ctrl` and both, on a real canvas, and compares what the canvas
+took with what the list says, both ways. `K` opens the palette, `I` shows and
 hides the inspector, `Enter` opens it on the focused node and moves into it,
 `Escape` steps back out to the node, arrows move the selection by 8px,
-`Ctrl/Cmd+Z` undoes, `F` fits, `0` resets zoom.
+`Ctrl/Cmd+Z` undoes and `Ctrl/Cmd+Y` redoes, `Delete` or `Backspace` removes the
+selection, `F` fits, `0` resets zoom. With `Ctrl/Cmd` held the canvas takes only
+`A`, `D`, `Z` and `Y`; every other chord belongs to the browser.
+<!-- asserted: shortcuts.bindings.test.tsx › lists every key the canvas takes -->
+
+Until round seventeen this paragraph said the map was "generated from the same
+array the canvas binds, so it cannot drift". It was never generated from
+anything the canvas binds, and it had drifted: `Ctrl+Y` redid and `Backspace`
+deleted without being listed, and the canvas took `Ctrl+0` — the browser's own
+zoom reset, against the rule the code states for `+` and `-` — along with `Ctrl`
+and `K`, `?`, `Space`, `Enter`, `Escape` and the arrows.
 
 `Enter` and `Space` are the two keys the canvas does **not** claim when a
 control inside it has focus. It is a `role="application"` region, so every
@@ -425,8 +455,14 @@ keyboard has ever put a wire in the selection, so before this a wire could only
 be removed by a pointer hitting a curve. It is also exactly where the refusal
 points — the panel already prints which wire is in the way.
 
-`?` lists all of this in a "Without a keyboard" table generated from the same
-array the canvas implements, so it cannot drift. What is still keyboard-only is
+`?` lists all of this in a "Without a keyboard" table rendered from one list in
+code, and a test holds the overlay to that list. Nothing holds the list to the
+controls themselves, so this used to say — wrongly — that it came "from the
+same array the canvas implements" and "cannot drift"; a route that stopped
+existing would stay listed until somebody edited the list.
+<!-- asserted: overlays.test.tsx › lists every route that needs no keyboard, from the one list in code -->
+
+What is still keyboard-only is
 **add-to-selection**: `Shift`+tap has no touch equivalent that is not a mode,
 and a mode on a surface whose primary gesture is a pan will be entered by
 accident. The reasoning, the alternatives rejected, and the rest of what a
@@ -461,7 +497,12 @@ surface _and_ a solid accent bar. Wires and ports switch to `CanvasText` and
 
 axe runs against every component and route in the unit suite, and against every
 route in two real engines — with `color-contrast` enabled, which jsdom cannot
-do — in `pnpm check:browsers`. All four themes are held to WCAG AA by a test
+do — in `pnpm check:browsers`.
+<!-- asserted: routes.axe.test.tsx › every route has no axe violations -->
+
+The unit half was not true until round seventeen: `/styleguide` and the
+not-found page had never been scanned in any commit, and `LiveRegion` was the
+one component with no test at all. All four themes are held to WCAG AA by a test
 that resolves the real CSS and measures each pair.
 
 A theme somebody builds themselves cannot be held to that by a test, because it
@@ -474,8 +515,10 @@ about.
 
 ## Testing
 
-5,320 tests across 131 files. The count is not the interesting part; what the
-tests caught is.
+`pnpm test` prints how many tests there are; this file does not, because the
+number written here was wrong at least three times, twice within one round, and
+a gate now refuses one. The count is not the interesting part; what the tests
+caught is.
 
 ### Every conversion, with a verdict and the evidence behind it
 
@@ -544,9 +587,9 @@ run on every `pnpm test`; neither reaches the network.
 | GFM extensions                                           | 24    | **21 (87.5%)**  |
 
 Comparison is by parsed DOM rather than by bytes — on a byte comparison the
-same converter scores 475/652, and almost all of that gap is spelling (`<hr />`
-against `<hr>`, `&#x26;` against `&amp;`, an inserted `<tbody>`) rather than
-meaning.
+same converter fails 475 of the 652, and almost all of that gap is spelling
+(`<hr />` against `<hr>`, `&#x26;` against `&amp;`, an inserted `<tbody>`)
+rather than meaning.
 
 The expected-failure list is **exact**, not a threshold: an example that starts
 passing fails the suite too, so the list cannot quietly drift away from the
@@ -559,7 +602,7 @@ and the third is `ftp://` not being linkified.
 
 **624 of 652 is not "exact", and the conversion matrix used to say it was.**
 Twenty-two of the twenty-eight are raw HTML the allow-list removes, which is the
-product working and is the only group of the five that a README or an LLM
+product working and is the only group of the four that a README or an LLM
 realistically produces. It is reported now: the same chain is run with the
 allow-list off and the two documents compared, so the note names what was really
 removed rather than what a schema suggests. The other six are URL schemes,
@@ -1099,8 +1142,10 @@ warned out of every test file that opens the dialog. Both rows did render — th
 list is fixed at mount, and a duplicate key only drops or duplicates a child
 once the list changes — so the visible damage was nil and the latent damage was
 not. Rows are keyed on the binding now, and `shortcuts.test.ts` asserts the
-array itself is unique under that identity, because the reference is generated
-from the array the canvas binds.
+array itself is unique under that identity, because the reference is rendered
+from that array. (This used to add "the array the canvas binds"; the canvas
+binds in a switch, and since round seventeen `shortcuts.bindings.test.tsx`
+holds the two together.)
 
 ### What adding a file input found
 
@@ -1186,7 +1231,12 @@ compared a SHA-256 against a node summary that is deliberately truncated to 60
 characters because it is also the node's accessible name. The check that noticed
 none of this was a negative assertion — "the summary is not the guidance" —
 which `Those options are not valid for this tool.` satisfies perfectly well. It
-asks for the report's own arrow now.
+asks for the sniffed summary of the bytes the node produced now — a size and
+`WebP image`, matched by shape because the encoders differ between engines —
+which only a real conversion can satisfy. (This said it asked for "the report's
+own arrow", which it never did: the node summarises its first output, the image,
+not its report.)
+<!-- asserted: cross-browser-check.mjs › a converted node reports the sniffed summary of the bytes it produced -->
 
 That split is not tidiness. A serious accessibility bug — the shortcuts dialog
 scrolled but nothing could focus it, so a keyboard user could not read past the
@@ -1198,7 +1248,8 @@ jsdom, because whether a box scrolls is a question about layout.
 A few things are reachable by neither, and they are listed in
 [docs/manual-checks.md](docs/manual-checks.md) with a checklist each rather than
 a suggestion to try it on a phone: Safari itself, a real on-screen keyboard, a
-genuinely backgrounded tab, and pasting into Word.
+genuinely backgrounded tab, pasting into Word, and whether a repackaged video
+actually plays.
 
 The trap is that "the harness cannot do this" is easy to say and expensive to
 be wrong about. The soft-keyboard check is the cautionary example. It was
@@ -1350,7 +1401,7 @@ satisfied by the thing being absent just as well as by the thing being correct,
 and absence is what a broken harness produces. The repository already knew this
 — `a converted node reports the sniffed summary` carries a comment saying a
 negative assertion cannot tell a result from a different failure — and the
-share-link check thirty-six lines below it was doing exactly that. So: **pair
+share-link check a few dozen lines below it was doing exactly that. So: **pair
 every negative assertion with a positive one that proves the subject exists.**
 
 ### The node that failed for something the node beside it did
@@ -1492,7 +1543,9 @@ space, so "the survivors it has not reached" was a real category and was written
 down as one in
 [the matrix](docs/conversion-matrix.md#found-in-round-four-by-breaking-things-on-purpose).
 **Round five emptied it** - 765 mutants, the whole space over the conversion
-code, with `node scripts/mutate.mjs` committed so the next person re-runs it
+code as it stood at `825d50a` (2026-09-18); the space grows with the code, and
+the runner prints each file's count as it goes, with `node scripts/mutate.mjs`
+committed so the next person re-runs it
 rather than re-inventing it.
 Every new assertion here was run against the break that exposed it and seen to
 fail — which is not a formality: the first version of one of them asserted a
@@ -1956,6 +2009,16 @@ in this file have numbers behind them.
 
 ### Bundle
 
+The sizes below are measurements of one build, and every change moves them;
+they were last taken at `69d069f` (2026-09-16), and they are not updated by
+hand, because a figure written here was stale within days every time it was.
+The **budgets** are the constants in
+[`scripts/check-bundle-budget.js`](scripts/check-bundle-budget.js) and are
+current. For today's figures, `pnpm build` and then `pnpm bundle:check`, which
+prints each one beside its budget.
+
+Measured at `69d069f`:
+
 |                                          | Raw      | Gzipped  |
 | ---------------------------------------- | -------- | -------- |
 | Initial JavaScript                       | 331.3 kB | 107.2 kB |
@@ -1965,18 +2028,20 @@ Every tool, the canvas, the styleguide and the tool pages are lazy chunks and
 none of them are in that figure.
 
 **Neither is the first screen, because it is not JavaScript.** The cold open is
-markup and CSS, so the figure above is unchanged by it to the byte; what it does
-cost is 1232 → 3022 bytes gzipped on the document and 5554 → 6063 on the entry
+markup and CSS, so the figure above is unchanged by it to the byte; what it did
+cost, measured when it shipped at `4e38c71` (2026-09-11), was 1232 → 3022
+bytes gzipped on the document and 5554 → 6063 on the entry
 stylesheet. The document is `no-cache`, so a returning visitor re-fetches those
 1.8 kB only when a deploy has changed them, and the stylesheet is content-hashed
 and `immutable`. **Three more budgets are, though**, and two of
-them were added because the first two could not see what they measure:
+them were added because the first two could not see what they measure
+(figures at `69d069f`; budgets current):
 
-| Measured                                    | Now       | Budget |
-| ------------------------------------------- | --------- | ------ |
-| The worker entry chunk                      | 6.5 kB    | 32 kB  |
-| The largest single lazy chunk (`pipelines`) | 414.6 kB  | 512 kB |
-| Everything `sw.js` precaches                | 2476.4 kB | 3 MB   |
+| Measured                                    | At 69d069f | Budget |
+| ------------------------------------------- | ---------- | ------ |
+| The worker entry chunk                      | 6.5 kB     | 32 kB  |
+| The largest single lazy chunk (`pipelines`) | 414.6 kB   | 512 kB |
+| Everything `sw.js` precaches                | 2476.4 kB  | 3 MB   |
 
 The last two are the newest. `bundle:check` measured what index.html loads and
 what the worker entry costs, and a lazy chunk is by construction neither — so
@@ -1990,11 +2055,13 @@ makes "no precache exclusion is needed here" a checked statement rather than an
 assumption.
 
 For scale, the video tool — four container parsers, a bitstream re-framer and
-an MP4 writer — is **68.2 kB raw, 23.6 kB gzipped** in a lazy chunk, against
+an MP4 writer — was **68.2 kB raw, 23.6 kB gzipped** in a lazy chunk at
+`44571c5` (2026-09-10), against
 the 6.9 MiB brotli the ffmpeg route would have cost.
 
 The node inspector reuses the tool runner's options panel and output views, so
-those moved into a chunk both routes share rather than being duplicated:
+those moved into a chunk both routes share rather than being duplicated
+(measured on either side of `c567793`, 2026-09-08, when the inspector shipped):
 
 |                             | Before                 | After                  |
 | --------------------------- | ---------------------- | ---------------------- |
@@ -2004,7 +2071,8 @@ those moved into a chunk both routes share rather than being duplicated:
 | Shared `toolrunner` chunk   | —                      | 64.8 kB / 20.9 kB gz   |
 
 The canvas pays about 79 kB raw (~24 kB gzipped) more on first load, all of it
-the five output views and the options panel, and a visitor who opens both
+the seven output views and the options panel (this said five; there were seven
+then too), and a visitor who opens both
 routes now downloads them once instead of once per route. Deferring the views
 behind a second dynamic import was considered and rejected: a canvas exists to
 produce output, so the deferral would last seconds and buy a loading state
@@ -2088,12 +2156,32 @@ export const caseConvertTool = defineTool({
   name: 'Case',
   summary: 'Convert text between upper, lower, title, snake and kebab case.',
   category: 'text',
-  inputs: [{ id: 'input', label: 'Text', types: ['text'], required: true }],
-  outputs: [{ id: 'output', label: 'Converted', types: ['text'] }],
+  inputs: [
+    {
+      id: 'input',
+      label: 'Text',
+      types: ['text'],
+      required: true,
+      description: 'The text to convert.',
+    },
+  ],
+  outputs: [
+    {
+      id: 'output',
+      label: 'Converted',
+      types: ['text'],
+      description: 'The text in the chosen case.',
+    },
+  ],
   optionsSchema: caseOptionsSchema,
   defaultOptions: caseDefaultOptions,
   optionFields: caseOptionFields,
-  execution: { strategy: 'main', timeoutMs: 5_000, maxInputBytes: 2 * 1024 * 1024 },
+  execution: {
+    strategy: 'main',
+    requiresOffscreenCanvas: false,
+    timeoutMs: 5_000,
+    maxInputBytes: 2 * 1024 * 1024,
+  },
   // `inputs.input` is narrowed to the text variant by the port declaration
   // above — the run signature is derived from the ports, not asserted.
   run: ({ inputs, options }) =>
@@ -2101,7 +2189,12 @@ export const caseConvertTool = defineTool({
 });
 ```
 
-Then one line in the manifest and one in the loader. It now appears in the
+Then an entry in the manifest — the same metadata again, without `run`,
+because the manifest is eager and the tool is not; `registry.test.ts` fails if
+the two disagree — and one line in the loader. (This said "one line in the
+manifest", and the example above it did not compile: it had no
+`requiresOffscreenCanvas`, which every tool must state, and its ports had no
+description, which `ports.test.ts` requires.) It now appears in the
 index, in canvas search and in the palette, and can be wired to anything with
 compatible ports — without any of those places being edited. No route, no UI,
 no worker message type, no caching, no cancellation handling.
@@ -2157,7 +2250,7 @@ Contributing guide, including the six gates and the token-layering rule:
 | `pnpm lint` / `lint:fix`                     | ESLint, zero warnings tolerated                              |
 | `pnpm format` / `format:check`               | Prettier                                                     |
 | `pnpm test` / `test:watch` / `test:coverage` | Vitest                                                       |
-| `pnpm bundle:check`                          | Fail if the initial payload exceeds its budget               |
+| `pnpm bundle:check`                          | Fail over any of four size budgets; reads `dist/`            |
 | `pnpm check:browsers`                        | Drive the built app in Firefox and WebKit                    |
 | `pnpm assets:generate`                       | Regenerate icons and the social image from the design tokens |
 | `pnpm fonts:sync`                            | Copy font subsets out of Fontsource into `public/fonts/`     |

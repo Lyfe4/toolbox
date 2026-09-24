@@ -34,14 +34,14 @@ failure is a failure — there is no "warning" tier.
 pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build && pnpm bundle:check
 ```
 
-| Gate                | What it protects                                                                                                                           |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm typecheck`    | `tsc -b` across both projects. No `any`, no `!`, no suppressed errors.                                                                     |
-| `pnpm lint`         | ESLint with `--max-warnings 0`, type-aware rules on. Also bans `eval`, `new Function`, `innerHTML` and `dangerouslySetInnerHTML`.          |
-| `pnpm format:check` | Prettier. Formatting is not a review topic.                                                                                                |
-| `pnpm test`         | Vitest, including axe on every component and route.                                                                                        |
-| `pnpm build`        | The production build, including the CSP hash and service worker plugins.                                                                   |
-| `pnpm bundle:check` | Four payloads against four budgets: the initial JS, the worker entry, the largest lazy chunk, and everything the service worker precaches. |
+| Gate                | What it protects                                                                                                                                |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm typecheck`    | `tsc -b` across both projects, strict, with no suppressed errors.                                                                               |
+| `pnpm lint`         | ESLint with `--max-warnings 0`, type-aware rules on. Bans `any` and `!`, and `eval`, `new Function`, `innerHTML` and `dangerouslySetInnerHTML`. |
+| `pnpm format:check` | Prettier. Formatting is not a review topic.                                                                                                     |
+| `pnpm test`         | Vitest, including axe on every component and route, and the documentation checks in `vite/` - see [Claims in documents](#claims-in-documents).  |
+| `pnpm build`        | The production build, including the CSP hash and service worker plugins.                                                                        |
+| `pnpm bundle:check` | Four payloads against four budgets: the initial JS, the worker entry, the largest lazy chunk, and everything the service worker precaches.      |
 
 A pre-commit hook runs ESLint and Prettier on staged files. It is a
 convenience, not the gate — run the six before opening a pull request.
@@ -49,7 +49,7 @@ convenience, not the gate — run the six before opening a pull request.
 ### Three more that are not in CI
 
 ```bash
-pnpm build && pnpm check:browsers   # Firefox + WebKit, ~165 MB of binaries
+pnpm build && pnpm check:browsers   # Firefox + WebKit, about 500 MB on disk
 pnpm build && pnpm serve:dist       # the built app under the real _headers
 node scripts/mutate.mjs             # mutation testing over the conversion code
 ```
@@ -70,7 +70,7 @@ pnpm check:browsers --only=popovers,valuemodel          # a substring of each, `
 pnpm check:browsers --only=outputviews --engine=webkit  # one engine
 ```
 
-A partial run's verdict begins `PARTIAL` and never prints the `OK — Firefox and
+A partial run's verdict begins `PARTIAL` and never prints the `OK - Firefox and
 WebKit both pass` line, and a filter that matches no section is an error rather
 than an empty green run. Every run ends with each section's time, slowest first.
 The full run stays the pre-commit gate because the failures this harness is
@@ -274,6 +274,61 @@ everybody or fails for everybody.
 **jsdom has no layout engine.** Anything about geometry, overflow, computed
 colour or whether something actually scrolls belongs in
 `scripts/cross-browser-check.mjs`, not in a unit test that will silently pass.
+
+## Claims in documents
+
+Documents in this repository have described behaviour that did not exist at
+least seven times - a test that was never written, a loss that was "told" with
+no note anywhere in the code, a single inline script when there were two - and
+every round that corrected them left more to find. Round seventeen's audit
+found over a hundred more. A one-off audit decays, so the part that can be
+checked mechanically is now checked in `pnpm test`, by
+[`vite/docClaims.test.ts`](vite/docClaims.test.ts) beside
+[`vite/docLinks.test.ts`](vite/docLinks.test.ts):
+
+- **A name is a name in the code.** A backticked file, identifier or
+  `patchbay:…:vN` storage key in any document must exist - in the code with its
+  comments taken out, so a comment cannot vouch for a function that is gone, or
+  in a dependency's type declarations. The same holds for a backticked name, and
+  any `*.test.ts` file, mentioned in a code comment. A name that is somebody
+  else's or is history goes in the test's exemption table with its reason, and
+  an exemption nobody needs any more fails.
+- **A harness section named anywhere exists.** Any `check…` name in a document
+  or a comment.
+- **A count the code can count is counted.** "The two inline scripts", "four
+  payloads against four budgets", "the six gates", "the 53 section names", "ten
+  tools that run": each is a phrase pattern in `COUNTS` and the number the code
+  gives, wherever the phrase appears, docs and comments alike. A pattern that
+  stops matching anything fails, rather than retiring in silence.
+- **No hand-written test count.** `pnpm test` prints it.
+
+What it cannot do is most of the job: it cannot tell whether a sentence about
+behaviour is true. So, two conventions, both HTML comments so a document reads
+the same rendered:
+
+```markdown
+The panel is never painted for a share link.<!-- asserted: cross-browser-check.mjs › a share link never paints the panel -->
+
+No screen reader announces a `code` role by default.<!-- unverified: a judgement about screen readers, not a measurement -->
+```
+
+`asserted` names the test that holds the sentence, and the gate fails if that
+file does not contain that title. `unverified` marks a claim nothing holds and
+nothing can, so that it does not look identical to one that is checked; the gate
+requires a reason. Use them where a reader would otherwise have to guess - not on
+every sentence.
+
+**And the rule the audit keeps arriving at:** a sentence written while reading
+something is a belief, not a fact. Before writing "a test checks X", find the
+line that checks it; before writing "the only", count; before writing a number
+the code knows, add it to `COUNTS` or leave it out. If a document says the app
+does something and it does not, that is a defect in the app, not in the
+sentence - fix the app or say it is not built, and do not weaken the sentence
+until it is true.
+
+`docs/test-findings.md` and `docs/video-convert-feasibility.md` are dated
+records, and the identifier and count rules do not apply to them: a record of a
+removal names the thing removed. Their file references still have to resolve.
 
 ## The token layering rule
 

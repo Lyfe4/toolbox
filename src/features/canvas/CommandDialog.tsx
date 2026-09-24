@@ -485,7 +485,7 @@ function pageSize(list: HTMLElement | null): number {
 /**
  * Small subsequence match, scored so that earlier and tighter matches win.
  *
- * Deliberately hand-written: this filters eight tools, and pulling in a search
+ * Deliberately hand-written: this filters ten tools, and pulling in a search
  * library for that would cost more bytes than the whole canvas chunk.
  */
 export function fuzzyFilter(

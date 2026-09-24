@@ -51,11 +51,14 @@ spelling, which is the whole asymmetry between the two directions.
 That union is also why base64 is the tool that can still deliver a value a
 downstream port refuses. Since the
 [port audit](../../../docs/architecture.md#the-port-set) every port that reads
-a document accepts `bytes`, so the only ports left that can refuse one at
-runtime are the two that take a short literal: a JWT and a colour. `base64 →
-jwt` is legal to draw and, in decode mode, delivers bytes to a text-only port —
-which `validateInputs` refuses on the node that received it, naming the type it
-got.
+a document accepts `bytes`, so the only ports left that can refuse a decoded
+value at runtime are the two that take a short literal: a JWT and a colour.
+`base64 → jwt` is legal to draw and, in decode mode, delivers bytes to a
+text-only port — which `validateInputs` refuses on the node that received it,
+naming the type it got. The same happens the other way round in encode mode:
+`image-convert` and `video-remux` take only `bytes`, so `base64 → image-convert`
+is legal to draw and refused at runtime when what arrives is base64 text. This
+paragraph used to say the two short literals were the only such ports.
 
 ## Approach
 
@@ -110,7 +113,9 @@ declared property of the tool rather than a decision made by the caller.
 
 ## Tests
 
-`base64.test.ts` covers the RFC 4648 test vectors, each edge case above, and
-three property-based invariants: byte round-trip for arbitrary `Uint8Array`
+`base64.test.ts` covers the RFC 4648 test vectors, each edge case above but
+the last — no test feeds in a lone surrogate, and combining marks are reached
+only through the text round-trip property — and three property-based
+invariants: byte round-trip for arbitrary `Uint8Array`
 inputs under every option combination, text round-trip for arbitrary well-formed
 strings, and the guarantee that output only ever uses the declared alphabet.

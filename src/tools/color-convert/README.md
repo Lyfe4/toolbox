@@ -104,7 +104,9 @@ refused rather than scaled by 360.
 
 ## Tests
 
-`color.test.ts` covers every accepted syntax, the refusals, alpha handling and
+`color.test.ts` covers every accepted syntax but one — no test reads the legacy
+comma form of `hsl()`, which the parser does accept — the refusals, except the
+seven-digit hex named above, which is refused and not tested, alpha handling and
 the precision option. The property tests are the ones that matter for a
 converter: sRGB → HSL → sRGB is exact at 8-bit depth, sRGB → OKLCH → sRGB is
 within one 8-bit step, and a full parse → format → parse cycle holds in all four

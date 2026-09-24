@@ -2,6 +2,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
+import { TOOL_MANIFEST } from '@/features/registry';
 import { expectNoAxeViolations } from '@/lib/testing/axe';
 import { renderRoute } from '@/lib/testing/renderRoute';
 
@@ -10,8 +11,14 @@ describe('/tools index', () => {
     await renderRoute('/tools');
 
     expect(screen.getByRole('heading', { level: 1, name: 'Every tool' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Base64/ })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Structured data/ })).toBeInTheDocument();
+    // Every one, by its route - this checked two of the ten until round seventeen.
+    const hrefs = screen
+      .getAllByRole('link')
+      .map((link) => link.getAttribute('href'))
+      .filter((href) => href?.startsWith('/tools/'));
+    expect([...new Set(hrefs)].sort()).toEqual(
+      TOOL_MANIFEST.map((entry) => `/tools/${entry.id}`).sort(),
+    );
   });
 
   it('filters as you type, and announces the count', async () => {

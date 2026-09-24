@@ -128,7 +128,7 @@ export const TOKEN_GROUPS: readonly TokenGroup[] = [
  *
  * Asserted rather than trusted, because a token added to `THEMED_TOKENS` and
  * forgotten here would simply be uneditable, with nothing to show for it. The
- * check runs in the test suite; see tokenGroups.test.ts.
+ * check runs in the test suite; see `customThemes.test.ts`.
  */
 export function ungroupedTokens(): readonly ThemedToken[] {
   const grouped = new Set(TOKEN_GROUPS.flatMap((group) => group.tokens.map((one) => one.token)));

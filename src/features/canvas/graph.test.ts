@@ -44,35 +44,76 @@ const into = (nodeId: string, portId = 'input'): PortRef => ({ nodeId, portId })
 
 describe('command inverses', () => {
   const base = graphOf(node('n1', 'base64', 0, 0), node('n2', 'structured-data', 300, 0));
+  const wire = { id: 'e1', from: out('n1'), to: into('n2') };
+  const wired = applyCommand(base, { kind: 'add-edge', edge: wire });
 
-  const cases: readonly Command[] = [
-    { kind: 'add-node', node: node('n3', 'base64', 100, 100) },
-    {
-      kind: 'remove-nodes',
-      nodes: [node('n1', 'base64', 0, 0)],
-      nodeIndices: [0],
-      edges: [],
-      edgeIndices: [],
+  /*
+   * ONE CASE PER KIND, AND THE COMPILER COUNTS THEM. `commands.ts` said "every
+   * command kind" is checked here, and for as long as the list was an array two
+   * of the seven were missing - `add-subgraph`, which every preset drop goes
+   * through, and `remove-edges`, which is how a wire is deleted. A `Record`
+   * keyed by the union makes a new kind without a case a type error.
+   */
+  const cases = {
+    'add-node': {
+      start: base,
+      command: { kind: 'add-node', node: node('n3', 'base64', 100, 100) },
     },
-    {
-      kind: 'move-nodes',
-      ids: ['n1'],
-      from: { n1: { x: 0, y: 0 } },
-      to: { n1: { x: 64, y: 32 } },
+    'remove-nodes': {
+      start: base,
+      command: {
+        kind: 'remove-nodes',
+        nodes: [node('n1', 'base64', 0, 0)],
+        nodeIndices: [0],
+        edges: [],
+        edgeIndices: [],
+      },
     },
-    { kind: 'add-edge', edge: { id: 'e1', from: out('n1'), to: into('n2') } },
-    { kind: 'set-options', nodeId: 'n1', from: {}, to: { mode: 'decode' } },
-  ];
+    'move-nodes': {
+      start: base,
+      command: {
+        kind: 'move-nodes',
+        ids: ['n1'],
+        from: { n1: { x: 0, y: 0 } },
+        to: { n1: { x: 64, y: 32 } },
+      },
+    },
+    'add-edge': { start: base, command: { kind: 'add-edge', edge: wire } },
+    'add-subgraph': {
+      start: base,
+      command: {
+        kind: 'add-subgraph',
+        label: 'a preset',
+        nodes: [node('n3', 'base64', 0, 300), node('n4', 'structured-data', 300, 300)],
+        edges: [{ id: 'e2', from: out('n3'), to: into('n4') }],
+      },
+    },
+    'remove-edges': {
+      start: wired,
+      command: { kind: 'remove-edges', edges: [wire], edgeIndices: [0] },
+    },
+    'set-options': {
+      start: base,
+      command: { kind: 'set-options', nodeId: 'n1', from: {}, to: { mode: 'decode' } },
+    },
+  } satisfies {
+    readonly [K in Command['kind']]: {
+      readonly start: GraphData;
+      readonly command: Command & { kind: K };
+    };
+  };
 
-  it.each(cases.map((command) => [command.kind, command] as const))(
+  it.each(Object.entries(cases))(
     '%s: apply then revert returns the original graph',
-    (_kind, command) => {
-      const applied = applyCommand(base, command);
+    (_kind, { start, command }) => {
+      const applied = applyCommand(start, command);
+      // The positive half: the command did something, so "reverted equals start" is not two no-ops.
+      expect(applied).not.toEqual(start);
       const reverted = revertCommand(applied, command);
-      expect(reverted.nodes).toEqual(base.nodes);
-      expect(reverted.nodeOrder).toEqual(base.nodeOrder);
-      expect(reverted.edges).toEqual(base.edges);
-      expect(reverted.edgeOrder).toEqual(base.edgeOrder);
+      expect(reverted.nodes).toEqual(start.nodes);
+      expect(reverted.nodeOrder).toEqual(start.nodeOrder);
+      expect(reverted.edges).toEqual(start.edges);
+      expect(reverted.edgeOrder).toEqual(start.edgeOrder);
     },
   );
 

@@ -553,7 +553,7 @@ describe('what gets painted', () => {
    * The two branches are separate code with separate APIs, so nothing but a
    * test stops one of them drifting - and the drift that matters is not the
    * blob, it is what was painted. Both sequences come out of the same
-   * `prepareContext`, and this is what says so.
+   * `paint`, and this is what says so.
    */
   it('paints exactly the same sequence with and without OffscreenCanvas', async () => {
     const worker = stubCanvas({ bitmap: fakeBitmap(1_600, 900), blobType: 'image/jpeg' });

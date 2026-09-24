@@ -624,6 +624,8 @@ export function writeCsv(data: JsonValue, delimiter: string): ToolResult<Written
   const nested: string[] = [];
   /** Columns that some row did not have, so the cell is empty for that row. */
   const missing = new Set<string>();
+  /** Paths whose value was `null`, which a cell spells the same as `""`. */
+  const nulls: string[] = [];
 
   data.forEach((row, index) => {
     const record = row as Readonly<Record<string, JsonValue>>;
@@ -641,6 +643,7 @@ export function writeCsv(data: JsonValue, delimiter: string): ToolResult<Written
             if (value !== undefined && value !== null && typeof value === 'object') {
               nested.push(`$[${index.toString()}]${pathStep(column)}`);
             }
+            if (value === null) nulls.push(`$[${index.toString()}]${pathStep(column)}`);
             const cell = cellToString(value);
             if (tsv && hasNoTsvSpelling(cell))
               unspellable.push(`$[${index.toString()}]${pathStep(column)}`);
@@ -700,6 +703,34 @@ export function writeCsv(data: JsonValue, delimiter: string): ToolResult<Written
         `${names.length.toString()} column${names.length === 1 ? ' was' : 's were'} absent from some rows`,
         `CSV has one spelling for "this row has no such key" and for "this row's value is the empty string", and it is an empty cell. Reading the file back cannot tell them apart. The ${names.length === 1 ? 'column is' : 'columns are'} ${shown.join(', ')}${rest > 0 ? `, and ${rest.toString()} more` : ''}.`,
         // The written document only, for the same reason as the note above.
+        ['output'],
+      ),
+    );
+  }
+
+  /*
+   * A NULL, WHICH A CELL SPELLS AS NOTHING.
+   *
+   * The matrix said this conversion's three losses were "all now reported by
+   * path", and a value becoming text was one of the three - found by the
+   * documentation audit of round seventeen to have no note at all. For a
+   * number or a boolean that is right and stays unsaid: CSV has no types, the
+   * digits are all there, and a note on every export is one nobody reads (the
+   * negative control in reports.test.ts). A `null` is different. It comes out
+   * as the empty cell an empty string and an absent key also come out as, so
+   * the file no longer says which of three things it was - the note above
+   * this one says so for the absent key, and this says it for the null.
+   */
+  if (nulls.length > 0) {
+    const shown = nulls.slice(0, 5);
+    const rest = nulls.length - shown.length;
+    notes.push(
+      lost(
+        nulls.length === 1
+          ? `The null at ${shown[0] ?? ''} became an empty cell`
+          : `${nulls.length.toString()} null values became empty cells`,
+        `CSV has no null, so a null is written as an empty cell - the same cell an empty string and an absent key are written as. Reading the file back gives the empty string. At ${shown.join(', ')}${rest > 0 ? `, and ${rest.toString()} more` : ''}.`,
+        // The written document only, for the same reason as the notes above.
         ['output'],
       ),
     );

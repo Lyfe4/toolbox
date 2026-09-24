@@ -99,8 +99,11 @@ export type WorkerResponse = StartedResponse | SettledResponse | ReadyResponse;
  *
  * A structured clone of a 30 MB buffer allocates and copies 30 MB. Transferring
  * moves ownership instead: the receiving side gets the same memory and the
- * sending side's view is detached. That makes it near-free, and it is why the
- * engine documents binary inputs as consumed by the call.
+ * sending side's view is detached. That makes it near-free, and it is why this
+ * is used for a tool's OUTPUTS on the way back. Inputs are not transferred:
+ * the engine borrows them (they are cloned in, or a blob goes by reference),
+ * so one output can feed several nodes without being detached. This comment
+ * used to say inputs were "consumed by the call", which nothing ever did.
  *
  * SharedArrayBuffer is deliberately skipped - it is shared, not transferable,
  * and attempting to transfer one throws.

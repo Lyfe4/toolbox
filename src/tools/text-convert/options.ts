@@ -237,10 +237,13 @@ export const textConvertOptionFields: readonly OptionField<TextConvertOptions>[]
     label: 'Tables',
     control: 'select',
     choices: [
-      { value: 'rows', label: 'Tab-separated rows' },
+      // `rows` is the stored value from when these were tab-separated; kept, so
+      // a saved graph or a share link still selects this choice.
+      { value: 'rows', label: 'Aligned columns' },
       { value: 'drop', label: 'Drop them' },
     ],
-    description: 'Tab-separated because that is what survives a paste into a spreadsheet.',
+    description:
+      'Laid out in aligned columns with a rule under the header, so a table still reads as a table in plain text.',
     when: whenTarget('text'),
   },
 ];

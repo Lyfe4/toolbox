@@ -40,7 +40,7 @@ import type { FileInputRef, NodeId } from './types';
  * reference to the same immutable bytes rather than a copy of them. A blob
  * cannot be detached, so the failure this rule was written to prevent is not
  * available to it. `fanout.test.ts` holds the line for wired outputs;
- * `attachments.test.ts` holds it for a file, and reads every consumer's value
+ * `attachments.test.tsx` holds it for a file, and reads every consumer's value
  * rather than the first.
  */
 
@@ -72,7 +72,7 @@ export interface AttachmentStore {
  * points at nothing, and cannot collide its way into a wrong answer: the
  * pipeline cache only ever holds entries for keys computed while a file was
  * actually attached, so a stale token can cause a redundant re-run and never a
- * stale hit. Asserted by `attachments.test.ts`.
+ * stale hit. Asserted by `attachments.test.tsx`.
  */
 let nextToken = 1;
 

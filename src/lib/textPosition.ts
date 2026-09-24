@@ -26,8 +26,11 @@ export function positionFromOffset(source: string, offset: number, firstLine = 1
     }
   }
 
-  // A CR immediately before the offset belongs to the break, not the column.
-  const column = clamped - lineStart + 1;
+  // A CR immediately before the offset belongs to the break, not the column:
+  // an offset on the LF of a CRLF pair is the end of the line, and gets the
+  // column the same offset would get in an LF file.
+  const onCrlfBreak = source[clamped] === '\n' && source[clamped - 1] === '\r';
+  const column = clamped - lineStart + 1 - (onCrlfBreak ? 1 : 0);
 
   return { line, column, offset: clamped };
 }

@@ -129,7 +129,7 @@ that target is selected.
 | `unsupported`        | Markdown             | What to do with markup Markdown cannot express.                                      |
 | `keepLinkUrls`       | Plain text           | Writes the URL in brackets, when it adds something.                                  |
 | `listMarker`         | Plain text           | `-`, `*`, or none.                                                                   |
-| `tables`             | Plain text           | Tab-separated rows, or dropped.                                                      |
+| `tables`             | Plain text           | Aligned columns with a ruled header, or dropped.                                     |
 
 **One default the merge had to pick.** `markdown` defaulted `unsupported` to
 `keep`, `html-text` to `text`, and one tool cannot have two.
@@ -190,9 +190,13 @@ Two are the converter being **right**, and settle after one round trip:
   comes back as `<del>`, because `~~` is the nearest Markdown and `~~` means
   `<del>`. Once, then never again.
 
-Two more are **upstream defects** — a backslash before inline markup, and a
-space at the edge of a code span. Both are written up under
-[Known limitations](#known-limitations) with their causes located exactly.
+Two more are **upstream defects**, with one cause — `mdast-util-to-markdown`'s
+`safe()` escaping correctly for the construct in front of it: a backslash before
+inline markup, and text escaped into something GFM then linkifies as an email
+address (`|7*P*@Oj.EK` comes back as a `mailto:` link). Both are written up
+under [Known limitations](#known-limitations). The second used to be a space at
+the edge of a code span, which has since been fixed from outside the dependency
+(see [Whitespace inside code](#whitespace-inside-code)).
 
 A third used to be here: **a list starting at zero renumbered to one.** That
 one now has a fix. `hast-util-to-mdast@10.1.2` tests `properties.start` for
@@ -306,7 +310,7 @@ neither reaches the network.
 
 | Suite                                                                    | Cases | Passing         |
 | ------------------------------------------------------------------------ | ----- | --------------- |
-| [CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/)                 | 652   | **612 (93.9%)** |
+| [CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/)                 | 652   | **624 (95.7%)** |
 | GFM extensions (tables, task lists, strikethrough, autolinks, tagfilter) | 24    | **21 (87.5%)**  |
 
 **Comparison is by DOM, not by bytes**, and that choice is worth understanding
@@ -320,25 +324,30 @@ text was expected all still fail. The one normalisation on top is that
 whitespace-only text containing a newline is treated as formatting, outside
 `pre` and `code`. See [`conformance.ts`](../../lib/markup/conformance.ts).
 
-### The 40 CommonMark examples that do not pass
+### The 28 CommonMark examples that do not pass
 
 Every one is about raw HTML or about a URL. **None is about emphasis, lists,
 tables, code, headings or any other Markdown construct** — which is asserted
 directly, so a failure appearing in another section is a parser problem rather
 than a policy one.
 
-| Cause                                                                 | Count | Examples                                                                        |
-| --------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------- |
-| The sanitiser removed an element or attribute the spec passes through | 25    | 150, 152–154, 163, 164, 169–173, 176, 178, 201, 491, 524, 536, 613–617, 627–629 |
-| HTML comments are dropped                                             | 7     | 177, 179, 183, 308, 309, 625, 626                                               |
-| URL scheme not in the allow-list                                      | 4     | 596, 598, 599, 601                                                              |
-| Processing instructions and CDATA are dropped                         | 2     | 180, 182                                                                        |
-| The scheme's case is normalised (`MAILTO:` → `mailto:`)               | 1     | 597                                                                             |
-| A relative URL containing a colon is rejected upstream                | 1     | 500                                                                             |
+| Cause                                                                 | Count | Examples                                                               |
+| --------------------------------------------------------------------- | ----- | ---------------------------------------------------------------------- |
+| The sanitiser removed an element or attribute the spec passes through | 22    | 150, 152–154, 163, 164, 169–173, 176, 178, 201, 491, 524, 536, 613–617 |
+| URL scheme not in the allow-list                                      | 4     | 596, 598, 599, 601                                                     |
+| The scheme's case is normalised (`MAILTO:` → `mailto:`)               | 1     | 597                                                                    |
+| A relative URL containing a colon is rejected upstream                | 1     | 500                                                                    |
 
-The first four groups are the product rather than defects: cmark copies raw
+The first two groups are the product rather than defects: cmark copies raw
 HTML to the output verbatim and this tool refuses to, because its output is
 meant to be safe to paste somewhere that renders it.
+
+This section said 612 (93.9%) and 40 until HTML comments stopped being dropped.
+That took twelve examples off the list: the seven comments; 180 and 182, a
+processing instruction and a CDATA section, which an HTML parser represents as
+comment nodes; and 627–629 from the sanitiser row, for the same reason. The
+list in [`conformance.test.ts`](../../lib/markup/conformance.test.ts) is exact,
+so the numbers here are the ones it asserts.
 
 ### The 3 GFM examples that do not pass
 
@@ -513,8 +522,10 @@ Markdown → HTML keeps the blank line, in every spelling of the document there
 is: backtick and tilde fences, with and without a language, indented four
 spaces instead, inside a list, inside a blockquote, with CRLF line endings,
 with spaces or a tab on the blank line, and with no trailing newline. Fifteen
-variants, all measured, all correct. That direction was never broken and is now
-pinned so it cannot break quietly.
+variants, all measured, all correct. That direction was never broken, and the
+reported document itself is now pinned in `hardening.test.ts` so it cannot
+break quietly; the other spellings were measured once and are not all pinned —
+the indented block and a `<pre>` arriving as HTML are.
 
 ### What did
 
@@ -633,7 +644,7 @@ tag, so a fenced code block inside `<details>` stays a fenced code block.
 
 **`text` means text for every element on the list, from round thirteen.** It
 used to register nothing and fall through to hast-util-to-mdast's defaults, on
-the belief that they keep the words and drop the wrapper. For seven elements
+the belief that they keep the words and drop the wrapper. For eight elements
 they substitute instead: `<mark>` became `_emphasis_`, `<kbd>`, `<samp>` and
 `<var>` became code spans, a definition list became bullets, and `<q>` wrote
 quotation marks into the text. Under a policy labelled _Keep the text, drop the
@@ -643,10 +654,14 @@ for `<kbd>` as a key cap; it is written back verbatim.
 
 ## Known limitations
 
-Every one of these is asserted in
-[`hardening.test.ts`](../../lib/markup/hardening.test.ts) against its **current, wrong**
-behaviour, so an upstream fix shows up as a failing test with the file and
-line to go and delete.
+The upstream ones are asserted against their **current, wrong** behaviour —
+in [`hardening.test.ts`](../../lib/markup/hardening.test.ts), and the email
+address in `constructs.test.ts` — so an upstream fix shows up as a failing test
+with the file and line to go and delete. Of the deliberate ones, `data:`, the
+emoji and the second round trip are asserted in `hardening.test.ts`, and
+`<ol reversed>` and the class names in `normalisation.test.ts`. Two are asserted
+nowhere: the missing `alt` (TC-11) and the backslash spelling of a hard break.
+This paragraph used to say every one was in `hardening.test.ts`.
 
 ### Upstream, with no clean fix from outside
 
@@ -656,6 +671,12 @@ character reference arrives as four visible characters instead of an `x`. The
 serialiser encodes the `x` so the following `_` can open emphasis — correct in
 isolation — but leaves the backslash bare. In `mdast-util-to-markdown`'s
 `safe()`, which no configuration reaches. A backslash on its own is fine.
+
+**Prose can be escaped into an email address.** Serialising
+`|7<em>P</em>@Oj.EK` writes the `7` and the `P` as character references so the
+`_` can open and close emphasis, and the result contains `_@Oj.EK`, which GFM's
+autolink literals then read as an address: one round trip turns prose into a
+`mailto:` link. The same `safe()`, again unreachable by configuration.
 
 **`ftp://` is not linkified.** See the GFM section above.
 
@@ -797,11 +818,14 @@ input already is HTML, a real parser has handled it, and the sanitiser deletes
 the element and its content. Neither leaves anything executable; one leaves the
 tag legible as words.
 
-### `output` and `rendered` coincide for one target, and cannot be made not to
+### `output` and `rendered` coincide for HTML targets, and cannot be made not to
 
-With a Markdown source and an HTML target the two ports are the same string,
+With a Markdown source and either HTML target the two ports are the same string,
 because converting a document to HTML and rendering it are the same operation.
-No definition of `rendered` can differ from `output` there. Both alternatives
+No definition of `rendered` can differ from `output` there. The same holds for
+an HTML source with the **HTML (sanitised)** target, which is the sanitised
+source and nothing else — exactly what `rendered` carries. This section used to
+name one target; there are three combinations. Both alternatives
 cost more:
 
 - **One port, presented as HTML only when the target is HTML.**

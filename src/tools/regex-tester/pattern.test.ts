@@ -285,6 +285,9 @@ describe('risk analysis', () => {
       '<a href="([^"]*)">',
       '^(?<key>[^=]+)=(?<value>.*)$',
       '(?:GET|POST|PUT) (/\\S*) HTTP/1\\.[01]',
+      // The README said this test covered a lookahead password rule; it did
+      // not until round seventeen.
+      '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^\\w\\s]).{12,}$',
     ]) {
       expect(level(pattern), pattern).toBe('none');
     }

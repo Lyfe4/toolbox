@@ -132,7 +132,7 @@ function named(changes: readonly MarkupChange[], kind: MarkupChange['kind']): st
  * `rendered` is the SANITISED HUB for every target but Markdown, where index.ts
  * re-renders it from `output`. So:
  *
- *   atHub     a loss the hub already has - the allow-list dropping raw HTML on
+ *   HUB_AND_OUTPUT  a loss the hub already has - the allow-list dropping raw HTML on
  *             the way in, the sanitiser dropping an attribute. `output` is
  *             derived from the hub, so it is in both, always.
  *   afterHub  a loss the Markdown round trip caused, or one measured on
@@ -195,7 +195,10 @@ export function normalisationNotes(input: NormalisationInput): readonly ToolNote
   if (input.source === 'html' && input.target !== 'text') {
     return [...identifiers, ...htmlNotes(input)];
   }
-  if (input.source === 'markdown' && input.target === 'markdown') return markdownNotes(input);
+  if (input.source === 'markdown' && input.target === 'markdown') {
+    const removed = markdownToHtmlNotes(input);
+    return [...removed, ...markdownNotes(input, removed.length > 0)];
+  }
   if (input.source === 'markdown') return [...identifiers, ...markdownToHtmlNotes(input)];
   return identifiers;
 }
@@ -222,32 +225,83 @@ export function normalisationNotes(input: NormalisationInput): readonly ToolNote
  * reader can see exactly what happened; a note would claim a removal that did
  * not occur.
  *
- * Applies to every target a Markdown source has, plain text included: a thing
- * the allow-list removed before the text was extracted is still a thing the
- * document had, and the text output is where its absence is least visible.
+ * Applies to every target a Markdown source has, plain text AND Markdown
+ * included: a thing the allow-list removed before the text was extracted is
+ * still a thing the document had, and the text output is where its absence is
+ * least visible. Until round seventeen this comment said so and the Markdown
+ * target was the exception - `<foo>bar</foo>` came back as `bar` under a note
+ * saying the meaning was unchanged.
+ *
+ * A LINK OR AN IMAGE WHOSE ADDRESS WAS REFUSED is not raw HTML and is not an
+ * element the list refuses, so it gets the same sentences the HTML source
+ * gives it (`refusedAddressNotes`) rather than being blamed on markup the
+ * document may not have. `[x](javascript:alert(1))` used to become `x` with no
+ * note at all, and `<irc://host>` was told its `<a>` was not on the list.
  */
 function markdownToHtmlNotes(input: NormalisationInput): readonly ToolNote[] {
   if (input.unsanitised === null) return [];
 
-  const changes = compareCensus(input.unsanitised, censusOfHtml(input.sanitised));
-  const elements = named(changes, 'element-dropped');
-  const attributes = named(changes, 'attribute-dropped');
-  if (elements.length === 0 && attributes.length === 0) return [];
+  const sanitised = censusOfHtml(input.sanitised);
+  const changes = compareCensus(input.unsanitised, sanitised);
+  const deadLinks = input.unsanitised.linksWithAddress - sanitised.linksWithAddress;
+  const deadImages = input.unsanitised.imagesWithSource - sanitised.imagesWithSource;
+  const elements = named(
+    changes.filter((change) => !input.allowedElements.has(change.name)),
+    'element-dropped',
+  );
+  const attributes = named(changes, 'attribute-dropped').filter(
+    (name) =>
+      !(name === 'href' && deadLinks > 0) &&
+      !((name === 'src' || name === 'alt') && deadImages > 0),
+  );
 
-  const parts = [
-    ...(elements.length > 0 ? [elements.join(', ')] : []),
-    ...(attributes.length > 0 ? [attributes.join(', ')] : []),
-  ];
+  const notes: ToolNote[] = [];
+  if (elements.length > 0 || attributes.length > 0) {
+    const parts = [
+      ...(elements.length > 0 ? [elements.join(', ')] : []),
+      ...(attributes.length > 0 ? [attributes.join(', ')] : []),
+    ];
+    notes.push(
+      lost(
+        `${(elements.length + attributes.length).toString()} ${plural(elements.length + attributes.length, 'thing the allow-list does not permit was removed', 'things the allow-list does not permit were removed')}`,
+        `Markdown can contain raw HTML and this document does. ${parts.join(' and ')} ${plural(elements.length + attributes.length, 'is', 'are')} not on the allow-list, so ${plural(elements.length + attributes.length, 'it was', 'they were')} removed on the way out. That list is what makes this output safe to paste into a page.`,
+        // The allow-list runs on the way INTO the hub, so both documents are
+        // missing what it removed.
+        HUB_AND_OUTPUT,
+      ),
+    );
+  }
+  return [...notes, ...refusedAddressNotes(deadLinks, deadImages)];
+}
 
-  return [
-    lost(
-      `${(elements.length + attributes.length).toString()} ${plural(elements.length + attributes.length, 'thing the allow-list does not permit was removed', 'things the allow-list does not permit were removed')}`,
-      `Markdown can contain raw HTML and this document does. ${parts.join(' and ')} ${plural(elements.length + attributes.length, 'is', 'are')} not on the allow-list, so ${plural(elements.length + attributes.length, 'it was', 'they were')} removed on the way out. That list is what makes this output safe to paste into a page; it is also why a README's <details> block does not survive.`,
-      // The allow-list runs on the way INTO the hub, so both documents are
-      // missing what it removed.
-      HUB_AND_OUTPUT,
-    ),
-  ];
+/**
+ * What happened to a link or an image whose address the allowed list refused,
+ * from either source: the sanitiser removes the attribute, and two steps after
+ * it take the element too.
+ */
+function refusedAddressNotes(deadLinks: number, deadImages: number): readonly ToolNote[] {
+  const addresses =
+    'which keeps http, https, mailto and tel addresses and relative ones and refuses every other scheme - javascript:, data: and blob: among them';
+  const notes: ToolNote[] = [];
+  if (deadLinks > 0) {
+    notes.push(
+      lost(
+        `${deadLinks.toString()} ${plural(deadLinks, 'link became', 'links became')} plain text`,
+        `The address of ${plural(deadLinks, 'a link', 'each')} was refused by the allowed list, ${addresses}. A link with no address goes nowhere, so its words are kept and the link is not.`,
+        HUB_AND_OUTPUT,
+      ),
+    );
+  }
+  if (deadImages > 0) {
+    notes.push(
+      lost(
+        `${deadImages.toString()} ${plural(deadImages, 'image was', 'images were')} replaced by ${plural(deadImages, 'its', 'their')} alt text`,
+        `The source of ${plural(deadImages, 'an image', 'each')} was refused by the allowed list, ${addresses}. An image with no source could only draw a broken-image icon, so an image with alt text becomes that text and one without is removed.`,
+        HUB_AND_OUTPUT,
+      ),
+    );
+  }
+  return notes;
 }
 
 /**
@@ -379,9 +433,6 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
     bySanitiser.filter((change) => !input.allowedElements.has(change.name)),
     'element-dropped',
   );
-  const addresses =
-    'which keeps http, https, mailto and tel addresses and relative ones and refuses every other scheme - javascript:, data: and blob: among them';
-
   if (sanitisedAttributes.length > 0) {
     notes.push(
       lost(
@@ -403,25 +454,7 @@ function htmlNotes(input: NormalisationInput): readonly ToolNote[] {
     );
   }
 
-  if (deadLinks > 0) {
-    notes.push(
-      lost(
-        `${deadLinks.toString()} ${plural(deadLinks, 'link became', 'links became')} plain text`,
-        `The address of ${plural(deadLinks, 'a link', 'each')} was refused by the allowed list, ${addresses}. A link with no address goes nowhere, so its words are kept and the link is not.`,
-        HUB_AND_OUTPUT,
-      ),
-    );
-  }
-
-  if (deadImages > 0) {
-    notes.push(
-      lost(
-        `${deadImages.toString()} ${plural(deadImages, 'image was', 'images were')} replaced by ${plural(deadImages, 'its', 'their')} alt text`,
-        `The source of ${plural(deadImages, 'an image', 'each')} was refused by the allowed list, ${addresses}. An image with no source could only draw a broken-image icon, so an image with alt text becomes that text and one without is removed.`,
-        HUB_AND_OUTPUT,
-      ),
-    );
-  }
+  notes.push(...refusedAddressNotes(deadLinks, deadImages));
 
   /*
    * CORPUS ROW 16: A CLASS NAME THE SANITISER TOOK OUT OF AN ATTRIBUTE IT KEPT.
@@ -616,7 +649,7 @@ const MARKDOWN_CASUALTIES: readonly {
   },
 ];
 
-function markdownNotes(input: NormalisationInput): readonly ToolNote[] {
+function markdownNotes(input: NormalisationInput, somethingRemoved: boolean): readonly ToolNote[] {
   // Nothing changed at all: the document was already in the shape this writer
   // produces. Saying anything here would be the note that cries wolf.
   if (input.input === input.output) return [];
@@ -650,7 +683,7 @@ function markdownNotes(input: NormalisationInput): readonly ToolNote[] {
   notes.push(
     noted(
       'The document was reformatted',
-      'Markdown to Markdown goes out to HTML and back, so the output is written in this tool’s own style: the bullet, emphasis, fence and heading options above decide how. The meaning is unchanged - "md to html to md to html" is asserted stable - but the bytes are not the ones that went in.',
+      `Markdown to Markdown goes out to HTML and back, so the output is written in this tool’s own style: the bullet, emphasis, fence and heading options above decide how. ${somethingRemoved ? 'Apart from what the note above names, the meaning is unchanged' : 'The meaning is unchanged'} - "md to html to md to html" is asserted stable - but the bytes are not the ones that went in.`,
     ),
   );
 

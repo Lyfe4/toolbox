@@ -312,7 +312,7 @@ export type TrackKind = 'video' | 'audio' | 'other';
  * differ only where a stream has B-frames, and keeping both is what lets a
  * reordered stream survive the trip: Matroska stores presentation times and
  * MP4 wants both, so one of the two readers has to reconstruct the other. See
- * `reconstructDecodeTimes`.
+ * `decodeTimes`.
  */
 export interface SampleTable {
   readonly count: number;

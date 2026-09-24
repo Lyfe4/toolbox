@@ -550,7 +550,14 @@ export interface ToolRunContext {
    */
 }
 
-export const TOOL_CATEGORIES = ['encoding', 'data', 'text', 'colour', 'time', 'hashing'] as const;
+/**
+ * Every category a tool is filed under. `time` was here from the first commit
+ * for a date tool nobody wrote, and `/tools` offered it as a filter that could
+ * only ever show nothing - found by the documentation audit, which read the
+ * skill's list of five and the select's six. Removed, the way `datetime` left
+ * `DATA_TYPES`; `ports.test.ts` now asserts every entry holds a tool.
+ */
+export const TOOL_CATEGORIES = ['encoding', 'data', 'text', 'colour', 'hashing'] as const;
 export type ToolCategory = (typeof TOOL_CATEGORIES)[number];
 
 /* ========================================================================== *

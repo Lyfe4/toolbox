@@ -4,8 +4,9 @@ Paste this into the text-convert tool, set **Target format** to **HTML**, press
 **Run**, then press **Copy as rich text** on the _Rendered HTML_ output.
 
 Paste the result into Word, Google Docs and Outlook. What to look for is listed
-in [the README](README.md#checking-it-against-word-yourself); the numbered
-items below correspond to it.
+in [the README](README.md#checking-it-against-word-yourself); items 1 to 6
+below correspond to its first six. Item 7 here has no entry there, and the
+README's seventh is the plain-text paste at the end of this file.
 
 ---
 
@@ -65,8 +66,9 @@ See [the specification](https://spec.commonmark.org/0.31.2/) or email
 
 ## 6. Encoding
 
-An em dash — a non-breaking space, "curly quotes", a rocket 🚀, H<sub>2</sub>O
-and 25 °C. None of these should arrive as mojibake.
+An em dash —, a non-breaking space in 25 °C, “curly quotes”, a rocket 🚀
+and H<sub>2</sub>O. None of these should arrive as mojibake, and the space in
+25 °C should not break across a line.
 
 ## 7. Everything else the allow-list permits
 

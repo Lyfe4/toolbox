@@ -954,8 +954,8 @@ async function checkInspector(browser, label) {
      * OPENED, RATHER THAN FOUND OPEN. The panel used to default to open at this
      * width; it starts closed on a first visit now, because an empty panel
      * explaining that there is nothing to inspect is not a useful first screen.
-     * `checkInspectorState` below asserts that starting point and the memory
-     * behind it; everything here is about the rail once it is showing.
+     * `checkInspectorMotion` asserts that starting point and the memory
+     * behind it ("It starts closed, and remembers"); everything here is about the rail once it is showing.
      */
     check(
       label,
@@ -9778,7 +9778,7 @@ async function checkBackgroundedTab(browser, label) {
        * down with it - a harness that cannot drive the page proves nothing
        * about the page. Every timer this check is about is far above the
        * threshold: the regex deadline is 2000ms, base64's is 15000ms, and the
-       * pipeline's re-run debounce is 500ms. Sub-100ms timers are the
+       * pipeline's re-run debounce is 300ms. Sub-100ms timers are the
        * harness's, not the engine's.
        */
       const real = window.setTimeout.bind(window);
@@ -13224,6 +13224,48 @@ async function checkCanvasGrid(browser, label) {
   }
 }
 
+/**
+ * WHAT WAS ON SCREEN, FRAME BY FRAME, UNTIL THE DOCUMENT HAD PARSED.
+ *
+ * Installed as an init script, so the first `requestAnimationFrame` is asked
+ * for before a byte of the document has been parsed, and every frame after it
+ * is recorded until the parse is over - plus the first one after, which is
+ * the first frame the app itself could have touched. A rendering update runs
+ * its frame callbacks before it paints, so each record is what that paint
+ * showed.
+ *
+ * WHY NOT `domcontentloaded`, which these checks used until round seventeen
+ * with a comment saying it was "before the module script has run". It is not:
+ * a module script is deferred, and deferred scripts run BEFORE
+ * DOMContentLoaded fires. So a panel the app removed after it had been painted
+ * passed exactly as well as one the inline script removed first, which is the
+ * difference the checks exist to see.
+ */
+const RECORD_FRAMES = () => {
+  const frames = [];
+  window.__frames = frames;
+  const record = () => {
+    const root = document.documentElement;
+    frames.push({
+      panel: document.getElementById('cold-open') !== null,
+      theme: root.getAttribute('data-theme'),
+      accent: root.style.getPropertyValue('--pb-accent').trim(),
+      parsing: document.readyState === 'loading',
+    });
+    if (document.readyState === 'loading') requestAnimationFrame(record);
+    else window.__framesDone = true;
+  };
+  requestAnimationFrame(record);
+};
+
+async function framesOf(page) {
+  await page.waitForFunction(() => window.__framesDone === true, undefined, { timeout: 15_000 });
+  return page.evaluate(() => window.__frames);
+}
+
+const panelFrames = (frames) =>
+  `${String(frames.filter((frame) => frame.panel).length)} of ${String(frames.length)} frame(s) showed the panel`;
+
 async function checkColdOpen(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
@@ -13446,9 +13488,25 @@ async function checkColdOpen(browser, label) {
 
     /* -- Dismissing it by hand ------------------------------------------ */
     const fresh = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await fresh.addInitScript(RECORD_FRAMES);
     const freshPage = await fresh.newPage();
     try {
       await freshPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+
+      /*
+       * THE POSITIVE PARTNER of every "never painted" below: the recorder can
+       * see the panel when there is one to see. Without this, a recorder whose
+       * first frame came before the body was parsed would pass every negative
+       * check by looking at an empty page.
+       */
+      const firstVisit = await framesOf(freshPage);
+      check(
+        label,
+        'a first visit paints the panel, and the frame recorder sees it',
+        firstVisit.length > 0 && firstVisit.some((frame) => frame.panel),
+        panelFrames(firstVisit),
+      );
+
       await freshPage.locator('#cold-open-start').click();
       await freshPage.locator('#cold-open').waitFor({ state: 'detached', timeout: 15_000 });
 
@@ -13464,16 +13522,18 @@ async function checkColdOpen(browser, label) {
       );
 
       /*
-       * Reloaded, and checked at `domcontentloaded` rather than after the app
-       * has booted. A panel that were merely REMOVED BY REACT would still have
-       * been painted first, and "you saw the introduction again for 200ms" is
-       * the failure this is here to rule out.
+       * Reloaded, and read from every frame painted while the document parsed
+       * rather than after the app has booted. A panel that were merely
+       * REMOVED BY REACT would still have been painted first, and "you saw the
+       * introduction again for 200ms" is the failure this is here to rule out.
        */
-      await freshPage.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded' });
+      await freshPage.goto(`${ORIGIN}/`, { waitUntil: 'commit' });
+      const reloaded = await framesOf(freshPage);
       check(
         label,
         'and a reload never paints it again',
-        (await freshPage.locator('#cold-open').count()) === 0,
+        reloaded.length > 0 && !reloaded.some((frame) => frame.panel),
+        panelFrames(reloaded),
       );
 
       /* -- Somebody with work saved ------------------------------------- */
@@ -13505,17 +13565,19 @@ async function checkColdOpen(browser, label) {
         { timeout: 20_000 },
       );
 
-      await freshPage.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded' });
+      await freshPage.goto(`${ORIGIN}/`, { waitUntil: 'commit' });
 
       /*
-       * Read at `domcontentloaded`, before the module script has run, which is
-       * the earliest moment a paint could have happened. Anything later would
-       * pass just as happily on a panel that was shown and then withdrawn.
+       * Read from every frame painted while the document parsed - the earliest
+       * moments a paint could have happened. Anything later would pass just as
+       * happily on a panel that was shown and then withdrawn.
        */
+      const withWork = await framesOf(freshPage);
       check(
         label,
         'a saved graph is enough on its own to suppress it',
-        (await freshPage.locator('#cold-open').count()) === 0,
+        withWork.length > 0 && !withWork.some((frame) => frame.panel),
+        panelFrames(withWork),
       );
 
       /*
@@ -13565,6 +13627,99 @@ async function checkColdOpen(browser, label) {
       );
     } finally {
       await fresh.close().catch(() => {});
+    }
+
+    /*
+     * -- A share link, and a custom theme, from the first frame ----------
+     *
+     * Two claims the README and the skill made that nothing checked until
+     * round seventeen. The README said a share link reaches
+     * `domcontentloaded` with the panel already absent; the only share-link
+     * check clicked an example and looked after the canvas had booted. The
+     * skill said the bootstrap applies the stored theme before first paint;
+     * for a custom theme it read the library from a key the editor had moved
+     * it out of, so every custom theme's first frame was the system preset.
+     */
+    const early = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      colorScheme: 'light',
+    });
+    await early.addInitScript(RECORD_FRAMES);
+    const earlyPage = await early.newPage();
+    try {
+      await earlyPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+      const href = await earlyPage
+        .locator('#cold-open a[href^="/?p="]')
+        .first()
+        .getAttribute('href');
+      await earlyPage.goto(`${ORIGIN}${href ?? '/?p='}`, { waitUntil: 'commit' });
+      const shared = await framesOf(earlyPage);
+      check(
+        label,
+        'a share link never paints the panel, not even for a frame',
+        href !== null && shared.length > 0 && !shared.some((frame) => frame.panel),
+        `${href === null ? 'no example link; ' : ''}${panelFrames(shared)}`,
+      );
+
+      /*
+       * A base that is NOT the system preset in this context (light, so
+       * vellum), and an override the base does not have - so both halves of
+       * "a preset plus a handful of overridden tokens" have to arrive, and
+       * neither can arrive by accident.
+       */
+      await earlyPage.evaluate(() => {
+        window.localStorage.setItem('patchbay:cold-open:v1', String(Date.now()));
+        window.localStorage.setItem(
+          'patchbay:theme:v1',
+          JSON.stringify({ version: 1, selection: { kind: 'custom', id: 'probe-theme' } }),
+        );
+        window.localStorage.setItem(
+          'patchbay:themes:v1',
+          JSON.stringify({
+            version: 1,
+            themes: [
+              {
+                id: 'probe-theme',
+                label: 'Probe',
+                base: 'graphite',
+                overrides: { accent: '#ff00aa' },
+              },
+            ],
+          }),
+        );
+      });
+      await earlyPage.goto(`${ORIGIN}/`, { waitUntil: 'commit' });
+      const themed = await framesOf(earlyPage);
+      const wrong = themed.filter(
+        (frame) => frame.theme !== 'graphite' || frame.accent !== '#ff00aa',
+      );
+      check(
+        label,
+        'a custom theme is on the document, base and overrides, from the first frame',
+        themed.length > 0 && wrong.length === 0,
+        wrong.length === 0
+          ? `${String(themed.length)} frame(s)`
+          : `first wrong frame: data-theme=${String(wrong[0].theme)}, --pb-accent=${wrong[0].accent || '(unset)'}`,
+      );
+
+      /* The control: a preset selection sets no override at all. */
+      await earlyPage.evaluate(() => {
+        window.localStorage.setItem(
+          'patchbay:theme:v1',
+          JSON.stringify({ version: 1, selection: { kind: 'preset', name: 'graphite' } }),
+        );
+      });
+      await earlyPage.goto(`${ORIGIN}/`, { waitUntil: 'commit' });
+      const preset = await framesOf(earlyPage);
+      check(
+        label,
+        'and a preset selection paints the preset with nothing overridden',
+        preset.length > 0 &&
+          preset.every((frame) => frame.theme === 'graphite' && frame.accent === ''),
+        `${String(preset.length)} frame(s); first: ${JSON.stringify(preset[0] ?? null)}`,
+      );
+    } finally {
+      await early.close().catch(() => {});
     }
 
     /* -- Every other URL ------------------------------------------------ */
@@ -14219,19 +14374,37 @@ async function checkPipeline(browser, label) {
   await page.addInitScript(() => {
     const posted = [];
     const started = [];
-    Object.assign(window, { __execution: { posted, started } });
+    /*
+     * Which worker each execution started on, and which workers were
+     * terminated: what "the next run is not queued behind the worker the
+     * runaway wedged" means, observed rather than timed. See the last step.
+     */
+    const startedOn = [];
+    const terminated = [];
+    let workers = 0;
+    Object.assign(window, { __execution: { posted, started, startedOn, terminated } });
 
     const Native = window.Worker;
     window.Worker = class extends Native {
       constructor(url, options) {
         super(url, options);
+        const worker = workers;
+        workers += 1;
+        this.__index = worker;
         this.addEventListener('message', (event) => {
-          if (event.data?.kind === 'started') started.push(event.data.requestId);
+          if (event.data?.kind === 'started') {
+            started.push(event.data.requestId);
+            startedOn.push(worker);
+          }
         });
       }
       postMessage(message, transfer) {
         if (message?.kind === 'execute') posted.push(message.requestId);
         return super.postMessage(message, transfer);
+      }
+      terminate() {
+        terminated.push(this.__index);
+        return super.terminate();
       }
     };
   });
@@ -14519,24 +14692,24 @@ async function checkPipeline(browser, label) {
      * The runaway node is DELETED rather than edited so that the next run has
      * no short deadline of its own to rescue it - that is the difference
      * between measuring the engine and measuring the regex tool's two seconds.
-     * The threshold is 10s for the same reason it is not 3s: it has to sit
-     * clear of the 2.1s the fix produces and clear of the replacement worker's
-     * boot, while still failing the 10.8s that the defect produced in the
-     * slower of the two engines.
+     *
+     * OBSERVED, NOT TIMED, SINCE ROUND SEVENTEEN. This asserted the next run
+     * finished inside 10s, sized to fail the 10.8s the defect took in WebKit.
+     * But it drove the 26-branch pattern, which the note on `WEDGE_PATTERN`
+     * measures giving up by itself in 1.5s in JavaScriptCore - and the defect's
+     * Gecko figure, 4.1s, was under the threshold from the start. So the check
+     * could not fail in either engine: found by the documentation audit,
+     * reading the two numbers side by side. No threshold fixes that, because
+     * the defect's cost is the regex's own running time, which an engine can
+     * shorten. What the fix does, and the defect does not, is terminate the
+     * worker the runaway is spinning in - so the next run starts on a NEW
+     * worker. That is asserted, with the wide pattern so the regex is still
+     * running when its deadline arrives in both engines.
      */
     await page.goto(
       link(
         [
-          [
-            'n1',
-            'regex-tester',
-            0,
-            0,
-            {
-              pattern: '((a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z)*)*!!',
-              mode: 'match',
-            },
-          ],
+          ['n1', 'regex-tester', 0, 0, { pattern: WEDGE_PATTERN, mode: 'match' }],
           ['n2', 'base64', 0, 320, { mode: 'decode' }],
         ],
         [],
@@ -14553,6 +14726,8 @@ async function checkPipeline(browser, label) {
       wedging === 'run',
       String(wedging),
     );
+    // The worker the runaway started on: the latest start, now that it is running.
+    const wedgedOn = await page.evaluate(() => window.__execution.startedOn.at(-1) ?? null);
 
     // Escape leaves the editor and puts focus back on the node, which is where
     // Delete is handled - the canvas root never sees a key typed in the panel.
@@ -14565,11 +14740,18 @@ async function checkPipeline(browser, label) {
     const afterEdit = await untilStatus('n2', 'ok', 25_000);
     const afterEditMs = Date.now() - editedAt;
 
+    const after = await page.evaluate(() => ({
+      ranOn: window.__execution.startedOn.at(-1) ?? null,
+      terminated: [...window.__execution.terminated],
+    }));
     check(
       label,
       'the run after a cancelled one is not left queued behind the worker it wedged',
-      afterEdit === 'ok' && afterEditMs < 10_000,
-      `${String(afterEdit)} after ${String(afterEditMs)}ms`,
+      afterEdit === 'ok' &&
+        wedgedOn !== null &&
+        after.ranOn !== wedgedOn &&
+        after.terminated.includes(wedgedOn),
+      `${String(afterEdit)} after ${String(afterEditMs)}ms; the runaway ran on worker ${String(wedgedOn)}, the next run on worker ${String(after.ranOn)}, terminated: [${after.terminated.join(', ')}]`,
     );
   } finally {
     await context.close();

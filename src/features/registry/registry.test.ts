@@ -121,6 +121,15 @@ describe('searchTools', () => {
     expect(searchTools('btoa').map((entry) => entry.id)).toEqual(['base64']);
   });
 
+  /*
+   * The search box on /tools said "Matches names, summaries and keywords",
+   * and so did the skill's oracle, which therefore could not check the whole
+   * contract. `hashing` is in no name, no summary and no keyword.
+   */
+  it('matches on a category name that appears nowhere else', () => {
+    expect(searchTools('hashing').map((entry) => entry.id)).toEqual(['hash']);
+  });
+
   it('filters by category', () => {
     expect(searchTools('', 'data').map((entry) => entry.id)).toEqual(['structured-data']);
   });

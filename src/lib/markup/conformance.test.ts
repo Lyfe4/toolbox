@@ -48,7 +48,7 @@ interface SpecCase {
 /**
  * THE SANITISER REMOVED SOMETHING THE SPEC PASSES THROUGH.
  *
- * All but three of the remaining failures, and the least interesting of them:
+ * All but six of the remaining failures, and the least interesting of them:
  * cmark copies raw HTML to the output verbatim, and this tool refuses to. An
  * unknown element (`<foo>`, `<bar>`), a `<script>`, a `class` or `id` the
  * allow-list does not permit - all of it goes, by design and on purpose,

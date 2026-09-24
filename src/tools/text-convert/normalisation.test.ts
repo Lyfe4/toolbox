@@ -456,6 +456,90 @@ describe('Markdown to HTML, which was labelled exact and is not', () => {
  * The identifiers the author wrote
  * ========================================================================== */
 
+/*
+ * THREE THINGS THE MATRIX SAID OF A MARKDOWN SOURCE THAT WERE NOT TRUE.
+ *
+ * Found by the documentation audit of round seventeen, each by reading the
+ * sentence and then the code: the note's own body said a README's <details>
+ * block does not survive (it does, and the test above says so); Markdown to
+ * Markdown never asked the allowed list anything; and a link whose address was
+ * refused was either silent or blamed on raw HTML the document did not have.
+ */
+describe('what the allowed list did to a Markdown source, on every target', () => {
+  const TARGETS = ['html', 'markdown', 'text'] as const;
+
+  it.each(TARGETS)('names raw HTML the list refuses, to %s', async (target) => {
+    const { notes } = await convert('Hi\n\n<foo>bar</foo>\n', { source: 'markdown', target });
+    expect(losses(notes).join(' ')).toContain('allow-list does not permit');
+    expect(notes.find((note) => note.title.includes('allow-list'))?.body).toContain('foo');
+  });
+
+  it('never tells anyone that <details> does not survive', async () => {
+    const { output, notes } = await convert('<details>\n\n<foo>x</foo>\n\n</details>\n', {
+      source: 'markdown',
+      target: 'html',
+    });
+    const note = notes.find((one) => one.title.includes('allow-list'));
+    // The positive half: there IS a note, about the element that really went.
+    expect(note?.body).toContain('foo');
+    expect(output).toContain('<details>');
+    expect(note?.body).not.toContain('details');
+  });
+
+  it('does not call a Markdown to Markdown round trip meaning-preserving when something was removed', async () => {
+    const { notes } = await convert('Hi\n\n<foo>bar</foo>\n', {
+      source: 'markdown',
+      target: 'markdown',
+    });
+    const reformatted = notes.find((note) => note.title === 'The document was reformatted');
+    expect(reformatted?.body).toContain('Apart from what the note above names');
+    // And a document the list had nothing to say about keeps the plain sentence.
+    const clean = await convert('Hi\n\n*there*\n', { source: 'markdown', target: 'markdown' });
+    const plain = clean.notes.find((note) => note.title === 'The document was reformatted');
+    expect(plain?.body).toContain('The meaning is unchanged');
+    expect(titles(clean.notes).join(' ')).not.toContain('allow-list');
+  });
+
+  it.each(TARGETS)(
+    'says a link whose address was refused became plain text, to %s',
+    async (target) => {
+      const { notes } = await convert('[x](javascript:alert(1)) and [ok](https://example.org)\n', {
+        source: 'markdown',
+        target,
+      });
+      expect(losses(notes)).toContain('1 link became plain text');
+      // Not blamed on raw HTML: the document has none, and <a> is on the list.
+      expect(titles(notes).join(' ')).not.toContain('allow-list');
+    },
+  );
+
+  it('says an autolink with a refused scheme became plain text, not that <a> is refused', async () => {
+    const { notes } = await convert('<irc://foo.bar:2233/baz>\n', {
+      source: 'markdown',
+      target: 'html',
+    });
+    expect(losses(notes)).toContain('1 link became plain text');
+    expect(notes.map((note) => note.body).join(' ')).not.toContain('<a> ');
+    expect(titles(notes).join(' ')).not.toContain('allow-list');
+  });
+
+  it('says an image whose source was refused became its alt text', async () => {
+    const { notes } = await convert('![a cat](javascript:alert(1))\n', {
+      source: 'markdown',
+      target: 'html',
+    });
+    expect(losses(notes)).toContain('1 image was replaced by its alt text');
+  });
+
+  it('says nothing about links and images the list keeps', async () => {
+    const { notes } = await convert(
+      '[a](https://example.org), [b](/relative), [c](#here), [d](mailto:x@example.org) and ![e](https://example.org/e.png)\n',
+      { source: 'markdown', target: 'html' },
+    );
+    expect(losses(notes)).toEqual([]);
+  });
+});
+
 describe('an id the author wrote, under a prefix they did not', () => {
   /*
    * THE SILENCE `compareMarkup` CANNOT SEE.

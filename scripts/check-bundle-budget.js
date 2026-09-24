@@ -58,9 +58,11 @@ const WORKER_BUDGET_BYTES = 32 * 1024;
  * worker budget was added for, one level along: something large arrives, every
  * gate stays green, and the cost lands on whoever opens the route.
  *
- * The number is measured rather than chosen. The largest lazy chunk today is
- * `pipelines` at 414.2 kB - the Markdown/HTML unified pipelines behind
- * text-convert - and 512 kB is about 24% of headroom over it. Raise it in a
+ * The number is measured rather than chosen. When it was set, the largest lazy
+ * chunk was `pipelines` at 414.2 kB - the Markdown/HTML unified pipelines
+ * behind text-convert - and 512 kB was about 24% of headroom over it. The
+ * chunks have been split since (text-convert and pipelines are each near
+ * 220 kB at 07666fd); this script prints today's largest on every run. Raise it in a
  * commit that says what got bigger and why anybody should carry it.
  *
  * WHAT THIS IS NOT A SUBSTITUTE FOR. A chunk under the ceiling is not thereby
