@@ -50,7 +50,8 @@ jobs:
       - name: Build
         run: pnpm build
 
-      # Fails if the initial (non-lazy) JS payload grows past its budget, so a
-      # tool or a heavy dependency cannot drift into the entry chunk unnoticed.
+      # Fails if any of four payloads grows past its budget - the initial JS,
+      # the worker entry, the largest lazy chunk and the service worker's
+      # precache - so a tool or a heavy dependency cannot drift in unnoticed.
       - name: Check bundle budget
         run: pnpm bundle:check
