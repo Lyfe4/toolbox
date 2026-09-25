@@ -120,8 +120,13 @@
  * and at 448px alike, and each one was 66px tall: a line of text over a
  * button left-aligned under it, with the middle of the box empty.
  *
- * - Between the canvas's own margins, `--pb-space-md` from either edge, the
- *   inset the readout and the toolbar column both use.
+ * - Inside the canvas's own margins, `--pb-space-md` from either edge, the
+ *   inset the readout and the toolbar column both use - and on the RIGHT one,
+ *   as wide as what it says. A deletion with its Undo is a title, a button and
+ *   a close, and spanning the row gave it the whole width for about 230px of
+ *   content; a notification carrying a sentence wraps that sentence at the
+ *   full band, so it still spans. Beside the readout was measured first and
+ *   does not fit - see architecture.md, "Beside the readout".
  * - Above the readout, wherever it is: `--toast-clearance` is its measured top
  *   edge, written by the canvas, and absent on a page with no readout.
  * - The action in the row, beside the close button, and the description - when
@@ -139,10 +144,18 @@
     );
     inline-size: auto;
     max-inline-size: none;
+    align-items: flex-end;
     gap: var(--pb-space-xs);
   }
 
+  /*
+   * `fit-content` sizes the grid to its columns' max-content, which for the
+   * title column is the title on one line - and the cap is what makes a long
+   * one wrap in that column rather than push the close button off the band.
+   */
   .toast {
+    inline-size: fit-content;
+    max-inline-size: 100%;
     grid-template-columns: auto minmax(0, 1fr) auto auto;
     align-items: center;
     padding-block: var(--pb-space-xs);

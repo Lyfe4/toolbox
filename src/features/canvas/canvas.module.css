@@ -48,6 +48,14 @@
   inset: 0;
   inline-size: 100%;
   block-size: 100%;
+  /*
+   * `GridLayer` sizes the layer to the whole pixels its host covers, which is
+   * up to a CSS pixel WIDER than the host - and reset.css caps every
+   * canvas at 100% of its container, which clamped it straight back to the
+   * fractional width the bitmap cannot match. The wire layer lifts the same
+   * rule for a related reason. The root clips the overhang.
+   */
+  max-inline-size: none;
   pointer-events: none;
 }
 

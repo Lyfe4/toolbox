@@ -3,8 +3,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { cx } from '@/lib/cx';
 
 import styles from './canvas.module.css';
-import { gridLevels, gridRules } from './grid';
+import { gridLevels, gridRules, layerPlacement } from './grid';
 
+import type { LayerPlacement } from './grid';
 import type { Viewport } from './viewportStore';
 
 /**
@@ -121,14 +122,45 @@ function ruleWidth(dpr: number): number {
   return Math.max(1, Math.round(dpr));
 }
 
+/**
+ * Where the layer sits: the host's box, on whole pixels. `grid.ts` has the
+ * arithmetic and why each step is the size it is.
+ *
+ * The host is the canvas root, the layer's containing block, which has no
+ * border - so its border box is the box `inset: 0` used to fill.
+ */
+function placementOf(canvas: HTMLCanvasElement, dpr: number): LayerPlacement | null {
+  const host = canvas.parentElement;
+  return host ? layerPlacement(host.getBoundingClientRect(), dpr) : null;
+}
+
+/**
+ * What each layer's inline box was last set to, so a pan - every frame - does
+ * not write four styles that have not changed. Kept here rather than read back
+ * off `style`, because an engine may serialise a length with fewer digits than
+ * it was given, and the comparison would then never be equal.
+ */
+const placedAs = new WeakMap<HTMLCanvasElement, string>();
 function draw(canvas: HTMLCanvasElement, viewport: Viewport, dpr: number): void {
   const context = canvas.getContext('2d');
   // jsdom has no 2D context at all, and a lost context returns null too.
   if (!context) return;
 
-  const width = Math.round(canvas.clientWidth * dpr);
-  const height = Math.round(canvas.clientHeight * dpr);
-  if (width <= 0 || height <= 0) return;
+  const placement = placementOf(canvas, dpr);
+  if (!placement) return;
+  const { bitmapWidth: width, bitmapHeight: height } = placement;
+
+  // Written through the CSSOM, which `style-src` does not govern, and only on
+  // a change: a pan is every frame and a placement is not.
+  const key = [placement.left, placement.top, placement.width, placement.height].join(' ');
+  if (placedAs.get(canvas) !== key) {
+    placedAs.set(canvas, key);
+    const px = (value: number): string => `${value.toString()}px`;
+    canvas.style.left = px(placement.left);
+    canvas.style.top = px(placement.top);
+    canvas.style.width = px(placement.width);
+    canvas.style.height = px(placement.height);
+  }
 
   // Assigning either dimension clears the bitmap, so only touch them on a real
   // change: a resize is rare and a pan is every frame.
@@ -142,8 +174,14 @@ function draw(canvas: HTMLCanvasElement, viewport: Viewport, dpr: number): void 
   const levels = gridLevels(viewport.zoom);
   const thickness = ruleWidth(dpr);
 
-  const columns = gridRules(viewport.x, canvas.clientWidth, viewport.zoom, dpr);
-  const rows = gridRules(viewport.y, canvas.clientHeight, viewport.zoom, dpr);
+  /*
+   * The viewport's translation is measured from the HOST's origin and the
+   * bitmap starts `placement.left` from it, so the rules are placed in the
+   * layer's own frame - which puts each one on the device pixel nearest where
+   * the world says it is, exactly as before the layer moved.
+   */
+  const columns = gridRules(viewport.x - placement.left, placement.width, viewport.zoom, dpr);
+  const rows = gridRules(viewport.y - placement.top, placement.height, viewport.zoom, dpr);
 
   for (const [index, level] of levels.entries()) {
     if (level.strength <= 0) continue;
@@ -225,7 +263,7 @@ export function GridLayer({ viewport, revealed }: GridLayerProps) {
    * A background image was repainted by the compositor whenever anything about
    * it changed, and nothing had to say so. A bitmap has to be told. Four things
    * change what this layer should look like without changing the viewport: the
-   * layer's own size, the theme, the display's density, and the accessibility
+   * host's size, the theme, the display's density, and the accessibility
    * media queries that rewrite the tokens. A counter is the redraw request, for
    * the reason the inspector's focus request is one - two changes in a row are
    * two requests where a boolean would be one.
@@ -235,6 +273,9 @@ export function GridLayer({ viewport, revealed }: GridLayerProps) {
     typeof window === 'undefined' ? 1 : window.devicePixelRatio,
   );
 
+  /** What the last draw was of, for a redraw that cannot wait for React. */
+  const latest = useRef({ viewport, dpr });
+
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return undefined;
@@ -243,8 +284,30 @@ export function GridLayer({ viewport, revealed }: GridLayerProps) {
       setEpoch((request) => request + 1);
     };
 
-    const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(bump) : undefined;
-    resize?.observe(canvas);
+    /*
+     * A RESIZE IS DRAWN IN THE OBSERVER'S OWN CALLBACK, not by asking React.
+     *
+     * The callback runs after layout and before paint, so a bitmap drawn here
+     * is on screen in the frame whose size it was drawn for. A state update
+     * from here renders after that paint - and the inspector's rail animates
+     * the canvas's width, so every frame of the slide used to show the PREVIOUS
+     * frame's bitmap stretched into the new box: measured in both engines, 12
+     * of 13 frames in Gecko and 5 of 7 in WebKit, and at the fastest point a
+     * 1364px bitmap in a 1220px box, which moves a rule near the right edge by
+     * a hundred pixels for a frame and then puts it back. That was the grid
+     * shifting as the inspector opened and closed.
+     *
+     * The host is observed rather than the layer, because the layer's size is
+     * now written by `draw` and observing it would observe ourselves.
+     */
+    const host = canvas.parentElement;
+    const resize =
+      typeof ResizeObserver === 'function'
+        ? new ResizeObserver(() => {
+            draw(canvas, latest.current.viewport, latest.current.dpr);
+          })
+        : undefined;
+    if (host) resize?.observe(host);
 
     /*
      * The theme is written to the root as an attribute by `applyTheme`, and a
@@ -300,6 +363,7 @@ export function GridLayer({ viewport, revealed }: GridLayerProps) {
    * nodes - visible as the whole backdrop lagging whatever is on it.
    */
   useLayoutEffect(() => {
+    latest.current = { viewport, dpr };
     const canvas = ref.current;
     if (canvas) draw(canvas, viewport, dpr);
   }, [viewport, dpr, epoch]);

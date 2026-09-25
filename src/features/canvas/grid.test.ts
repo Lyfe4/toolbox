@@ -14,6 +14,7 @@ import {
   gridRules,
   gridStrengths,
   gridWeights,
+  layerPlacement,
 } from './grid';
 import { zoomFactorForNotches } from './wheel';
 
@@ -669,5 +670,95 @@ describe('where the rules land', () => {
     expect(gridRules(0, 100, 0, 1)).toEqual([]);
     expect(gridRules(0, 100, Number.NaN, 1)).toEqual([]);
     expect(gridRules(0, 100, -1, 1)).toEqual([]);
+  });
+});
+
+/*
+ * WHERE THE LAYER SITS. The bitmap has to be exactly the box it is painted into
+ * or the engine scales it, and the old arithmetic - `clientWidth`, which is a
+ * whole number of CSS px, times the density - was not the box wherever the
+ * host is fractional, which on a 2.625x phone is every page. None of the gate's
+ * engines can render at that density with a fractional viewport, so this is
+ * the only place the case exists.
+ */
+describe('where the layer sits', () => {
+  const DENSITIES = [1, 1.25, 1.5, 2, 2.625, 2.75, 3, 3.5];
+  // Fractional edges on purpose: whole ones are the case that always worked.
+  const BOXES = [
+    { left: 0, top: 50, right: 411.4286, bottom: 914.2857 },
+    { left: 0, top: 49.5, right: 389.5, bottom: 843.5 },
+    { left: 0, top: 50, right: 1219.9, bottom: 900 },
+    { left: 12.3, top: 0.7, right: 1092.65, bottom: 850.25 },
+  ];
+
+  it('makes the bitmap exactly the layer, in whole device pixels', () => {
+    for (const dpr of DENSITIES) {
+      for (const box of BOXES) {
+        const placed = layerPlacement(box, dpr);
+        expect(placed).not.toBeNull();
+        if (!placed) continue;
+        expect(Number.isInteger(placed.bitmapWidth)).toBe(true);
+        expect(Number.isInteger(placed.bitmapHeight)).toBe(true);
+        expect(placed.width * dpr).toBeCloseTo(placed.bitmapWidth, 9);
+        expect(placed.height * dpr).toBeCloseTo(placed.bitmapHeight, 9);
+        // The layer's origin is a whole device pixel of the page.
+        const x0 = (box.left + placed.left) * dpr;
+        const y0 = (box.top + placed.top) * dpr;
+        expect(Math.abs(x0 - Math.round(x0))).toBeLessThan(1e-9);
+        expect(Math.abs(y0 - Math.round(y0))).toBeLessThan(1e-9);
+      }
+    }
+  });
+
+  it('covers the whole host, and overhangs it by less than one step', () => {
+    for (const dpr of DENSITIES) {
+      const step = Number.isInteger(dpr) ? 1 : 1 / dpr;
+      for (const box of BOXES) {
+        const placed = layerPlacement(box, dpr);
+        if (!placed) throw new Error('no placement');
+        const left = box.left + placed.left;
+        const top = box.top + placed.top;
+        expect(left).toBeLessThanOrEqual(box.left + 1e-9);
+        expect(top).toBeLessThanOrEqual(box.top + 1e-9);
+        expect(left + placed.width).toBeGreaterThanOrEqual(box.right - 1e-9);
+        expect(top + placed.height).toBeGreaterThanOrEqual(box.bottom - 1e-9);
+        expect(box.left - left).toBeLessThan(step);
+        expect(left + placed.width - box.right).toBeLessThan(step);
+      }
+    }
+  });
+
+  /*
+   * WebKit lays out in sixty-fourths of a CSS pixel, so a layer whose CSS size
+   * is 2381/3 px is one it cannot state, and it then scales the bitmap by a
+   * hair - measured at 3x, every horizontal rule 4px where it was drawn 3.
+   */
+  it('is a whole number of CSS px at a whole-number density', () => {
+    for (const dpr of [1, 2, 3]) {
+      for (const box of BOXES) {
+        const placed = layerPlacement(box, dpr);
+        if (!placed) throw new Error('no placement');
+        for (const value of [
+          placed.width,
+          placed.height,
+          box.left + placed.left,
+          box.top + placed.top,
+        ]) {
+          expect(Math.abs(value - Math.round(value))).toBeLessThan(1e-9);
+        }
+      }
+    }
+  });
+
+  it('gives a 1080-pixel phone a 1080-pixel bitmap, where clientWidth gave 1079', () => {
+    const phone = { left: 0, top: 50, right: 1080 / 2.625, bottom: 914.2857 };
+    expect(Math.round(Math.round(phone.right) * 2.625)).toBe(1079);
+    expect(layerPlacement(phone, 2.625)?.bitmapWidth).toBe(1080);
+  });
+
+  it('places nothing for an empty host or a density that is not one', () => {
+    expect(layerPlacement({ left: 0, top: 0, right: 0, bottom: 0 }, 1)).toBeNull();
+    expect(layerPlacement({ left: 0, top: 0, right: 10, bottom: 10 }, 0)).toBeNull();
+    expect(layerPlacement({ left: 0, top: 0, right: 10, bottom: 10 }, Number.NaN)).toBeNull();
   });
 });

@@ -253,8 +253,16 @@
  * and the options below have to be reachable without scrolling past the input
  * on every visit. It stays user-resizable, so a long paste is one drag away
  * from having the room it wants.
+ *
+ * `textarea` IN THE SELECTOR IS WHAT MAKES 120PX WIN. TextArea's own
+ * `.textarea` sets a floor of its own at one class, the same as `.editor`, so
+ * the two TIED and the later stylesheet won. Measured, this one happened to be
+ * later in the build and in dev alike, so it read 120px in both - decided by
+ * an order nothing states, which is how the tool page's editor came out 87px in
+ * dev. `checkCascadeTies` found it before it went wrong. (0,1,1) against
+ * (0,1,0) settles it the same way everywhere.
  */
-.editor {
+textarea.editor {
   inline-size: 100%;
   min-block-size: 120px;
   resize: vertical;

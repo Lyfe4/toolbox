@@ -1875,7 +1875,12 @@ identically everywhere: dev goes 87px → 200px, the build stays 200px.
 The repository already knew about the tie — the note explaining it said these
 rules "look like dead code" read in dev alone, which is what they had once been
 mistaken for. Knowing about a footgun is not the same as removing it, and in the
-meantime it cost a second person the same afternoon.
+meantime it cost a second person the same afternoon. It went on to cost a
+third, on the rich-text copy button, and round twenty made the class fail
+instead: `checkCascadeTies` finds any two CSS modules tying for a property on
+one element, and its first run found a fourth, in the inspector's editor, before
+it had gone wrong. See
+[architecture.md](docs/architecture.md#a-tie-in-the-cascade-fails-the-run).
 
 **A progress bar that could not move.** Reported as "the bar is just empty and
 then suddenly it's done". The track renders at 120x6; the marker inside it is a

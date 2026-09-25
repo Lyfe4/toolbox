@@ -74,7 +74,7 @@ unable to see most of what that script checks.
 treat that as the run a commit needs:
 
 ```bash
-pnpm check:browsers --list                              # the 56 section names
+pnpm check:browsers --list                              # the 57 section names
 pnpm check:browsers --only=popovers,valuemodel          # a substring of each, `check` optional
 pnpm check:browsers --only=outputviews --engine=webkit  # one engine
 ```
@@ -197,6 +197,23 @@ keystroke, so there is no window to lose. Where the move has to happen more
 than once, make the request a **counter or a sequence number** rather than a
 boolean — two Enters in a row are two requests, and a boolean is one.
 
+### Overriding a component's style
+
+**A rule that changes a primitive's property must outrank the primitive's own
+rule, not tie with it.** Button, TextArea and the rest style themselves at one
+class, and so does the `className` a consumer hands them - so a consumer's
+`.editor { min-block-size: 200px }` against `.textarea`'s own floor is a tie, and
+a tie is decided by which stylesheet loads last. That order is stated nowhere:
+the build and the dev server disagree about it, which is how an editor was 200px
+in one and 87px in the other. Qualify the selector - `textarea.editor`, or the
+parent the consumer already has, `.copyGroup .richCopy` - and override the
+primitive's hover and active states too if they set the same property.
+
+`checkCascadeTies` in `check:browsers` fails on any tie between two modules'
+rules on the same element, so this is a convention a run holds rather than one
+a reviewer has to notice. It can only judge what the states it visits render;
+see [architecture.md](docs/architecture.md#a-tie-in-the-cascade-fails-the-run).
+
 ### Types
 
 - No `any`, no non-null assertions, no `@ts-expect-error` without a comment
@@ -305,7 +322,7 @@ checked mechanically is now checked in `pnpm test`, by
 - **A harness section named anywhere exists.** Any `check…` name in a document
   or a comment.
 - **A count the code can count is counted.** "The two inline scripts", "four
-  payloads against four budgets", "the six gates", "the 56 section names", "ten
+  payloads against four budgets", "the six gates", "the 57 section names", "ten
   tools that run": each is a phrase pattern in `COUNTS` and the number the code
   gives, wherever the phrase appears, docs and comments alike. A pattern that
   stops matching anything fails, rather than retiring in silence.

@@ -79,6 +79,32 @@
   background-color: var(--pb-control-surface-active);
 }
 
+/*
+ * PRESSED: A TOGGLE THAT SAYS IT IS ON.
+ *
+ * The inspector toggle and the options panel's Notes both carried
+ * `aria-pressed` and drew nothing for it - the only controls on their bars
+ * whose look did not say whether the thing they switch was showing. The
+ * treatment is the theme switcher's checked chip, an accent border on the
+ * control surface, with the palette's accent bar under it, so the state does
+ * not rest on a colour alone. It is the quiet end of what a toggle does here:
+ * the view toggles' filled accent marks one choice among several, and this is
+ * one control being on.
+ *
+ * THE SECOND RULE IS WHAT KEEPS IT ON UNDER THE POINTER. The hover rule above
+ * is one class more specific and sets the border, so without this the state
+ * would vanish exactly when somebody reached for the control - the way the rich
+ * copy button's border did, a round ago.
+ */
+.ghost[aria-pressed='true'] {
+  border-color: var(--pb-border-accent);
+  box-shadow: inset 0 calc(var(--pb-border-width-strong) * -1) 0 var(--pb-accent);
+}
+
+.ghost[aria-pressed='true']:is(:hover, [data-force='hover']):not(:disabled) {
+  border-color: var(--pb-border-accent);
+}
+
 .danger {
   background-color: transparent;
   border-color: var(--pb-signal-error);
@@ -115,6 +141,13 @@
   .button:disabled {
     border-color: GrayText;
     color: GrayText;
+  }
+
+  /* Forced colours removes box-shadow, so the bar becomes the border's own. */
+  .ghost[aria-pressed='true'],
+  .ghost[aria-pressed='true']:is(:hover, [data-force='hover']):not(:disabled) {
+    border-color: Highlight;
+    border-block-end-width: var(--pb-border-width-strong);
   }
 }
 

@@ -145,7 +145,22 @@ export default defineConfig({
     // else inline, so never let Rollup inline an asset back into the HTML as a
     // data: URL.
     assetsInlineLimit: 0,
-    sourcemap: true,
+    /*
+     * MAPS ARE BUILT AND NOT POINTED AT. `true` since the scaffold, which
+     * writes `//# sourceMappingURL=` into every chunk - and with devtools open
+     * the browser fetches each one, `connect-src 'none'` refuses it, and the
+     * console fills with twenty violations that are the policy working. Twenty
+     * refusals nobody reads is where a real one hides, and the maps could never
+     * load there anyway.
+     *
+     * `hidden` keeps the files and drops the comment. They are still deployed,
+     * because a stack trace from the live site is worth resolving and the map
+     * for its chunk is one navigation away - a navigation is not a connection.
+     * The repository is public, so they publish nothing that is not already.
+     * `checkDeployment` holds the missing comment, beside a count of the maps
+     * that still exist.
+     */
+    sourcemap: 'hidden',
   },
 
   test: {

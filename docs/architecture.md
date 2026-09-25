@@ -1202,6 +1202,81 @@ to fade in, so the grid could only spread, to 10px at 250% against the 8px it is
 authored at — and a screen-anchored ladder does not run out, because there is
 always another power of two below the one it is standing on.
 
+### The screen is the bitmap: placed, and redrawn in the frame it is resized
+
+Round twenty was a report from a phone at 50%, 59% and 71%: the coarse lines
+denser on one half of the screen than the other, and a band a third of the way
+down where the spacing changed. The guess was fractional zoom putting lines on
+fractional pixels; the other suspect was the grid's draw-in, which had just
+landed. **It was neither**, measured rather than argued:
+
+- **Not the zoom.** At 390px, at 1x in both engines and at 3x in WebKit — a
+  390px phone's density — every rule reached the screen at exactly the pixel
+  and width the bitmap drew it, at all three zooms. Per-rule rounding puts every
+  rule on a whole device pixel whatever the zoom; the only thing the zoom
+  changes is the one-pixel gap jitter above, which is the same in every part of
+  the viewport.
+- **Not the draw-in.** Both mechanisms below date from `d787c85` (2026-09-11),
+  the commit that made the grid a bitmap, two weeks before the motion round; and
+  the screen matched the bitmap in every measurement taken after the draw-in
+  had run.
+
+What the measurements did find is that **the bitmap was not always the box it
+was painted into**, and a bitmap that is not its box is scaled by the engine to
+fit — which is the report's shape exactly: crisp where the scaling's phase is
+whole and smeared where it is not, and a seam where it slips a pixel.
+
+- **Every frame of the inspector's slide.** The grid redrew on a resize through
+  a React state update, which renders after the frame paints, so each frame of
+  the rail's width animation painted the previous frame's bitmap stretched into
+  the new box: 12 of 13 frames in Gecko and 5 of 7 in WebKit, and at the fastest
+  point a 1364px bitmap in a 1220px box, which moves a rule near the right edge
+  by about a hundred pixels for one frame. That was item two of the same report,
+  "the inspector shifts the grid". The layer now draws in its `ResizeObserver`
+  callback, which runs after layout and before paint: 0 of 27 and 0 of 17.
+- **Wherever the host is not a whole number of CSS pixels.** The bitmap was
+  `Math.round(clientWidth × dpr)`, and `clientWidth` is an integer. On a phone
+  at 2.625x — most Android phones — the CSS viewport itself is fractional: 1080
+  device pixels is 411.43 CSS px, so the bitmap was 1079 pixels for a 1080-pixel
+  box. `layerPlacement` in `grid.ts` covers the host's box outward in whole
+  pixels and sizes the bitmap to exactly that.
+
+**What could not be reproduced, and is said rather than claimed.** The report's
+own pictures were not reproduced. Neither gate engine can render a fractional
+CSS viewport — Playwright asks for whole CSS pixels, and Gecko ignores
+`deviceScaleFactor` altogether — so the fractional-density case exists here
+only as arithmetic, in `grid.test.ts`, and the build before this passes a
+fractional-host fixture at 1x and 3x, because both engines snap a canvas's paint
+rectangle to whole pixels and a half-pixel box snaps onto the bitmap the old
+arithmetic made. If the phone was a 390px iPhone at 3x, where everything is
+whole and the screen matched exactly, then neither mechanism explains those
+screenshots and the cause has not been found. One candidate outside the app:
+the page allows the browser's own pinch-zoom, as it must, and a browser zoom
+scales the whole page — bitmap included — by a factor the app is never told.
+
+**The step is a whole CSS pixel at a whole-number density**, and that was
+found by the check rather than designed. The first version placed the layer on
+whole device pixels at every density, which at 3x can mean a layer 793.67 CSS px
+tall — a length WebKit, which lays out in sixty-fourths of a CSS pixel, cannot
+state. It then scales the bitmap by a hair and filters it: every horizontal rule
+4px where it was drawn 3. At 1x, 2x and 3x a whole CSS pixel is a whole number of
+device pixels and exact in every engine; at a fractional density no step is
+whole in both units, and the engines that ship those densities lay out in
+device pixels, so there the step is one device pixel.
+
+`checkCanvasGrid` holds it at 390px: along three rows and three columns, one in
+each third of the viewport, every rule the bitmap drew at more than half ink is
+on screen at the same pixel and width, nothing on screen is outside one, and the
+full-ink rules are one width and spaced at no more than two neighbouring whole
+numbers of device pixels — at 50%, 59%, 71% and 100%, as the page comes and with
+the host made fractional, at 1x in both engines and at 3x in WebKit.
+`checkInspectorMotion` holds the slide frame by frame, and at 390px that the
+sheet opening and closing leaves every pixel of grid above it the same bytes.
+Against a bitmap one device pixel short of its box every grid assertion fails in
+both engines, and against the old redraw so does the slide.
+<!-- asserted: cross-browser-check.mjs › every rule reaches the screen where the bitmap drew it -->
+<!-- asserted: cross-browser-check.mjs › every frame of the slide paints a grid drawn for that frame -->
+
 ### The ink is its own pair of tokens
 
 The minor rules were `--pb-border-subtle`, a token specified against
@@ -1844,6 +1919,28 @@ so nobody makes it consistent later. While a wire is drawing in, the draw wins
 and the dash waits: they animate the same two properties, and the first run
 after a connection often lands inside the draw.
 
+#### The typing window that measured Gecko
+
+Round twenty's first full run failed one check, and not one it had touched:
+typing into the node upstream has to re-run the node the wire landed on and land
+a new figure, which is the partner for "nothing counts while somebody types".
+It failed two runs in three in Gecko at `e9ec507` as well, so it was not new.
+Measured with a thirty-second window: **each keystroke into a four-megabyte
+controlled field holds Gecko's main thread for one to three seconds**, so four
+keys typed at 350ms took 7.6-9.9s and the figure landed at 9-12s, where the
+check had looked for six. WebKit lands it in about three. The window ends on a
+state now - the node has run since the last `input` event and is `ok` again -
+with thirty seconds as a ceiling; against a count armed on every keystroke it
+fails in both engines, which the six-second window could only do in Gecko when
+Gecko happened to be quick.
+
+**The keystroke cost is a finding, not fixed here.** Typing into a very large
+input on the canvas is janky in Firefox by a second or more per key; WebKit
+pays a fraction of it. Where it goes - React re-rendering a four-megabyte
+controlled value, the graph store copying it, or the save that follows - was not
+measured, and nothing asserts it.
+<!-- unverified: the split of the Gecko keystroke cost between rendering, the store and the save was not measured -->
+
 ### Announcements are a log, not a variable
 
 The canvas has one live region, and several independent things announce into
@@ -2138,7 +2235,18 @@ repository](../CONTRIBUTING.md#moving-focus). A restored save is not touched:
 its reader has already answered the question and the answer is remembered.
 
 `I` toggles it at both sizes and a toolbar button carries the same toggle with
-an `aria-pressed` that says which state it is in. Selection never opens or
+an `aria-pressed` that says which state it is in — and, since round twenty,
+shows it: until then it was the one control on that bar whose look did not say
+whether the thing it opens was showing, and the options panel's `Notes` had the
+same gap. Pressed is the theme switcher's checked chip — an accent border —
+with the palette's accent bar under it, so the state does not rest on colour
+alone, on Button's ghost variant and IconButton alike. It is held on under the
+pointer by a rule of its own, because the hover rule is the more specific one and
+a state that vanished when the pointer arrived is exactly how the rich copy
+button lost its border. `checkInspectorMotion` asserts both at 1440px and 390px.
+<!-- asserted: cross-browser-check.mjs › and still shows it under the pointer -->
+
+Selection never opens or
 closes it — on a phone that would bury the canvas on every tap while arranging
 nodes, and on a desktop it would be a panel that reopens itself faster than it
 can be dismissed. Closing does not clear the selection either: what you are
@@ -2771,9 +2879,13 @@ narrowing the root changes three boxes and does not reflow or re-render a single
 node.
 
 **The drawn grid added one thing to that accounting**, and it turns out not to
-change the answer. `GridLayer` observes its own size, so a slide wakes React once
-per frame to repaint the grid's bitmap, and the table above was measured when
-React slept through the animation instead. Measured again on the same canvas,
+change the answer. `GridLayer` observes its host's size, so a slide repaints the
+grid's bitmap once per frame, and the table above was measured when nothing did.
+(When the table below was measured the repaint went through React, which woke
+once a frame and painted each frame's bitmap one frame late — the grid visibly
+squeezing during the slide. Since round twenty the observer draws directly, which
+is the same repaint without the render; the frame costs below were not measured
+again. See [the screen is the bitmap](#the-screen-is-the-bitmap-placed-and-redrawn-in-the-frame-it-is-resized).) Measured again on the same canvas,
 against a control that keeps the layer in the paint tree at a fixed size so that
 nothing wakes React — which isolates the repaint from the mere existence of a
 full-viewport canvas — over six alternated passes per variant:
@@ -4363,8 +4475,12 @@ round sixteen and not done; round eighteen found no trace of an attempt.
 
 Below that width a notification now:
 
-- **spans the canvas between `--pb-space-md` margins**, the inset the readout and
-  the toolbar column already use;
+- **sits inside the canvas's `--pb-space-md` margins**, the inset the readout and
+  the toolbar column already use, **on the right one and as wide as what it
+  says** — since round twenty; it used to span the whole band. A deletion with
+  its `Undo` is 223px under a mouse and 243px under a finger of a 366px band at
+  390px, and a notification carrying a sentence wraps it at the full band and so
+  still spans it;
 - **sits above the readout wherever the readout is.** The canvas measures the
   readout's top edge and writes it to `--toast-clearance` (`useToastClearance`),
   because the readout is 22px tall under a mouse and 50px under a finger - a
@@ -4426,6 +4542,15 @@ right-aligned and as wide as its content up to the full width. A receipt with
 an `Undo` would then take 224-244px at the right rather than the whole row; a
 refusal with a sentence would still span it.
 
+**Round twenty built it**, and the measurement held: 223px and 243px, against
+the 224-244 estimated. It costs one thing the band did not have, which is a
+ragged left edge when a deletion and a refusal are on screen together — two
+notifications of two widths, both on the right margin. `checkNotifications`
+asserts, at 390px under both pointers, that the four deletions sit on the right
+margin clear of the left one and that a refused share link, which carries its
+reason, spans both.
+<!-- asserted: cross-browser-check.mjs › that carries a sentence spans the band between both margins -->
+
 ### Why the clock is ours and not Radix's
 
 This is a fixed bug rather than a preference, and it is worth writing down
@@ -4480,14 +4605,15 @@ it goes. It took 55 s per engine and takes under 3. Shown against three breaks
 
 ## Focus, pressing and the browser's own marks
 
-Three indicators belong to the application and one to the browser, and round
+Four indicators belong to the application and one to the browser, and round
 nineteen found the browser's where nobody had asked for it and the keyboard's
-where it had not been earned.
+where it had not been earned. The toggle row is round twenty's.
 
 | Indicator                 | Whose       | Shown for                                                      |
 | ------------------------- | ----------- | -------------------------------------------------------------- |
 | The focus ring            | ours        | `:focus-visible` - the keyboard, never a pointer click         |
 | A control's pressed state | ours        | `:active`, on the shared Button and IconButton                 |
+| A toggle that is on       | ours        | `aria-pressed="true"`: an accent border and an accent bar      |
 | Selection                 | ours        | a selected wire's accent stroke, and the selection bar's count |
 | The tap highlight         | the browser | nothing - switched off                                         |
 
@@ -4521,6 +4647,22 @@ computed value wherever an engine supports the property, and records a skip
 naming why where one does not. And in both engines it checks the half that must
 survive: a finger still selects the wire and the wire still draws its selection.
 <!-- asserted: cross-browser-check.mjs › the served stylesheets set no tap highlight: transparent on :root, and nothing sets it back -->
+
+**A recorded limitation, since round twenty, rather than an open question.**
+What is verified is the stylesheet and not the effect, and the one route not yet
+tried was the obvious one: a real tap gesture in a headed browser.
+`Input.synthesizeTapGesture`, which hangs in headless Chromium, completes in
+headed Chromium with a mobile, touch-enabled context — and on a neutral page, a
+link at the default highlight beside one set transparent, it paints nothing on
+either: Chromium computes its default, `rgba(0, 0, 0, 0.18)`, and six samples
+over 900ms of a 1.5s press are the page's own white. The highlight is drawn by
+a mobile browser's own gesture handling, and nothing on this machine is one.
+Seeing it would take a real mobile browser: an iPhone, or an Android emulator
+running Chrome, captured with its own screen recording. That is several
+gigabytes of emulator and a boot per run, and cannot be put in this gate; so the
+effect is a step in the Safari-on-iPhone checklist in
+[manual-checks.md](manual-checks.md#1-safari-itself), and the gate holds the
+cause.
 
 ### A focus ring is for the keyboard
 
@@ -4663,6 +4805,57 @@ in a second rather than after twenty minutes of driving the wrong bytes, and
 run. The comparison is against `dist`'s _newest_ file rather than its oldest,
 because Vite writes the directory in one pass and a half-written build is a
 different failure that every other check here would report anyway.
+
+### A tie in the cascade fails the run
+
+Three times a style here was decided by which stylesheet loaded last: the input
+editor that was 200px in the build and 87px in dev, its own hover rule, and the
+rich-text copy button's accent border. Each was fixed where it was found, by
+out-specifying the rule it tied with, and each was found by somebody looking at
+a screen. Round twenty asked whether the CLASS could be stopped.
+
+**What makes it a class.** Two CSS modules' rules with the same specificity,
+matching the same element, setting the same property to different values. The
+order between them is never stated: the build links chunk stylesheets in
+whatever order the chunks come out, and the dev server injects one `<style>` per
+module in the order modules run. A lint rule cannot see it, because a tie needs
+an element that carries both classes and that only exists at runtime — a
+component's own class and the `className` a consumer handed it. A build check
+cannot either, for the same reason. The DOM can.
+
+**`checkCascadeTies`** walks every stylesheet the page has, matches every rule
+against the DOM, and for each element and property asks whether the most
+specific declarations come from two different modules with two different
+values. The module, not the stylesheet, is the origin compared: a CSS module's
+class names carry the hash of the file they came from, between the local name and a line number, and
+two modules in one built chunk are still two orders in dev. The document's own
+stylesheet is not a party, because the document links it before anything a
+module can add, in dev and in the build alike. State pseudo-classes are matched
+as though they held, so a tie between two hover rules counts; rules on
+pseudo-elements and under media queries that do not currently apply are not
+seen. It runs over every route, the canvas with a pipeline and its inspector, the
+palette and the shortcuts, and a rendered text-convert result, at 1440px and
+390px, in both engines, and takes about thirty seconds.
+
+**It carries its own control.** Two made-up modules that tie on purpose are
+installed through `adoptedStyleSheets` — the CSSOM, which `style-src` does not
+govern — and the detector has to report that tie before its silence about the
+app counts for anything. It was also run against the 87px editor's tie put back,
+and named it: `._textarea` against `._editor`, both one class, one in the Panel
+chunk and one in the tool runner's.
+
+**And its first run found a fourth.** The inspector's input editor declares a
+120px floor at one class, and TextArea's own `.textarea` declares one too. The
+inspector's happened to be later in the build and in dev alike, so it read
+120px in both — decided by an order nothing states, which is precisely how the
+tool page's editor came out 87px. It is `textarea.editor` now, like the tool
+page's.
+
+What it cannot do is see a DOM the run never builds: a tie on a component no
+visited state renders passes. The states are the ones the three known ties lived
+in and the ones with the most components on screen, and a component added later
+is covered when a route renders it, not before.
+<!-- asserted: cross-browser-check.mjs › no two CSS modules tie for a property and leave the winner to load order -->
 
 ### The worker boundary, with text no encoder would produce
 
@@ -5152,6 +5345,16 @@ because the list is also clamped to the height Radix reports as available, and "
 survived a leaked stylesheet, because the leaked rules are scoped to an
 attribute that had already gone. It counts adopted stylesheets now.
 
+**One occurrence nobody has explained, recorded as that.** Round twenty's second
+full run ended inside this check, in Gecko, at the phone-on-its-side scene: the
+Category list was still open ten seconds after "Hashing" was picked, and the
+wait for it to close threw, which ended the run with nothing saying what state
+the page was in. It passed in the full run before, and in eleven isolated passes
+after. The wait is a named check now - `the list closes after the pick` - which
+says whether the pick's click landed, where focus was, and whether a second
+Escape closes the list, so the next occurrence is a reading rather than a crash.
+<!-- unverified: the cause of one Gecko run where the Category list stayed open after a pick has not been found -->
+
 ## Build and deployment
 
 ```mermaid
@@ -5188,6 +5391,32 @@ build that somehow skipped the plugin produces an obviously broken policy
 rather than a quietly permissive one. The same instinct runs through
 `index-html.ts`: the failure modes it guards against are all silent ones, and
 the build is the last moment anybody is looking.
+
+### Source maps are built, and nothing points at them
+
+`build.sourcemap` was `true` from the scaffold, which was never a decision: it
+writes a `//# sourceMappingURL=` comment into every chunk. With devtools open the
+browser fetches each chunk's map, and `connect-src 'none'` refuses every one —
+17 scripts on the canvas and 20 on a tool page, so about twenty violations a
+page, every one of them the policy working. That is harmless by itself and
+costly in what it trains: a console that always carries twenty refusals nobody
+reads is where the twenty-first, the real one, goes unread, and the
+radix-inline-style entry that once hid a real fault in the verification skill's
+list of known noise began exactly that way. And the maps could never load
+there, so production was not debuggable through them anyway.
+
+**`sourcemap: 'hidden'`**: the maps are still built and deployed, and no chunk
+names them. They are kept because a stack trace from the live site is worth
+resolving — its chunk's map is one navigation away, a navigation is not a
+connection, and the repository is public, so they publish nothing that is not
+already. `connect-src` is untouched. `checkDeployment` asserts that no built
+script or stylesheet carries the comment, beside a count of the maps that still
+exist, so a build that stopped making maps cannot pass for one that stopped
+pointing at them; against `sourcemap: true` it reports 51 of 61 files pointing.
+A real violation stays visible because nothing is left to be noise:
+`KNOWN_CONSOLE_NOISE` is empty, and `checkPopovers` records every
+`securitypolicyviolation` while each Radix component is in use and fails on one.
+<!-- asserted: cross-browser-check.mjs › no built script or stylesheet points the browser at a source map -->
 
 ### The head has two audiences
 

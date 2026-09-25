@@ -337,3 +337,67 @@ export function gridRules(
 
   return rules;
 }
+
+/** A box in CSS px, as `getBoundingClientRect` reports one. */
+export interface LayerBox {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+}
+
+/** Where the grid's layer sits, and how big its bitmap is. */
+export interface LayerPlacement {
+  /** CSS px from the host's origin to the layer's: zero or a small negative. */
+  readonly left: number;
+  readonly top: number;
+  /** The layer's size in CSS px - its bitmap divided by the density. */
+  readonly width: number;
+  readonly height: number;
+  /** The bitmap, in device pixels. */
+  readonly bitmapWidth: number;
+  readonly bitmapHeight: number;
+}
+
+/**
+ * The layer that covers `box`, on whole pixels, with a bitmap exactly its size.
+ *
+ * THE BITMAP HAS TO BE EXACTLY THE BOX IT IS PAINTED INTO, or the engine scales
+ * it to fit, and a scaled grid is the defect the drawn grid exists to remove:
+ * rules smeared across two device pixels in part of the viewport and crisp in
+ * the rest, and a seam where the spacing slips by one. The layer used to be
+ * sized `Math.round(clientWidth * dpr)`, and `clientWidth` is a whole number of
+ * CSS px - so wherever the host is not, the two disagree. That is every page on
+ * a fractional-density phone: 1080 device px at 2.625x is 411.43 CSS px, whose
+ * `clientWidth` is 411, which made a 1079px bitmap for a 1080px box.
+ *
+ * OUTWARD, AND IN STEPS A LAYOUT ENGINE CAN STATE EXACTLY. Outward so the layer
+ * always covers the host, whose `overflow` clips the rest. The step is a whole
+ * CSS pixel wherever the density is a whole number, because WebKit lays out in
+ * sixty-fourths of a CSS pixel: at 3x a layer 2381 device px tall is 793.67 CSS
+ * px, which it cannot state, and the bitmap is then scaled by a hair and
+ * filtered - measured, every horizontal rule 4px where it was drawn 3. A whole
+ * CSS pixel is a whole number of device pixels at 1x, 2x and 3x and exact in
+ * every engine. At a fractional density no step is whole in both units, and
+ * the engines that ship those densities lay out in device pixels, so there the
+ * step is one device pixel.
+ */
+export function layerPlacement(box: LayerBox, dpr: number): LayerPlacement | null {
+  if (!Number.isFinite(dpr) || dpr <= 0) return null;
+
+  const step = Number.isInteger(dpr) ? dpr : 1;
+  const x0 = Math.floor((box.left * dpr) / step) * step;
+  const y0 = Math.floor((box.top * dpr) / step) * step;
+  const bitmapWidth = Math.ceil((box.right * dpr) / step) * step - x0;
+  const bitmapHeight = Math.ceil((box.bottom * dpr) / step) * step - y0;
+  if (bitmapWidth <= 0 || bitmapHeight <= 0) return null;
+
+  return {
+    left: x0 / dpr - box.left,
+    top: y0 / dpr - box.top,
+    width: bitmapWidth / dpr,
+    height: bitmapHeight / dpr,
+    bitmapWidth,
+    bitmapHeight,
+  };
+}

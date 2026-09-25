@@ -853,6 +853,65 @@ async function setInspector(page, open) {
   await page.waitForTimeout(200);
 }
 
+/**
+ * Whether the toolbar's inspector toggle LOOKS pressed when it is, and still
+ * does under the pointer.
+ *
+ * It carried `aria-pressed` from the start and drew nothing for it. Pressed is
+ * an accent border and an accent bar, and the bar is the half that does not
+ * rest on colour; hovered is asserted separately because the hover rule is the
+ * more specific one, and a state that disappears when the pointer arrives is
+ * the rich copy button's bug again. The partner for "not pressed" is the same
+ * control measured pressed, so a toggle that never changes cannot pass.
+ */
+async function checkInspectorToggleLook(page, label, where) {
+  const toggle = page.getByRole('button', { name: 'Inspector', exact: true });
+  const look = () =>
+    toggle.evaluate((button) => {
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--pb-border-accent)';
+      document.body.append(probe);
+      const accent = getComputedStyle(probe).color;
+      probe.remove();
+      const style = getComputedStyle(button);
+      return {
+        pressed: button.getAttribute('aria-pressed'),
+        border: style.borderTopColor,
+        shadow: style.boxShadow,
+        accent,
+      };
+    });
+
+  await page.mouse.move(1, 1);
+  await setInspector(page, false);
+  const off = await look();
+  await setInspector(page, true);
+  await page.mouse.move(1, 1);
+  await page.waitForTimeout(250);
+  const on = await look();
+  await toggle.hover();
+  await page.waitForTimeout(250);
+  const hovered = await look();
+  await page.mouse.move(1, 1);
+
+  check(
+    label,
+    `${where}: the inspector toggle shows whether the panel is showing`,
+    off.pressed === 'false' &&
+      on.pressed === 'true' &&
+      off.shadow === 'none' &&
+      off.border !== on.accent &&
+      on.border === on.accent &&
+      on.shadow !== 'none',
+    `off: border ${off.border}, shadow ${off.shadow}; on: border ${on.border}, shadow ${on.shadow}; accent ${on.accent}`,
+  );
+  check(
+    label,
+    `${where}: and still shows it under the pointer`,
+    hovered.border === hovered.accent && hovered.shadow !== 'none',
+    `hovered: border ${hovered.border}, shadow ${hovered.shadow}`,
+  );
+}
 /* ========================================================================== *
  * THE NODE INSPECTOR
  * ========================================================================== */
@@ -3249,6 +3308,58 @@ async function checkInspectorMotion(browser, label) {
     );
 
     /*
+     * AND THE GRID IS REDRAWN IN THE FRAME THE CANVAS IS RESIZED IN.
+     *
+     * The slide narrows the canvas every frame, and the grid is a bitmap that
+     * has to be told. It used to be told through React, which renders after
+     * the frame paints - so every frame of the slide painted the previous
+     * frame's bitmap stretched into the new box, up to a hundred pixels of
+     * squeeze at the right edge, and the grid appeared to shift as the panel
+     * opened and closed. Nothing about where the rules rest was ever wrong.
+     *
+     * Read from a ResizeObserver created AFTER the grid's own, which is
+     * therefore called after it in every frame and is the last script to run
+     * before that frame paints: what it sees is what is painted. A count of
+     * the distinct widths it saw goes beside the verdict, because an observer
+     * that was never called passes "no frame disagreed" perfectly.
+     */
+    const resized = await page.evaluate(async () => {
+      const root = document.querySelector('[data-testid="canvas-root"]');
+      const grid = document.querySelector('[data-testid="canvas-grid"]');
+      const frames = [];
+      const observer = new ResizeObserver(() => {
+        const box = grid.getBoundingClientRect();
+        frames.push({
+          box: Math.round(box.width * window.devicePixelRatio * 100) / 100,
+          bitmap: grid.width,
+        });
+      });
+      observer.observe(root);
+      const toggle = [...document.querySelectorAll('button')].find(
+        (button) => button.textContent.trim() === 'Inspector',
+      );
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      toggle.click();
+      await wait(450);
+      toggle.click();
+      await wait(450);
+      observer.disconnect();
+      return {
+        widths: new Set(frames.map((frame) => Math.round(frame.box))).size,
+        stale: frames.filter((frame) => Math.abs(frame.box - frame.bitmap) > 1),
+        frames: frames.length,
+      };
+    });
+
+    check(
+      label,
+      'every frame of the slide paints a grid drawn for that frame',
+      resized.widths >= 4 && resized.stale.length === 0,
+      `${String(resized.stale.length)} of ${String(resized.frames)} frames painted a bitmap drawn for another width, over ${String(resized.widths)} widths${resized.stale.length > 0 ? ` - first ${JSON.stringify(resized.stale[0])}` : ''}`,
+    );
+    await checkInspectorToggleLook(page, label, '1440px');
+
+    /*
      * THE CONTENT COLUMN IS PINNED, which is the measured half of the design:
      * an unpinned panel re-wraps every label and table row at every
      * intermediate width, and that is what turns a free animation into a
@@ -3425,6 +3536,77 @@ async function checkInspectorMotion(browser, label) {
     } finally {
       await moving.close().catch(() => {});
     }
+
+    /*
+     * AT A PHONE'S WIDTH THE PANEL IS A SHEET OVER THE CANVAS, which nothing
+     * has to move out of the way for, so opening it cannot move the grid by
+     * construction - and that is exactly the kind of claim that goes stale.
+     * The strip of canvas above the sheet is captured closed, open and closed
+     * again, with the canvas chrome hidden, and has to be the same bytes all
+     * three times. The partners: the sheet really is up and really stops below
+     * the strip, and the strip really has grid in it.
+     */
+    const phone = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+    });
+    const phonePage = await phone.newPage();
+    try {
+      await gotoCanvas(phonePage);
+      await phonePage.locator('[data-testid="canvas-grid"]').waitFor({ timeout: 15_000 });
+      await phonePage.waitForTimeout(600);
+      await setInspector(phonePage, false);
+
+      const strip = await phonePage.evaluate(() => {
+        const box = document.querySelector('[data-testid="canvas-root"]').getBoundingClientRect();
+        return { x: box.left, y: box.top, width: box.width, height: Math.floor(box.height * 0.3) };
+      });
+      const capture = () => gridShot(phonePage, { clip: strip });
+
+      const closed = await capture();
+      await setInspector(phonePage, true);
+      await phonePage.waitForTimeout(400);
+      const sheet = await phonePage.evaluate(() => {
+        const panel = document.querySelector('[data-testid="node-inspector"]');
+        return panel ? panel.getBoundingClientRect().top : null;
+      });
+      const open = await capture();
+      await setInspector(phonePage, false);
+      await phonePage.waitForTimeout(400);
+      const closedAgain = await capture();
+
+      const inked = await phonePage.evaluate(
+        async (bytes) => {
+          const bitmap = await createImageBitmap(
+            new Blob([new Uint8Array(bytes)], { type: 'image/png' }),
+          );
+          const surface = document.createElement('canvas');
+          surface.width = bitmap.width;
+          surface.height = bitmap.height;
+          const context = surface.getContext('2d');
+          context.drawImage(bitmap, 0, 0);
+          const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height);
+          const shades = new Set();
+          for (let i = 0; i < data.length; i += 4) shades.add(`${data[i]},${data[i + 1]}`);
+          return shades.size;
+        },
+        [...closed],
+      );
+
+      check(
+        label,
+        'at 390px the sheet opens and closes without moving a single pixel of grid above it',
+        sheet !== null &&
+          sheet >= strip.y + strip.height &&
+          inked >= 2 &&
+          open.equals(closed) &&
+          closedAgain.equals(closed),
+        `sheet top ${String(sheet)} below a strip ending ${String(strip.y + strip.height)}, ${String(inked)} shades in the strip, open ${open.equals(closed) ? 'identical' : 'DIFFERENT'}, closed again ${closedAgain.equals(closed) ? 'identical' : 'DIFFERENT'}`,
+      );
+      await checkInspectorToggleLook(phonePage, label, '390px');
+    } finally {
+      await phone.close().catch(() => {});
+    }
   } finally {
     await context.close().catch(() => {});
   }
@@ -3593,6 +3775,11 @@ const MOTION_PAGE = () => {
      * Runs `act`, then samples `reader` every frame for `ms`. `act` is a
      * selector to click, so a click and the first sample are in the same task
      * and the first frame after the click is the first frame read.
+     *
+     * `window.__motionStopWhen`, if a caller installed one, ends the window
+     * early on the frame it first returns true - so `ms` can be a ceiling for
+     * a wait that is really for a state, rather than a guess at how long the
+     * state takes to arrive.
      */
     sample: (reader, args, ms, act) =>
       new Promise((resolve) => {
@@ -3603,8 +3790,12 @@ const MOTION_PAGE = () => {
         const tick = (now) => {
           firstFrameMs ??= Math.round(now - started);
           samples.push(readers[reader](args));
-          if (now - started < ms) requestAnimationFrame(tick);
-          else resolve({ samples, firstFrameMs });
+          if (now - started < ms && !(window.__motionStopWhen?.() ?? false)) {
+            requestAnimationFrame(tick);
+          } else {
+            window.__motionStopWhen = undefined;
+            resolve({ samples, firstFrameMs });
+          }
         };
         requestAnimationFrame(tick);
       }),
@@ -3985,12 +4176,40 @@ async function motionPass(page, label, reduced) {
   await page.keyboard.press('End');
   await install();
   /*
-   * Long enough for the last keystroke's run to land, and the runs here are not
-   * short: every keystroke re-encodes four megabytes upstream. The window is
-   * how long to look; the partner below is what says the looking was enough.
+   * UNTIL THE LAST KEYSTROKE'S RUN HAS LANDED - a state, with thirty seconds
+   * as a ceiling rather than a guess. This was a six-second window, and it
+   * failed two runs in three in Gecko at `e9ec507` and after it alike: each
+   * keystroke into a four-megabyte controlled field holds Gecko's main thread
+   * for one to three seconds, so the four keys took 7.6-9.9s to type and the
+   * downstream figure landed at 9-12s, after the window had closed on a node
+   * still `running`. WebKit lands it in about three. The window was measuring
+   * the engine's keystroke cost, not the count.
+   *
+   * Each `input` event resets it, so a run that started for an earlier
+   * keystroke cannot end it: the node has to go `running` after the LAST one
+   * and come back `ok`. Typing is over when `keyboard.type` resolves, which
+   * waits for every key to be handled.
    */
-  const quiet = sample('quiet', { to: second }, 6000);
+  await page.evaluate((id) => {
+    const input = document.querySelector('[data-inspector-input]');
+    let lastInput = performance.now();
+    let ranSince = false;
+    window.__typingDone = false;
+    input.addEventListener('input', () => {
+      lastInput = performance.now();
+      ranSince = false;
+    });
+    window.__motionStopWhen = () => {
+      const status = document.querySelector(`[data-testid="node-${id}"]`)?.dataset.status;
+      if (status === 'running' && performance.now() > lastInput) ranSince = true;
+      return window.__typingDone === true && ranSince && status === 'ok';
+    };
+  }, second);
+  const quiet = sample('quiet', { to: second }, 30_000);
   await page.keyboard.type('abcd', { delay: 350 });
+  await page.evaluate(() => {
+    window.__typingDone = true;
+  });
   const typed = await quiet;
   const shown = typed.samples.filter((reading) => reading.text !== null);
   /*
@@ -4751,6 +4970,40 @@ async function notificationPlacement(browser, label, { width, height, coarse }) 
     await context.close().catch(() => {});
   }
 
+  /*
+   * AND ONE WITH A SENTENCE, which a narrow viewport still spans: a share link
+   * that does not decode is refused on arrival with the reason under the
+   * title. The description's own box is the partner - a notification that lost
+   * its sentence would be narrow for the wrong reason.
+   */
+  let sentence = null;
+  if (narrow) {
+    const refused = await browser.newContext({
+      viewport: { width, height },
+      ...(coarse ? { hasTouch: true } : {}),
+    });
+    try {
+      const refusedPage = await refused.newPage();
+      await refusedPage.goto(`${ORIGIN}/?p=not-a-pipeline`, { waitUntil: 'networkidle' });
+      await refusedPage.locator('[role="region"] ol > li').first().waitFor({ timeout: 15_000 });
+      sentence = await refusedPage.evaluate(async () => {
+        const item = document.querySelector('[role="region"] ol > li');
+        await Promise.all(item.getAnimations().map((animation) => animation.finished));
+        const box = item.getBoundingClientRect();
+        const readout = document.querySelector('[data-testid="canvas-readout"]');
+        return {
+          left: box.left,
+          right: box.right,
+          described: item.querySelector('[class*="description"]') !== null,
+          margin: readout ? readout.getBoundingClientRect().left : null,
+          viewport: document.documentElement.clientWidth,
+        };
+      });
+    } finally {
+      await refused.close().catch(() => {});
+    }
+  }
+
   const counts = readings.map((reading) => reading.toasts.length);
   const all = readings.flatMap((reading) => reading.toasts.map((toast) => ({ ...toast, reading })));
   const overlaps = (a, b) =>
@@ -4802,17 +5055,23 @@ async function notificationPlacement(browser, label, { width, height, coarse }) 
   );
 
   if (narrow) {
-    // The readout's own inset, which is --pb-space-md: the margin the canvas uses.
-    const off = all.filter(
+    /*
+     * ON THE RIGHT MARGIN AND AS WIDE AS WHAT IT SAYS. The margin is the
+     * readout's own inset, --pb-space-md. These four are deletions - a title,
+     * an Undo and a close, no sentence - so each has to end on the right margin
+     * and start well clear of the left one; the band they used to fill is what
+     * a notification WITH a sentence still gets, asserted below.
+     */
+    const offRight = all.filter(
       (toast) =>
-        Math.abs(toast.box.left - toast.reading.readout.left) > 0.5 ||
         Math.abs(toast.reading.viewport - toast.box.right - toast.reading.readout.left) > 0.5,
     );
+    const spanning = all.filter((toast) => toast.box.left - toast.reading.readout.left < 40);
     check(
       label,
-      `notifications ${where} span the canvas between the margins its readout keeps`,
-      off.length === 0,
-      `${String(off.length)} off; first ${px(all[0]?.box.left ?? -1)}..${px(all[0]?.box.right ?? -1)} against a readout inset ${px(all[0]?.reading.readout.left ?? -1)}`,
+      `notifications ${where} sit on the right margin, as wide as what they say`,
+      all.length > 0 && offRight.length === 0 && spanning.length === 0,
+      `${String(offRight.length)} off the margin, ${String(spanning.length)} spanning; widths ${[...new Set(all.map((toast) => px(toast.box.right - toast.box.left)))].join('/')}px of a ${px((all[0]?.reading.viewport ?? 0) - 2 * (all[0]?.reading.readout.left ?? 0))}px band`,
     );
     const stacked = all.filter(
       (toast) =>
@@ -4823,6 +5082,18 @@ async function notificationPlacement(browser, label, { width, height, coarse }) 
       `each ${where} is one line, its Undo beside the message rather than under it`,
       stacked.length === 0,
       `${String(stacked.length)} with the action on a row of its own`,
+    );
+    check(
+      label,
+      `a notification ${where} that carries a sentence spans the band between both margins`,
+      sentence !== null &&
+        sentence.described &&
+        sentence.margin !== null &&
+        Math.abs(sentence.left - sentence.margin) <= 0.5 &&
+        Math.abs(sentence.viewport - sentence.right - sentence.margin) <= 0.5,
+      sentence === null
+        ? 'no refusal was raised'
+        : `${px(sentence.left)}..${px(sentence.right)} against margins of ${String(sentence.margin)}, ${sentence.described ? 'with' : 'WITHOUT'} its sentence`,
     );
     check(
       label,
@@ -4890,6 +5161,35 @@ async function checkDeployment(label, rules) {
     "the document keeps connect-src 'none'",
     (global['Content-Security-Policy'] ?? '').includes("connect-src 'none'"),
     global['Content-Security-Policy']?.slice(0, 60) ?? 'absent',
+  );
+
+  /*
+   * AND NOTHING THE BROWSER LOADS ASKS IT TO CONNECT FOR A SOURCE MAP.
+   *
+   * Every chunk used to end in `//# sourceMappingURL=`, so opening devtools on
+   * the live site fetched one map per chunk and `connect-src 'none'` refused
+   * each: a steady run of violations that were the policy working, which is
+   * exactly the noise a real violation would be filed under. The maps are
+   * still built - `sourcemap: 'hidden'` - and the count of them is the partner,
+   * so a build that simply stopped making maps cannot pass for one that stopped
+   * pointing at them.
+   */
+  const shipped = [
+    ...(await readdir(join(DIST, 'assets'))).map((name) => join('assets', name)),
+    ...(await readdir(DIST)).filter((name) => name.endsWith('.js')),
+  ];
+  const loaded = shipped.filter((name) => /\.(?:js|css)$/.test(name));
+  const pointing = [];
+  for (const name of loaded) {
+    if (/[#@] sourceMappingURL=/.test(await readFile(join(DIST, name), 'utf8')))
+      pointing.push(name);
+  }
+  const maps = shipped.filter((name) => name.endsWith('.map'));
+  check(
+    label,
+    'no built script or stylesheet points the browser at a source map',
+    loaded.length > 0 && pointing.length === 0 && maps.length > 0,
+    `${String(loaded.length)} files scanned, ${String(pointing.length)} pointing${pointing.length > 0 ? ` (${pointing.slice(0, 3).join(', ')})` : ''}, ${String(maps.length)} maps still built`,
   );
 
   /*
@@ -9960,7 +10260,40 @@ async function checkPopovers(engine, label) {
             (error) => String(error).split('\n')[0],
           );
         if (chose !== true) await page.keyboard.press('Escape');
-        await page.getByRole('listbox').waitFor({ state: 'detached', timeout: 10_000 });
+        /*
+         * BOUNDED AND RECORDED TOO, for the same reason as the click. Round
+         * twenty's second full run ended here, in Gecko, on a list still open
+         * ten seconds after the pick - thrown, so the run died with every
+         * check after it unread and nothing to say what state the page was in.
+         * It did not recur in isolation. Now it is a named failure that says
+         * what the pick returned, where focus was, and whether a second Escape
+         * closes the list.
+         */
+        const stuck = await page
+          .getByRole('listbox')
+          .waitFor({ state: 'detached', timeout: 10_000 })
+          .then(
+            () => null,
+            async () => {
+              const focus = await page.evaluate(() => {
+                const active = document.activeElement;
+                return active
+                  ? `${active.tagName.toLowerCase()}[role=${String(active.getAttribute('role'))}]`
+                  : 'nothing';
+              });
+              await page.keyboard.press('Escape');
+              const second = await page
+                .getByRole('listbox')
+                .waitFor({ state: 'detached', timeout: 5_000 })
+                .then(
+                  () => 'a second Escape closed it',
+                  () => 'a second Escape did not close it',
+                );
+              return `still open 10s after the pick (${chose === true ? 'the click landed' : String(chose)}); focus on ${focus}; ${second}`;
+            },
+          );
+        check(label, `${at}: the list closes after the pick`, stuck === null, stuck ?? 'closed');
+        if (stuck !== null && (await page.getByRole('listbox').count()) > 0) continue;
         const hrefs = await page
           .locator('a[href^="/tools/"]')
           .evaluateAll((els) => [...new Set(els.map((el) => el.getAttribute('href')))]);
@@ -13581,7 +13914,301 @@ async function checkPreviewSandbox(browser, label) {
  *      engine's business, and Firefox's answer differs from Chromium's - three
  *      LINES rather than a hundred pixels. Asserting it here is asserting it in
  *      the only place the difference exists.
+ *
+ *   5. THE SCREEN IS THE BITMAP, at a phone's width. Everything above reads a
+ *      strip of screenshot and asks whether it looks like a grid; this asks
+ *      whether each rule reached the screen at the pixel the bitmap put it on,
+ *      and at the width it was drawn. A bitmap that is not exactly its box is
+ *      resampled by the engine, and a resampled grid is right in one part of
+ *      the viewport and smeared in another - which is what it looked like on a
+ *      phone, and which no strip-average could see.
  */
+
+/**
+ * Drives the zoom to a target through real ctrl+wheel events on the root.
+ *
+ * Every step waits two frames, so this hangs in a page whose frames have
+ * stopped - which no page in this harness is.
+ */
+const INSTALL_SET_ZOOM = () => {
+  const root = document.querySelector('[data-testid="canvas-root"]');
+  window.__setZoom = async (target) => {
+    const readout = () =>
+      Number(
+        document.querySelector('[data-testid="canvas-readout"]').textContent.match(/(\d+)%/)[1],
+      ) / 100;
+    for (let attempt = 0; attempt < 300; attempt += 1) {
+      const current = readout();
+      if (Math.abs(current - target) < 0.006) break;
+      const box = root.getBoundingClientRect();
+      let step = Math.max(-1, Math.min(1, Math.log2(target / current) * 6));
+      // Half-steps near the target, or 59% and 71% are overshot for ever.
+      if (Math.abs(step) < 0.3) step *= 0.5;
+      root.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: -step * 12,
+          ctrlKey: true,
+          clientX: box.left + box.width / 2,
+          clientY: box.top + box.height / 2,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    }
+    return readout();
+  };
+};
+
+/**
+ * Every rule along six lines across the grid, as the bitmap drew it and as the
+ * screen shows it.
+ *
+ * THREE ROWS AND THREE COLUMNS, one in each third of the layer, because the
+ * defect this exists for was a difference BETWEEN regions - smeared on the
+ * right and crisp on the left, a band a third of the way down. Each line is the
+ * quietest one in its third, so that a row does not run along a horizontal rule
+ * and say nothing about the columns.
+ *
+ * Both are reported in the layer's own device pixels. A run is `[start, width,
+ * peak]`, where the peak is the bitmap's alpha for a layer run and the distance
+ * from the backdrop for a screen run.
+ */
+const INSTALL_GRID_LINES = () => {
+  window.__gridLines = async (bytes) => {
+    const canvas = document.querySelector('[data-testid="canvas-grid"]');
+    const layer = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+    const bitmap = await createImageBitmap(
+      new Blob([new Uint8Array(bytes)], { type: 'image/png' }),
+    );
+    const surface = document.createElement('canvas');
+    surface.width = bitmap.width;
+    surface.height = bitmap.height;
+    const context = surface.getContext('2d');
+    context.drawImage(bitmap, 0, 0);
+    const shot = context.getImageData(0, 0, bitmap.width, bitmap.height);
+
+    const dpr = window.devicePixelRatio;
+    const rect = canvas.getBoundingClientRect();
+    const ox = Math.round(rect.left * dpr);
+    const oy = Math.round(rect.top * dpr);
+    /*
+     * Only the pixels the HOST covers entirely. The layer overhangs a
+     * fractional host by design, and the host's clip edge is a pixel the
+     * backdrop only partly fills - which reads as ink nobody drew.
+     */
+    const host = canvas.parentElement.getBoundingClientRect();
+    const width = Math.min(layer.width, shot.width - ox, Math.floor(host.right * dpr) - ox);
+    const height = Math.min(layer.height, shot.height - oy, Math.floor(host.bottom * dpr) - oy);
+
+    const alpha = (x, y) => layer.data[(y * layer.width + x) * 4 + 3];
+    const lum = (x, y) => {
+      const i = ((oy + y) * shot.width + ox + x) * 4;
+      return 0.2126 * shot.data[i] + 0.7152 * shot.data[i + 1] + 0.0722 * shot.data[i + 2];
+    };
+
+    const quietest = (count, length, at) => {
+      const lines = [];
+      for (let third = 0; third < 3; third += 1) {
+        let best = -1;
+        let fewest = Infinity;
+        // Clear of the layer's edges, where the host's clip and the header's
+        // rule share pixels with the grid.
+        const from = Math.floor((third * count) / 3) + Math.ceil(count / 30);
+        const to = Math.floor(((third + 1) * count) / 3) - Math.ceil(count / 30);
+        for (let line = from; line < to; line += 1) {
+          let inked = 0;
+          for (let p = 0; p < length; p += 1) if (at(line, p) > 0) inked += 1;
+          if (inked < fewest) {
+            fewest = inked;
+            best = line;
+          }
+        }
+        lines.push(best);
+      }
+      return lines;
+    };
+
+    const runsOf = (length, value, threshold) => {
+      const runs = [];
+      for (let p = 0; p < length; p += 1) {
+        const v = value(p);
+        if (v <= threshold) continue;
+        const last = runs.at(-1);
+        if (last && last[0] + last[1] === p) {
+          last[1] += 1;
+          last[2] = Math.max(last[2], v);
+        } else {
+          runs.push([p, 1, v]);
+        }
+      }
+      return runs;
+    };
+
+    const backdropOf = (length, value) => {
+      const counts = new Map();
+      for (let p = 0; p < length; p += 1) {
+        const v = Math.round(value(p));
+        counts.set(v, (counts.get(v) ?? 0) + 1);
+      }
+      return [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    };
+
+    const line = (axis, at) => {
+      const length = axis === 'row' ? width : height;
+      const layerAt = axis === 'row' ? (p) => alpha(p, at) : (p) => alpha(at, p);
+      const screenAt = axis === 'row' ? (p) => lum(p, at) : (p) => lum(at, p);
+      const backdrop = backdropOf(length, screenAt);
+      return {
+        axis,
+        at,
+        length,
+        layer: runsOf(length, layerAt, 0),
+        screen: runsOf(length, (p) => Math.abs(screenAt(p) - backdrop), 2),
+      };
+    };
+
+    return {
+      dpr,
+      bitmap: [canvas.width, canvas.height],
+      lines: [
+        ...quietest(height, width, (y, x) => alpha(x, y)).map((y) => line('row', y)),
+        ...quietest(width, height, (x, y) => alpha(x, y)).map((x) => line('column', x)),
+      ],
+    };
+  };
+};
+
+/**
+ * Whether the screen shows the bitmap, and whether its spacing is one spacing.
+ *
+ * FAITHFUL: every rule the bitmap drew at more than half ink is on screen at
+ * the same start and the same width, and nothing on screen is outside a rule
+ * the bitmap drew. Resampling fails both halves - a smeared rule is wider and
+ * starts early, and its ink lands where the bitmap has none.
+ *
+ * UNIFORM: the full-ink rules on screen - every rank coarser than the one
+ * fading in, which together are one lattice at the finest full pitch - are
+ * spaced at no more than two neighbouring whole numbers of device pixels, and
+ * are all one rule wide. That is the per-rule rounding `grid.test.ts` bounds
+ * and nothing else: a seam where the resampling phase slips is a gap one pixel
+ * outside the pair, and a smeared rule is a second width.
+ */
+function judgeGridLines(reading) {
+  const thickness = Math.max(1, Math.round(reading.dpr));
+  const problems = [];
+  let compared = 0;
+  let spaced = 0;
+
+  for (const line of reading.lines) {
+    const where = `${line.axis} ${String(line.at)}`;
+    const onScreen = new Map(line.screen.map((run) => [run[0], run]));
+
+    for (const run of line.layer.filter((one) => one[2] >= 128)) {
+      compared += 1;
+      const seen = onScreen.get(run[0]);
+      if (!seen || seen[1] !== run[1]) {
+        problems.push(
+          `${where}: drawn at ${String(run[0])}x${String(run[1])}, on screen ${seen ? `${String(seen[0])}x${String(seen[1])}` : 'not there'}`,
+        );
+      }
+    }
+    for (const run of line.screen) {
+      const inside = line.layer.some(
+        (drawn) => run[0] >= drawn[0] && run[0] + run[1] <= drawn[0] + drawn[1],
+      );
+      if (!inside) {
+        problems.push(`${where}: ink at ${String(run[0])}x${String(run[1])} the bitmap never drew`);
+      }
+    }
+
+    /*
+     * A rule cut off by either end of the line is the viewport's width, not
+     * the grid's: it reads narrower than it was drawn and its start is where
+     * the edge is. Everything between the ends is judged.
+     */
+    const whole = (run) => run[0] > 0 && run[0] + run[1] < line.length;
+    const full = line.screen.filter((run) => {
+      const drawn = line.layer.find((one) => one[0] === run[0]);
+      return whole(run) && drawn !== undefined && drawn[2] >= 250;
+    });
+    const gaps = full.slice(1).map((run, index) => run[0] - full[index][0]);
+    spaced += full.length;
+    if (gaps.length > 0 && Math.max(...gaps) - Math.min(...gaps) > 1) {
+      problems.push(
+        `${where}: full-ink gaps run ${String(Math.min(...gaps))} to ${String(Math.max(...gaps))}`,
+      );
+    }
+    const widths = new Set(
+      line.screen.filter((run) => whole(run) && run[2] > 8).map((run) => run[1]),
+    );
+    if ([...widths].some((w) => w !== thickness)) {
+      problems.push(`${where}: rules ${[...widths].join('/')}px wide against ${String(thickness)}`);
+    }
+  }
+
+  return { compared, spaced, problems };
+}
+
+/**
+ * The canvas root, made a fractional number of pixels on both axes.
+ *
+ * A FIXTURE FOR A CONDITION THE VIEWPORT CANNOT PRODUCE. On a phone at 2.625x
+ * - most Android phones - the CSS viewport is itself fractional (1080 device
+ * px is 411.43 CSS px), so the canvas's box is not a whole number of CSS
+ * pixels. Playwright can only ask for a whole-pixel viewport, so this makes
+ * the host fractional directly, half a pixel off each axis.
+ *
+ * WHAT IT HOLDS IS THE PLACEMENT, NOT THE OLD DEFECT. The build before the
+ * layer was placed passes it at 1x and 3x in both engines, because both snap a
+ * canvas's paint rect to whole pixels and a half-pixel box snaps to the bitmap
+ * the old arithmetic happened to make. What it failed was the first version
+ * of the placement, which put a 3x layer on a device pixel that WebKit's
+ * sixty-fourths of a CSS pixel cannot state: every horizontal rule came out
+ * 4px wide where it was drawn 3.
+ */
+async function makeCanvasFractional(page) {
+  await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="canvas-root"]');
+    root.style.inlineSize = 'calc(100% - 0.5px)';
+    root.style.blockSize = 'calc(100% - 0.5px)';
+  });
+  await page.waitForTimeout(150);
+}
+
+/**
+ * A screenshot of the grid alone. Everything the canvas root draws over the
+ * grid - the toolbar, the readout, the empty-state sentence - is hidden for
+ * the capture and put back straight after it.
+ *
+ * THROUGH THE CSSOM, not Playwright's `style` option. That option injects a
+ * stylesheet, and WebKit holds it to the page's own `style-src`, which admits
+ * three hashed stylesheets and nothing else: the chrome stayed on screen there
+ * and was read as grid. Gecko let it through, so one engine was measuring the
+ * grid and the other the toolbar.
+ */
+async function gridShot(page, options = {}) {
+  await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="canvas-root"]');
+    for (const child of root.children) {
+      if (child.getAttribute('data-testid') === 'canvas-grid') continue;
+      child.dataset.gridShotVisibility = child.style.visibility;
+      child.style.setProperty('visibility', 'hidden', 'important');
+    }
+  });
+  try {
+    return await page.screenshot(options);
+  } finally {
+    await page.evaluate(() => {
+      const root = document.querySelector('[data-testid="canvas-root"]');
+      for (const child of root.querySelectorAll(':scope > [data-grid-shot-visibility]')) {
+        child.style.visibility = child.dataset.gridShotVisibility;
+        delete child.dataset.gridShotVisibility;
+      }
+    });
+  }
+}
+
 async function checkCanvasGrid(browser, label) {
   /** Mean ink and shade count over a strip of bare canvas. */
   const MEASURE = () => {
@@ -13637,11 +14264,13 @@ async function checkCanvasGrid(browser, label) {
   /*
    * ONE DENSITY, AND IT IS THE ENGINE'S OWN.
    *
-   * `deviceScaleFactor` is quietly ignored by Gecko and by WebKit's Playwright
-   * build - a context asked for 2x reports `devicePixelRatio` of 1 and renders
-   * at 1x - so a sweep over it here would assert the same thing twice and call
-   * it coverage. Which it did, until the coverage figure was computed from the
-   * REQUESTED density and came out against a 2x ideal on a 1x render.
+   * `deviceScaleFactor` is quietly ignored by Gecko - a context asked for 2x
+   * reports `devicePixelRatio` of 1 and renders at 1x - so a sweep over it here
+   * would assert the same thing twice and call it coverage. Which it did, until
+   * the coverage figure was computed from the REQUESTED density and came out
+   * against a 2x ideal on a 1x render. This used to say WebKit ignored it too;
+   * measured in round twenty, WebKit's build honours it, and the phone-width
+   * block at the end of this section uses that for a 3x pass.
    *
    * So everything below is derived from what the page reports, and higher
    * densities are covered where they can be: `grid.test.ts` asserts every rule
@@ -14058,6 +14687,113 @@ async function checkCanvasGrid(browser, label) {
     );
   } finally {
     await forced.close();
+  }
+
+  /* -- At a phone's width, the screen is the bitmap --------------------- */
+
+  /*
+   * 50%, 59% AND 71% ARE THE ZOOMS IT WAS REPORTED AT, and 100% is the one
+   * with no fraction in it at all. Each is asserted twice: as the page comes,
+   * and with the canvas made a fractional number of pixels, which is the
+   * condition a fractional-density phone is always in - see
+   * `makeCanvasFractional` for what that half does and does not hold.
+   */
+  const phoneZooms = [0.5, 0.59, 0.71, 1];
+
+  const phonePass = async (context, density) => {
+    const phone = await context.newPage();
+    try {
+      await gotoCanvas(phone);
+      await phone.locator('[data-testid="canvas-grid"]').waitFor({ timeout: 15_000 });
+      // Past the once-per-load draw-in, which clips the layer while it runs.
+      await phone.waitForTimeout(600);
+      await phone.evaluate(INSTALL_SET_ZOOM);
+      await phone.evaluate(INSTALL_GRID_LINES);
+
+      /*
+       * Read off the page under test rather than a blank one: Gecko reports
+       * the density a context asked for on `about:blank` and 1 once a real
+       * document has loaded, so a probe page said 3 and the canvas drew at 1x.
+       */
+      const reported = await phone.evaluate(() => window.devicePixelRatio);
+      if (reported !== density && density !== 1) {
+        skip(
+          label,
+          `390px at ${String(density)}x: the screen is the bitmap`,
+          `this engine renders at ${String(reported)}x whatever deviceScaleFactor asks for`,
+        );
+        return;
+      }
+      check(
+        label,
+        `390px at ${String(density)}x: the page renders at the density it asked for`,
+        reported === density,
+        `devicePixelRatio ${String(reported)}`,
+      );
+
+      for (const fractional of [false, true]) {
+        if (fractional) await makeCanvasFractional(phone);
+        for (const zoom of phoneZooms) {
+          const reached = await phone.evaluate((target) => window.__setZoom(target), zoom);
+          await phone.waitForTimeout(100);
+          const reading = await phone.evaluate(
+            (bytes) => window.__gridLines(bytes),
+            [...(await gridShot(phone))],
+          );
+          const verdict = judgeGridLines(reading);
+          const where = `390px at ${String(density)}x, ${String(Math.round(reached * 100))}%${fractional ? ', a fractional canvas' : ''}`;
+
+          check(
+            label,
+            `${where}: every rule reaches the screen where the bitmap drew it`,
+            verdict.compared >= 60 && verdict.problems.every((p) => !/drawn at|never drew/.test(p)),
+            `${String(verdict.compared)} rules compared along six lines; ${
+              verdict.problems
+                .filter((p) => /drawn at|never drew/.test(p))
+                .slice(0, 3)
+                .join('; ') || 'all where they were drawn'
+            }`,
+          );
+          check(
+            label,
+            `${where}: rule spacing is one spacing across the whole viewport`,
+            verdict.spaced >= 30 && verdict.problems.every((p) => !/gaps run|wide against/.test(p)),
+            `${String(verdict.spaced)} full-ink rules; ${
+              verdict.problems
+                .filter((p) => /gaps run|wide against/.test(p))
+                .slice(0, 3)
+                .join('; ') || 'gaps within one device pixel, every rule one width'
+            }`,
+          );
+        }
+      }
+    } finally {
+      await phone.close();
+    }
+  };
+
+  const oneX = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  try {
+    await phonePass(oneX, 1);
+  } finally {
+    await oneX.close();
+  }
+
+  /*
+   * AND AT 3X, THE DENSITY OF A 390PX PHONE. WebKit's Playwright build honours
+   * `deviceScaleFactor` now, which the comment at the top of this section used
+   * to say it did not; Gecko's still reports 1 whatever it is asked for, so a
+   * 3x pass there would be the 1x pass again under another name.
+   */
+  const threeX = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    deviceScaleFactor: 3,
+  });
+  try {
+    await phonePass(threeX, 3);
+  } finally {
+    await threeX.close();
   }
 }
 
@@ -15537,6 +16273,355 @@ async function checkPointerFocus(browser, label) {
   }
 }
 
+/* ========================================================================== *
+ * NO STYLE IS DECIDED BY WHICH STYLESHEET LOADED LAST
+ * ========================================================================== */
+
+/**
+ * Every place two CSS modules' rules tie for a property on the same element.
+ *
+ * A tie in specificity is decided by order, and the order of two CSS modules'
+ * rules is not something this code base states: the build links chunk
+ * stylesheets in whatever order its chunks come out, and the dev server
+ * injects one `<style>` per module in the order modules run. It has decided
+ * three things here by luck - the input editor that was 200px built and 87px
+ * in dev, its own hover rule, and the rich-text copy button's accent border -
+ * and each was found by somebody looking at a screen.
+ *
+ * THE MODULE, NOT THE STYLESHEET, IS WHAT A RULE BELONGS TO. Two modules can
+ * land in one built chunk, where their order is fixed in the build and is
+ * still not fixed in dev. A CSS module's class names carry the hash of the file
+ * they came from (Button's ghost ships as _ghost_, the hash, a line number) - so
+ * that is the origin compared. A rule
+ * with no module class is the document's own stylesheet, which the document
+ * links before anything a module can add in both dev and the build, so its
+ * order against a module is fixed by construction and is not a tie.
+ *
+ * STATES ARE COUNTED AS POSSIBLE. `:hover`, `:active`, `:focus`,
+ * `:focus-visible`, `:focus-within` and the styleguide's `[data-force]` are
+ * matched as though they held, because two of the three ties above were
+ * between hover rules. Specificity is taken from the selector as written.
+ * Rules on pseudo-elements are not matched, and only rules whose media query
+ * currently applies are; both are limits on what this can see.
+ */
+const FIND_CASCADE_TIES = () => {
+  const splitList = (text) => {
+    const out = [];
+    let depth = 0;
+    let current = '';
+    let quote = null;
+    for (const character of text) {
+      if (quote) {
+        current += character;
+        if (character === quote) quote = null;
+        continue;
+      }
+      if (character === '"' || character === "'") {
+        quote = character;
+        current += character;
+        continue;
+      }
+      if (character === '(' || character === '[') depth += 1;
+      if (character === ')' || character === ']') depth -= 1;
+      if (character === ',' && depth === 0) {
+        out.push(current.trim());
+        current = '';
+        continue;
+      }
+      current += character;
+    }
+    if (current.trim()) out.push(current.trim());
+    return out;
+  };
+  const compare = (x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+  /* Selectors 4: `:is`, `:not` and `:has` take their most specific argument, `:where` none. */
+  const specificity = (selector) => {
+    let a = 0;
+    let b = 0;
+    let c = 0;
+    let i = 0;
+    const word = (from) => {
+      let j = from;
+      while (j < selector.length && /[\w-]/.test(selector[j])) j += 1;
+      return j;
+    };
+    while (i < selector.length) {
+      const character = selector[i];
+      if (character === '#') {
+        a += 1;
+        i = word(i + 1);
+      } else if (character === '.') {
+        b += 1;
+        i = word(i + 1);
+      } else if (character === '[') {
+        b += 1;
+        i = selector.indexOf(']', i) + 1 || selector.length;
+      } else if (character === ':') {
+        const element = selector[i + 1] === ':';
+        const start = i + (element ? 2 : 1);
+        let j = word(start);
+        const name = selector.slice(start, j);
+        let argument = null;
+        if (selector[j] === '(') {
+          let depth = 0;
+          const open = j;
+          for (; j < selector.length; j += 1) {
+            if (selector[j] === '(') depth += 1;
+            if (selector[j] === ')' && (depth -= 1) === 0) break;
+          }
+          argument = selector.slice(open + 1, j);
+          j += 1;
+        }
+        if (element || ['before', 'after', 'marker', 'placeholder', 'selection'].includes(name)) {
+          c += 1;
+        } else if (['is', 'not', 'has'].includes(name) && argument !== null) {
+          const best = splitList(argument)
+            .map(specificity)
+            .reduce((x, y) => (compare(x, y) >= 0 ? x : y), [0, 0, 0]);
+          a += best[0];
+          b += best[1];
+          c += best[2];
+        } else if (name !== 'where') {
+          b += 1;
+        }
+        i = j;
+      } else if (/[a-zA-Z]/.test(character) && (i === 0 || /[\s>+~(]/.test(selector[i - 1]))) {
+        c += 1;
+        i = word(i);
+      } else {
+        i += 1;
+      }
+    }
+    return [a, b, c];
+  };
+  const asPossible = (selector) =>
+    selector
+      .replace(/:(hover|active|focus-visible|focus-within|focus)(?![\w-])/g, ':is(*)')
+      .replace(/\[data-force=['"]?\w+['"]?\]/g, ':is(*)');
+  const moduleOf = (selector) => {
+    const files = [...selector.matchAll(/\._[A-Za-z0-9-]+?_([a-z0-9]{5})_\d+/g)].map((m) => m[1]);
+    return files.length > 0 ? [...new Set(files)].sort().join('+') : null;
+  };
+
+  const rules = [];
+  const walk = (list, sheet) => {
+    for (const rule of list) {
+      if (rule instanceof CSSMediaRule) {
+        if (window.matchMedia(rule.media.mediaText).matches) walk(rule.cssRules, sheet);
+      } else if (rule instanceof CSSSupportsRule) {
+        if (CSS.supports(rule.conditionText)) walk(rule.cssRules, sheet);
+      } else if (rule instanceof CSSStyleRule) {
+        const declarations = [];
+        for (let k = 0; k < rule.style.length; k += 1) {
+          const property = rule.style[k];
+          declarations.push([
+            property,
+            rule.style.getPropertyValue(property).trim(),
+            rule.style.getPropertyPriority(property),
+          ]);
+        }
+        for (const selector of splitList(rule.selectorText)) {
+          const origin = moduleOf(selector);
+          if (origin === null || selector.includes('::')) continue;
+          const test = asPossible(selector);
+          try {
+            document.querySelector(test);
+          } catch {
+            continue;
+          }
+          rules.push({ selector, test, origin, sheet, spec: specificity(selector), declarations });
+        }
+      }
+    }
+  };
+  const sheets = [...document.styleSheets, ...document.adoptedStyleSheets];
+  sheets.forEach((sheet, index) => {
+    try {
+      walk(sheet.cssRules, sheet.href ? sheet.href.split('/').pop() : `sheet ${String(index)}`);
+    } catch {
+      /* a sheet whose rules cannot be read is not one this app wrote */
+    }
+  });
+
+  const onElement = new Map();
+  for (const rule of rules) {
+    for (const element of document.querySelectorAll(rule.test)) {
+      const list = onElement.get(element) ?? [];
+      list.push(rule);
+      onElement.set(element, list);
+    }
+  }
+
+  const ties = new Map();
+  for (const [element, list] of onElement) {
+    const byProperty = new Map();
+    for (const rule of list) {
+      for (const [property, value, priority] of rule.declarations) {
+        const candidates = byProperty.get(property) ?? [];
+        candidates.push({ rule, value, important: priority === 'important' });
+        byProperty.set(property, candidates);
+      }
+    }
+    for (const [property, all] of byProperty) {
+      const pool = all.some((one) => one.important) ? all.filter((one) => one.important) : all;
+      const top = pool.reduce(
+        (best, one) => (compare(one.rule.spec, best) > 0 ? one.rule.spec : best),
+        [0, 0, 0],
+      );
+      const tied = pool.filter((one) => compare(one.rule.spec, top) === 0);
+      const clash = tied.some((x) =>
+        tied.some((y) => x.rule.origin !== y.rule.origin && x.value !== y.value),
+      );
+      if (!clash) continue;
+      const key = `${property} ${tied
+        .map((one) => one.rule.selector)
+        .sort()
+        .join(' | ')}`;
+      if (!ties.has(key)) {
+        ties.set(key, {
+          property,
+          at: top.join(','),
+          element: `${element.tagName.toLowerCase()}${typeof element.className === 'string' && element.className ? `.${element.className.trim().split(/\s+/).join('.')}` : ''}`,
+          rules: tied.map(
+            (one) => `${one.rule.selector} { ${property}: ${one.value} } in ${one.rule.sheet}`,
+          ),
+        });
+      }
+    }
+  }
+  return {
+    rules: rules.length,
+    elements: document.querySelectorAll('*').length,
+    ties: [...ties.values()],
+  };
+};
+
+/**
+ * Two rules that tie on purpose, from two made-up modules, on one element.
+ *
+ * Installed through `adoptedStyleSheets`, the CSSOM, which `style-src` does
+ * not govern. It is the instrument's own control: a pass over a page that
+ * cannot find THIS tie proves nothing about the page's.
+ */
+const INSTALL_TIE_CONTROL = () => {
+  const one = new CSSStyleSheet();
+  one.replaceSync('._tieProbe_aaaaa_1 { color: rgb(1, 2, 3); }');
+  const two = new CSSStyleSheet();
+  two.replaceSync('._tieProbe_bbbbb_1 { color: rgb(4, 5, 6); }');
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, one, two];
+  const probe = document.createElement('span');
+  probe.className = '_tieProbe_aaaaa_1 _tieProbe_bbbbb_1';
+  probe.dataset.tieControl = '';
+  document.body.append(probe);
+  window.__removeTieControl = () => {
+    probe.remove();
+    document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+      (sheet) => sheet !== one && sheet !== two,
+    );
+  };
+};
+
+async function checkCascadeTies(browser, label) {
+  for (const [width, height] of [
+    [1440, 900],
+    [390, 844],
+  ]) {
+    const where = `at ${String(width)}px`;
+    const context = await browser.newContext({ viewport: { width, height } });
+    const page = await context.newPage();
+    const visited = [];
+    const read = async (name) => {
+      await page.waitForTimeout(250);
+      visited.push({ name, ...(await page.evaluate(FIND_CASCADE_TIES)) });
+    };
+
+    try {
+      await page.goto(`${ORIGIN}/tools`, { waitUntil: 'networkidle' });
+      const tools = await page
+        .locator('a[href^="/tools/"]')
+        .evaluateAll((links) => [...new Set(links.map((link) => link.getAttribute('href')))]);
+
+      /* -- The control, first, on a real page ----------------------------- */
+      await page.evaluate(INSTALL_TIE_CONTROL);
+      const control = await page.evaluate(FIND_CASCADE_TIES);
+      await page.evaluate(() => window.__removeTieControl());
+      check(
+        label,
+        `${where}: the tie detector finds a tie planted for it`,
+        control.ties.some((tie) => tie.property === 'color' && tie.element.includes('_tieProbe_')),
+        `${String(control.ties.length)} tie(s) found with the control installed`,
+      );
+
+      /* -- Every route, and the canvas states with the most components ---- */
+      await read('/tools');
+      for (const path of [...tools, '/styleguide', '/no-such-page']) {
+        await page.goto(`${ORIGIN}${path}`, { waitUntil: 'networkidle' });
+        await read(path);
+      }
+
+      // A pipeline, which opens the inspector on its first node.
+      await page.goto(
+        `${ORIGIN}/?p=${shareParam({
+          v: 3,
+          n: [
+            ['n1', 'base64', 0, 0, { mode: 'encode' }],
+            ['n2', 'hash', 260, 0, {}],
+          ],
+          e: [],
+        })}`,
+        { waitUntil: 'networkidle' },
+      );
+      await page.locator('[data-testid="node-n2"]').waitFor({ timeout: 15_000 });
+      await read('the canvas, a share link with its inspector');
+      await page.locator('[role="application"]').first().focus();
+      await page.keyboard.press('k');
+      await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+      await read('the canvas, its palette open');
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('?');
+      await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+      await read('the canvas, its shortcuts open');
+      await page.keyboard.press('Escape');
+
+      // Where the rich-text copy button lives, which was the third tie.
+      await page.goto(`${ORIGIN}/tools/text-convert`, { waitUntil: 'networkidle' });
+      await page.locator('textarea').first().fill('# Ties\n\nA *paragraph*.');
+      await page.getByRole('combobox', { name: 'Target format' }).click();
+      await page.getByRole('option', { name: 'HTML (normalised)', exact: true }).click();
+      await page.getByRole('button', { name: 'Run' }).click();
+      await page.getByRole('button', { name: 'Copy as rich text' }).waitFor({ timeout: 20_000 });
+      await read('text-convert, with a rendered result');
+    } finally {
+      await context.close().catch(() => {});
+    }
+
+    const thin = visited.filter((state) => state.rules < 50 || state.elements < 40);
+    check(
+      label,
+      `${where}: the tie detector read every state it visited`,
+      visited.length >= 16 && thin.length === 0,
+      `${String(visited.length)} states; ${thin.length === 0 ? 'every one with module rules and elements to match' : `thin: ${thin.map((state) => state.name).join(', ')}`}`,
+    );
+
+    const found = new Map();
+    for (const state of visited) {
+      for (const tie of state.ties) {
+        const key = tie.rules.join(' | ');
+        if (!found.has(key)) found.set(key, { ...tie, state: state.name });
+      }
+    }
+    const first = [...found.values()][0];
+    check(
+      label,
+      `${where}: no two CSS modules tie for a property and leave the winner to load order`,
+      found.size === 0,
+      found.size === 0
+        ? `${String(visited.reduce((sum, state) => sum + state.rules, 0))} module selectors matched across ${String(visited.length)} states`
+        : `${String(found.size)} tie(s); first on ${first.element} (${first.state}): ${first.rules.join(' AGAINST ')}`,
+    );
+  }
+}
+
 /*
  * EVERY SECTION OF A RUN, IN THE ORDER A FULL RUN DRIVES THEM.
  *
@@ -15582,6 +16667,7 @@ const SECTIONS = [
   checkMobileLayout,
   checkPopovers,
   checkPointerFocus,
+  checkCascadeTies,
   checkSoftKeyboard,
   checkBackgroundedTab,
   checkTwoTabs,

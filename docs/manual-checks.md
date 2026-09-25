@@ -73,7 +73,19 @@ in Firefox.
      would mean Safari's `ClipboardItem` is not being detected.
 
 **If you only have an iPhone or iPad**, do 1, 3 and 5, and add: rotate the
-device on `/` and confirm the canvas and the inspector both survive it.
+device on `/` and confirm the canvas and the inspector both survive it. And two
+more that only a real phone can show:
+
+- **Tap a wire, then a toolbar button.** _Pass:_ the wire draws its selection
+  and nothing else flashes. _Fail:_ a translucent box, blue or grey, over the
+  wire's bounding box or over the button — the browser's own tap highlight,
+  which no engine in the harness can paint (see architecture.md, "The tap
+  highlight").
+- **Pinch the canvas to about 60% and look at the grid.** _Pass:_ one surface,
+  the same density across the screen. _Fail:_ one side denser than the other,
+  or a band where the spacing changes. Screenshot it, and note the phone, and
+  whether the page itself had been zoomed by the browser — the app cannot see
+  that zoom, and it was the one explanation round twenty could not test.
 
 ---
 
