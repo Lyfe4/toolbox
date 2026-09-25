@@ -15,21 +15,19 @@ import {
   portRowCount,
   portStackGap,
   portInsetStyle,
+  portKey,
   portTopStyle,
   PORT_ROW_HEIGHT,
   type PortSide,
 } from './geometry';
+import { NodeTiming } from './NodeTiming';
 import { PortButton } from './PortButton';
 import { PORT_GLYPH_SIZE } from './PortGlyph';
 import { lossSummary, summariseOutputs } from './resultSummary';
 
 import type { LossTrace } from './lossTrace';
+import type { PortContact } from './motion';
 import type { CanvasNode, NodeId, PortRef } from './types';
-
-/** How a port is keyed in the state sets below: "input:document". */
-export function portKey(side: PortSide, portId: string): string {
-  return `${side}:${portId}`;
-}
 
 /**
  * The attribute the canvas root's pointer handler looks for.
@@ -198,6 +196,19 @@ export interface CanvasNodeViewProps {
    * when the pipeline state changes.
    */
   readonly inheritedLoss: LossTrace | null;
+  /**
+   * Whether this node was just created - by the palette, a preset or a
+   * duplicate - and settles into place. Never true for a node a document,
+   * an undo or a redo brought back. See `Arrivals`.
+   */
+  readonly arriving: boolean;
+  /** The ports on this node a new wire has just touched, if any. */
+  readonly contact: PortContact | null;
+  /**
+   * The arrival this node's next timing figure may count up for, or null.
+   * See `countArmed` in graphStore.ts for why typing clears it.
+   */
+  readonly countArmed: number | null;
 }
 
 /**
@@ -224,6 +235,9 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   soleSelected,
   onConnect,
   inheritedLoss,
+  arriving,
+  contact,
+  countArmed,
 }: CanvasNodeViewProps) {
   const entry: ToolManifestEntry = getManifestEntry(node.toolId);
   const Glyph = CATEGORY_GLYPHS[entry.category] ?? SignalIcon;
@@ -419,6 +433,7 @@ export const CanvasNodeView = memo(function CanvasNodeView({
         // A drop target nothing marks is a guess, and on overlapping nodes it
         // is a guess the user gets wrong.
         dropTarget && styles.nodeDropTarget,
+        arriving && styles.nodeArriving,
       )}
       style={{ left: node.position.x, top: node.position.y, height }}
       data-node-id={node.id}
@@ -443,11 +458,7 @@ export const CanvasNodeView = memo(function CanvasNodeView({
         </span>
         <span className={styles.nodeTitle}>{entry.name}</span>
         {/* Per-node timing: small, mono, tabular. A developer-tool detail. */}
-        {run.durationMs === null ? null : (
-          <span className={styles.nodeTiming} aria-hidden="true">
-            {formatDuration(run.durationMs)}
-          </span>
-        )}
+        <NodeTiming durationMs={run.durationMs} armed={countArmed} />
         <span className={ledClass(verdict)} aria-hidden="true" />
       </div>
 
@@ -491,6 +502,7 @@ export const CanvasNodeView = memo(function CanvasNodeView({
               types={port.types}
               side={side}
               connected={connectedPorts.has(key)}
+              contact={contact?.keys.has(key) ? contact.seq : null}
               className={cx(
                 styles.port,
                 side === 'input' ? styles.portInput : styles.portOutput,
@@ -646,11 +658,4 @@ function hintFor(
   return waiting.types.includes('text')
     ? `Type or add a file in the inspector, or wire ${waiting.label}.`
     : `Add a file in the inspector, or wire ${waiting.label}.`;
-}
-
-/** Sub-millisecond runs read as "<1ms" rather than "0ms". */
-export function formatDuration(ms: number): string {
-  if (ms < 1) return '<1ms';
-  if (ms < 1000) return `${Math.round(ms).toString()}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
 }

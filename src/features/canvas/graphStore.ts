@@ -34,6 +34,34 @@ export interface Selection {
 
 const NO_SELECTION: Selection = { nodes: [], edges: [] };
 
+/**
+ * WHAT THE LAST STRUCTURAL ACTION CREATED, for the motion that acknowledges it.
+ *
+ * A wire drawing itself in, a node settling, a port flicking and a timing
+ * figure counting up are all answers to one question - "did the thing I just
+ * did happen?" - so they share one trigger, and it is an EVENT rather than a
+ * duration: nodes here run in 1-8ms, under a frame, and nothing tied to how
+ * long something took would ever be seen.
+ *
+ * Written only by the four actions that create something - adding a node,
+ * a preset, a duplicate, a wire - and never by undo, redo or loading a
+ * document. Those restore things rather than make them, and a canvas of
+ * forty nodes all settling at once on every reload is exactly the consumer
+ * app this is not. `seq` is the identity of one arrival: two in a row on the
+ * same port are two flicks, which a boolean could not say.
+ */
+export interface Arrivals {
+  readonly seq: number;
+  readonly nodes: readonly NodeId[];
+  /**
+   * Whole edges rather than ids, so the ports a wire touches are known without
+   * looking the wire up in a graph that is replaced on every frame of a drag.
+   */
+  readonly edges: readonly CanvasEdge[];
+}
+
+const NO_ARRIVALS: Arrivals = { seq: 0, nodes: [], edges: [] };
+
 export type { Announcement };
 
 /**
@@ -51,6 +79,19 @@ export interface CanvasStore extends AnnouncementSlice {
   readonly selection: Selection;
   readonly past: readonly Command[];
   readonly future: readonly Command[];
+  readonly arrivals: Arrivals;
+  /**
+   * The nodes whose NEXT timing figure may count up: the ones the latest
+   * arrival added, or landed a wire on.
+   *
+   * Emptied by any change to a value - typed input, an option, a file -
+   * anywhere on the canvas, so nothing counts while somebody is typing: a
+   * node added blocked and then fed by the keyboard would otherwise count up
+   * on the first keystroke's run, which is the one moment motion must not
+   * happen. Its own field rather than part of `arrivals`, so disarming it does
+   * not hand the wire layer a new arrival and start a finished draw again.
+   */
+  readonly countArmed: readonly NodeId[];
   /** Set while a pointer drag is in flight, so it becomes one undo step. */
   readonly pendingMove: {
     readonly ids: readonly NodeId[];
@@ -179,11 +220,40 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
     set((state) => appendAnnouncement(state, text, channel));
   };
 
+  const arrive = (
+    nodes: readonly NodeId[],
+    edges: readonly CanvasEdge[],
+    timing: readonly NodeId[],
+  ): void => {
+    set((state) => ({
+      arrivals: { seq: state.arrivals.seq + 1, nodes, edges },
+      countArmed: timing,
+    }));
+  };
+
+  /**
+   * Undo, redo and a replaced document retire the last arrival rather than
+   * leave it standing: a node id restored by redo, or reused by the next
+   * document - every canvas starts at `n1` - must not inherit an arrival that
+   * was about something else.
+   */
+  const retireArrivals = (): void => {
+    arrive([], [], []);
+  };
+
+  /** A value edit ends every pending count-up. See `countArmed`. */
+  const disarmTiming = (): void => {
+    if (get().countArmed.length === 0) return;
+    set({ countArmed: [] });
+  };
+
   return {
     graph: EMPTY_GRAPH,
     selection: NO_SELECTION,
     past: [],
     future: [],
+    arrivals: NO_ARRIVALS,
+    countArmed: [],
     ...EMPTY_ANNOUNCEMENTS,
     pendingMove: null,
 
@@ -207,6 +277,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
       });
 
       set({ selection: { nodes: [id], edges: [] } });
+      arrive([id], [], [id]);
       announce(`Added ${entry.name}. Selected.`);
       return id;
     },
@@ -219,7 +290,9 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
       const { nodes, edges } = instantiatePreset(preset, snapPoint(origin), graph.nextId);
 
       push({ kind: 'add-subgraph', label: preset.name, nodes, edges });
-      set({ selection: { nodes: nodes.map((node) => node.id), edges: [] } });
+      const ids = nodes.map((node) => node.id);
+      set({ selection: { nodes: ids, edges: [] } });
+      arrive(ids, edges, ids);
       announce(
         `Loaded the ${preset.name} pipeline: ${nodes.length.toString()} nodes, ${edges.length.toString()} wires. No data included.`,
       );
@@ -276,6 +349,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
 
       if (created.length === 0) return;
       set({ selection: { nodes: created, edges: [] } });
+      arrive(created, [], created);
       announce(
         created.length === 1
           ? 'Duplicated node.'
@@ -438,6 +512,8 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
 
       const id: EdgeId = `e${graph.nextId.toString()}`;
       push({ kind: 'add-edge', edge: { id, from, to } });
+      // The node the wire lands on is the one that runs because of it.
+      arrive([], [{ id, from, to }], [to.nodeId]);
 
       const fromNode = graph.nodes[from.nodeId];
       const toNode = graph.nodes[to.nodeId];
@@ -466,6 +542,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
     setNodeOptions: (nodeId, options, coalesce = false) => {
       const node = get().graph.nodes[nodeId];
       if (!node) return;
+      disarmTiming();
       push({ kind: 'set-options', nodeId, from: node.options, to: options }, coalesce);
     },
 
@@ -474,6 +551,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
       // keystroke. The text is user data that is saved locally anyway.
       const node = get().graph.nodes[nodeId];
       if (!node || node.inputs[portId] === value) return;
+      disarmTiming();
 
       set((state) => ({
         graph: {
@@ -497,6 +575,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
     setNodeFile: (nodeId, portId, ref) => {
       const node = get().graph.nodes[nodeId];
       if (!node) return;
+      disarmTiming();
 
       // Filtered rather than deleted: a computed `delete` is what the lint
       // rules refuse, and rebuilding says exactly which key is going.
@@ -554,6 +633,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
         future: [command, ...state.future],
         selection: NO_SELECTION,
       });
+      retireArrivals();
       announce(`Undid ${describeCommand(command)}.`);
     },
 
@@ -571,6 +651,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
         future: state.future.slice(1),
         selection: NO_SELECTION,
       });
+      retireArrivals();
       announce(`Redid ${describeCommand(command)}.`);
     },
 
@@ -591,6 +672,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => {
       // sensible to go back to, and keeping the history would let undo
       // "delete" a graph the user never created in this session.
       set({ graph, selection: NO_SELECTION, past: [], future: [] });
+      retireArrivals();
     },
   };
 });

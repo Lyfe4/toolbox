@@ -195,6 +195,11 @@ export function firstTypedInputNode(graph: GraphData): NodeId | null {
 
 export type PortSide = 'input' | 'output';
 
+/** How a port is keyed in the canvas's per-node state sets: "input:document". */
+export function portKey(side: PortSide, portId: string): string {
+  return `${side}:${portId}`;
+}
+
 /**
  * Vertical centre of a port, relative to the node's top edge.
  *

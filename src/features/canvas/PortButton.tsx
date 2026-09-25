@@ -1,5 +1,6 @@
 import { Tooltip } from '@/components/Tooltip';
 import type { DataType } from '@/features/registry';
+import { cx } from '@/lib/cx';
 import { useIsTruncated } from '@/lib/useIsTruncated';
 
 import styles from './canvas.module.css';
@@ -14,6 +15,16 @@ export interface PortButtonProps {
   readonly types: readonly DataType[];
   readonly side: PortSide;
   readonly connected: boolean;
+  /**
+   * The arrival whose wire has just landed on this port, or null.
+   *
+   * A number rather than a flag because it is also the glyph's `key`: a second
+   * wire out of the same output a moment later is a second contact, and a
+   * class that is already on an element does not start its animation again. A
+   * new key is a new element, and an 11px SVG is the cheapest thing on the
+   * node to remake.
+   */
+  readonly contact: number | null;
   readonly className: string;
   readonly style: CSSProperties;
   readonly state: 'held' | 'armed' | 'refused' | 'valid' | 'idle';
@@ -53,6 +64,7 @@ export function PortButton({
   types,
   side,
   connected,
+  contact,
   className,
   style,
   state,
@@ -85,7 +97,12 @@ export function PortButton({
         legible without colour.
       */}
       <span className={styles.portHalo} aria-hidden="true" />
-      <PortGlyph types={types} connected={connected} className={styles.portConnector} />
+      <PortGlyph
+        key={contact ?? 'rest'}
+        types={types}
+        connected={connected}
+        className={cx(styles.portConnector, contact !== null && styles.portContact)}
+      />
       <span ref={labelRef} className={styles.portLabel}>
         {label}
       </span>

@@ -3430,6 +3430,628 @@ async function checkInspectorMotion(browser, label) {
   }
 }
 
+/* ========================================================================== *
+ * THE CANVAS'S MOTION
+ * ========================================================================== */
+
+/**
+ * FIVE PIECES OF MOTION, EACH SAMPLED FRAME BY FRAME, AND EACH AGAIN WITH THE
+ * PREFERENCE THAT REMOVES IT.
+ *
+ * A wire draws in, a node settles, a port flicks when a wire lands, a node's
+ * timing figure counts up, and the grid draws in once per page load. jsdom runs
+ * no animation and has no layout, so none of that is visible to the unit suite;
+ * `motion.test.tsx` holds WHEN each one fires and this holds that it MOVES.
+ *
+ * EVERY ASSERTION IS ABOUT A STATE OR A POSITION, NEVER ABOUT HOW LONG
+ * ANYTHING TOOK. The inspector's own motion check spent a round learning why:
+ * "two frames in" is a duration this harness does not control, and a slow
+ * machine turns it into a failure. So each piece is asked questions a late
+ * frame cannot answer wrongly - was it caught part of the way, did it only ever
+ * move one way, did it stop where it rests, did anything else move - and a slow
+ * machine can only REMOVE samples, never invent one. Where a machine is so slow
+ * that the first frame landed after the whole animation, that is a skip naming
+ * the number, not a pass.
+ *
+ * REDUCED MOTION IS ASSERTED, NOT ASSUMED, and against the specific trap the
+ * brief named: the shared override in global.css collapses animations to 1ms
+ * rather than removing them, and a frame can land inside 1ms. So under the
+ * preference these assert that the animation does not EXIST - no arrival class
+ * written, `animation-name: none` computed - rather than that it was not seen,
+ * which is a claim about a sampler. The normal pass is the positive partner: it
+ * shows every one of these is observable in the first place.
+ */
+async function checkCanvasMotion(browser, label) {
+  for (const reduced of [false, true]) {
+    const context = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      ...(reduced ? { reducedMotion: 'reduce' } : {}),
+    });
+    try {
+      await motionPass(await context.newPage(), label, reduced);
+    } finally {
+      await context.close().catch(() => {});
+    }
+  }
+}
+
+/**
+ * The page half: readers, and a sampler that runs one of them every frame.
+ *
+ * Installed once per document. The sampler is bounded by a window rather than
+ * a frame count, because a frame count is a duration that differs by five
+ * times between the two engines here; the window is only how long to look, and
+ * nothing is asserted about it.
+ */
+const MOTION_PAGE = () => {
+  const bottomInset = (clip) => {
+    // `inset(0px 0px 98.66%)` -> 98.66. `none` is a grid with no clip at all.
+    const match = /inset\(([^)]*)\)/.exec(clip);
+    if (!match) return 0;
+    const parts = match[1].trim().split(/\s+/);
+    const bottom = parts.length >= 3 ? parts[2] : parts[0];
+    return Number.parseFloat(bottom);
+  };
+  const rect = (element) => {
+    if (!element) return null;
+    const box = element.getBoundingClientRect();
+    return [box.left, box.top, box.width, box.height].map((v) => Math.round(v * 10) / 10).join(',');
+  };
+  const node = (id) => document.querySelector(`[data-testid="node-${id}"]`);
+  const glyph = (id, side, port) =>
+    node(id)?.querySelector(`[data-port-side="${side}"][data-port-id="${port}"] svg`) ?? null;
+  const named = (element, part) =>
+    element === null
+      ? []
+      : element
+          .getAnimations()
+          .map((animation) => animation.animationName ?? '')
+          .filter((name) => name.includes(part));
+
+  /** What the brightest ink resolves to here, measured on a real element. */
+  const inkPrimary = () => {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--pb-ink-primary)';
+    document.body.append(probe);
+    const colour = getComputedStyle(probe).color;
+    probe.remove();
+    return colour;
+  };
+
+  const readers = {
+    grid: () => {
+      const grid = document.querySelector('[data-testid="canvas-grid"]');
+      return grid
+        ? {
+            inset: bottomInset(getComputedStyle(grid).clipPath),
+            animationName: getComputedStyle(grid).animationName,
+            drawing: grid.className.includes('gridDrawing'),
+            running: named(grid, 'grid-draw').length,
+          }
+        : null;
+    },
+    settle: ({ still }) => {
+      const nodes = [...document.querySelectorAll('[data-node-id]')];
+      const arrived = nodes.find((element) => !still.includes(element.dataset.nodeId)) ?? null;
+      return {
+        id: arrived?.dataset.nodeId ?? null,
+        width: arrived ? Math.round(arrived.getBoundingClientRect().width * 10) / 10 : null,
+        classed: arrived?.className.includes('nodeArriving') ?? false,
+        running: named(arrived, 'node-settle').length,
+        others: still.map((id) => rect(node(id))).join(' '),
+      };
+    },
+    connect: ({ from, to, before }) => {
+      const wire =
+        [...document.querySelectorAll('[data-edge-id]')].find(
+          (element) => !before.includes(element.getAttribute('data-edge-id')),
+        ) ?? null;
+      const stroke = wire?.querySelector('path:last-child') ?? null;
+      const style = stroke ? getComputedStyle(stroke) : null;
+      const out = glyph(from, 'output', 'output');
+      const into = glyph(to, 'input', 'input');
+      const timing = node(to)?.querySelector('[data-final]') ?? null;
+      return {
+        wire: stroke !== null,
+        dash: style ? style.strokeDasharray : null,
+        offset: style ? Number.parseFloat(style.strokeDashoffset) : null,
+        wireClassed: stroke?.getAttribute('class')?.includes('wireArriving') ?? false,
+        wireRunning: named(stroke, 'wire-draw').length,
+        out: out ? getComputedStyle(out).color : null,
+        into: into ? getComputedStyle(into).color : null,
+        contactClassed:
+          (out?.getAttribute('class')?.includes('portContact') ?? false) ||
+          (into?.getAttribute('class')?.includes('portContact') ?? false),
+        text: timing?.textContent ?? null,
+        final: timing?.getAttribute('data-final') ?? null,
+        timingBox: rect(timing),
+        titleBox: rect(node(to)?.querySelector('[class*="nodeTitle"]') ?? null),
+        nodes: `${rect(node(from))} ${rect(node(to))}`,
+        status: node(to)?.dataset.status ?? null,
+      };
+    },
+    quiet: ({ to }) => {
+      const timing = node(to)?.querySelector('[data-final]') ?? null;
+      return {
+        text: timing?.textContent ?? null,
+        final: timing?.getAttribute('data-final') ?? null,
+        status: node(to)?.dataset.status ?? null,
+        motion: document
+          .getAnimations()
+          .map((animation) => animation.animationName ?? '')
+          .filter((name) => /wire-draw|node-settle|port-contact|grid-draw/.test(name)),
+      };
+    },
+  };
+
+  window.__motion = {
+    inkPrimary,
+    /**
+     * Runs `act`, then samples `reader` every frame for `ms`. `act` is a
+     * selector to click, so a click and the first sample are in the same task
+     * and the first frame after the click is the first frame read.
+     */
+    sample: (reader, args, ms, act) =>
+      new Promise((resolve) => {
+        const started = performance.now();
+        const samples = [];
+        let firstFrameMs = null;
+        if (act) document.querySelector(act)?.click();
+        const tick = (now) => {
+          firstFrameMs ??= Math.round(now - started);
+          samples.push(readers[reader](args));
+          if (now - started < ms) requestAnimationFrame(tick);
+          else resolve({ samples, firstFrameMs });
+        };
+        requestAnimationFrame(tick);
+      }),
+  };
+};
+
+/** Values strictly between two ends: the animation caught part of the way. */
+const between = (values, low, high) => values.filter((value) => value > low && value < high);
+
+/** A sequence with its repeats folded, for a detail line a person can read. */
+const steps = (values) =>
+  values.filter((value, index) => index === 0 || value !== values[index - 1]).join(',');
+
+/** Whether a sequence only ever moves one way. */
+const monotone = (values, direction) =>
+  values.every((value, index) => index === 0 || direction * (value - values[index - 1]) >= -1e-6);
+
+async function motionPass(page, label, reduced) {
+  const mode = reduced ? 'under reduced motion' : '';
+  const say = (text) => (reduced ? `${text}, ${mode}` : text);
+  const install = () => page.evaluate(MOTION_PAGE);
+  const sample = (reader, args, ms, act = null) =>
+    page.evaluate(([r, a, m, c]) => window.__motion.sample(r, a, m, c), [reader, args, ms, act]);
+
+  /* -- 5. The grid, on the one page load that has a cold open -------------- */
+
+  await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+  await install();
+
+  /*
+   * NOT BEHIND THE PANEL. The cold open covers the whole viewport, and a first
+   * visit is exactly the page load the grid draws in on - so a draw-in that ran
+   * behind the introduction would be the one draw-in this page gets, spent
+   * where nobody can see it.
+   */
+  const behind = await sample('grid', {}, 150);
+  check(
+    label,
+    say('the grid does not draw in behind the cold open, where nobody can see it'),
+    behind.samples.length > 0 &&
+      behind.samples.every(
+        (reading) => reading !== null && !reading.drawing && reading.running === 0,
+      ),
+    `${String(behind.samples.length)} frames behind the panel, ${String(
+      behind.samples.filter((reading) => reading?.drawing).length,
+    )} of them drawing`,
+  );
+
+  const sweep = await sample('grid', {}, 700, '#cold-open-start');
+  const insets = sweep.samples
+    .filter((reading) => reading !== null)
+    .map((reading) => reading.inset);
+  if (reduced) {
+    check(
+      label,
+      say('the grid is simply there, with no draw-in at all'),
+      sweep.samples.length > 0 &&
+        sweep.samples.every(
+          (reading) => reading !== null && reading.inset === 0 && reading.animationName === 'none',
+        ),
+      `insets ${[...new Set(insets)].join(',')}; animation ${String(sweep.samples.at(-1)?.animationName)}`,
+    );
+  } else {
+    const partWay = between(insets, 0, 100);
+    if (partWay.length === 0 && (sweep.firstFrameMs ?? 0) > 400) {
+      skip(
+        label,
+        'the grid caught part way through drawing in',
+        `first frame ${String(sweep.firstFrameMs)}ms after the click, past the 400ms draw-in`,
+      );
+    } else {
+      check(
+        label,
+        'the grid draws in from the top once the cold open comes down, rows uncovered in order',
+        new Set(partWay).size >= 3 && monotone(insets, -1) && insets.at(-1) === 0,
+        `${String(new Set(partWay).size)} part-way clips over ${String(insets.length)} frames, first ${String(
+          insets[0],
+        )}%, last ${String(insets.at(-1))}%`,
+      );
+    }
+  }
+
+  /*
+   * ONCE PER PAGE LOAD: not on the way back from another route, and again on a
+   * reload. Read off the class the draw-in leaves behind, which is a state -
+   * the animation itself is long over by the time a route has loaded.
+   */
+  await page
+    .getByRole('navigation', { name: 'Views' })
+    .getByRole('link', { name: 'Tools' })
+    .click();
+  await page.waitForURL(/\/tools$/);
+  await page.getByRole('navigation', { name: 'Views' }).getByRole('link', { name: 'Home' }).click();
+  await page.locator('[data-testid="canvas-grid"]').waitFor({ timeout: 15_000 });
+  await install();
+  const back = await sample('grid', {}, 150);
+  check(
+    label,
+    say('coming back to the canvas from /tools does not draw the grid in again'),
+    back.samples.length > 0 &&
+      back.samples.every(
+        (reading) =>
+          reading !== null && !reading.drawing && reading.running === 0 && reading.inset === 0,
+      ),
+    `${String(back.samples.filter((reading) => reading?.drawing).length)} of ${String(back.samples.length)} frames drawing`,
+  );
+  await page.reload({ waitUntil: 'networkidle' });
+  const reloaded = await page.evaluate(
+    () =>
+      document.querySelector('[data-testid="canvas-grid"]')?.className.includes('gridDrawing') ??
+      false,
+  );
+  check(label, say('a reload is a cold open, and draws the grid in again'), reloaded, '');
+
+  /* -- 2. A node settles -------------------------------------------------- */
+
+  const addTool = async (testId, still) => {
+    await page.getByRole('button', { name: 'Add tool' }).click();
+    await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
+    await install();
+    return sample('settle', { still }, 400, `[data-testid="dialog-option-${testId}"]`);
+  };
+
+  await addTool('base64', []);
+  await page.waitForTimeout(300);
+  const [first] = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-node-id]')].map((element) => element.dataset.nodeId),
+  );
+
+  const settle = await addTool('hash', [first]);
+  const widths = settle.samples.map((reading) => reading.width).filter((width) => width !== null);
+  const second = settle.samples.find((reading) => reading.id !== null)?.id ?? null;
+  const othersStill = new Set(settle.samples.map((reading) => reading.others)).size === 1;
+
+  if (reduced) {
+    check(
+      label,
+      say('a new node arrives at its own size, with no settle'),
+      widths.length > 0 &&
+        widths.every((width) => Math.abs(width - 224) <= 0.5) &&
+        settle.samples.every((reading) => !reading.classed && reading.running === 0),
+      `widths ${[...new Set(widths)].join(',')}`,
+    );
+  } else {
+    const partWay = between(widths, 0, 223.5);
+    if (partWay.length === 0 && (settle.firstFrameMs ?? 0) > 120) {
+      skip(
+        label,
+        'a new node caught part way through settling',
+        `first frame ${String(settle.firstFrameMs)}ms after the click, past the 120ms settle`,
+      );
+    } else {
+      check(
+        label,
+        'a new node settles from about 96% to its own size, never past it',
+        new Set(partWay).size >= 2 &&
+          widths[0] >= 224 * 0.955 &&
+          widths[0] < 223.5 &&
+          monotone(widths, 1) &&
+          Math.max(...widths) <= 224.5 &&
+          Math.abs(widths.at(-1) - 224) <= 0.5,
+        `widths ${steps(widths)}`,
+      );
+    }
+  }
+  check(
+    label,
+    say('and nothing else on the canvas moves while it does'),
+    othersStill,
+    `${String(new Set(settle.samples.map((reading) => reading.others)).size)} distinct positions for the node already there`,
+  );
+
+  /* -- 1, 3 and 4. A wire lands ------------------------------------------ */
+
+  /*
+   * THE COUNT NEEDS A RUN LONG ENOUGH TO HAVE A NUMBER IN IT. Nodes here run in
+   * 1-8ms and a figure under a millisecond has nothing to count, so the hash is
+   * fed four megabytes - which takes more than 2ms on any machine this could
+   * plausibly run on. That is a precondition, stated and checked below, not a
+   * measurement: if the figure is under 2ms the count assertion FAILS saying
+   * so, rather than passing on a count that had nothing to show.
+   */
+  await page.locator(`[data-testid="node-${first}"]`).focus();
+  await page.keyboard.press('Enter');
+  await page.getByTestId('node-inspector').waitFor({ timeout: 10_000 });
+  await page
+    .locator('[data-inspector-input]')
+    .first()
+    .fill('x'.repeat(4 * 1024 * 1024));
+  await page.waitForFunction(
+    (id) => document.querySelector(`[data-testid="node-${id}"]`)?.dataset.status === 'ok',
+    first,
+    { timeout: 30_000 },
+  );
+  await setInspector(page, false);
+  await page.waitForTimeout(400);
+
+  const portCentre = async (id, side) => {
+    const box = await page
+      .locator(
+        `[data-testid="node-${id}"] [data-port-side="${side}"][data-port-id="${side === 'output' ? 'output' : 'input'}"] svg`,
+      )
+      .boundingBox();
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  };
+  const from = await portCentre(first, 'output');
+  const to = await portCentre(second, 'input');
+  const before = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-edge-id]')].map((element) =>
+      element.getAttribute('data-edge-id'),
+    ),
+  );
+  await install();
+  const ink = await page.evaluate(() => window.__motion.inkPrimary());
+
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  for (let step = 1; step <= 8; step += 1) {
+    await page.mouse.move(
+      from.x + ((to.x - from.x) * step) / 8,
+      from.y + ((to.y - from.y) * step) / 8,
+    );
+  }
+  const landing = sample('connect', { from: first, to: second, before }, 1500);
+  await page.mouse.up();
+  // Off the port, so its hover colour is not what the last frames read.
+  await page.mouse.move(to.x + 200, to.y + 200);
+  const landed = await landing;
+  const withWire = landed.samples.filter((reading) => reading.wire);
+
+  check(
+    label,
+    say('the wire lands'),
+    withWire.length > 0,
+    `${String(withWire.length)} frames with the new wire`,
+  );
+
+  /*
+   * THE DRAW, and not the travelling dash that follows it. The wire's own run
+   * starts a few hundred milliseconds later and dashes the same stroke in real
+   * lengths - `10px, 190px` from an offset of 200 - so the draw is read from the
+   * frames that carry its class, and the frame after them has to be a plain
+   * stroke or that dash, never the draw's own one-unit pattern held over.
+   */
+  const drawing = withWire.filter((reading) => reading.wireClassed);
+  const afterDraw = withWire.slice(drawing.length);
+  const offsets = drawing.map((reading) => reading.offset);
+  if (reduced) {
+    check(
+      label,
+      say('a new wire is simply there, whole, from its first frame'),
+      withWire.length > 0 &&
+        withWire.every(
+          (reading) => reading.dash === 'none' && !reading.wireClassed && reading.wireRunning === 0,
+        ),
+      `dashes ${[...new Set(withWire.map((reading) => reading.dash))].join(',')}`,
+    );
+    check(
+      label,
+      say('neither port flicks'),
+      withWire.every(
+        (reading) => !reading.contactClassed && reading.out !== ink && reading.into !== ink,
+      ),
+      `ink ${ink}; out ${[...new Set(withWire.map((reading) => reading.out))].join(',')}; in ${[
+        ...new Set(withWire.map((reading) => reading.into)),
+      ].join(',')}`,
+    );
+  } else {
+    const partWay = between(offsets, 0, 1);
+    if (partWay.length === 0 && (landed.firstFrameMs ?? 0) > 150) {
+      skip(
+        label,
+        'a new wire caught part way through drawing in',
+        `first frame ${String(landed.firstFrameMs)}ms after the drop, past the 150ms draw`,
+      );
+    } else {
+      check(
+        label,
+        'a new wire draws in from its output end rather than appearing whole',
+        new Set(partWay).size >= 3 &&
+          monotone(offsets, -1) &&
+          withWire.slice(0, drawing.length).every((reading) => reading.wireClassed) &&
+          afterDraw.length > 0 &&
+          afterDraw.every((reading) => reading.dash !== '1px, 1px' && !reading.wireClassed) &&
+          withWire.at(-1)?.dash === 'none',
+        `${String(new Set(partWay).size)} part-way offsets ${offsets.map((value) => value.toFixed(2)).join(',')}, then ${[
+          ...new Set(afterDraw.map((reading) => reading.dash)),
+        ].join(' / ')}`,
+      );
+    }
+    /*
+     * THE FIRST FRAME WITH THE WIRE IS THE BRIGHT ONE - the claim the 33ms
+     * rests on. An animation's clock starts on the first frame that draws it,
+     * so however late the next frame is, this one cannot be missed.
+     */
+    check(
+      label,
+      'both ports flick to the brightest ink on the first frame the wire exists',
+      withWire.length > 0 && withWire[0].out === ink && withWire[0].into === ink,
+      `ink ${ink}; first frame out ${String(withWire[0]?.out)}, in ${String(withWire[0]?.into)}`,
+    );
+    check(
+      label,
+      'and drop back rather than staying lit',
+      withWire.length > 0 && withWire.at(-1).out !== ink && withWire.at(-1).into !== ink,
+      `last frame out ${String(withWire.at(-1)?.out)}, in ${String(withWire.at(-1)?.into)}`,
+    );
+  }
+
+  /* The count. */
+  const counted = withWire.filter((reading) => reading.text !== null);
+  const finals = [...new Set(counted.map((reading) => reading.final))];
+  const final = counted.at(-1)?.final ?? null;
+  const texts = counted.map((reading) => reading.text);
+  if (reduced) {
+    check(
+      label,
+      say('the timing figure is shown as it is, with no count'),
+      counted.length > 0 && counted.every((reading) => reading.text === reading.final),
+      `texts ${[...new Set(texts)].join(',')}`,
+    );
+  } else {
+    const value = (text) => Number.parseFloat(text);
+    const enough = final !== null && !final.startsWith('<') && value(final) >= 2;
+    check(
+      label,
+      'the run the wire causes is long enough to have a count in it at all',
+      enough,
+      `final figure ${String(final)} - under 2ms there is nothing to count, and the check below would prove nothing`,
+    );
+    if (enough) {
+      check(
+        label,
+        'the timing figure counts up from zero to its value and stops there',
+        /^0(\.00)?(ms|s)$/.test(texts[0]) &&
+          monotone(texts.map(value), 1) &&
+          texts.at(-1) === final &&
+          new Set(texts).size >= 3 &&
+          finals.length === 1,
+        `${steps(texts)} (final ${String(final)})`,
+      );
+    }
+  }
+  const counting = counted.filter((reading) => reading.final === final);
+  check(
+    label,
+    say('the count moves nothing beside it: the figure and the title hold their boxes'),
+    counting.length > 0 &&
+      new Set(counting.map((reading) => reading.timingBox)).size === 1 &&
+      new Set(counting.map((reading) => reading.titleBox)).size === 1,
+    `${String(new Set(counting.map((reading) => reading.timingBox)).size)} figure boxes, ${String(
+      new Set(counting.map((reading) => reading.titleBox)).size,
+    )} title boxes over ${String(counting.length)} frames`,
+  );
+  check(
+    label,
+    say('and neither node moves while the wire lands'),
+    new Set(landed.samples.map((reading) => reading.nodes)).size === 1,
+    `${String(new Set(landed.samples.map((reading) => reading.nodes)).size)} distinct positions`,
+  );
+
+  if (reduced) return;
+
+  /* -- Nothing while a value is being typed ------------------------------- */
+
+  /*
+   * TYPED INTO THE NODE UPSTREAM, so every keystroke that reaches the
+   * pipeline's debounce re-runs the node the wire landed on and hands it a new
+   * figure - the exact event the count is otherwise armed for. The partner
+   * below is that it really did get new figures; without one, "it never
+   * counted" is satisfied by a node that never ran.
+   */
+  await page.locator(`[data-testid="node-${first}"]`).focus();
+  await page.keyboard.press('Enter');
+  await page.getByTestId('node-inspector').waitFor({ timeout: 10_000 });
+  const field = page.locator('[data-inspector-input]').first();
+  await field.focus();
+  await page.keyboard.press('End');
+  await install();
+  /*
+   * Long enough for the last keystroke's run to land, and the runs here are not
+   * short: every keystroke re-encodes four megabytes upstream. The window is
+   * how long to look; the partner below is what says the looking was enough.
+   */
+  const quiet = sample('quiet', { to: second }, 6000);
+  await page.keyboard.type('abcd', { delay: 350 });
+  const typed = await quiet;
+  const shown = typed.samples.filter((reading) => reading.text !== null);
+  /*
+   * A NEW FIGURE, NOT MERELY A RUN. The first version of this partner accepted
+   * a `running` frame as proof, and against a break that armed the count on
+   * every keystroke it passed: the window ended with the node still running,
+   * so no figure ever arrived for the count to be wrong about. A figure that
+   * lands after a `running` frame is the event the count would fire on.
+   */
+  const firstRun = typed.samples.findIndex((reading) => reading.status === 'running');
+  const reruns =
+    firstRun !== -1 &&
+    typed.samples
+      .slice(firstRun)
+      .some((reading) => reading.status === 'ok' && reading.text !== null);
+  check(
+    label,
+    'typing re-runs the node downstream, and a new figure lands after typing begins',
+    reruns,
+    `the node went ${typed.samples
+      .map((reading) => `${String(reading.status)} ${String(reading.text)}`)
+      .filter((step, index, all) => index === 0 || step !== all[index - 1])
+      .join(' > ')}`,
+  );
+  check(
+    label,
+    'and nothing counts or moves while somebody types',
+    shown.every((reading) => reading.text === reading.final) &&
+      typed.samples.every((reading) => reading.motion.length === 0),
+    `${String(shown.filter((reading) => reading.text !== reading.final).length)} counting frames; motion ${[
+      ...new Set(typed.samples.flatMap((reading) => reading.motion)),
+    ].join(',')}`,
+  );
+  await setInspector(page, false);
+
+  /* -- Undo and redo restore; they do not arrive --------------------------- */
+
+  await page.locator('[data-testid="canvas-root"]').focus();
+  await page.keyboard.press('Control+z');
+  const undone = await page.evaluate(
+    (known) =>
+      [...document.querySelectorAll('[data-edge-id]')].filter(
+        (element) => !known.includes(element.getAttribute('data-edge-id')),
+      ).length,
+    before,
+  );
+  await install();
+  const redoing = sample('connect', { from: first, to: second, before }, 400);
+  await page.keyboard.press('Control+y');
+  const redone = (await redoing).samples.filter((reading) => reading.wire);
+  check(
+    label,
+    'a wire brought back by redo is simply there - no draw-in, no flick',
+    undone === 0 &&
+      redone.length > 0 &&
+      redone.every(
+        (reading) => reading.dash === 'none' && !reading.wireClassed && !reading.contactClassed,
+      ),
+    `${String(undone)} new wires after undo, ${String(redone.length)} frames after redo, dashes ${[
+      ...new Set(redone.map((reading) => reading.dash)),
+    ].join(',')}`,
+  );
+}
+
 /**
  * Scroll containment, which is a LAYOUT fact and so cannot be asserted in
  * jsdom.
@@ -14245,6 +14867,7 @@ const SECTIONS = [
   checkRunnerLayout,
   checkInspector,
   checkInspectorMotion,
+  checkCanvasMotion,
   checkInspectorTouch,
   checkDialogScroll,
   checkRouteFeedback,

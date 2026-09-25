@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { cx } from '@/lib/cx';
+
 import styles from './canvas.module.css';
 import { gridLevels, gridRules } from './grid';
 
@@ -20,6 +22,31 @@ import type { Viewport } from './viewportStore';
  */
 export interface GridLayerProps {
   readonly viewport: Viewport;
+  /**
+   * Whether anything can see the grid yet.
+   *
+   * False while the cold open is up, because the panel covers the whole
+   * viewport - and a first visit is exactly the page load the grid draws in
+   * on, so drawing it in behind the introduction would spend the one draw-in
+   * the page gets where nobody can see it.
+   */
+  readonly revealed: boolean;
+}
+
+/**
+ * Whether this document has drawn the grid in yet.
+ *
+ * MODULE STATE, ON PURPOSE, because the lifetime it describes is the page's
+ * and not the component's. The canvas route unmounts on the way to `/tools`
+ * and mounts again on the way back, and a grid that swept in every time would
+ * be motion on navigation. A module is evaluated once per document, so a
+ * reload - which is a cold open - draws it again, and nothing inside the app
+ * ever can.
+ */
+let drawnInThisDocument = false;
+
+function markDrawnIn(): void {
+  drawnInThisDocument = true;
 }
 
 /** The ink for one draw, resolved from the cascade rather than hard-coded. */
@@ -167,8 +194,26 @@ function draw(canvas: HTMLCanvasElement, viewport: Viewport, dpr: number): void 
   context.globalAlpha = 1;
 }
 
-export function GridLayer({ viewport }: GridLayerProps) {
+export function GridLayer({ viewport, revealed }: GridLayerProps) {
   const ref = useRef<HTMLCanvasElement>(null);
+
+  /*
+   * THE DRAW-IN, decided the first time the grid is visible, and decided in
+   * RENDER rather than in an effect: the frame that first shows the grid has
+   * to have the clip on it already, or it is one frame of the finished grid
+   * and then a sweep that starts by taking it away. The class stays on
+   * afterwards and does nothing - the animation is not held, and nothing ever
+   * takes the class away and puts it back, so it cannot run twice.
+   *
+   * Under reduced motion the class is still written and the stylesheet removes
+   * the animation, which is the whole of the preference here: this layer has no
+   * end event to wait for and nothing else to skip.
+   */
+  const [drawingIn, setDrawingIn] = useState(false);
+  if (revealed && !drawingIn && !drawnInThisDocument) setDrawingIn(true);
+  useEffect(() => {
+    if (drawingIn) markDrawnIn();
+  }, [drawingIn]);
 
   /**
    * WHAT MAKES THE GRID REDRAW, beyond the viewport moving.
@@ -255,5 +300,12 @@ export function GridLayer({ viewport }: GridLayerProps) {
     if (canvas) draw(canvas, viewport, dpr);
   }, [viewport, dpr, epoch]);
 
-  return <canvas ref={ref} className={styles.grid} aria-hidden="true" data-testid="canvas-grid" />;
+  return (
+    <canvas
+      ref={ref}
+      className={cx(styles.grid, drawingIn && styles.gridDrawing)}
+      aria-hidden="true"
+      data-testid="canvas-grid"
+    />
+  );
 }

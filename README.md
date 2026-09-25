@@ -2204,6 +2204,11 @@ no worker message type, no caching, no cancellation handling.
 Instrument panel: dense modular grids on an 8px baseline, hairline borders
 instead of shadows, tight uppercase monospace labels, near-monochrome palettes
 with one saturated accent, mechanical 120–180 ms motion, radii never above 2px.
+The canvas acknowledges what you do with five short pieces of it - a wire
+drawing in, a node settling, a port flicking, a timing figure counting up, the
+grid drawing in once per page load - each started by an event and run for a
+fixed length, because nodes finish in under a frame and nothing tied to how
+long they took would ever be seen. See [Motion](docs/architecture.md#motion-and-the-one-rule-all-of-it-follows).
 
 Tokens are CSS custom properties in three layers — raw scale, semantic
 meanings, theme overrides — and the boundary between them is enforced by a test

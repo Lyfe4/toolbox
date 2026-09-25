@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 
 import { cx } from '@/lib/cx';
 
@@ -12,6 +12,13 @@ export interface WiresProps {
   readonly selectedEdges: readonly EdgeId[];
   /** Wires currently carrying data into a running node. */
   readonly activeEdges: ReadonlySet<EdgeId>;
+  /**
+   * Wires that have just been connected, and draw themselves in.
+   *
+   * From the canvas's arrivals - see `freshArrivals` - so a wire restored by
+   * undo, or loaded with a document, is simply there.
+   */
+  readonly arrivingEdges: ReadonlySet<EdgeId>;
   readonly onSelectEdge: (id: EdgeId, additive: boolean) => void;
   /**
    * Which wire a press at this client point means.
@@ -48,16 +55,40 @@ export interface WiresProps {
  * data. Moving a node repaints its two or three wires and the node itself,
  * not the whole canvas.
  */
+const EMPTY_EDGES: ReadonlySet<EdgeId> = new Set();
+
 export const Wires = memo(function Wires({
   graph,
   selectedEdges,
   activeEdges,
+  arrivingEdges,
   onSelectEdge,
   resolveEdge,
   draft,
 }: WiresProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const selected = new Set(selectedEdges);
+
+  /*
+   * WIRES THAT HAVE FINISHED DRAWING, for the one arrival being shown.
+   *
+   * A wire drawing in and a wire carrying data both animate the same two
+   * properties, so they cannot run at once: the dash would replace the draw,
+   * and the draw would start again from nothing when the dash ended - a wire
+   * that draws itself twice. The first run after a connection lands inside
+   * the draw's 150ms often enough to matter, because the run it causes is the
+   * point of connecting. So the draw wins while it lasts, and its own
+   * `animationend` hands the wire back.
+   *
+   * Reset per arrival rather than kept for the session: a replaced document
+   * reuses edge ids, and a wire must not be skipped because an unrelated wire
+   * of the same name was drawn an hour ago.
+   */
+  const [drawn, setDrawn] = useState<{
+    readonly of: ReadonlySet<EdgeId>;
+    readonly ids: ReadonlySet<EdgeId>;
+  }>(() => ({ of: arrivingEdges, ids: new Set() }));
+  const drawnIds = drawn.of === arrivingEdges ? drawn.ids : EMPTY_EDGES;
 
   /*
    * Click handling is delegated and attached imperatively rather than as a
@@ -107,6 +138,30 @@ export const Wires = memo(function Wires({
     };
   }, [onSelectEdge, resolveEdge]);
 
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return undefined;
+
+    // Delegated for the reason the press is: one listener, however many wires.
+    const onAnimationEnd = (event: AnimationEvent): void => {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.classList.contains(styles.wireArriving ?? ''))
+        return;
+      const id = target.closest('[data-edge-id]')?.getAttribute('data-edge-id');
+      if (id === null || id === undefined) return;
+      setDrawn((current) => {
+        const ids = new Set(current.of === arrivingEdges ? current.ids : []);
+        ids.add(id);
+        return { of: arrivingEdges, ids };
+      });
+    };
+
+    svg.addEventListener('animationend', onAnimationEnd);
+    return () => {
+      svg.removeEventListener('animationend', onAnimationEnd);
+    };
+  }, [arrivingEdges]);
+
   return (
     <svg ref={svgRef} className={styles.wireLayer} aria-hidden="true" width={1} height={1}>
       {graph.edgeOrder.map((id) => {
@@ -118,6 +173,7 @@ export const Wires = memo(function Wires({
         if (!from || !to) return null;
 
         const path = wirePath(from, to);
+        const arriving = arrivingEdges.has(id) && !drawnIds.has(id);
 
         return (
           <g key={id} data-edge-id={id}>
@@ -133,13 +189,23 @@ export const Wires = memo(function Wires({
               names is silent by construction - which is the same hole the
               reverse half of `cssModules.test.ts` now closes.
             */}
+            {/*
+              DRAWN IN, NOT CUT IN. `pathLength` makes the wire one unit long
+              whatever its real length, so the stylesheet can sweep a single
+              dash from 0 to 1 without anyone measuring a cubic - and it is set
+              only while the draw runs, because the travelling dash below is
+              written in real lengths and would be scaled into nonsense by it.
+              From the output end to the input end: the direction data goes,
+              and the direction the travelling dash already moves.
+            */}
             <path
               className={cx(
                 styles.wire,
-                activeEdges.has(id) && styles.wireActive,
+                arriving ? styles.wireArriving : activeEdges.has(id) && styles.wireActive,
                 selected.has(id) && styles.wireSelected,
               )}
               d={path}
+              {...(arriving ? { pathLength: 1 } : {})}
             />
           </g>
         );

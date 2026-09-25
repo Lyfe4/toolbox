@@ -27,11 +27,11 @@ import {
 import { cx } from '@/lib/cx';
 import { describeFile, loadFileForPort, type LoadedFile } from '@/lib/fileInput';
 import { counted } from '@/lib/plural';
-import { useMediaQuery } from '@/lib/useMediaQuery';
+import { mediaMatches, useMediaQuery } from '@/lib/useMediaQuery';
 
 import { useAttachmentStore } from './attachmentStore';
 import styles from './canvas.module.css';
-import { CanvasNodeView, NODE_ACTION_ATTRIBUTE, portKey } from './CanvasNodeView';
+import { CanvasNodeView, NODE_ACTION_ATTRIBUTE } from './CanvasNodeView';
 import { dismissColdOpen, isColdOpenShowing, onColdOpenStart, subscribeColdOpen } from './coldOpen';
 import { CommandDialog, type DialogGroup, type DialogOption } from './CommandDialog';
 import {
@@ -53,6 +53,7 @@ import {
   MIN_ZOOM,
   nearestEdge,
   NODE_WIDTH,
+  portKey,
   portPositionById,
   snapPoint,
   spatialOrder,
@@ -65,6 +66,7 @@ import inspectorStyles from './inspector.module.css';
 import { loadInspectorOpen, saveInspectorOpen } from './inspectorPreference';
 import { useKeyboardInset } from './keyboardInset';
 import { traceLosses } from './lossTrace';
+import { freshArrivals, REDUCED_MOTION } from './motion';
 import { NodeInspector, type InspectorNode } from './NodeInspector';
 import { OverflowMenu, type OverflowItem } from './OverflowMenu';
 import { createDebouncedSaver, loadGraph } from './persistence';
@@ -328,7 +330,29 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
   const graph = useCanvasStore((state) => state.graph);
   const selection = useCanvasStore((state) => state.selection);
   const announcementLog = useCanvasStore((state) => state.announcementLog);
+  const arrivals = useCanvasStore((state) => state.arrivals);
+  const countArmed = useCanvasStore((state) => state.countArmed);
   const store = useCanvasStore;
+
+  /*
+   * THE ARRIVAL THAT WAS ALREADY THERE WHEN THIS CANVAS MOUNTED, and so is not
+   * news. The store outlives the route: leave for `/tools` and come back, and
+   * the node added last is still the latest arrival - and settling it again on
+   * the way back in would be motion on navigation, which is the one thing a
+   * cold open is the only exception to. See `freshArrivals`.
+   */
+  const [arrivedBeforeMount] = useState(() => useCanvasStore.getState().arrivals.seq);
+  /*
+   * Keyed on the arrival and nothing else, so the objects this hands the wire
+   * layer and each node keep their identity until the next one - an arrival
+   * rebuilt by an unrelated edit would start its animations over. The
+   * preference is read when an arrival HAPPENS rather than subscribed to,
+   * which is the moment the answer is needed.
+   */
+  const fresh = useMemo(
+    () => freshArrivals(arrivals, arrivedBeforeMount, mediaMatches(REDUCED_MOTION)),
+    [arrivals, arrivedBeforeMount],
+  );
 
   const viewport = useViewportStore((state) => state.viewport);
   const isPanning = useViewportStore((state) => state.isPanning);
@@ -2761,7 +2785,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
           the whole surface pale at 33% instead of making the grid coarser.
           `grid.ts` carries both arguments.
         */}
-        <GridLayer viewport={viewport} />
+        <GridLayer viewport={viewport} revealed={!coldOpen} />
 
         <div
           className={styles.plane}
@@ -2791,6 +2815,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
             graph={graph}
             selectedEdges={selection.edges}
             activeEdges={activeEdges}
+            arrivingEdges={fresh.edges}
             draft={draftPath}
             resolveEdge={resolveEdgeAt}
             onSelectEdge={(id, additive) => {
@@ -2844,6 +2869,9 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
                  */
                 onConnect={beginConnectFrom}
                 inheritedLoss={lossTraces.get(id) ?? null}
+                arriving={fresh.nodes.has(id)}
+                contact={fresh.ports.get(id) ?? null}
+                countArmed={fresh.seq !== 0 && countArmed.includes(id) ? fresh.seq : null}
               />
             );
           })}

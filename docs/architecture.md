@@ -1709,6 +1709,125 @@ reader was also generalised to any binding name: `Canvas.tsx` imports the
 inspector's stylesheet as `inspectorStyles`, and a checker that only knew the
 name `styles` had been blind to nine references in both directions.
 
+### Motion, and the one rule all of it follows
+
+Five things move on the canvas, and each of them acknowledges something
+somebody just did:
+
+| What                           | Length             | Curve              | Started by                                                           |
+| ------------------------------ | ------------------ | ------------------ | -------------------------------------------------------------------- |
+| A new wire draws in            | `--pb-motion-base` | `--pb-ease-out`    | a connection, by any route                                           |
+| A new node settles from 96%    | `--pb-motion-fast` | `--pb-ease-out`    | the palette, a preset, a duplicate                                   |
+| Both ports of a new wire flick | 33ms, a literal    | none, a held value | a connection                                                         |
+| The timing figure counts up    | `--pb-motion-fast` | linear             | the first figure a node gets after it arrived or a wire landed on it |
+| The grid draws in, top down    | 400ms, a literal   | linear             | the first moment the grid can be seen in this page load              |
+
+**Every one is started by an event and runs for a fixed length.** Nodes here
+run in 1-8ms, which is under a frame, so motion paced by how long something
+took is motion nobody sees. The count is the clearest case: it lasts 120ms
+whether the run took 1ms or 800, and what it acknowledges is that a number
+arrived, not how long the number took.
+
+**One trigger for four of them.** `Arrivals` in the canvas store records what
+the last structural action created - nodes, and whole edges so their ports are
+known without a lookup - and is written only by the four actions that create
+something. Undo, redo and a loaded document retire it instead: they restore
+things rather than make them, and forty nodes settling at once on every reload
+is exactly the register this is not. The canvas remembers the arrival it found
+when it mounted and treats that one as history, which is what makes coming back
+from `/tools` free of motion - see `freshArrivals`. The grid's once per page load
+is a module-level flag in `GridLayer`, because the lifetime it describes is the
+document's, and it waits for the cold open to come down: the panel covers the
+whole viewport, and a first visit is exactly the page load the grid draws in on.
+
+**Nothing counts while somebody types.** `countArmed` is emptied by any change
+to a value anywhere on the canvas - typed input, an option, a file - so a node
+added blocked and then fed from the keyboard does not count up on its first
+keystroke's run, and neither does anything downstream of the field being typed
+in. It is its own store field rather than part of the arrival, so disarming it
+does not hand the wire layer a new arrival and restart a draw.
+
+**Nothing moves anything else.** A transform, a dash offset, a colour and a
+clip - the four properties that change no box but their own. The count is the
+one that needed work: `0ms` is narrower than `12ms` and the node's title is the
+flexible item beside it, so the figure's box is sized by its final text, in a
+hidden pseudo-element, from the first frame.
+
+**Reduced motion removes all five rather than shortening them**, and not
+through the shared override. `global.css` collapses animations to 1ms, on
+purpose, so the inspector's `animationend` still fires - and a 1ms animation
+still has a from-state a frame can land in: one frame of a wire that is not
+there, or a node at 96%. Nothing here waits for an end event, so each has its
+own `animation: none`, and under the preference the canvas resolves no arrival
+at all, so the arrival classes are never written in the first place.
+`checkCanvasMotion` asserts that they do not exist - no class, `animation-name:
+none` - rather than that they were not seen, which would be a claim about a
+sampler.<!-- asserted: cross-browser-check.mjs › a new wire is simply there, whole, from its first frame -->
+
+**The two literals.** The motion scale is for UI transitions and runs
+120-180ms. A flick held for 120ms is a glow, so the port holds the brightest
+ink for 33ms, two frames at 60Hz; an animation's clock starts on the first frame
+that draws it, so that frame is always the bright one and a late second frame
+only shortens the flick. The grid is the whole backdrop, once, at a moment
+nobody is aiming at anything, and at 180ms a viewport of rows arrives as a
+blink. Both are written at the line with this reasoning. Neither is a token,
+because a token is a promise that other things will use the value.
+
+#### What it costs on a large canvas
+
+A 48-node, 47-wire share link at 1440×900, six alternated passes per variant in
+each engine, against the build before this change and against this build under
+reduced motion. The worst frame interval per pass, median of the six; raw frame
+timings are not comparable between the engines, for the reason the inspector's
+table above gives.
+
+| Scenario                          | Gecko: before / after / reduced | JavaScriptCore: before / after / reduced |
+| --------------------------------- | ------------------------------- | ---------------------------------------- |
+| Dragging a node with two wires    | 41.4 / 39.3 / 41.9 ms           | 47.1 / 45.7 / 45.7 ms                    |
+| 400ms after a wire lands          | 65.2 / 64.4 / 63.5 ms           | 61.7 / 61.9 / 48.8 ms                    |
+| 400ms after a node is added       | 64.4 / 64.2 / 68.8 ms           | 29.6 / 30.0 / 31.7 ms                    |
+| 600ms from the grid's first frame | 82.8 / 75.5 / 92.5 ms           | 70.4 / 83.7 / 84.7 ms                    |
+
+**A drag is unchanged**, which is the case that matters: nothing here runs
+during one. The classes land on the one element an arrival is about, and once
+its animation has run it does nothing - not held, no transform left behind, no
+dash left on a stroke whose path is recomputed every frame. No pass left an
+animation running a second after the action.
+
+**The worst frame after an action is the action's** - the React commit of the
+new node or wire - and it is the same with the animation and without it. What
+the worst frame hides is one real cost: in JavaScriptCore the second-worst
+frame after a wire lands rose from 17-20ms to 29-31ms in three passes of six.
+The wire layer is one SVG, and sweeping a dash along one path repaints that
+layer for the 150ms of the draw. It is bounded - once per connection, never per
+drag frame - and it did not cost a frame: 21 were painted in both builds. It is
+recorded rather than rounded away.
+
+#### What was rejected
+
+- **Scaling the count by the run.** The obvious first build, and invisible for
+  nearly every node here.
+- **Settling nodes that a document or a redo brought back.** Restoring is not
+  arriving; a whole canvas settling on load is an app being friendly.
+- **Easing the grid and the count.** Both are sweeps across a set of equal
+  things - rows, digits - and a decelerating sweep spends its last third on the
+  last few. Linear is the absence of a curve, not an invented one.
+- **The accent for the flick.** An armed port already is the accent while a
+  drag is over it, so at the moment of release the flick would change nothing.
+- **Drawing the grid in behind the cold open.** It would spend the page load's
+  one draw-in where nobody can see it.
+
+#### The travelling dash still tracks a real duration
+
+`.wireActive` - a dash travelling along a wire while data moves through it - is
+on only while the node the wire feeds is `running`, so its length is the run's.
+Measured while building the above: a 10ms hash showed it for one frame in Gecko,
+a 39ms one for two in JavaScriptCore, and a 1-8ms node for none. It is left as
+it is and recorded here, because making it an event - one fixed sweep when a
+run starts - is a decision about what it is for rather than a fix. While a wire
+is drawing in, the draw wins and the dash waits: they animate the same two
+properties, and the first run after a connection often lands inside the draw.
+
 ### Announcements are a log, not a variable
 
 The canvas has one live region, and several independent things announce into

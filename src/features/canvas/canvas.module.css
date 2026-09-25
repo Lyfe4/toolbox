@@ -1304,6 +1304,26 @@
   font-size: var(--pb-label-size);
   font-variant-numeric: tabular-nums;
   color: var(--pb-ink-muted);
+
+  /*
+   * One grid cell holding two things: the final figure, hidden, which is what
+   * sizes the box, and whatever the count is showing now, right-aligned over
+   * it. So `0ms` on the way to `12ms` is drawn in a `12ms`-wide box and the
+   * title beside it - the flexible item in this row - never moves. See
+   * `NodeTiming`.
+   */
+  display: inline-grid;
+  justify-items: end;
+}
+
+.nodeTiming::before {
+  content: attr(data-final);
+  grid-area: 1 / 1;
+  visibility: hidden;
+}
+
+.nodeTimingValue {
+  grid-area: 1 / 1;
 }
 
 /* --- Wire activity ------------------------------------------------------ */
@@ -1337,6 +1357,141 @@
   .wireActive {
     animation: none;
     stroke-dasharray: none;
+  }
+}
+
+/* --- Arrival motion ------------------------------------------------------ */
+
+/*
+ * FOUR ACKNOWLEDGEMENTS, AND WHAT THEY HAVE IN COMMON.
+ *
+ * A wire drawing in, a node settling, a port flicking when a wire lands, and
+ * the grid drawing in once per page load. Each is started by an EVENT - see
+ * `Arrivals` in graphStore.ts - and runs for a fixed length, because nodes run
+ * in 1-8ms and motion paced by a real duration would be over before it was
+ * painted. None of them overshoots, none loops, and none is on anything that
+ * moves during a drag: the classes land on the one element an arrival is about
+ * and do nothing once their animation has run.
+ *
+ * NOTHING HERE MOVES ANYTHING ELSE. A transform, a dash offset, a colour and a
+ * clip, which are the four properties that change no box but their own.
+ */
+
+/*
+ * A NEW WIRE DRAWS IN, from its output end to its input end over 150ms - the
+ * direction data travels, and the one the travelling dash already uses.
+ * `pathLength="1"` is set on the path while this runs (see Wires.tsx), so one
+ * dash the length of the wire can be swept in without anybody measuring a
+ * cubic. The dash lives in the keyframes rather than on the rule, so the
+ * moment the draw is over the wire is an ordinary stroke again.
+ */
+.wireArriving {
+  animation: wire-draw var(--pb-motion-base) var(--pb-ease-out);
+}
+
+@keyframes wire-draw {
+  from {
+    stroke-dasharray: 1 1;
+    stroke-dashoffset: 1;
+  }
+
+  to {
+    stroke-dasharray: 1 1;
+    stroke-dashoffset: 0;
+  }
+}
+
+/*
+ * A NEW NODE SETTLES: from 96% to its own size over 120ms on the ease-out
+ * curve, with nothing past 100% - placed, not pasted. A transform, so no box
+ * but its own changes size, and not held after the end, so a settled node
+ * carries no transform and no stacking context it did not have before.
+ */
+.nodeArriving {
+  animation: node-settle var(--pb-motion-fast) var(--pb-ease-out);
+}
+
+@keyframes node-settle {
+  from {
+    transform: scale(0.96);
+  }
+}
+
+/*
+ * A PORT MAKES CONTACT. Its glyph - the port's LED, filled once it is wired -
+ * is held at the brightest ink the theme has for a frame or two and then
+ * drops back, with no fade of its own: a contact is made or it is not.
+ *
+ * 33MS IS A LITERAL, OUTSIDE THE MOTION SCALE, ON PURPOSE. The scale is for
+ * transitions, and its shortest step is 120ms; a flick held that long is a
+ * glow, which is the consumer-app register this is not. 33ms is two frames at
+ * 60Hz. It cannot be missed by a slow frame, either: an animation's clock
+ * starts on the first frame that draws it, so that frame is always the bright
+ * one, and a late second frame only makes the flick one frame long.
+ *
+ * `--pb-ink-primary` rather than the accent, because the accent is what an
+ * armed port already is while a drag is over it - so at the moment of release
+ * the flick would be no change at all. The primary ink is the one step brighter
+ * than that in every theme's own terms: the most contrast it has against a
+ * node.
+ */
+.portContact {
+  animation: port-contact 33ms linear;
+}
+
+@keyframes port-contact {
+  from,
+  to {
+    color: var(--pb-ink-primary);
+  }
+}
+
+/*
+ * THE GRID DRAWS IN, ONCE PER PAGE LOAD, top to bottom. Each horizontal rule is
+ * a device pixel high, so a clip travelling down the layer uncovers the rows
+ * one at a time; linear, because a sweep that decelerated would spend its last
+ * third on the bottom few rows. See `GridLayer` for when, and why only once.
+ *
+ * 400MS IS A LITERAL, AND LONGER THAN ANYTHING ON THE MOTION SCALE, which tops
+ * out at 180ms because it describes UI transitions. This is not one: it is
+ * the whole backdrop, once, at a moment nobody is aiming at anything, and at
+ * 180ms a viewport of rows arrives as a blink rather than a sweep. It runs
+ * while a loaded canvas is mounting, so it was measured there: a 48-node share
+ * link, frames over the first 600ms, against the build before this and against
+ * this build under reduced motion. The worst frame is the mount's in all three
+ * and the draw-in does not move it. It never runs again in the life of the page.
+ */
+.gridDrawing {
+  animation: grid-draw 400ms linear;
+}
+
+@keyframes grid-draw {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+
+  to {
+    clip-path: inset(0);
+  }
+}
+
+/*
+ * REMOVED UNDER REDUCED MOTION, NOT SHORTENED - and the difference is the
+ * reason this block exists rather than trusting the shared override. global.css
+ * collapses every animation to 1ms, deliberately, so the inspector's
+ * `animationend` still fires. A 1ms animation still has a from-state, and a
+ * frame can land inside it: one frame of a wire that is not there, a node at
+ * 96%, a grid with no rows. Nothing here waits for an end event, so nothing
+ * here needs the 1ms. The canvas also resolves no arrival at all under the
+ * preference (see `freshArrivals`), so the three arrival classes are never
+ * written in the first place; these rules are the second of two locks.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .wireArriving,
+  .nodeArriving,
+  .portContact,
+  .gridDrawing {
+    animation: none;
   }
 }
 

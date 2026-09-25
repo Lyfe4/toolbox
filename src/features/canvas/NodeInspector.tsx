@@ -19,9 +19,9 @@ import { counted } from '@/lib/plural';
 import { formatBytes } from '@/lib/sniff';
 
 import { useAttachmentStore } from './attachmentStore';
-import { formatDuration } from './CanvasNodeView';
 import { otherInputBytes } from './fileInputs';
 import styles from './inspector.module.css';
+import { formatDuration } from './motion';
 import { summariseValue } from './resultSummary';
 
 import type { CanvasNode, EdgeId, NodeId } from './types';
