@@ -5186,11 +5186,14 @@ standing in for.
 
 The nine were the skip lines a full run printed, not call sites: six `skip(`
 calls, three of them reached in both engines and three in WebKit only. The
-first six rows below are those six, and were audited. The harness has eight
+first six rows below are those six, and were audited. The harness has thirteen
 `skip(` call sites now; the last two rows were added after the audit and were
-not put to it. A full run on an idle machine prints ten — the three
-both-engine skips twice, and four in WebKit only — and one more in either
-engine when the machine is too loaded to sample the inspector's slide.
+not put to it, and five more since - the tap highlight and the canvas grid at
+3x among them - are not in the table. A full run on an idle machine printed
+thirteen in round twenty-two: the three both-engine skips twice, the tap
+highlight in both engines, four in WebKit only and the 3x grid in Gecko only -
+and one more in either engine when the machine is too loaded to sample the
+inspector's slide.
 
 So each of the six was put to the engines directly rather than taken from the
 text beside it. Playwright 1.63, Firefox 155 and WebKit 26.6:
@@ -5546,6 +5549,89 @@ A real violation stays visible because nothing is left to be noise:
 `KNOWN_CONSOLE_NOISE` is empty, and `checkPopovers` records every
 `securitypolicyviolation` while each Radix component is in use and fails on one.
 <!-- asserted: cross-browser-check.mjs › no built script or stylesheet points the browser at a source map -->
+
+### A URL that is immutable has to keep its bytes
+
+**That fix worked on the server and nowhere else.** Thirteen violations were
+still in the live site's console the day after, one per chunk that console's
+page had loaded, and every one was a map request. The live server serves no
+file that points at a map - all 60 scripts and stylesheets were fetched and
+scanned - so they were not coming from the server.
+
+A file's hash is taken **before** the map comment is appended. Built both ways
+at the same commit, `sourcemap: true` and `'hidden'` give the same 60 names, and
+51 of those files have different bytes. So the deploy changed the contents of
+41 URLs the previous deploy had already served, and renamed none of them. Those
+URLs are `Cache-Control: immutable` - a browser that has one never asks again -
+and the service worker is cache-first; its next precache ran `cache.addAll`
+through the same HTTP cache and filed the old bytes in the new build's cache.
+Measured against a local server holding each build in turn: after the deploy,
+Chrome requested the changed chunks and never the class-name helper's chunk,
+/assets/cx-C3pDGSKU.js at the time - a built name, not a file in this
+repository - which the server had sent as 21113 bytes before the deploy and
+would have sent as 21074 after it.
+Every returning visitor was left holding the commented bytes, for up to a year,
+under names that promised they could not differ. The count fits: of the
+chunks `/` loads, twelve kept their URL from the previous deploy with a comment
+in it, and a saved canvas holding one tool adds the chunk the worker prefetches
+for it. That is counted rather than seen - the browser that reported the
+thirteen was not one this investigation could open.<!-- unverified: the reporting browser's thirteen URLs were not read; the count is derived from the two builds -->
+
+DevTools asks for a map with `Network.loadNetworkResource`, which answers to the
+page's `connect-src` - issued by hand against the live site, that command
+produces the same line, down to "The request has been blocked" where an
+application `fetch` would say "The action has been blocked".
+
+**Why the check passed.** It read `dist/`, and `dist/` held the new bytes. So
+did the live server. The bytes that mattered existed only in caches the
+repository cannot see, which is the whole of why a check on the build could not
+fail, and why a check on the live server alone would have passed as well.
+
+**The fix is in two halves.** Every file was given a new name once -
+`ASSET_NAMES` in `vite.config.ts` asks for ten hash characters where the default
+is eight - because a new URL is the only thing that reaches a cache nobody can
+purge. It costs each returning visitor one download of the whole build, which is
+what the first fix was supposed to cost them and did not. And what the headers
+promise is asserted: `checkLiveAssets` reads the live site's precache list, and
+any URL this build shares with the live site must hold byte-identical content.
+It fails against the build that caused this - 46 shared, 41 changed - and
+against `sourcemap: true` today, 60 shared and 51 changed. It also scans the
+live site's own scripts for a map comment, so a deploy that differs from its
+build is seen. It needs the network, and fails saying the live site did not
+answer rather than passing on a comparison it never made;
+`PATCHBAY_LIVE_ORIGIN` points it at another deploy.
+<!-- asserted: cross-browser-check.mjs › no URL this build shares with the live site holds different bytes -->
+
+**What else a fresh load logs, measured rather than assumed** - each engine's
+instrument first shown to hear a deliberate `connect-src` refusal:
+
+| Engine              | A first visit, a controlled reload, `/tools`, `/tools/base64`                                                                                                                                                                                                                        |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Chrome 153          | nothing                                                                                                                                                                                                                                                                              |
+| Gecko               | nothing                                                                                                                                                                                                                                                                              |
+| WebKit (not Safari) | on 4 of 10 first visits to the live site, at load + 3.2s, "preloaded using link preload but not used" for some or all of the twelve chunks Vite's dynamic-import helper preloads for the canvas; 0 of 12 against a local server, so it follows latency. Not fixed, and not explained |
+
+`checkConsoleSilence` could not have heard that last row: it listens for 400ms
+after `networkidle` against a local server, and the warning needs both a slower
+network and three seconds.
+<!-- unverified: the cause of WebKit's intermittent unused-preload warning on a first visit is not known -->
+
+Two things the report of this round asked about were measured and not found. A
+fresh Chrome profile gives no "cross-world service worker resource mismatch"
+for the two modulepreloads in the document - not on a first visit, a controlled
+reload, a hard reload, with the cache disabled, with the worker bypassed, or on
+the first load after a deploy - and the server sends each once per visitor. In
+Chrome and Gecko nothing is downloaded twice on a first visit. In Playwright's
+WebKit, 23 files are: the service worker's `cache.addAll` fetches again the
+248 kB the page has just loaded, because that engine's worker does not find the
+page's responses in an HTTP cache. Whether Safari itself does is not known.
+<!-- unverified: whether Safari's service worker precache repeats the page's downloads; measured only in Playwright's WebKit -->
+
+**Rejected: precaching with `cache: 'reload'`.** It would have healed the
+service worker's cache at the next deploy without renaming anything. It also
+makes every deploy cost every visitor the whole build again, rather than only
+the files that changed, for a problem that renaming fixes once and the check
+now prevents.
 
 ### The head has two audiences
 

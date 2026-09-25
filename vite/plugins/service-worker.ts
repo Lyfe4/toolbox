@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join, posix, relative, sep } from 'node:path';
+import { join, posix, relative, resolve, sep } from 'node:path';
 
 import type { Plugin } from 'vite';
 
@@ -71,7 +71,9 @@ export function serviceWorker(): Plugin {
      * dependency is stated rather than incidental.
      */
     closeBundle() {
-      const dist = join(root, outDir);
+      // resolve, not join: `vite build --outDir` may be absolute, and join
+      // glues a second drive letter onto the root on Windows.
+      const dist = resolve(root, outDir);
       const source = join(root, 'vite', 'service-worker.js');
 
       if (!existsSync(source)) {

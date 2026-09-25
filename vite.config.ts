@@ -13,6 +13,27 @@ import { serviceWorker } from './vite/plugins/service-worker.ts';
 // own URL so it works no matter where the process was started from.
 const srcPath = fileURLToPath(new URL('./src', import.meta.url));
 
+/*
+ * TEN HASH CHARACTERS, NOT THE DEFAULT EIGHT - and not for collisions.
+ *
+ * A file's hash is taken before the `//# sourceMappingURL=` comment is
+ * appended, so moving `sourcemap` from `true` to `'hidden'` changed the bytes
+ * of 51 files and the names of none. Those URLs are served `immutable` and the
+ * service worker is cache-first, so every returning visitor kept the commented
+ * bytes - and its next precache filled from the same HTTP cache - under names
+ * that would never change again: DevTools on the live site went on fetching
+ * maps, and `connect-src 'none'` went on refusing them. Changing the length
+ * gave every URL a new name once, which is the only thing that reaches a cache
+ * nobody can purge. It is harmless to change again; what must not happen is a
+ * URL keeping its name while its bytes change, and `checkLiveAssets` in
+ * check:browsers compares this build against the live site for exactly that.
+ */
+const ASSET_NAMES = {
+  entryFileNames: 'assets/[name]-[hash:10].js',
+  chunkFileNames: 'assets/[name]-[hash:10].js',
+  assetFileNames: 'assets/[name]-[hash:10][extname]',
+};
+
 export default defineConfig({
   plugins: [
     // Scans src/routes and regenerates src/routeTree.gen.ts.
@@ -138,6 +159,8 @@ export default defineConfig({
    */
   worker: {
     format: 'es',
+    // The worker's tool chunks were re-keyed with the page's - see ASSET_NAMES.
+    rolldownOptions: { output: ASSET_NAMES },
   },
 
   build: {
@@ -161,6 +184,7 @@ export default defineConfig({
      * that still exist.
      */
     sourcemap: 'hidden',
+    rolldownOptions: { output: ASSET_NAMES },
   },
 
   test: {

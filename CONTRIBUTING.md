@@ -69,7 +69,10 @@ node scripts/mutate.mjs             # mutation testing over the conversion code
 ```
 
 `check:browsers` drives the production build in two real engines under the real
-CSP. It is out of the CI gate because of the binary download, not because it is
+CSP, and compares it with the live site: every URL the two share must hold the
+same bytes, because those URLs are served `immutable` and a browser that has one
+never asks again. So it needs the network, and says so rather than passing
+without it. It is out of the CI gate because of the binary download, not because it is
 optional — **run it before any change to the canvas, the headers, the service
 worker or anything visual.** jsdom has no layout engine, no Worker, no
 `OffscreenCanvas` and no pointer events, so the unit suite is structurally

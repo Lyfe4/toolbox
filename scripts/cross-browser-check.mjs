@@ -5319,6 +5319,93 @@ async function notificationPlacement(browser, label, { width, height, coarse }) 
  * working app. Netlify's own resolution of the file was checked separately
  * against `netlify dev` and is modelled by `headersFor` above.
  */
+/**
+ * The build against the site it is about to replace.
+ *
+ * Every other check here reads `dist/`, and `dist/` cannot see the failure this
+ * exists for. Moving `sourcemap` from `true` to `'hidden'` changed the bytes of
+ * 51 files and the name of none, because a file's hash is taken before the
+ * map comment is appended. Those URLs are `immutable` and the service worker is
+ * cache-first, so every returning visitor kept the commented bytes - and
+ * DevTools on the live site went on fetching thirteen maps and `connect-src
+ * 'none'` went on refusing them - while `dist/` and the server both held the
+ * new bytes and the source-map check above passed against both. The bytes that
+ * mattered were only in caches, under names that promised they could not
+ * differ.
+ *
+ * So the promise is what is asserted: a URL this build shares with the live
+ * deploy must hold the same bytes, because a browser that has it will never
+ * ask again. And the live site's own scripts are scanned for a map comment, so
+ * a deploy that differs from the build is seen too. It needs the network, and
+ * says so when it has none, rather than passing on a comparison it never made.
+ * `PATCHBAY_LIVE_ORIGIN` points it at another deploy.
+ */
+async function checkLiveAssets(label) {
+  const live = process.env.PATCHBAY_LIVE_ORIGIN ?? SITE_URL;
+  let worker;
+  try {
+    const response = await fetch(`${live}/sw.js`);
+    worker = response.ok ? await response.text() : `HTTP ${String(response.status)}`;
+  } catch (error) {
+    worker = `unreachable: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  const literal = /JSON\.parse\(("(?:[^"\\]|\\.)*")\)/.exec(worker)?.[1];
+  const precached = literal ? JSON.parse(JSON.parse(literal)) : [];
+  const liveAssets = precached.filter((url) => /^\/assets\/[^/]+\.(?:js|css)$/.test(url));
+  check(
+    label,
+    `the live site's precache list was read (${live})`,
+    liveAssets.length > 0,
+    literal ? `${String(liveAssets.length)} scripts and stylesheets` : worker.slice(0, 80),
+  );
+  if (liveAssets.length === 0) return;
+
+  const bodies = new Map();
+  for (let i = 0; i < liveAssets.length; i += 8) {
+    await Promise.all(
+      liveAssets.slice(i, i + 8).map(async (url) => {
+        const response = await fetch(`${live}${url}`);
+        if (response.ok) bodies.set(url, Buffer.from(await response.arrayBuffer()));
+      }),
+    );
+  }
+  const pointing = [...bodies].filter(([, body]) =>
+    /[#@] sourceMappingURL=/.test(body.toString('utf8')),
+  );
+  check(
+    label,
+    'the live site serves no script or stylesheet that points at a source map',
+    bodies.size === liveAssets.length && pointing.length === 0,
+    `${String(bodies.size)} of ${String(liveAssets.length)} fetched, ${String(pointing.length)} pointing${
+      pointing.length > 0
+        ? ` (${pointing
+            .slice(0, 3)
+            .map(([url]) => url)
+            .join(', ')})`
+        : ''
+    }`,
+  );
+
+  const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+  const built = new Set(await readdir(join(DIST, 'assets')));
+  const shared = [...bodies.keys()].filter((url) => built.has(url.slice('/assets/'.length)));
+  const changed = [];
+  for (const url of shared) {
+    const ours = await readFile(join(DIST, url.slice(1)));
+    if (digest(ours) !== digest(bodies.get(url) ?? Buffer.alloc(0))) changed.push(url);
+  }
+  // Zero shared is a pass and says why: every URL is new, which is a re-key
+  // rather than a comparison, and the detail must not read like one.
+  check(
+    label,
+    'no URL this build shares with the live site holds different bytes',
+    changed.length === 0,
+    shared.length === 0
+      ? `no URL shared with the ${String(bodies.size)} live files - every one is new, so no cache holds any of them`
+      : `${String(shared.length)} shared, ${String(changed.length)} changed${changed.length > 0 ? ` (${changed.slice(0, 3).join(', ')}) - a browser that has these will never fetch the new bytes` : ''}`,
+  );
+}
+
 async function checkDeployment(label, rules) {
   const headers = await readFile(join(DIST, '_headers'), 'utf8');
 
@@ -20390,6 +20477,7 @@ const server = await serveDist(PORT);
 try {
   // Engine-independent: these are assertions about the files the build emits.
   await checkDeployment('Build output', await readHeaders());
+  await checkLiveAssets('Build output');
 
   for (const name of selection.engines) {
     const [engine, label] = ENGINES[name];
