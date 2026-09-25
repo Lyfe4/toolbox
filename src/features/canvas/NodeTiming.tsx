@@ -9,6 +9,8 @@ export interface NodeTimingProps {
   readonly durationMs: number | null;
   /** The arrival this figure may count up for, or null. */
   readonly armed: number | null;
+  /** Whether the node is running now, which is the one time an absent figure is held. */
+  readonly running: boolean;
 }
 
 /** A count in progress: which arrival it is for, and how far through it is. */
@@ -39,8 +41,9 @@ interface Count {
  * `durationMs` while a node runs, so the figure is absent for a moment on
  * every run and this is how the count knows the next one is a change.
  */
-export function NodeTiming({ durationMs, armed }: NodeTimingProps) {
+export function NodeTiming({ durationMs, armed, running }: NodeTimingProps) {
   const [seen, setSeen] = useState(durationMs);
+  const [last, setLast] = useState(durationMs);
   const [played, setPlayed] = useState<number | null>(null);
   const [count, setCount] = useState<Count | null>(null);
 
@@ -53,6 +56,7 @@ export function NodeTiming({ durationMs, armed }: NodeTimingProps) {
    */
   if (seen !== durationMs) {
     setSeen(durationMs);
+    if (durationMs !== null) setLast(durationMs);
     if (durationMs !== null && armed !== null && armed !== played) {
       setPlayed(armed);
       setCount(mediaMatches(REDUCED_MOTION) ? null : { seq: armed, durationMs, progress: 0 });
@@ -92,9 +96,23 @@ export function NodeTiming({ durationMs, armed }: NodeTimingProps) {
     };
   }, [counting]);
 
-  if (durationMs === null) return null;
-  const final = formatDuration(durationMs);
-  const text = count === null ? final : countUpText(count.durationMs, count.progress);
+  /*
+   * A RUN KEEPS THE LAST FIGURE'S BOX, EMPTY. `settle` clears the figure while
+   * a node runs, and a box that left with it gave its width to the title for
+   * that frame and took it back when the run landed - a shift on every
+   * keystroke that re-ran the node. Held only while running: a node that is
+   * blocked or idle has no figure to come, and a gap there would be a box
+   * reserved for nothing.
+   */
+  const held = durationMs ?? (running ? last : null);
+  if (held === null) return null;
+  const final = formatDuration(held);
+  const text =
+    durationMs === null
+      ? ''
+      : count === null
+        ? final
+        : countUpText(count.durationMs, count.progress);
 
   return (
     /*

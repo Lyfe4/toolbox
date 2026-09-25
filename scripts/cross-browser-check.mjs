@@ -3562,7 +3562,8 @@ const MOTION_PAGE = () => {
         contactClassed:
           (out?.getAttribute('class')?.includes('portContact') ?? false) ||
           (into?.getAttribute('class')?.includes('portContact') ?? false),
-        text: timing?.textContent ?? null,
+        // Empty is no figure: a run holds the last one's box with nothing in it.
+        text: timing?.textContent || null,
         final: timing?.getAttribute('data-final') ?? null,
         timingBox: rect(timing),
         titleBox: rect(node(to)?.querySelector('[class*="nodeTitle"]') ?? null),
@@ -3573,9 +3574,11 @@ const MOTION_PAGE = () => {
     quiet: ({ to }) => {
       const timing = node(to)?.querySelector('[data-final]') ?? null;
       return {
-        text: timing?.textContent ?? null,
+        // Empty is no figure: a run holds the last one's box with nothing in it.
+        text: timing?.textContent || null,
         final: timing?.getAttribute('data-final') ?? null,
         status: node(to)?.dataset.status ?? null,
+        titleBox: rect(node(to)?.querySelector('[class*="nodeTitle"]') ?? null),
         motion: document
           .getAnimations()
           .map((animation) => animation.animationName ?? '')
@@ -4020,6 +4023,37 @@ async function motionPass(page, label, reduced) {
     `${String(shown.filter((reading) => reading.text !== reading.final).length)} counting frames; motion ${[
       ...new Set(typed.samples.flatMap((reading) => reading.motion)),
     ].join(',')}`,
+  );
+  /*
+   * A RUN MOVES NOTHING IN THE HEADER. The figure is cleared while a node
+   * runs, and its box used to leave with it, so the title widened for the
+   * running frames and narrowed when the next figure landed - on every
+   * keystroke that re-ran the node. The partner is a running frame read AFTER
+   * a figure was shown: the one state the shift lived in, actually observed.
+   * A new figure may be a different width from the last, which is a real
+   * change rather than a shift, so the title is compared across each run -
+   * the frame before it, every running frame, and nothing else.
+   */
+  const shiftedRuns = [];
+  let runsAfterAFigure = 0;
+  typed.samples.forEach((reading, index) => {
+    const previous = typed.samples[index - 1];
+    if (reading.status !== 'running' || previous === undefined) return;
+    if (previous.status === 'running' || previous.text === null) return;
+    runsAfterAFigure += 1;
+    const run = [previous];
+    for (let next = index; typed.samples[next]?.status === 'running'; next += 1)
+      run.push(typed.samples[next]);
+    const boxes = new Set(run.map((step) => step.titleBox));
+    if (boxes.size !== 1) shiftedRuns.push([...boxes].join(' > '));
+  });
+  check(
+    label,
+    'a run that re-starts on a keystroke leaves the title where it was',
+    runsAfterAFigure > 0 && shiftedRuns.length === 0,
+    `${String(runsAfterAFigure)} runs seen starting from a shown figure, ${String(
+      shiftedRuns.length,
+    )} moved the title${shiftedRuns.length > 0 ? `: ${shiftedRuns[0]}` : ''}`,
   );
   await setInspector(page, false);
 
@@ -4631,6 +4665,187 @@ async function checkNotifications(browser, label) {
     );
   } finally {
     await context.close().catch(() => {});
+  }
+
+  /*
+   * WHERE THEY ARE, not only how long they last. Everything above is about
+   * lifetime, and for as long as that was all this section asked, a single
+   * notification at 390px sat on top of the canvas readout in both engines.
+   */
+  await notificationPlacement(browser, label, { width: 390, height: 844, coarse: false });
+  const touch = await launchTouchBrowser(browser.browserType());
+  try {
+    await notificationPlacement(touch, label, { width: 390, height: 844, coarse: true });
+  } finally {
+    await touch.close().catch(() => {});
+  }
+  await notificationPlacement(browser, label, { width: 1280, height: 900, coarse: false });
+}
+
+/**
+ * Four deletions, and where every notification is after each one: against the
+ * readout, the window's edges and each other.
+ *
+ * Read once each notification's own entrance has FINISHED - its
+ * `animation.finished`, which is a state, not a wait - because the entrance
+ * slides it 8px sideways, and a margin read part way through is a reading of
+ * the slide.
+ */
+async function notificationPlacement(browser, label, { width, height, coarse }) {
+  const narrow = width <= 640;
+  const where = `at ${String(width)}px${coarse ? ' under a finger' : ''}`;
+  const context = await browser.newContext({
+    viewport: { width, height },
+    ...(coarse ? { hasTouch: true } : {}),
+  });
+  const page = await context.newPage();
+  // Two columns, so a phone's fit keeps every node on screen and clickable.
+  const nodes = [];
+  for (let index = 0; index < 6; index += 1) {
+    nodes.push([
+      `n${String(index + 1)}`,
+      'base64',
+      (index % 2) * 260,
+      Math.floor(index / 2) * 200,
+      { mode: 'encode' },
+    ]);
+  }
+  const readings = [];
+  try {
+    await page.goto(`${ORIGIN}/?p=${shareParam({ v: 3, n: nodes, e: [] })}`, {
+      waitUntil: 'networkidle',
+    });
+    await page.locator('[data-testid="node-n4"]').waitFor({ timeout: 15_000 });
+    for (const id of ['n1', 'n2', 'n3', 'n4']) {
+      // A phone's sheet covers most of the canvas, and a selection opens it.
+      await setInspector(page, false);
+      await page.locator(`[data-testid="node-${id}"]`).click({ timeout: 10_000 });
+      await page.keyboard.press('Delete');
+      await page
+        .locator(`[data-testid="node-${id}"]`)
+        .waitFor({ state: 'detached', timeout: 10_000 });
+      await setInspector(page, false);
+      readings.push(
+        await page.evaluate(async () => {
+          const items = [...document.querySelectorAll('[role="region"] ol > li')];
+          await Promise.all(items.flatMap((item) => item.getAnimations().map((a) => a.finished)));
+          const box = (element) => {
+            if (!element) return null;
+            const { left, top, right, bottom } = element.getBoundingClientRect();
+            return { left, top, right, bottom };
+          };
+          return {
+            readout: box(document.querySelector('[data-testid="canvas-readout"]')),
+            toasts: items.map((item) => ({
+              box: box(item),
+              title: box(item.querySelector('[class*="title"]')),
+              action: box(item.querySelector('[class*="action"]')),
+            })),
+            overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+            viewport: document.documentElement.clientWidth,
+          };
+        }),
+      );
+    }
+  } finally {
+    await context.close().catch(() => {});
+  }
+
+  const counts = readings.map((reading) => reading.toasts.length);
+  const all = readings.flatMap((reading) => reading.toasts.map((toast) => ({ ...toast, reading })));
+  const overlaps = (a, b) =>
+    a !== null &&
+    b !== null &&
+    a.left < b.right &&
+    b.left < a.right &&
+    a.top < b.bottom &&
+    b.top < a.bottom;
+  const px = (value) => String(Math.round(value));
+
+  // The partner every "never covers" below needs: there was something to cover.
+  check(
+    label,
+    `notifications ${where} are on screen with the readout they must stay off`,
+    readings.length === 4 &&
+      readings.every((reading) => reading.readout !== null && reading.toasts.length > 0),
+    `counts ${counts.join(',')}; readout ${readings.every((reading) => reading.readout !== null) ? 'present' : 'missing'}`,
+  );
+  if (coarse) {
+    // Or the finger pass is the mouse pass again: the readout only grows under one.
+    const grown = readings.every(
+      (reading) => reading.readout !== null && reading.readout.bottom - reading.readout.top >= 44,
+    );
+    check(
+      label,
+      `the pointer ${where} really is coarse: the readout has grown to its 44px targets`,
+      grown,
+      `readout ${px((readings[0]?.readout?.bottom ?? 0) - (readings[0]?.readout?.top ?? 0))}px tall`,
+    );
+  }
+  const covering = all.filter((toast) => overlaps(toast.box, toast.reading.readout));
+  check(
+    label,
+    `no notification ${where} covers the canvas readout`,
+    all.length > 0 && covering.length === 0,
+    covering.length === 0
+      ? `${String(all.length)} readings clear of it`
+      : `bottom ${px(covering[0].box.bottom)} over a readout from ${px(covering[0].reading.readout.top)}`,
+  );
+  const outside = all.filter(
+    (toast) => toast.box.left < 0 || toast.box.right > toast.reading.viewport,
+  );
+  check(
+    label,
+    `and none ${where} runs past the window's edge`,
+    readings.every((reading) => reading.overflow <= 0) && outside.length === 0,
+    `overflow ${readings.map((reading) => String(reading.overflow)).join(',')}; ${String(outside.length)} outside`,
+  );
+
+  if (narrow) {
+    // The readout's own inset, which is --pb-space-md: the margin the canvas uses.
+    const off = all.filter(
+      (toast) =>
+        Math.abs(toast.box.left - toast.reading.readout.left) > 0.5 ||
+        Math.abs(toast.reading.viewport - toast.box.right - toast.reading.readout.left) > 0.5,
+    );
+    check(
+      label,
+      `notifications ${where} span the canvas between the margins its readout keeps`,
+      off.length === 0,
+      `${String(off.length)} off; first ${px(all[0]?.box.left ?? -1)}..${px(all[0]?.box.right ?? -1)} against a readout inset ${px(all[0]?.reading.readout.left ?? -1)}`,
+    );
+    const stacked = all.filter(
+      (toast) =>
+        toast.action === null || toast.title === null || toast.action.top >= toast.title.bottom,
+    );
+    check(
+      label,
+      `each ${where} is one line, its Undo beside the message rather than under it`,
+      stacked.length === 0,
+      `${String(stacked.length)} with the action on a row of its own`,
+    );
+    check(
+      label,
+      `four deletions ${where} leave at most two notifications, not a column up the canvas`,
+      counts.join(',') === '1,2,2,2',
+      `counts ${counts.join(',')}`,
+    );
+  } else {
+    // Desktop: the corner column it has always been, and the ceiling of three.
+    const last = readings.at(-1)?.toasts ?? [];
+    const pinned = last.every(
+      (toast) =>
+        Math.abs(toast.box.right - (width - 16)) <= 0.5 &&
+        Math.abs(toast.box.right - toast.box.left - 320) <= 0.5,
+    );
+    check(
+      label,
+      `notifications ${where} stay a 320px column pinned to the bottom-right corner, three at most`,
+      counts.join(',') === '1,2,3,3' &&
+        pinned &&
+        Math.abs((last.at(-1)?.box.bottom ?? 0) - (height - 16)) <= 0.5,
+      `counts ${counts.join(',')}; last ${px(last.at(-1)?.box.left ?? -1)}..${px(last.at(-1)?.box.right ?? -1)}, bottom ${px(last.at(-1)?.box.bottom ?? -1)}`,
+    );
   }
 }
 

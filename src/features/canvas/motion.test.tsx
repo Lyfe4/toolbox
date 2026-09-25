@@ -247,7 +247,7 @@ describe('the store writes an arrival only for things that are new', () => {
 
 describe('the timing figure', () => {
   function renderTiming(durationMs: number | null, armed: number | null) {
-    const view = render(<NodeTiming durationMs={durationMs} armed={armed} />);
+    const view = render(<NodeTiming durationMs={durationMs} armed={armed} running={false} />);
     const text = (): string | null => view.container.textContent || null;
     return { ...view, text };
   }
@@ -259,13 +259,13 @@ describe('the timing figure', () => {
 
   it('starts at zero on the render that first has a new figure, when armed', () => {
     const { rerender, text } = renderTiming(null, 4);
-    rerender(<NodeTiming durationMs={12} armed={4} />);
+    rerender(<NodeTiming durationMs={12} armed={4} running={false} />);
     expect(text()).toBe('0ms');
   });
 
   it('holds the final figure’s width from that first frame', () => {
     const { rerender, container } = renderTiming(null, 4);
-    rerender(<NodeTiming durationMs={12} armed={4} />);
+    rerender(<NodeTiming durationMs={12} armed={4} running={false} />);
     expect(container.querySelector('[data-final]')?.getAttribute('data-final')).toBe('12ms');
   });
 
@@ -273,7 +273,7 @@ describe('the timing figure', () => {
     vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] });
     document.documentElement.style.setProperty('--pb-motion-fast', '120ms');
     const { rerender, text } = renderTiming(null, 4);
-    rerender(<NodeTiming durationMs={12} armed={4} />);
+    rerender(<NodeTiming durationMs={12} armed={4} running={false} />);
 
     const seen: string[] = [text() ?? ''];
     for (let frame = 0; frame < 12; frame += 1) {
@@ -294,32 +294,48 @@ describe('the timing figure', () => {
 
   it('does not count when nothing armed it - a run somebody typed for', () => {
     const { rerender, text } = renderTiming(8, null);
-    rerender(<NodeTiming durationMs={null} armed={null} />);
-    rerender(<NodeTiming durationMs={12} armed={null} />);
+    rerender(<NodeTiming durationMs={null} armed={null} running={false} />);
+    rerender(<NodeTiming durationMs={12} armed={null} running={false} />);
     expect(text()).toBe('12ms');
   });
 
   it('counts once per arrival, and swaps the next figure in', () => {
     const { rerender, text } = renderTiming(null, 4);
-    rerender(<NodeTiming durationMs={12} armed={4} />);
+    rerender(<NodeTiming durationMs={12} armed={4} running={false} />);
     expect(text()).toBe('0ms');
-    rerender(<NodeTiming durationMs={null} armed={4} />);
-    rerender(<NodeTiming durationMs={30} armed={4} />);
+    rerender(<NodeTiming durationMs={null} armed={4} running={false} />);
+    rerender(<NodeTiming durationMs={30} armed={4} running={false} />);
     expect(text()).toBe('30ms');
   });
 
   it('stops where it is the moment it is disarmed', () => {
     const { rerender, text } = renderTiming(null, 4);
-    rerender(<NodeTiming durationMs={12} armed={4} />);
+    rerender(<NodeTiming durationMs={12} armed={4} running={false} />);
     expect(text()).toBe('0ms');
-    rerender(<NodeTiming durationMs={12} armed={null} />);
+    rerender(<NodeTiming durationMs={12} armed={null} running={false} />);
     expect(text()).toBe('12ms');
+  });
+
+  // The per-keystroke shift: the box left with the figure for the frame a node
+  // spent running, and the title took its width and gave it back.
+  it('keeps the last figure’s box, empty, while the node runs, and only then', () => {
+    const { rerender, container, text } = renderTiming(12, null);
+    const box = (): string | null =>
+      container.querySelector('[data-final]')?.getAttribute('data-final') ?? null;
+    rerender(<NodeTiming durationMs={null} armed={null} running />);
+    expect(box()).toBe('12ms');
+    expect(text()).toBeNull();
+    rerender(<NodeTiming durationMs={3} armed={null} running={false} />);
+    expect(text()).toBe('3ms');
+    // Blocked or idle: no figure is coming, so nothing is reserved for one.
+    rerender(<NodeTiming durationMs={null} armed={null} running={false} />);
+    expect(box()).toBeNull();
   });
 
   it('does not count under reduced motion', () => {
     preferReducedMotion(true);
     const { rerender, text } = renderTiming(null, 4);
-    rerender(<NodeTiming durationMs={12} armed={4} />);
+    rerender(<NodeTiming durationMs={12} armed={4} running={false} />);
     expect(text()).toBe('12ms');
   });
 });

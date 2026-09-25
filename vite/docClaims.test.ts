@@ -98,7 +98,12 @@ const TEXT_NAMES = new Set(['_headers', '_redirects']);
 /** Generated or vendored: not prose anybody wrote, and not code anybody reads. */
 const NOT_OURS = new Set(['pnpm-lock.yaml', 'src/routeTree.gen.ts']);
 
-function repositoryFiles(): readonly string[] {
+/**
+ * Every file in the repository, whatever its type: what a document may name.
+ * The skipped directories are what .gitignore keeps out of a clone, so this
+ * list is the same on a machine that has built and on CI, which has not.
+ */
+function everyFile(): readonly string[] {
   const found: string[] = [];
   const walk = (directory: string, relative: string): void => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -107,16 +112,20 @@ function repositoryFiles(): readonly string[] {
       // `.claude/` is per machine except its skills - the same line .gitignore draws.
       if (relative === '.claude' && entry.name !== 'skills') continue;
       if (entry.isDirectory()) walk(resolve(directory, entry.name), path);
-      else if (TEXT_EXTENSIONS.has(extname(entry.name)) || TEXT_NAMES.has(entry.name)) {
-        if (!NOT_OURS.has(path)) found.push(path);
-      }
+      else found.push(path);
     }
   };
   walk(ROOT, '');
   return found.sort();
 }
 
-const FILES = repositoryFiles();
+const EVERY_FILE = everyFile();
+const EVERY_FILE_SET = new Set(EVERY_FILE);
+/** The text among them that somebody wrote: what this file reads for claims. */
+const FILES = EVERY_FILE.filter(
+  (path) =>
+    (TEXT_EXTENSIONS.has(extname(path)) || TEXT_NAMES.has(basename(path))) && !NOT_OURS.has(path),
+);
 const read = (path: string): string => readFileSync(resolve(ROOT, path), 'utf8');
 const TEXT = new Map(FILES.map((path) => [path, read(path)]));
 const textOf = (path: string): string => TEXT.get(path) ?? '';
@@ -124,8 +133,6 @@ const textOf = (path: string): string => TEXT.get(path) ?? '';
 const DOCUMENTS = FILES.filter((path) => path.endsWith('.md'));
 const CURRENT_DOCUMENTS = DOCUMENTS.filter((path) => !(path in DATED));
 const CODE = FILES.filter((path) => !path.endsWith('.md'));
-/** Every basename in the repository, for a document naming a file without its directory. */
-const BASENAMES = new Set(FILES.map((path) => basename(path)));
 
 /* ========================================================================== *
  * Reading prose out of documents and code
@@ -278,12 +285,18 @@ export function missingFile(
   if (/\s|\*|\{|<|\.\.\.|^https?:|^\.[\w.]+$/.test(path)) return false;
   if (!FILE_LIKE.test(path) && !/^(?:src|scripts|docs|vite|public|\.claude)\/./.test(path))
     return false;
-  const candidates = [path, `${dirname(from)}/${path}`].map((candidate) =>
-    resolve(ROOT, candidate)
-      .slice(ROOT.length + 1)
-      .split(sep)
-      .join('/'),
-  );
+  // A served path is resolved as one; joining it to a directory would turn
+  // `/sw.js` into the root itself.
+  if (path.startsWith('/')) return !exists(path);
+  const candidates = [path, `${dirname(from)}/${path}`].map((candidate) => {
+    const absolute = resolve(ROOT, candidate);
+    return absolute.startsWith(ROOT + sep)
+      ? absolute
+          .slice(ROOT.length + 1)
+          .split(sep)
+          .join('/')
+      : '';
+  });
   return !candidates.some(exists);
 }
 
@@ -292,18 +305,47 @@ export function missingFile(
  * trailing part of a path - `lib/text.ts`, `spec/loss-corpus.json` - which is
  * how the prose names a file when its directory is clear from the sentence.
  */
-const existsInRepository = (path: string): boolean => {
-  const bare = path.replace(/\/$/, '');
-  // An import specifier: `@/lib/zod` is src/lib/zod.ts.
-  if (['.ts', '.tsx', '/index.ts'].some((suffix) => FILES.includes(`${bare}${suffix}`)))
-    return true;
-  return (
-    FILES.includes(bare) ||
-    FILES.some((file) => file.startsWith(`${bare}/`) || file.endsWith(`/${bare}`)) ||
-    BASENAMES.has(bare) ||
-    existsSync(resolve(ROOT, bare))
-  );
+/**
+ * WHAT THE BUILD WRITES, AND FROM WHAT. A document may name `dist/index.html`
+ * - it is the file the harness and the skill read - but the name resolves
+ * because its SOURCE is in the repository, never because a build happens to
+ * be lying on this disk. That used to be the rule by accident: a fallback to
+ * the filesystem found `dist/` on every machine that had built, and CI, which
+ * runs the tests before the build, found three names missing on the first
+ * push after this file landed and on every push since.
+ */
+export const BUILD_OUTPUTS: Readonly<Record<string, string>> = {
+  'dist/index.html': 'index.html',
+  'dist/sw.js': 'vite/service-worker.js',
 };
+
+/**
+ * Whether a path is in the repository. Nothing here reads the disk: the one
+ * list is `EVERY_FILE`, so the answer cannot depend on what the machine has
+ * built, and a path that climbs out of the root - `/sw.js` did, to the root
+ * itself, which exists - is simply not in it.
+ */
+export function existsIn(files: ReadonlySet<string>, path: string): boolean {
+  // A served path: `/sw.js` is what the site answers, from public/ or the build.
+  if (path.startsWith('/')) {
+    const served = path.slice(1);
+    return files.has(`public/${served}`) || existsIn(files, `dist/${served}`);
+  }
+  const bare = path.replace(/\/$/, '');
+  const source = BUILD_OUTPUTS[bare];
+  if (source !== undefined) return files.has(source);
+  if (bare === '' || bare.startsWith('..')) return false;
+  // An import specifier: `@/lib/zod` is src/lib/zod.ts.
+  if (['.ts', '.tsx', '/index.ts'].some((suffix) => files.has(`${bare}${suffix}`))) return true;
+  if (files.has(bare)) return true;
+  for (const file of files) {
+    if (file.startsWith(`${bare}/`) || file.endsWith(`/${bare}`) || basename(file) === bare)
+      return true;
+  }
+  return false;
+}
+
+const existsInRepository = (path: string): boolean => existsIn(EVERY_FILE_SET, path);
 
 /**
  * Whether a code span is an identifier this repository would define - camel
@@ -765,6 +807,29 @@ describe('the claim rules, against sentences written to be wrong', () => {
     expect(missingFile('.ts', 'README.md', exists)).toBe(false);
     // Not a file name at all.
     expect(missingFile('2.1 MB PNG image', 'README.md', exists)).toBe(false);
+  });
+
+  // CI was red from the commit that added this file until round eighteen:
+  // resolution fell back to the disk, which had a `dist/` on every machine
+  // that had built and none on CI, where the tests run before the build.
+  it('answers from the file list alone, never from what is on this disk', () => {
+    const none = new Set<string>();
+    // Both exist on this disk; neither is in the list.
+    expect(existsIn(none, 'package.json')).toBe(false);
+    expect(existsIn(none, 'dist/index.html')).toBe(false);
+    // A build output resolves through its source, and only a declared one does.
+    expect(existsIn(new Set(['index.html']), 'dist/index.html')).toBe(true);
+    expect(existsIn(new Set(['index.html']), 'dist/nope.html')).toBe(false);
+    expect(Object.values(BUILD_OUTPUTS).every((source) => existsInRepository(source))).toBe(true);
+  });
+
+  // `/sw.js` joined to the root resolved to the root itself, which exists,
+  // so every name beginning with a slash passed on every machine.
+  it('resolves a served path through public/ and the build, and fails one that is neither', () => {
+    expect(missingFile('/sw.js', 'README.md', existsInRepository)).toBe(false);
+    expect(missingFile('/_headers.json', 'README.md', existsInRepository)).toBe(true);
+    expect(missingFile('/no-such-file.ts', 'README.md', existsInRepository)).toBe(true);
+    expect(missingFile('../outside.ts', 'README.md', existsInRepository)).toBe(true);
   });
 
   it('treats a camel-case, dotted or called name as an identifier, and a word as a word', () => {

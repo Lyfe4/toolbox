@@ -42,6 +42,10 @@ export interface GridLayerProps {
  * be motion on navigation. A module is evaluated once per document, so a
  * reload - which is a cold open - draws it again, and nothing inside the app
  * ever can.
+ *
+ * ONCE PER PAGE LOAD IS THE DECISION, not an approximation of once per
+ * session: confirmed in round eighteen. Do not move this to sessionStorage -
+ * a reload is meant to draw the grid in again.
  */
 let drawnInThisDocument = false;
 

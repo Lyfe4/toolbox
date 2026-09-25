@@ -458,7 +458,11 @@ export const CanvasNodeView = memo(function CanvasNodeView({
         </span>
         <span className={styles.nodeTitle}>{entry.name}</span>
         {/* Per-node timing: small, mono, tabular. A developer-tool detail. */}
-        <NodeTiming durationMs={run.durationMs} armed={countArmed} />
+        <NodeTiming
+          durationMs={run.durationMs}
+          armed={countArmed}
+          running={run.status === 'running'}
+        />
         <span className={ledClass(verdict)} aria-hidden="true" />
       </div>
 

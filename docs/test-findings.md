@@ -4338,3 +4338,84 @@ classes are left unmarked on purpose, because they already say what they are:
    not of the node, or of one engine and not the other, or of one target and not
    its sibling. "True somewhere" is not drift and not never-true, and it is the
    shape of most of the matrix's mistakes.
+
+## Round eighteen, done — CI, a header that moved, and the narrow notifications
+
+2026-09-25, against `0b88061`.
+
+|                                            | Before                                 | After                                      |
+| ------------------------------------------ | -------------------------------------- | ------------------------------------------ |
+| CI on `main`                               | **red on two commits**, green before   | green                                      |
+| A name beginning `/` in a document         | resolved on every machine, whatever    | resolved through `public/` and the build   |
+| A node's title while it runs, hash node    | 158px, then 186px, then 158px          | 158px throughout                           |
+| One notification at 390px                  | **over the readout**, 66px, 320px wide | above it, 34px, between the canvas margins |
+| Notifications at once at 390px             | three, 214px of a 794px canvas         | two, 72px (112px under a finger)           |
+| Deliberate breaks each new check failed on | -                                      | **11 of 11**                               |
+
+### CI: the gate worked; the newest test never passed there
+
+Every run on `main` was green until `f85855a`, the commit that added
+`vite/docClaims.test.ts`, and both runs since were red on the same three tests:
+`dist/index.html` and `dist/sw.js` "no such file". The resolver's last resort was
+`existsSync` against the disk, and the disk here always had a `dist/` - every
+`check:browsers` run builds one - while CI runs `pnpm test` before `pnpm build`.
+Reproduced exactly by moving `dist/` aside on this machine, which also rules out
+the three suspects: not line endings, not a case-sensitive filesystem, not a
+dependency - the same Windows checkout fails the same three tests.
+
+Removing the fallback found four names that had leaned on it and one that had
+never been checked at all: any name beginning `/` joined to the root resolved
+to the root itself, which exists, so a slash and any file name passed everywhere.
+Names now resolve against one list, every file the walk finds - binaries and
+generated files included - with the walk skipping what `.gitignore` keeps out,
+and build outputs through a table of what the build writes from what.
+
+**Proving tests**: `answers from the file list alone, never from what is on this
+disk` fails with the fallback restored; `resolves a served path through public/
+and the build, and fails one that is neither` fails with the served-path guard
+removed. With `dist/` present and absent, the file gives the same result.
+
+The workflow's bundle comment named one budget where there are four; the audit
+could not push it. Changed in its own commit, pushed last - see the report.
+
+### The header that moved on every keystroke
+
+`settle` clears a node's figure while it runs, and `NodeTiming` returned
+nothing for it, so the flexible title took the figure's width for the running
+frames and gave it back. The box now stays, empty, while the node runs, and only
+then. The status light was the other suspect and is not one: it is an 8px box in
+every state. **Proving tests**: a unit test that fails with the box leaving, and
+`a run that re-starts on a keystroke leaves the title where it was`, which failed
+in both engines against the same break (158px to 186px).
+
+### Two decisions, recorded where the next person will look
+
+The travelling dash keeps tracking a real duration, and the grid draws in once
+per page load - written at the lines in `canvas.module.css` and `GridLayer`, and
+in architecture.md's motion section.
+
+### Notifications at narrow widths
+
+Round sixteen's part five was not done, and not reported as dropped: the Toast
+files were last changed on 2026-09-13. The treatment and its numbers are in
+architecture.md, "At narrow widths". `checkNotifications` now asserts placement
+at 390px under a mouse and under a finger, and the desktop column at 1280px,
+with a partner that says the finger pass really had a coarse pointer.
+
+Breaks, each built and run: the narrow block removed (overlap, margins, one line
+all failed), no clearance (overlap), a hard-coded 30px clearance (overlap - it
+failed under a mouse too, so it does not isolate the pointer argument; the
+readout's 22px and 50px do), no narrow cap (count), a band pushed past the edge
+(edge, margins), the action back under the message (one line). The desktop
+checks stayed green through all six.
+
+**The dev server was not the measurement.** On the production build one
+notification already covered the readout at 448px, not the second; the report's
+numbers were taller than production, as recorded before.
+
+### Looked for and not found
+
+- Another test reading gitignored state: none; the walk's skip list matches every
+  ignored path on this disk.
+- The footer's status word moving anything: it is one end of a `space-between` row.
+- A desktop change: the 1280px column measured identical before and after.

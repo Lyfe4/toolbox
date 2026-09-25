@@ -1739,6 +1739,9 @@ from `/tools` free of motion - see `freshArrivals`. The grid's once per page loa
 is a module-level flag in `GridLayer`, because the lifetime it describes is the
 document's, and it waits for the cold open to come down: the panel covers the
 whole viewport, and a first visit is exactly the page load the grid draws in on.
+**Once per page load is the intended lifetime, not a stand-in for once per
+session** - confirmed in round eighteen. A reload draws the grid in again, and
+it is not to be moved into `sessionStorage`.
 
 **Nothing counts while somebody types.** `countArmed` is emptied by any change
 to a value anywhere on the canvas - typed input, an option, a file - so a node
@@ -1751,7 +1754,12 @@ does not hand the wire layer a new arrival and restart a draw.
 clip - the four properties that change no box but their own. The count is the
 one that needed work: `0ms` is narrower than `12ms` and the node's title is the
 flexible item beside it, so the figure's box is sized by its final text, in a
-hidden pseudo-element, from the first frame.
+hidden pseudo-element, from the first frame. A run keeps that box too, empty:
+`settle` clears the figure while a node runs, and until round eighteen the box
+left with it, so every keystroke that re-ran a node widened its title for the
+running frames and narrowed it again when the figure landed - 28px on a hash
+node in both engines. `checkCanvasMotion` compares the title across each run
+that starts from a shown figure.<!-- asserted: cross-browser-check.mjs › a run that re-starts on a keystroke leaves the title where it was -->
 
 **Reduced motion removes all five rather than shortening them**, and not
 through the shared override. `global.css` collapses animations to 1ms, on
@@ -1817,16 +1825,23 @@ recorded rather than rounded away.
 - **Drawing the grid in behind the cold open.** It would spend the page load's
   one draw-in where nobody can see it.
 
-#### The travelling dash still tracks a real duration
+#### The travelling dash tracks a real duration, on purpose
 
 `.wireActive` - a dash travelling along a wire while data moves through it - is
 on only while the node the wire feeds is `running`, so its length is the run's.
 Measured while building the above: a 10ms hash showed it for one frame in Gecko,
-a 39ms one for two in JavaScriptCore, and a 1-8ms node for none. It is left as
-it is and recorded here, because making it an event - one fixed sweep when a
-run starts - is a decision about what it is for rather than a fix. While a wire
-is drawing in, the draw wins and the dash waits: they animate the same two
-properties, and the first run after a connection often lands inside the draw.
+a 39ms one for two in JavaScriptCore, and a 1-8ms node for none.
+
+**It is the exception to the rule above, and it is meant to be.** Everything
+else here acknowledges an event; the dash says "still working", which is a
+statement about a duration and has to be paced by one. That it never appears
+for a normal 1-8ms node is the point, not a gap: a run too short to wait for
+has nothing to say it is still going. Converting it into one fixed sweep on a
+run's start would draw it on every run, including the ones it exists to stay out
+of. Decided in round eighteen, and written at the rule in `canvas.module.css`
+so nobody makes it consistent later. While a wire is drawing in, the draw wins
+and the dash waits: they animate the same two properties, and the first run
+after a connection often lands inside the draw.
 
 ### Announcements are a log, not a variable
 
@@ -4334,6 +4349,44 @@ the feedback for what you did a moment ago.
 Three, oldest evicted. An offer somebody has walked past while performing three
 more actions has been declined in every sense that matters, and `Ctrl`+`Z` is
 still there for the one who changes their mind.
+
+### At narrow widths: a band above the readout, two at most
+
+Below 640px (`NARROW_TOASTS`, the canvas's own `COMPACT_TOOLBAR` figure) the
+corner column did not fit beside the canvas readout, and nothing had ever
+measured it. On the production build at 390px and at 448px, in both engines,
+**one** notification already sat over the readout - bottom 828 against a readout
+top of 810 - and each was 66px tall: a line of text, a button left-aligned under
+it, and an empty middle. Three were 214px of a 794px canvas. It was asked for in
+round sixteen and not done; round eighteen found no trace of an attempt.
+
+Below that width a notification now:
+
+- **spans the canvas between `--pb-space-md` margins**, the inset the readout and
+  the toolbar column already use;
+- **sits above the readout wherever the readout is.** The canvas measures the
+  readout's top edge and writes it to `--toast-clearance` (`useToastClearance`),
+  because the readout is 22px tall under a mouse and 50px under a finger - a
+  number here would be right at one pointer type only. A page with no readout
+  keeps the ordinary margin;
+- **is one line**: icon, title, `Undo`, close, with a description on a second line
+  when there is one. 34px under a mouse, 54px under a finger, where both controls
+  are 44px targets;
+- **is one of at most two**, oldest evicted as on a desktop. Two are 72px of that
+  794px canvas under a mouse and 112px under a finger.
+
+The layout is decided by the stylesheet alone; the provider reads the same
+breakpoint only for how many to keep, where a moment's stale answer lays nothing
+out wrong. A desktop is unchanged - the 320px column, bottom right, three.
+`checkNotifications` asserts all of it at 390px under a mouse and under a finger,
+and the desktop column at 1280px.<!-- asserted: cross-browser-check.mjs › no notification ${where} covers the canvas readout -->
+
+Not done, and recorded: with the phone's inspector sheet open the readout is
+behind the sheet, so a notification sits over the sheet's lower edge instead -
+measured at 390px, two of them at 734-806 over a sheet from 328 to the bottom,
+in both engines. It was as true of the corner column before this. Docking above
+the sheet would put notifications at mid-screen over the canvas, and inside it
+would be a second layout for one state; neither is obviously better.
 
 ### Why the clock is ours and not Radix's
 

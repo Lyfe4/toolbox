@@ -113,6 +113,69 @@
   margin-block-start: var(--pb-space-sm);
 }
 
+/*
+ * NARROW: A BAND ABOVE THE READOUT, ONE LINE EACH. Below 640px - `NARROW_TOASTS`
+ * in clearance.ts, which is where this figure comes from - the 320px corner
+ * column overlapped the canvas readout with a single notification, at 390px
+ * and at 448px alike, and each one was 66px tall: a line of text over a
+ * button left-aligned under it, with the middle of the box empty.
+ *
+ * - Between the canvas's own margins, `--pb-space-md` from either edge, the
+ *   inset the readout and the toolbar column both use.
+ * - Above the readout, wherever it is: `--toast-clearance` is its measured top
+ *   edge, written by the canvas, and absent on a page with no readout.
+ * - The action in the row, beside the close button, and the description - when
+ *   there is one - on a line of its own under both. The wrapper is `contents`
+ *   so its three children are placed by this grid directly.
+ *
+ * How many there may be is the provider's: see MAX_ON_SCREEN_NARROW.
+ */
+@media (max-width: 640px) {
+  .viewport {
+    inset-inline: var(--pb-space-md);
+    inset-block-end: max(
+      var(--pb-space-md),
+      calc(var(--toast-clearance, 0px) + var(--pb-space-xs))
+    );
+    inline-size: auto;
+    max-inline-size: none;
+    gap: var(--pb-space-xs);
+  }
+
+  .toast {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    padding-block: var(--pb-space-xs);
+  }
+
+  .text {
+    display: contents;
+  }
+
+  .icon {
+    grid-area: 1 / 1;
+    padding-block-start: 0;
+  }
+
+  .title {
+    grid-area: 1 / 2;
+  }
+
+  .description {
+    grid-area: 2 / 2 / 3 / -1;
+    margin: 0;
+  }
+
+  .action {
+    grid-area: 1 / 3;
+    margin: 0;
+  }
+
+  .toast > :last-child {
+    grid-area: 1 / 4;
+  }
+}
+
 @media (forced-colors: active) {
   .toast {
     border-color: CanvasText;

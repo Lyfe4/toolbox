@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { expectNoAxeViolations } from '@/lib/testing/axe';
 
+import { NARROW_TOASTS } from './clearance';
 import { ToastProvider, useToast } from './Toast';
 
 function Trigger({ tone }: { readonly tone?: 'info' | 'error' }) {
@@ -483,6 +484,34 @@ describe('When several arrive at once', () => {
     expect(onScreen('Deleted node 1')).toBe(false);
     expect(onScreen('Deleted node 2')).toBe(false);
     expect(onScreen('Deleted node 5')).toBe(true);
+  });
+
+  // Where the stack is a band across a phone's whole canvas, every one costs a
+  // strip of it; where the harness measures that band, this holds the count.
+  it('keeps two at narrow widths, evicting the oldest the same way', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === NARROW_TOASTS,
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => false,
+    }));
+    try {
+      mountBench();
+      press('Delete');
+      press('Delete');
+      press('Delete');
+      await elapse(0);
+
+      expect(screen.getAllByRole('button', { name: 'Undo' })).toHaveLength(2);
+      expect(onScreen('Deleted node 1')).toBe(false);
+      expect(onScreen('Deleted node 3')).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   /*

@@ -1331,6 +1331,14 @@
 /*
  * A single dash travelling once along the wire while data moves through it.
  * Mechanical rather than decorative: no glow, no pulse, no loop past the run.
+ *
+ * THE ONE PIECE OF CANVAS MOTION PACED BY A REAL DURATION, ON PURPOSE. It is
+ * on while the node it feeds is running, so it says "still working" rather
+ * than acknowledging an event, and a 1-8ms node never shows it at all. Do not
+ * convert it to a fixed sweep on a run's start: that would draw it for every
+ * run, which is exactly the case it exists to stay out of. Decided in round
+ * eighteen; see docs/architecture.md, "The travelling dash tracks a real
+ * duration, on purpose".
  */
 .wireActive {
   stroke: var(--pb-accent);

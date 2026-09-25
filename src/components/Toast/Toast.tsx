@@ -14,7 +14,9 @@ import { Button } from '@/components/Button';
 import { CheckIcon, CloseIcon, ErrorIcon, InfoIcon, WarningIcon } from '@/components/Icon';
 import { IconButton } from '@/components/IconButton';
 import { cx } from '@/lib/cx';
+import { useMediaQuery } from '@/lib/useMediaQuery';
 
+import { NARROW_TOASTS } from './clearance';
 import styles from './Toast.module.css';
 
 export type ToastTone = 'info' | 'ok' | 'warn' | 'error';
@@ -149,12 +151,21 @@ const ACTION_LIFETIME = 20_000;
  * feedback for what the user is doing now hidden by the feedback for what they
  * did a moment ago, which is exactly backwards.
  *
- * Three, oldest evicted. Three fits above the fold on the shortest phone this
- * app supports, and an offer somebody has walked past while performing three
- * more actions has been declined in every sense that matters; Ctrl+Z is still
- * there for the one who changes their mind.
+ * Three, oldest evicted, and an offer somebody has walked past while
+ * performing three more actions has been declined in every sense that
+ * matters; Ctrl+Z is still there for the one who changes their mind.
+ *
+ * TWO BELOW `NARROW_TOASTS`, where the stack is a band across the full width
+ * of the canvas rather than a column beside it. There every notification
+ * covers the canvas edge to edge, so each one costs a whole strip of the
+ * thing being worked on. Two single-line notifications are 72px of a 794px
+ * canvas at 390px under a mouse and 112px under a finger, where every
+ * control is 44px tall; three of the old ones were 214px.
+ * Evicted rather than hidden, the same rule as above: nothing is kept counting
+ * down where nobody can see or reach it.
  */
 const MAX_ON_SCREEN = 3;
+const MAX_ON_SCREEN_NARROW = 2;
 
 /** A running countdown. `handle` is 0 when it is frozen or not yet started. */
 interface Countdown {
@@ -211,19 +222,32 @@ export function ToastProvider({ children }: ToastProviderProps) {
   const viewportRef = useRef<HTMLOListElement>(null);
   const countdowns = useRef(new Map<string, Countdown>());
   const pointerInside = useRef(false);
+  const narrow = useMediaQuery(NARROW_TOASTS);
+  const limit = narrow ? MAX_ON_SCREEN_NARROW : MAX_ON_SCREEN;
+  const [appliedLimit, setAppliedLimit] = useState(limit);
 
-  const notify = useCallback((toast: ToastInput) => {
-    nextId.current += 1;
-    const id = `toast-${nextId.current.toString()}`;
-    const tone = toast.tone ?? 'info';
-    // The longer of the two, so an actionable error is not cut to the action
-    // floor and an actionable receipt is not cut to the tone default.
-    const lifetime =
-      toast.action === undefined
-        ? TONE_LIFETIME[tone]
-        : Math.max(TONE_LIFETIME[tone], ACTION_LIFETIME);
-    setToasts((current) => [...current, { ...toast, id, tone, lifetime }].slice(-MAX_ON_SCREEN));
-  }, []);
+  // Narrowing the window with three up takes the oldest down, like a fourth
+  // would. Decided during render, so no frame shows three in a two-wide band.
+  if (appliedLimit !== limit) {
+    setAppliedLimit(limit);
+    if (toasts.length > limit) setToasts(toasts.slice(-limit));
+  }
+
+  const notify = useCallback(
+    (toast: ToastInput) => {
+      nextId.current += 1;
+      const id = `toast-${nextId.current.toString()}`;
+      const tone = toast.tone ?? 'info';
+      // The longer of the two, so an actionable error is not cut to the action
+      // floor and an actionable receipt is not cut to the tone default.
+      const lifetime =
+        toast.action === undefined
+          ? TONE_LIFETIME[tone]
+          : Math.max(TONE_LIFETIME[tone], ACTION_LIFETIME);
+      setToasts((current) => [...current, { ...toast, id, tone, lifetime }].slice(-limit));
+    },
+    [limit],
+  );
 
   const dismiss = useCallback((id: string) => {
     setToasts((current) => current.filter((toast) => toast.id !== id));
@@ -362,7 +386,7 @@ export function ToastProvider({ children }: ToastProviderProps) {
             }}
           >
             <span className={styles.icon}>{TONE_ICONS[toast.tone]}</span>
-            <div>
+            <div className={styles.text}>
               <RadixToast.Title className={styles.title}>{toast.title}</RadixToast.Title>
               {toast.description !== undefined ? (
                 <RadixToast.Description className={styles.description}>

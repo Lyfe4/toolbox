@@ -46,6 +46,15 @@ pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build && p
 A pre-commit hook runs ESLint and Prettier on staged files. It is a
 convenience, not the gate — run the six before opening a pull request.
 
+**When they pass here and fail in CI, CI is right.** CI runs the six from a
+fresh clone with nothing built, and that is the state they make claims about; a
+working copy also has `dist/`, an `evidence/` directory and whatever else
+`.gitignore` keeps out. The documentation audit's commit and the motion commit
+after it were red in CI and green here, because `vite/docClaims.test.ts` resolved file names against the
+disk and found a `dist/` that CI, which tests before it builds, never has. A test
+must not read gitignored state, and a local run that should match CI is one with
+`dist/` moved aside. Look at the run after pushing: `gh run list --limit 3`.
+
 ### Three more that are not in CI
 
 ```bash

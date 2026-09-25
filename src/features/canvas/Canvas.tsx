@@ -13,7 +13,7 @@ import { Button } from '@/components/Button';
 import { CopyIcon, PlusIcon, SearchIcon, SignalIcon, SlidersIcon } from '@/components/Icon';
 import { IconButton } from '@/components/IconButton';
 import { LiveRegion } from '@/components/LiveRegion';
-import { useToast } from '@/components/Toast';
+import { useToast, useToastClearance } from '@/components/Toast';
 import { VisuallyHidden } from '@/components/VisuallyHidden';
 import { idleState } from '@/features/execution/graph';
 import { usePipelineStore } from '@/features/execution/pipelineStore';
@@ -325,6 +325,9 @@ export interface CanvasProps {
 export function Canvas({ shareParam }: CanvasProps = {}) {
   const rootRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
+  // Notifications at narrow widths dock above this, wherever it has grown to.
+  const readoutRef = useRef<HTMLDivElement>(null);
+  useToastClearance(readoutRef);
   const descriptionId = useId();
 
   const graph = useCanvasStore((state) => state.graph);
@@ -3154,7 +3157,12 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
           "5 nodes" drew a row below "1 wires  idle  100%" inside a 32px box and
           read as overlapping.
         */}
-        <div className={styles.readout} data-canvas-chrome="readout" data-testid="canvas-readout">
+        <div
+          ref={readoutRef}
+          className={styles.readout}
+          data-canvas-chrome="readout"
+          data-testid="canvas-readout"
+        >
           <span className={styles.readoutItem}>
             <SignalIcon size={10} />
             {counted(graph.nodeOrder.length, 'node')}
