@@ -6,6 +6,7 @@ import {
   checkJsonInput,
   decodeDocument,
   DELIMITERS,
+  formatNamedBy,
   readAuto,
   readSource,
   sortKeysDeep,
@@ -182,11 +183,17 @@ export const structuredDataTool = defineTool({
      * threw `RangeError` straight out of `run`, which the execution contract
      * says can never happen.
      */
+    /*
+     * THE NAME OF A FILE, for the one question content cannot answer - see
+     * `readByName`. Only a `bytes` value has one: text was typed or pasted, and
+     * a wired `json` value was never a file.
+     */
+    const filename = input.type === 'bytes' ? input.filename : null;
     const parsed: ReturnType<typeof readAuto> =
       input.type === 'json'
         ? wired(checkJsonInput(input.data))
         : options.source === 'auto'
-          ? readAuto(source, delimiter, options.target)
+          ? readAuto(source, delimiter, options.target, formatNamedBy(filename))
           : readSource(source, options.source, delimiter, options.target);
 
     if (!parsed.ok) return parsed;
@@ -219,6 +226,7 @@ export const structuredDataTool = defineTool({
           // read from a format, so the report says JSON rather than claiming a
           // guess it did not make.
           chosen: input.type === 'json' || options.source !== 'auto',
+          filename,
           writeNotes: rendered.value.notes,
           wroteStream: rendered.value.stream,
           inputNotes,

@@ -4419,3 +4419,252 @@ numbers were taller than production, as recorded before.
   ignored path on this disk.
 - The footer's status word moving anything: it is one end of a `space-between` row.
 - A desktop change: the 1280px column measured identical before and after.
+
+## Round twenty-three, done — the harness reads the corpus, notifications over the sheet, and a one-column file
+
+2026-09-25, against `39b3e03`. The three items that had been parked since
+rounds fifteen, eighteen and thirteen.
+
+|                                                   | Before                                                                           | After                                                                                              |
+| ------------------------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Loss-corpus ratio                                 | **20 of 20**                                                                     | **20 of 20**, the same number                                                                      |
+| Places a corpus row is listed                     | two: the corpus and five harness sections                                        | one: the corpus                                                                                    |
+| Rows the harness drives on `/tools` / on a node   | 17 / 10 and one combined node; rows 4-7 as one document; rows 3, 8, 9 on no page | **20 / 20**, each on its own                                                                       |
+| Controls the harness drives, page / node          | 12 / 8                                                                           | **26 / 26**, every one on both                                                                     |
+| The five sections that listed rows                | 1,256 lines                                                                      | `checkLossCorpus` and its helpers 241, the two residual sections 397, TC-1 17: **655**             |
+| `scripts/cross-browser-check.mjs`, item 1 alone   | 20,537 lines                                                                     | 19,934 (**−603**); 20,284 with items 2 and 3's checks                                              |
+| Notifications over the phone's sheet              | unmeasured, "neither obviously better"                                           | measured, **kept**, and the reasons held by a check                                                |
+| A one-column `.csv` or `.tsv` file, auto-detect   | refused                                                                          | read, and the report says the name decided it                                                      |
+| Deliberate breaks each new check was shown red on | -                                                                                | **8 of 8** unit, **12 of 12** built into the harness                                               |
+| `check:browsers`, full run, idle                  | 3,090 passed at round seventeen; not recorded since                              | **3,512 passed, 0 failed, 13 skipped** (the thirteen round twenty-two listed), 1,271 s of sections |
+
+### 1. The harness reads the loss corpus
+
+**The overlap was smaller than "all twenty rows" and worse than it sounded.**
+Counted from `39b3e03`, row by row: row 3 (`rgb(300 -20 50)`) was in none of
+the five sections; rows 8 and 9 (the YAML target) were on no page; rows 4 to 7
+were one combined document on the page; one combined node, on the YAML target,
+stood in for rows 4 to 9; rows 2, 14 and 15 were never on a node. Seventeen rows
+on `/tools`, ten on a node, twelve controls on the page and eight on a node. So "a new row is two edits" was
+true, and the second copy had also stopped being a copy - it had drifted from
+the corpus it duplicated, the way the round-fifteen finding predicted.
+
+**The shape.** `spec/loss-corpus.json` is read by the harness as it is by
+`lossCorpus.test.ts`, and one section, `checkLossCorpus`, loops over it. The
+harness's sharper words and controls moved INTO each row, as a `drawn` block
+beside `expect` - which is the first half of what round fifteen said had to
+happen, and the reason it was a round of its own:
+
+| `drawn` field | What it holds                                                 | Came from                                                                               |
+| ------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `choose`      | the tool page's options as the page labels them               | each section's listbox clicks                                                           |
+| `says`        | words the WARNING must carry beyond `expect.mentions`         | `'1 header cell was trimmed'`, `'" shipped at "'`, `'$.retries discarded `3`'`, ...     |
+| `unsaid`      | words no note may carry                                       | the comment-only control (`!…includes('anchor')`), row 17's "invents nothing"           |
+| `face`        | what the node's face must hold, when sharper than the subject | the node checks' phrases                                                                |
+| `spoken`      | what the node's accessible name must hold                     | row 17's `highlighted and Esc`                                                          |
+| `outputLacks` | what the converted text may not hold                          | row 13's caption text, row 17's `_`, `*`, `` ` ``                                       |
+| `quiet`       | the clean document draws no note at all                       | the controls that asserted `!drawn && text === ''`                                      |
+| `controls`    | more documents that lose nothing, each run like `clean`       | `"2024": launched`, `alpha," shipped at "`, sibling objects, a literal block, `#aabbcc` |
+
+**Whether reading the corpus made anything weaker: no, and here is the
+check, assertion by assertion.** Every assertion in the five old sections was
+listed and given a place:
+
+- **Each positive** was "the notes list's text contains these words". It is now
+  "ONE note, drawn with a box, at the Warning level, whose title holds the
+  subject and whose title and body hold every `mentions` and `says` word" -
+  stronger in three ways the old one was not (per note, the level, `mentions`
+  as well as the section's own phrases). And it runs on both surfaces for every
+  row, where the old sections drove ten rows on a node.
+- **Each node positive** was a face starting `Lossy ·` with a phrase; now the
+  same, plus `data-verdict="lossy"` and `lossy:` in the accessible name for
+  every row, not four.
+- **Each control** was either "nothing drawn" or "this phrase absent". It is
+  now: no note about the subject at ANY level, no Warning at all, none of the
+  row's `says` words, and nothing at all where `quiet` - and on a node,
+  `data-verdict="ok"`. The old node controls checked `spoken.includes('succeeded')`,
+  which a LOSSY node also satisfies (`succeeded, and lost something`); the verdict
+  is the control those checks meant.
+- **The payload half moved into the unit suite too.** `lossCorpus.test.ts` now
+  holds every `drawn` word against the tools: the page's `choose` spells the
+  row's `options` (checked against each tool's own option fields), every `says`
+  is in the row's warning, every `unsaid` absent, every `outputLacks` absent,
+  every `controls` document runs through the negative control, and a `quiet`
+  one carries no note at all. So a phrase no tool writes fails in `pnpm test`,
+  not in a browser run nobody has started.
+
+**What did not move into the corpus, and why each stays a check of its own:**
+
+| Check                                                   | Now in                | Why it is not a row                                                                                            |
+| ------------------------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------- |
+| the value-model refusal, six offenders, its node        | `checkValueModel`     | a refusal converts nothing, so no note exists for a row to measure                                             |
+| the rounding advice fitted to the target (SD-13)        | `checkValueModel`     | not in the corpus - a rounded integer is round three's, `checkLossReports`                                     |
+| rows 4-7 in ONE document as ONE warning                 | `checkValueModel`     | no row holds a combination; it is the note's design. Now asked per note: it used to pass with four notes       |
+| the three JSON positions, `!!float`, a duplicate column | `checkValueModel`     | refusals, as above                                                                                             |
+| the contrast table and the compositor oracle            | `checkColourContrast` | not a note                                                                                                     |
+| TC-1, the cell list still writes a table                | `checkPastedCensus`   | a property of the OUTPUT a note cannot state; it reads row 14's input from the corpus rather than a copy of it |
+
+`checkMarkdownCensus`, `checkClassAndSubstitution` and `checkTableCellsAndFlow`
+are gone; `checkColourReports` is `checkColourContrast`, because what is left
+of it reports nothing.
+
+**The ratio is the same number: 20 of 20, before and after.** Nothing here
+changes a tool, and the verdict is still read from `expect` alone; `drawn` is
+held to the tools beside it, not folded into the verdict. A `drawn` phrase that
+failed would be a failing test, not a row turning silent - so the ratio cannot
+move because a harness phrase was wrong, which is the property that keeps the
+instrument honest.
+
+**Shown against the break the brief asked for, and three more.** Each built,
+run through `lossCorpus.test.ts` and `--only=checkLossCorpus` in both engines,
+and restored by hash:
+
+| Break                                                               | `pnpm test`                                                                 | `checkLossCorpus`, both engines                                                                             |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| **A. Row 11's note removed** (`trimmedHeaderNotes` returns nothing) | **the ratio: 19 of 20**, row 11 `lossy, silent`; and row 11's `drawn` words | **row 11 red on the page and on the node**; the other 180 of 184 checks green                               |
+| E. Row 11's note fires on a quoted header                           | row 11's control 1                                                          | control 1 red on the page and on the node; nothing else                                                     |
+| B. No note drawn anywhere (report list and face)                    | -                                                                           | **all 80 positives red**, all 104 controls green                                                            |
+| C. A warning on every run                                           | -                                                                           | **all 104 controls red**; 2 positives red too - row 17's `unsaid: ["invented"]` caught the fake note's body |
+
+### 2. Notifications over the inspector sheet: kept, and recorded as deliberate
+
+The measurements and the reasoning are in architecture.md, "Over the inspector
+sheet". In short: over the sheet's lower edge a stack covers the right half of
+the sheet's scrolling body; above the sheet it would cover 68% of the canvas
+left under a mouse and all of it, plus the selection bar's `Delete`, under a
+finger; docked at the sheet's top it sits on `Close the inspector`. The current
+placement is the only one that never covers a control that cannot be scrolled
+out from under it, and it keeps a receipt next to the press that raised it. The
+cost it is kept at is recorded: in text-convert's HTML view under a finger, a
+`Copied` receipt sat over the next two buttons for its six seconds.
+
+`checkNotifications` now holds the three facts the decision rests on, at 390px
+under both pointers, and was shown red against three placements built for real:
+
+| Break                                                         | Result                                                                                                                                                                         |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| above the sheet - the clearance measured from the sheet's top | "over the sheet's body" red in both engines under both pointers: the stack at 198-324 and 158-324, option B measured rather than estimated                                     |
+| the full band, left to right                                  | "does not cover Copy" red under a mouse in both engines; under a finger Copy is at 800-844, below the stack, so it holds there. The existing right-margin check red under both |
+| docked at the sheet's top edge                                | "over the sheet's body" red in both engines under both pointers: 328-454, over the title and Close                                                                             |
+
+The first version of the third break moved notifications up at every narrow
+width, not only over the sheet, and the section crashed before reaching the new
+check - the stack intercepted the placement check's own clicks on nodes. So the
+placement breaks were rebuilt the way a regression would actually arrive,
+through the clearance hook, and only while the sheet is open.
+
+### 3. A one-column file, read by its name
+
+**Whether the extension is available where detection runs: yes.** A dropped or
+chosen file reaches `structured-data` as a `bytes` value carrying
+`filename: file.name` (`fileValueFor`), on the tool page and in the canvas
+inspector alike, and across the worker boundary. Pasted text has none, and nor
+do bytes out of another tool (`base64` writes `filename: null`).
+
+**Whether anything already used it: one thing, and nothing that decides a
+format.** `image-convert` names its output after it. The declared MIME type -
+the operating system's extension mapping - is never read anywhere, and every
+format decision in the app was made from the bytes. Nothing overrode content
+with a name, and nothing was overridden.
+
+**What it does now, and which wins.** Content wins everywhere it says anything:
+a bracket, `---`, a block sequence, `sep=`, a delimiter detection finds, a YAML
+mapping, and the pipe suggestion all decide before the name is read. The name
+is consulted only at the point auto-detect would otherwise give up - and only
+when the file is ONE column under every delimiter the tool offers, parsed rather
+than searched, so `"Hopper, Grace"` is one cell. That is right, I think, because
+the name is evidence from outside the document and the content is the document:
+where they could disagree, the content has already decided.
+
+**The report says so, in words of their own.** `CSV (from the file name) →
+JSON` on the Detected summary where content guesses say `(detected)`, a note -
+level `info`, since nothing was lost - `Read as CSV because the file is named
+ids.csv`, and on a node's face `3 items · CSV by its name`. The face is new
+ground: a node never showed a guess before, and content guesses still do not;
+this one does because `3 items` from a file called `ids.csv` looks exactly like
+`3 items` from anything else, and the brief's rule was that a new report is
+visible with nothing clicked on both surfaces.
+
+**Pasted text keeps the refusal**, and its detail still opens with the
+instruction - "choose CSV as the source format" - and now adds that a file named
+`.csv` or `.tsv` is read without being asked.
+
+| Proving test                                                                        | Negative control, on subject                                                                                                                                                                                     |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `byName.test.ts`: ids, emails, `.tsv`, a quoted comma; the summary, note and guess  | the same bytes named `.txt` equal to pasted text's refusal; no name at all; six multi-column or ragged `.csv` documents deep-equal to the same bytes named `.txt`; content that says what it is; a chosen source |
+| `checkFileExtension`, both engines: summary and note on `/tools`, the face and name | `.txt` refused with its instruction on both surfaces; a two-column `.csv` says `(detected)` and `2 items`; pasted text refused                                                                                   |
+
+Unit breaks, each alone, restored by hash - eight, all caught: the name never
+consulted (6 red), no one-column test (2), the one-column test under the chosen
+delimiter only (1 - the ragged semicolon file), the name before the content (1),
+the report saying `(detected)` (2), no note (1), no guess on the face (1), and
+`.txt` claiming CSV (3). Harness breaks, each built and run in both engines:
+the name never consulted (the three case checks red, the four controls green),
+no guess on the face (the node case red), the report saying `(detected)` (the
+summary check red), `.txt` claiming CSV (both `.txt` controls red), and the
+refusal losing its instruction (the `.txt` and pasted controls red).
+
+### What was rejected, and why
+
+- **A per-row harness function, or a table of row ids to hand-written checks.**
+  Fewer lines than today and a second list again.
+- **Reading option labels off the page at run time.** The page shows labels, the
+  corpus holds values, and nothing in the DOM maps one to the other; `choose` is
+  data the unit test checks against the tool's own option fields instead.
+- **Folding `drawn` into the verdict.** It would let a harness phrase move the
+  ratio, which is the one number here that must only move when a tool does.
+- **Notifications above the sheet, or docked to it.** Measured above.
+- **Lowering the stack over the sheet by the readout clearance the sheet makes
+  pointless.** Moves the covered band rather than shrinking it.
+- **The extension overriding content**, or applying to a multi-column `.csv`
+  detection could not read. Either changes a file that behaves correctly today,
+  and the brief ruled that out.
+- **A warning for the name.** Nothing was lost; `Lossy` on the node would be
+  false.
+- **Showing content guesses on the node face too.** Consistent, and not asked
+  for; `JSON (detected)` on every node is the noise the face exists to avoid.
+
+### Looked for and NOT found
+
+- **A row the old sections covered that the corpus loop does not.** None - every
+  old assertion was placed, in the tables above.
+- **A `drawn` word the tools do not write.** None; the unit test says so.
+- **A second place a file name decides anything.** None besides image-convert's
+  output name.
+- **A cache that could serve a `.txt` result for the same bytes named `.csv`.**
+  None: a node's cache key has each file input's name.
+- **A cost this round did not pay back.** `checkLossCorpus` is now the slowest
+  section, 94 s in Firefox and 122 s in WebKit. With the two residual sections
+  the old five became, that is 269 s across both engines against 142 s for the
+  five before - about 127 s more per full run, for every row and every control
+  on both surfaces. Recorded rather than trimmed: the node controls are the half
+  the old sections mostly skipped. Measured on this machine, not asserted.
+- **A notification the canvas raises while someone types in the sheet** - the
+  keyboard case the sheet decision cannot measure. None of the canvas's
+  `notify` calls is on a typing path.
+
+### Anything in the framing I think is wrong
+
+1. **"The harness hard-codes all twenty corpus rows."** Seventeen on a page and
+   ten on a node, four of them as one document. The copy was not only
+   duplicated, it had drifted.
+2. **"Fewer lines is not worth a weaker check"** was the right worry, and the
+   answer turned out to be that the old checks were WEAKER than the corpus in
+   places: a list's text rather than one note, no level, `succeeded` as a
+   control. The trade was not lines for strength; both went the same way.
+3. **"Roughly 400 to 500 lines."** 603 net, out of 1,256.
+4. **"A toast about an action taken in the sheet arguably belongs near it"** is
+   the argument that decided it, but not on its own: what decided it is that the
+   other two placements cover things that cannot be scrolled away.
+5. **"A .csv or .tsv file with one column is unambiguous."** Nearly. A `.csv`
+   whose one column holds an unquoted comma - `Hopper, Grace` - is two columns
+   to every CSV reader, so it is not read by name, and is refused as before.
+
+### Still open
+
+- **A notification while the on-screen keyboard is up** would sit behind it on
+  a real phone. Unmeasured: nothing raises one there today.
+- **Content guesses on the node face.** A decision, recorded above, not made.
+- Unchanged from before: `checkLossReports`' 500 ms control, `someOf`, the
+  wall-clock sites, image metadata level, `TOUCH_ROUTES`, `checkPopovers`'
+  theme editor selects, `OptionField.secret`.

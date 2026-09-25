@@ -1,6 +1,7 @@
 {
   "$schema-note": "One document per row of the silent-loss table in docs/test-findings.md, with the note that row must produce. Read by src/features/registry/lossCorpus.test.ts, which runs every case and DERIVES the verdict rather than reading one. A case whose note fires is `lossy, told`; a case whose note does not fire is `lossy, silent`; a row with `input: null` is `not verified`. Most of this file is red on the day it lands, and that is the point: a ratio has a denominator, and a denominator is a thing somebody can add to.",
-  "howToAddACase": "Append an object with the next `row` number, a unique `id`, the `tool` and `options` that reproduce it, an `input` that loses something, a `clean` input of the same shape that does not, and the `expect` the note must satisfy. Nothing else has to change: the test derives the table and the ratio, and the doc block it writes into docs/conversion-matrix.md is compared rather than maintained.",
+  "howToAddACase": "Append an object with the next `row` number, a unique `id`, the `tool` and `options` that reproduce it, an `input` that loses something, a `clean` input of the same shape that does not, the `expect` the note must satisfy, and the `drawn` block below. Nothing else has to change: the test derives the table and the ratio, the doc block it writes into docs/conversion-matrix.md is compared rather than maintained, and scripts/cross-browser-check.mjs drives the new row on /tools and on a canvas node in both engines on its next run.",
+  "drawnNote": "`drawn` is what scripts/cross-browser-check.mjs holds each row to in two engines, beside `expect`: `choose` is the tool page's options as the page labels them (checked against the tool's own fields by lossCorpus.test.ts), `says` words the warning must carry as well as `expect.mentions`, `unsaid` words no note may carry, `face` what the node's face must hold (the subject when absent), `spoken` what its accessible name must, `outputLacks` what the converted text may not hold, `quiet` that the clean document draws no note at all, and `controls` more documents that lose nothing - each run through the same checks as `clean`, here and in the unit test.",
   "roundsThatReportedZero": [
     {
       "reported": "round three",
@@ -28,6 +29,15 @@
       "expect": {
         "titleContains": "outside sRGB",
         "mentions": ["oklch(0.7 0.4 150)", "#00d600"]
+      },
+      "drawn": {
+        "choose": {},
+        "controls": [
+          {
+            "input": "#aabbcc",
+            "quiet": true
+          }
+        ]
       }
     },
     {
@@ -44,6 +54,15 @@
       "expect": {
         "titleContains": "clamped",
         "mentions": ["hsl(361 110% -5%)", "saturation 110%", "lightness -5%", "#000000"]
+      },
+      "drawn": {
+        "choose": {},
+        "controls": [
+          {
+            "input": "#aabbcc",
+            "quiet": true
+          }
+        ]
       }
     },
     {
@@ -60,6 +79,9 @@
       "expect": {
         "titleContains": "clamped",
         "mentions": ["rgb(300 -20 50)", "red 300", "green -20", "#ff0032"]
+      },
+      "drawn": {
+        "choose": {}
       }
     },
     {
@@ -77,6 +99,14 @@
       "expect": {
         "titleContains": "comment",
         "mentions": ["why this column exists"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "YAML",
+          "Target format": "JSON"
+        },
+        "says": ["1 comment"],
+        "unsaid": ["anchor", "tag", "block style"]
       }
     },
     {
@@ -94,6 +124,14 @@
       "expect": {
         "titleContains": "anchor",
         "mentions": ["defaults"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "YAML",
+          "Target format": "JSON"
+        },
+        "says": ["1 anchor", "EXPANDED", "larger than the source"],
+        "unsaid": ["comment", "tag", "block style"]
       }
     },
     {
@@ -111,6 +149,14 @@
       "expect": {
         "titleContains": "tag",
         "mentions": ["!mytype"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "YAML",
+          "Target format": "JSON"
+        },
+        "says": ["1 tag"],
+        "unsaid": ["comment", "anchor", "block style"]
       }
     },
     {
@@ -128,6 +174,14 @@
       "expect": {
         "titleContains": "style",
         "mentions": ["description"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "YAML",
+          "Target format": "JSON"
+        },
+        "says": ["1 block style"],
+        "unsaid": ["comment", "anchor", "tag"]
       }
     },
     {
@@ -145,6 +199,14 @@
       "expect": {
         "titleContains": "anchor",
         "mentions": ["defaults"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "YAML",
+          "Target format": "YAML"
+        },
+        "says": ["1 anchor"],
+        "unsaid": ["comment", "tag"]
       }
     },
     {
@@ -162,6 +224,19 @@
       "expect": {
         "titleContains": "style",
         "mentions": ["description"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "YAML",
+          "Target format": "YAML"
+        },
+        "says": ["1 block style"],
+        "controls": [
+          {
+            "input": "text: |\n  one\n  two\n",
+            "quiet": true
+          }
+        ]
       }
     },
     {
@@ -179,6 +254,20 @@
       "expect": {
         "titleContains": "key",
         "mentions": ["2024"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "YAML",
+          "Target format": "YAML"
+        },
+        "says": ["1 key became text"],
+        "face": "key became text",
+        "controls": [
+          {
+            "input": "\"2024\": launched\n",
+            "quiet": true
+          }
+        ]
       }
     },
     {
@@ -196,6 +285,20 @@
       "expect": {
         "titleContains": "trim",
         "mentions": ["shipped at"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "CSV",
+          "Target format": "JSON"
+        },
+        "says": ["1 header cell was trimmed", "\" shipped at \""],
+        "face": "1 header cell was trimmed",
+        "controls": [
+          {
+            "input": "alpha,\" shipped at \"\n1,2\n",
+            "quiet": true
+          }
+        ]
       }
     },
     {
@@ -213,6 +316,20 @@
       "expect": {
         "titleContains": "duplicate",
         "mentions": ["retries", "3"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "JSON",
+          "Target format": "JSON"
+        },
+        "says": ["1 duplicate key was discarded", "$.retries discarded `3`"],
+        "face": "1 duplicate key was discarded",
+        "controls": [
+          {
+            "input": "[{\"retries\": 3}, {\"retries\": 5}]",
+            "quiet": true
+          }
+        ]
       }
     },
     {
@@ -231,7 +348,15 @@
         "titleContains": "could not carry",
         "mentions": ["<caption>"]
       },
-      "whyThisExpectation": "Round nine wrote `mentions: [\"Quarterly sales\"]` - the caption's TEXT. The instrument round ten was asked to use is `compareMarkup`, a census of NAMES, so it can say that a <caption> went in and did not come out and cannot say what was inside it. Naming the content needs a text dimension on the census, which is the same instrument change row 16 is excluded for. Re-specified to what the census can prove, and the gap recorded in docs/test-findings.md rather than closed quietly."
+      "whyThisExpectation": "Round nine wrote `mentions: [\"Quarterly sales\"]` - the caption's TEXT. The instrument round ten was asked to use is `compareMarkup`, a census of NAMES, so it can say that a <caption> went in and did not come out and cannot say what was inside it. Naming the content needs a text dimension on the census, which is the same instrument change row 16 is excluded for. Re-specified to what the census can prove, and the gap recorded in docs/test-findings.md rather than closed quietly.",
+      "drawn": {
+        "choose": {
+          "Source format": "HTML",
+          "Target format": "Markdown"
+        },
+        "quiet": true,
+        "outputLacks": ["Quarterly sales"]
+      }
     },
     {
       "row": 14,
@@ -248,6 +373,13 @@
       "expect": {
         "titleContains": "could not carry",
         "mentions": ["<ul>", "<li>"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "HTML",
+          "Target format": "Markdown"
+        },
+        "quiet": true
       }
     },
     {
@@ -265,6 +397,13 @@
       "expect": {
         "titleContains": "invented",
         "mentions": ["<th>", "header row"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "HTML",
+          "Target format": "Markdown"
+        },
+        "quiet": true
       }
     },
     {
@@ -282,6 +421,14 @@
       "expect": {
         "titleContains": "class",
         "mentions": ["class"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "HTML",
+          "Target format": "HTML (sanitised)"
+        },
+        "says": ["1 class name was removed by the sanitiser", "btn on <a>"],
+        "face": "class name was removed"
       }
     },
     {
@@ -300,7 +447,16 @@
         "titleContains": "could not carry",
         "mentions": ["<mark>", "<kbd>"]
       },
-      "whyThisExpectation": "Round eight filed this row as `<mark>` and `<kbd>` GIVEN FORMATTING THEY NEVER HAD - `_highlighted_` and a code span, under the policy labelled 'Keep the text, drop the tag'. Round thirteen found that was not a loss the tool failed to report but a defect in the policy: the 'text' branch registered no handlers, on the stated ground that upstream's default keeps the words and drops the wrapper, and for mark, kbd, samp, var, dl, dt, dd and q upstream substitutes instead. That was fixed rather than announced, so the substitution no longer happens and there is nothing about it left to tell - which the corpus has no verdict for. What the document still loses is the highlight and the key markup themselves, and that is what this row now measures. The old claim is held separately and more strongly than a note could hold it: constructs.test.ts asserts the output has no emphasis and no code span in it, under this policy, and that the census reports nothing invented. Recorded as a re-specification, in docs/test-findings.md, because it is the one kind of edit to this file that can turn a row green without a note being written."
+      "whyThisExpectation": "Round eight filed this row as `<mark>` and `<kbd>` GIVEN FORMATTING THEY NEVER HAD - `_highlighted_` and a code span, under the policy labelled 'Keep the text, drop the tag'. Round thirteen found that was not a loss the tool failed to report but a defect in the policy: the 'text' branch registered no handlers, on the stated ground that upstream's default keeps the words and drops the wrapper, and for mark, kbd, samp, var, dl, dt, dd and q upstream substitutes instead. That was fixed rather than announced, so the substitution no longer happens and there is nothing about it left to tell - which the corpus has no verdict for. What the document still loses is the highlight and the key markup themselves, and that is what this row now measures. The old claim is held separately and more strongly than a note could hold it: constructs.test.ts asserts the output has no emphasis and no code span in it, under this policy, and that the census reports nothing invented. Recorded as a re-specification, in docs/test-findings.md, because it is the one kind of edit to this file that can turn a row green without a note being written.",
+      "drawn": {
+        "choose": {
+          "Source format": "HTML",
+          "Target format": "Markdown"
+        },
+        "unsaid": ["invented"],
+        "outputLacks": ["_", "*", "`"],
+        "spoken": "highlighted and Esc"
+      }
     },
     {
       "row": 18,
@@ -317,6 +473,13 @@
       "expect": {
         "titleContains": "could not carry",
         "mentions": ["reversed", "count up"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "HTML",
+          "Target format": "Markdown"
+        },
+        "says": ["reversed", "now count up"]
       }
     },
     {
@@ -334,6 +497,14 @@
       "expect": {
         "titleContains": "tab",
         "mentions": ["$[0].note"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "JSON",
+          "Target format": "TSV"
+        },
+        "says": ["1 cell holds a tab or a line break", "$[0].note", "cut and awk"],
+        "face": "tab or a line break"
       }
     },
     {
@@ -351,6 +522,13 @@
       "expect": {
         "titleContains": "flow collection",
         "mentions": ["$.a", "$.c"]
+      },
+      "drawn": {
+        "choose": {
+          "Source format": "YAML",
+          "Target format": "YAML"
+        },
+        "says": ["Not carried over: 2 flow collections", "$.a"]
       }
     }
   ]

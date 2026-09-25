@@ -35,7 +35,7 @@ export function relativeLuminance(r: number, g: number, b: number): number {
  * SOURCE-OVER, ON THE GAMMA-ENCODED CHANNELS, which is what the platform's
  * own compositor does - `globalCompositeOperation` defaults to `source-over`
  * and a 2D canvas composites in sRGB rather than in linear light. So this is
- * not a formula chosen for tidiness: `checkColourReports` in
+ * not a formula chosen for tidiness: `checkColourContrast` in
  * `scripts/cross-browser-check.mjs` paints the same colour over the same
  * backdrop in Firefox and WebKit, reads the pixel back, and holds this
  * function to it.

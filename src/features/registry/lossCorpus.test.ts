@@ -79,6 +79,31 @@ interface CorpusCase {
    * NAMES for a fact about content.
    */
   readonly whyThisExpectation?: string;
+  /** What `check:browsers` holds this row to on /tools and on a node. See `drawnNote`. */
+  readonly drawn: Drawn;
+}
+
+/**
+ * The HARNESS's half of a row, kept here so there is one list of rows.
+ *
+ * `scripts/cross-browser-check.mjs` reads this file and drives every row in two
+ * engines; before round twenty-three five sections listed the rows a second
+ * time by hand, and the copy had drifted - row 3 was in none of them. This test
+ * holds the data the harness reads to the tools, so a phrase no tool writes or
+ * a label no page shows fails here, in `pnpm test`, rather than as a red row in
+ * a browser nobody has run yet.
+ */
+interface Drawn {
+  /** The tool page's options, as the page labels them: field label to choice label. */
+  readonly choose: Readonly<Record<string, string>>;
+  readonly says?: readonly string[];
+  readonly unsaid?: readonly string[];
+  readonly face?: string;
+  readonly spoken?: string;
+  readonly outputLacks?: readonly string[];
+  /** The clean document draws no note at all, of any level. */
+  readonly quiet?: boolean;
+  readonly controls?: readonly { readonly input: string; readonly quiet: boolean }[];
 }
 
 interface ZeroReport {
@@ -238,24 +263,132 @@ describe('the loss corpus', () => {
  * The negative control, per case
  * ========================================================================== */
 
-describe('a document that loses nothing produces no note about losing something', () => {
-  it.each(cases.filter((entry) => entry.clean !== null))(
-    'row $row, $id',
-    async (entry: CorpusCase) => {
-      const clean = entry.clean ?? '';
-      /*
-       * The control has to RUN. A refusal produces no notes either, and a
-       * control that silently stopped being a control is exactly the failure
-       * this whole file exists to make loud.
-       */
-      const outputs = await run(entry, clean);
-      expect(Object.keys(outputs).length).toBeGreaterThan(0);
+/**
+ * Every document a row says loses nothing: its `clean`, and each of the
+ * harness's sharper controls - `"2024": launched` beside `year: launched`, a
+ * header its author quoted, the same key in two sibling objects. They were the
+ * harness's alone until round twenty-three; asked here too, they hold the
+ * payload as well as the page.
+ */
+const CONTROLS = cases.flatMap((entry) =>
+  [
+    { input: entry.clean, quiet: entry.drawn.quiet === true },
+    ...(entry.drawn.controls ?? []),
+  ].flatMap(({ input, quiet }, index) =>
+    input === null
+      ? []
+      : [
+          {
+            entry,
+            text: input,
+            quiet,
+            which: index === 0 ? 'clean' : `control ${index.toString()}`,
+          },
+        ],
+  ),
+);
 
-      const note = aboutTheSameThing(warnNotes(entry.tool, outputs), entry.expect);
+/**
+ * How many notes of ANY level a run's report ports carry. A `quiet` control is
+ * held to none at all - the old checks' "draws no note at all", which is
+ * stronger than "no warning about the subject" and was what they asserted.
+ */
+function noteCount(toolId: string, outputs: ToolOutputs): number {
+  const entry = MANIFEST.find((tool) => tool.id === toolId);
+  let count = 0;
+  for (const port of entry?.outputs ?? []) {
+    if (port.presentation !== 'report') continue;
+    const value = outputs[port.id];
+    if (value?.type !== 'json' || typeof value.data !== 'object' || value.data === null) continue;
+    const notes = (value.data as { notes?: unknown }).notes;
+    if (Array.isArray(notes)) count += notes.length;
+  }
+  return count;
+}
+
+describe('a document that loses nothing produces no note about losing something', () => {
+  it.each(CONTROLS)('row $entry.row, $entry.id, $which', async ({ entry, text: clean, quiet }) => {
+    /*
+     * The control has to RUN. A refusal produces no notes either, and a
+     * control that silently stopped being a control is exactly the failure
+     * this whole file exists to make loud.
+     */
+    const outputs = await run(entry, clean);
+    expect(Object.keys(outputs).length).toBeGreaterThan(0);
+
+    const note = aboutTheSameThing(warnNotes(entry.tool, outputs), entry.expect);
+    expect(
+      note === null ? null : `${note.title} :: ${note.body}`,
+      `"${clean}" loses nothing, so nothing should say it did`,
+    ).toBeNull();
+    if (quiet) expect(noteCount(entry.tool, outputs), 'a quiet control carries no note').toBe(0);
+  });
+});
+
+/* ========================================================================== *
+ * The harness's half of each row
+ * ========================================================================== */
+
+/** The first output port's text: what the tool page shows as `<name> Converted`. */
+function answerOf(entry: CorpusCase, outputs: ToolOutputs): string {
+  const port = MANIFEST.find((tool) => tool.id === entry.tool)?.outputs[0];
+  const value = port === undefined ? undefined : outputs[port.id];
+  return value?.type === 'text' ? value.text : '';
+}
+
+describe('what check:browsers holds each row to', () => {
+  const runnable = cases.filter((entry) => entry.input !== null);
+
+  /*
+   * `choose` is the page's spelling of `options`, and the one place the two
+   * could disagree without anything running: a row whose page ran YAML to YAML
+   * while its unit case ran YAML to JSON would be two rows under one number.
+   */
+  it.each(runnable)(
+    'row $row, $id: chooses on the page exactly the options it runs with',
+    async (entry) => {
+      const tool = await loadTool(entry.tool as ToolId);
+      const defaults = tool.defaultOptions as Record<string, unknown>;
+      const chosen: Record<string, unknown> = {};
+      for (const [label, choice] of Object.entries(entry.drawn.choose)) {
+        const field = tool.optionFields.find((candidate) => candidate.label === label);
+        expect(field?.control, `no select labelled ${label}`).toBe('select');
+        if (field?.control !== 'select') continue;
+        const value = field.choices.find((option) => option.label === choice)?.value;
+        expect(value, `${label} offers no ${choice}`).toBeDefined();
+        chosen[field.key] = value;
+      }
+      // A default chosen out loud is harmless; a value that is not the row's, or
+      // an option the row sets and the page never touches, is two rows.
+      for (const [key, value] of Object.entries(chosen)) {
+        expect(value, key).toBe(key in entry.options ? entry.options[key] : defaults[key]);
+      }
+      const differ = Object.keys(entry.options).filter(
+        (key) => defaults[key] !== entry.options[key],
+      );
+      expect(differ.filter((key) => !(key in chosen))).toEqual([]);
+    },
+  );
+
+  it.each(runnable)(
+    'row $row, $id: its note carries every word the harness looks for',
+    async (entry) => {
+      const outputs = await run(entry, entry.input ?? '');
+      const notes = warnNotes(entry.tool, outputs);
+      const note = matchingNote(notes, entry.expect);
+      expect(note, 'the row is not told, so there is nothing to look for').not.toBeNull();
+      const whole = note === null ? '' : `${note.title} ${note.body}`;
+      for (const part of entry.drawn.says ?? []) expect(whole).toContain(part);
+      const face = entry.drawn.face ?? entry.expect.titleContains;
       expect(
-        note === null ? null : `${note.title} :: ${note.body}`,
-        `"${clean}" loses nothing, so nothing should say it did`,
-      ).toBeNull();
+        contains(note?.title ?? '', face),
+        `the face prints the title, and it lacks ${face}`,
+      ).toBe(true);
+
+      const everything = notes.map((each) => `${each.title} ${each.body}`).join(' | ');
+      for (const part of entry.drawn.unsaid ?? []) expect(everything).not.toContain(part);
+      const answer = answerOf(entry, outputs);
+      for (const part of entry.drawn.outputLacks ?? []) expect(answer).not.toContain(part);
     },
   );
 });

@@ -3267,6 +3267,18 @@ system's extension mapping: rename `payload.exe` to `notes.json` and the browser
 reports `application/json`. Every decision here comes from the bytes, which is
 the rule the rest of the app follows.
 
+**The file's name decides one thing, in one tool, and only where the bytes
+cannot.** Since round twenty-three `structured-data` reads a file named `.csv`
+or `.tsv` as a table when it is one column under every delimiter the tool
+offers and content detection found nothing else in it - the case where a
+column of ids is indistinguishable from prose. Content wins everywhere it says
+anything; the name is read after the last content signal and before the
+refusal. The Detected report says `(from the file name)` rather than
+`(detected)`, and a node prints `CSV by its name` beside its result. The name
+travels with the value, `filename` on a `bytes` value, and is part of a node's
+cache key, so the same bytes under another name are another run. See
+`readByName`.
+
 **And it decodes strictly, which fixed an inconsistency rather than adding one.**
 The file path used a lenient `TextDecoder` gated on the sniff while bytes on a
 wire went through [`lib/text.ts`](../src/lib/text.ts) — strict UTF-8, with a
@@ -4622,12 +4634,9 @@ out wrong. A desktop is unchanged - the 320px column, bottom right, three.
 `checkNotifications` asserts all of it at 390px under a mouse and under a finger,
 and the desktop column at 1280px.<!-- asserted: cross-browser-check.mjs › no notification ${where} covers the canvas readout -->
 
-Not done, and recorded: with the phone's inspector sheet open the readout is
-behind the sheet, so a notification sits over the sheet's lower edge instead -
-measured at 390px, two of them at 734-806 over a sheet from 328 to the bottom,
-in both engines. It was as true of the corner column before this. Docking above
-the sheet would put notifications at mid-screen over the canvas, and inside it
-would be a second layout for one state; neither is obviously better.
+With the phone's inspector sheet open the readout is behind the sheet, so a
+notification sits over the sheet's lower edge instead. That is deliberate, and
+measured - see [Over the inspector sheet](#over-the-inspector-sheet-measured-and-kept-on-purpose).
 
 ### Beside the readout: measured, and declined
 
@@ -4674,6 +4683,51 @@ asserts, at 390px under both pointers, that the four deletions sit on the right
 margin clear of the left one and that a refused share link, which carries its
 reason, spans both.
 <!-- asserted: cross-browser-check.mjs › that carries a sentence spans the band between both margins -->
+
+### Over the inspector sheet: measured, and kept on purpose
+
+With the phone's inspector sheet open the readout is behind the sheet, so a
+notification sits over the sheet's lower edge instead. This was recorded as not
+done in round eighteen, and it predates the narrow band - the corner column did
+the same. Round twenty-three measured it and the two alternatives the brief
+named, on the production build at 390 × 844, in both engines, under a mouse and
+under a finger, with two receipts a press in the sheet raises - `Copied` and
+`Downloaded`, each a title and a sentence - and **it stays where it is.**
+
+| Where the stack goes                    | What it covers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Over the sheet's lower edge (today)** | 126px of a 516px sheet under a mouse, 166px under a finger, on the right margin only (x 179-378). Under it: the right half of an output box, an option field - and, in one layout of twelve, text-convert's HTML view under a finger, the `Copy as rich text` and `Download` buttons beside the `Copy` just pressed.                                                                                                                                                                               |
+| Above the sheet                         | Built and measured, as a break: the stack at 198-324 under a mouse and 158-324 under a finger. The canvas strip is 328px, and the site header, toolbar and selection bar take its top 143px under a mouse and 183px under a finger - so that is 68% of the canvas left under a mouse and all of it under a finger, where it reaches into the selection bar and its `Delete` (186-246 × 139-183). With a keyboard up the sheet rises by the keyboard's height and there is no room above it at all. |
+| Docked to the sheet                     | Built too, at its top edge: 328-454 under a mouse, over the sheet's title and `Close the inspector` (352-382 × 332-356); under a finger it starts 40px above the sheet. Just below the header instead, it sits over the Input section - `Disconnect` (202-289 × 400-424) and the box being typed in. At its bottom, it is today's placement less a clearance.                                                                                                                                      |
+
+So the choice is between covering part of the sheet's body, which scrolls, and
+covering the canvas, the sheet's controls or its Close button, which do not.
+Today's placement is the only one of the three that never touches a control the
+person cannot move out from under, and the one that keeps a receipt next to the
+thing it is about - a notification raised by a press in the sheet appears in
+the sheet.
+
+**The cost it is kept at**, which is real: a receipt can sit over the NEXT
+button in a wide button row for its six seconds, as it did over `Download` in
+the text-convert case. A press there reaches the notification, which pauses it.
+The sheet scrolls, and the receipt is the shortest-lived kind there is.
+
+**Rejected on the way:** lowering the stack by the readout clearance the sheet
+makes pointless (26px under a mouse, 54px under a finger). It moves the band
+that is covered rather than shrinking it; which controls end up under it depends
+on how far the sheet is scrolled, so no layout is better on average.
+
+`checkNotifications` holds the three facts the decision rests on, at 390px
+under both pointers: the stack is inside the sheet and below its header, it is
+over neither `Close the inspector` nor the canvas, and it does not cover the
+`Copy` just pressed.<!-- asserted: cross-browser-check.mjs › notifications ${where} sit over the sheet's body, below its header, not over the canvas -->
+
+**Not measured, and why:** a notification arriving while the on-screen
+keyboard is up. The sheet rises by the keyboard's height; the notification
+viewport is fixed to the layout viewport and does not, so on a real phone it
+would be behind the keyboard. Nothing raises one while typing - typing runs the
+pipeline, which reports on the node - and a real keyboard is
+[a manual check](manual-checks.md) this harness cannot produce.
 
 ### Why the clock is ours and not Radix's
 

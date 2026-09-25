@@ -5089,6 +5089,15 @@ async function checkNotifications(browser, label) {
     await touch.close().catch(() => {});
   }
   await notificationPlacement(browser, label, { width: 1280, height: 900, coarse: false });
+
+  // And over the phone's inspector sheet, where the readout is hidden.
+  await notificationsOverTheSheet(browser, label, { coarse: false });
+  const sheetTouch = await launchTouchBrowser(browser.browserType());
+  try {
+    await notificationsOverTheSheet(sheetTouch, label, { coarse: true });
+  } finally {
+    await sheetTouch.close().catch(() => {});
+  }
 }
 
 /**
@@ -5307,6 +5316,136 @@ async function notificationPlacement(browser, label, { width, height, coarse }) 
         Math.abs((last.at(-1)?.box.bottom ?? 0) - (height - 16)) <= 0.5,
       `counts ${counts.join(',')}; last ${px(last.at(-1)?.box.left ?? -1)}..${px(last.at(-1)?.box.right ?? -1)}, bottom ${px(last.at(-1)?.box.bottom ?? -1)}`,
     );
+  }
+}
+
+/**
+ * NOTIFICATIONS OVER THE PHONE'S INSPECTOR SHEET: WHERE THEY ARE, ON PURPOSE.
+ *
+ * Round twenty-three measured the three placements the brief named and kept
+ * this one - see architecture.md, "Over the inspector sheet". The decision
+ * rests on three measured facts, and this holds each of them, so a change that
+ * moves notifications off the reasons fails here rather than in a review:
+ *
+ *   1. THEY STAY OVER THE SHEET'S BODY, inside its box and below its header -
+ *      never over its Close button, and never over the canvas strip above it,
+ *      where a stack would take half of the only canvas left on screen and,
+ *      under a finger, the selection bar's Delete.
+ *   2. THEY DO NOT COVER THE BUTTON JUST PRESSED. Copy sits at the left of the
+ *      output's toolbar and a receipt sits on the right margin, as wide as what
+ *      it says. Not "no control in the sheet": a wide button row can put its
+ *      NEXT button under a receipt - text-convert's HTML view under a finger,
+ *      measured - which is the cost this placement was kept at, and recorded.
+ *   3. THE PARTNER: two are on screen and the sheet is open, so none of the
+ *      above passes on a page that raised nothing.
+ */
+async function notificationsOverTheSheet(browser, label, { coarse }) {
+  const where = `at 390px${coarse ? ' under a finger' : ''}`;
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    ...(coarse ? { hasTouch: true } : {}),
+    acceptDownloads: true,
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(
+      `${ORIGIN}/?p=${shareParam({ v: 3, n: [['n1', 'base64', 0, 0, { mode: 'encode' }]], e: [] })}`,
+      { waitUntil: 'networkidle' },
+    );
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+    await page.locator('[data-testid="node-n1"]').focus();
+    await page.keyboard.press('Enter');
+    const field = page.locator('[data-inspector-input]').first();
+    await field.waitFor({ timeout: 15_000 });
+    await field.fill('hello world');
+    for (let look = 0; look < 300; look += 1) {
+      if ((await nodeFace(page))?.status === 'ok') break;
+      await page.waitForTimeout(100);
+    }
+
+    const inspector = page.getByTestId('node-inspector');
+    const copy = inspector.getByRole('button', { name: /^Copy/ }).first();
+    await copy.scrollIntoViewIfNeeded();
+    await copy.click();
+    const download = inspector.getByRole('button', { name: /^Download/ }).first();
+    await download.click();
+    const notifications = page.getByRole('region', { name: /notifications/i }).locator('li');
+    for (let look = 0; look < 50 && (await notifications.count()) < 2; look += 1) {
+      await page.waitForTimeout(100);
+    }
+
+    const reading = await page.evaluate(async () => {
+      const items = [...document.querySelectorAll('[role="region"] ol > li')];
+      await Promise.all(items.flatMap((item) => item.getAnimations().map((a) => a.finished)));
+      const box = (element) => {
+        if (!element) return null;
+        const { left, top, right, bottom } = element.getBoundingClientRect();
+        return { left, top, right, bottom };
+      };
+      const sheet = document.querySelector('[data-testid="node-inspector"]');
+      const close = [...(sheet?.querySelectorAll('button') ?? [])].find(
+        (button) => button.getAttribute('aria-label') === 'Close the inspector',
+      );
+      const buttons = [...(sheet?.querySelectorAll('button') ?? [])];
+      return {
+        sheet: box(sheet),
+        header: box(sheet?.querySelector('h2') ?? null),
+        close: box(close ?? null),
+        copy: box(
+          buttons.find((button) =>
+            /^Copy/.test(button.getAttribute('aria-label') ?? button.textContent ?? ''),
+          ) ?? null,
+        ),
+        toasts: items.map((item) => box(item)),
+      };
+    });
+
+    const overlaps = (a, b) =>
+      a !== null &&
+      b !== null &&
+      a.left < b.right &&
+      b.left < a.right &&
+      a.top < b.bottom &&
+      b.top < a.bottom;
+    const px = (value) => String(Math.round(value));
+    const { sheet, header, close, copy: copied, toasts } = reading;
+
+    check(
+      label,
+      `two notifications ${where} are on screen over an open inspector sheet`,
+      sheet !== null && toasts.length === 2,
+      `${String(toasts.length)} notifications; sheet ${sheet === null ? 'closed' : `${px(sheet.top)}..${px(sheet.bottom)}`}`,
+    );
+    const outside = toasts.filter(
+      (toast) =>
+        sheet === null ||
+        toast.left < sheet.left ||
+        toast.right > sheet.right ||
+        toast.bottom > sheet.bottom ||
+        toast.top < (close?.bottom ?? sheet.top),
+    );
+    check(
+      label,
+      `notifications ${where} sit over the sheet's body, below its header, not over the canvas`,
+      toasts.length > 0 &&
+        outside.length === 0 &&
+        !toasts.some((toast) => overlaps(toast, header) || overlaps(toast, close)),
+      toasts
+        .map(
+          (toast) =>
+            `${px(toast.left)}..${px(toast.right)} x ${px(toast.top)}..${px(toast.bottom)}`,
+        )
+        .join(', ') +
+        ` against a sheet from ${sheet === null ? '-' : px(sheet.top)} and a header to ${close === null ? '-' : px(close.bottom)}`,
+    );
+    check(
+      label,
+      `and none ${where} covers the Copy button that was just pressed`,
+      copied !== null && toasts.length > 0 && !toasts.some((toast) => overlaps(toast, copied)),
+      `copy ${copied === null ? 'missing' : `${px(copied.left)}..${px(copied.right)} x ${px(copied.top)}..${px(copied.bottom)}`}; notifications from x ${toasts.length === 0 ? '-' : px(Math.min(...toasts.map((toast) => toast.left)))}`,
+    );
+  } finally {
+    await context.close().catch(() => {});
   }
 }
 
@@ -6116,6 +6255,208 @@ async function checkStructuredData(browser, label) {
 }
 
 /**
+ * A ONE-COLUMN FILE, READ BY ITS NAME, AND SAID WHERE A PERSON LOOKS.
+ *
+ * Round twenty-three. A column of ids has no delimiter in it, so content
+ * detection refuses it - rightly, for pasted text, because every multi-line
+ * paste is a valid one-column CSV. A FILE called `ids.csv` has said what it is,
+ * so it is read as the table it claims to be. That is a guess of a different
+ * kind from every other one this tool makes, and the Detected report exists to
+ * make guesses visible, so the claim here is that it is SEEN: on `/tools` in
+ * the report's summary and a note, and on a node's face beside its result,
+ * with nothing clicked.
+ *
+ * EVERY CONTROL IS ON SUBJECT. The same bytes named `.txt` are refused exactly
+ * as pasted text is; a `.csv` with two columns is read by its content and says
+ * `(detected)` as it always has; pasted text keeps the refusal and the refusal
+ * still says to choose CSV. The unit suite (`byName.test.ts`) holds the payload;
+ * this holds the drawing, which jsdom has none of.
+ */
+async function checkFileExtension(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  const IDS = 'id\n1001\n1002\n1003\n';
+  const PEOPLE = 'name,age\nada,36\ngrace,45\n';
+  const upload = (name, text) => ({ name, mimeType: 'text/plain', buffer: Buffer.from(text) });
+
+  /**
+   * What `/tools/structured-data` draws for one input: a file chosen with the
+   * page's own file control, or text typed into the box. From a fresh page, and
+   * settled on the notification this page's one press of Run raises - finished
+   * or failed - so an empty page cannot pass a control.
+   */
+  const onPage = async ({ file, text }) => {
+    await page.goto(`${ORIGIN}/tools/structured-data`, { waitUntil: 'networkidle' });
+    await page
+      .getByRole('heading', { level: 1, name: 'Structured data' })
+      .waitFor({ timeout: 15_000 });
+    if (file) await page.locator('input[type="file"]').setInputFiles(file);
+    if (text) await page.getByLabel('Structured data input').fill(text);
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
+    await page
+      .getByRole('region', { name: /notifications/i })
+      .getByText(/^Structured data (finished|failed)$/)
+      .first()
+      .waitFor({ timeout: 30_000 })
+      .catch(() => {});
+    const drawn = await page.evaluate(() => {
+      const summary = document.querySelector(
+        'section[aria-label="Structured data Detected"] p[class*="summary"]',
+      );
+      const rect = summary?.getBoundingClientRect() ?? { width: 0, height: 0 };
+      return {
+        summary: (summary?.textContent ?? '').trim(),
+        summaryDrawn: rect.width > 0 && rect.height > 0,
+      };
+    });
+    const output = page.getByLabel('Structured data Converted');
+    return {
+      ...drawn,
+      notes: await drawnReportNotes(page),
+      output: (await output.count()) > 0 ? await output.inputValue() : null,
+      error: await drawnError(page),
+    };
+  };
+
+  /**
+   * One structured-data node fed `file` through the inspector's own file
+   * control, and its face once a run has FINISHED - `ok` or `error`, since two
+   * of these are refusals.
+   */
+  const onNodeWithFile = async (file) => {
+    const options = { source: 'auto', target: 'json', indent: 2, delimiter: 'comma' };
+    await page.goto(
+      `${ORIGIN}/?p=${shareParam({ v: 3, n: [['n1', 'structured-data', 0, 0, options]], e: [] })}`,
+      { waitUntil: 'networkidle' },
+    );
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+    await page.locator('[data-testid="node-n1"]').focus();
+    await page.keyboard.press('Enter');
+    await page.locator('[data-testid="node-inspector"] input[type="file"]').setInputFiles(file);
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      const face = await nodeFace(page);
+      if (face !== null && FINISHED.has(face.status)) return face;
+      if (Date.now() > deadline) {
+        const why = `HARNESS: no finished run in 30s - status ${face?.status ?? 'none'}`;
+        return { text: why, drawn: false, spoken: why, status: face?.status ?? '', verdict: '' };
+      }
+      await page.waitForTimeout(100);
+    }
+  };
+
+  const records = (output) => {
+    try {
+      return JSON.parse(output ?? '');
+    } catch {
+      return null;
+    }
+  };
+
+  try {
+    /* -- the case: ids.csv, one column, on the tool page ------------------ */
+    const named = await onPage({ file: upload('ids.csv', IDS) });
+    const because = named.notes.find((note) => note.title.includes('because the file is named'));
+    check(
+      label,
+      'a one-column .csv is read as a table, and the report says the NAME decided it',
+      named.summaryDrawn &&
+        named.summary === 'CSV (from the file name) → JSON' &&
+        JSON.stringify(records(named.output)) ===
+          JSON.stringify([{ id: '1001' }, { id: '1002' }, { id: '1003' }]),
+      `${named.summary} | ${named.output ?? named.error.text}`.slice(0, 240),
+    );
+    check(
+      label,
+      'and a note naming the file is drawn, at the level of a note rather than a loss',
+      because !== undefined &&
+        because.drawn &&
+        because.word === 'Note' &&
+        because.title === 'Read as CSV because the file is named ids.csv' &&
+        !named.notes.some((note) => note.word === 'Warning'),
+      drawnSummary({ failed: null, notes: named.notes }),
+    );
+
+    /* -- the controls, on the tool page ----------------------------------- */
+    const txt = await onPage({ file: upload('ids.txt', IDS) });
+    check(
+      label,
+      'the same bytes named .txt are refused, and the refusal says to choose CSV',
+      txt.error.drawn &&
+        txt.error.text.includes('This is not JSON, YAML, CSV or TSV that this tool can read.') &&
+        txt.error.text.includes('choose CSV as the source format') &&
+        txt.output === null &&
+        !txt.summary.includes('file name'),
+      txt.error.text.slice(0, 260),
+    );
+
+    const people = await onPage({ file: upload('people.csv', PEOPLE) });
+    check(
+      label,
+      'a .csv with two columns is read by its content, and says detected as it always has',
+      people.summaryDrawn &&
+        people.summary === 'CSV (detected) → JSON' &&
+        !people.notes.some((note) => note.title.includes('file is named')) &&
+        JSON.stringify(records(people.output)) ===
+          JSON.stringify([
+            { name: 'ada', age: '36' },
+            { name: 'grace', age: '45' },
+          ]),
+      `${people.summary} | ${drawnSummary({ failed: null, notes: people.notes })}`.slice(0, 240),
+    );
+
+    const typed = await onPage({ text: IDS });
+    check(
+      label,
+      'pasted text with one column keeps the refusal, and it still says to choose CSV',
+      typed.error.drawn &&
+        typed.error.text.includes('choose CSV as the source format') &&
+        typed.error.text.includes('A file whose name ends in .csv or .tsv is read as a table') &&
+        typed.output === null,
+      typed.error.text.slice(0, 300),
+    );
+
+    /* -- on a node's face ------------------------------------------------- */
+    const node = await onNodeWithFile(upload('ids.csv', IDS));
+    check(
+      label,
+      'a node fed ids.csv prints the guess beside its result, and says it aloud',
+      node.drawn &&
+        node.status === 'ok' &&
+        node.verdict === 'ok' &&
+        node.text === '3 items · CSV by its name' &&
+        node.spoken.includes('3 items · CSV by its name'),
+      JSON.stringify(node),
+    );
+
+    const txtNode = await onNodeWithFile(upload('ids.txt', IDS));
+    check(
+      label,
+      'a node fed the same bytes named .txt prints the refusal, and no guess',
+      txtNode.drawn &&
+        txtNode.status === 'error' &&
+        txtNode.text.includes('This is not JSON, YAML, CSV or TSV') &&
+        !txtNode.text.includes('by its name'),
+      JSON.stringify(txtNode),
+    );
+
+    const peopleNode = await onNodeWithFile(upload('people.csv', PEOPLE));
+    check(
+      label,
+      'a node fed a two-column .csv prints its result alone',
+      peopleNode.drawn &&
+        peopleNode.status === 'ok' &&
+        peopleNode.text === '2 items' &&
+        !peopleNode.spoken.includes('by its name'),
+      JSON.stringify(peopleNode),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
  * WHETHER A LOSS REPORT IS ACTUALLY ON THE SCREEN.
  *
  * Round three turned six silent losses into reported ones, and every unit test
@@ -6255,36 +6596,281 @@ async function checkLossReports(browser, label) {
   }
 }
 
+/* ========================================================================== *
+ * The loss corpus, drawn
+ * ========================================================================== */
+
 /**
- * THE REFUSAL THAT NAMES THE VALUE MODEL, AND THE TWO NOTES ROUND ELEVEN ADDED.
+ * `spec/loss-corpus.json`, read from the file `lossCorpus.test.ts` imports, so
+ * the two cannot list different rows: a row added there is driven here with no
+ * edit to this file, and a row removed there stops being driven.
+ */
+const LOSS_CORPUS = JSON.parse(
+  await readFile(join(ROOT, 'src/features/registry/spec/loss-corpus.json'), 'utf8'),
+);
+
+/**
+ * Every note in every report list on a tool page, one entry per note: its
+ * level word, title and body, and whether its own box is drawn.
  *
- * Three user-facing sentences changed, and every one of them has to be READ by
- * somebody with nothing clicked:
+ * PER NOTE, not the list's text run together, because a row's claim is about
+ * ONE note - a warning whose title names the subject and whose words name what
+ * happened. Two notes that between them contain the right words are not that,
+ * and a list read as one string cannot tell the difference.
+ */
+async function drawnReportNotes(page) {
+  return page.evaluate(() =>
+    [...document.querySelectorAll('ul[aria-label$=" notes"] > li')].map((item) => {
+      const rect = item.getBoundingClientRect();
+      const part = (name) =>
+        (item.querySelector(`[class*="${name}"]`)?.textContent ?? '').replace(/\s+/g, ' ').trim();
+      return {
+        word: part('noteWord'),
+        title: part('noteTitle'),
+        body: part('noteBody'),
+        drawn: rect.width > 0 && rect.height > 0,
+      };
+    }),
+  );
+}
+
+/** Case-insensitive, as `lossCorpus.test.ts` matches: a title may start a sentence. */
+const mentions = (haystack, needle) => haystack.toLowerCase().includes(needle.toLowerCase());
+
+/**
+ * One document through `/tools/<tool>` under the case's options, from a fresh
+ * page, and what the page drew for it.
  *
- *   1. THE REFUSAL. `$.a_nan is NaN, which JSON cannot represent` named a
+ * TYPED FIRST, CHOSEN SECOND, READ BACK THIRD - round eleven's order, because
+ * a fill landing while a Radix listbox hands focus back is discarded - and a
+ * box that does not hold the document fails as the harness's fault.
+ *
+ * SETTLED ON THIS RUN. The page runs only when Run is pressed and this page
+ * has pressed it once, so the `<name> finished` notification is this run's
+ * and nothing else's. Before it, a page with no notes list at all would pass
+ * every control; after it, the output and the notes are the ones this
+ * document produced.
+ */
+async function corpusOnPage(page, entry, text) {
+  await page.goto(`${ORIGIN}/tools/${entry.tool}`, { waitUntil: 'networkidle' });
+  const heading = page.getByRole('heading', { level: 1 });
+  await heading.waitFor({ timeout: 15_000 });
+  const name = ((await heading.textContent()) ?? '').trim();
+
+  const field = page.getByLabel(`${name} input`);
+  await field.fill(text);
+  for (const [control, choice] of Object.entries(entry.drawn.choose)) {
+    await page.getByRole('combobox', { name: control }).click();
+    await page.getByRole('option', { name: choice, exact: true }).click();
+  }
+  const typed = await field.inputValue();
+  if (typed !== text) {
+    return {
+      failed: `HARNESS: the input box holds ${typed.length.toString()} characters, not the ${text.length.toString()} typed`,
+    };
+  }
+
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  const finished = page
+    .getByRole('region', { name: /notifications/i })
+    .getByText(`${name} finished`, { exact: true });
+  try {
+    await finished.first().waitFor({ timeout: 30_000 });
+  } catch {
+    const error = await drawnError(page);
+    return {
+      failed: `HARNESS: no finished run in 30s${error.drawn ? ` - the page drew an error: ${error.text.slice(0, 160)}` : ''}`,
+    };
+  }
+  const output = page.getByLabel(`${name} Converted`);
+  return {
+    failed: null,
+    output: (await output.count()) > 0 ? await output.inputValue() : null,
+    notes: await drawnReportNotes(page),
+  };
+}
+
+/** A short account of what a page drew, for a check's detail. */
+const drawnSummary = (reading) =>
+  reading.failed ??
+  (reading.notes.length === 0
+    ? 'no notes drawn'
+    : reading.notes
+        .map((note) => `[${note.word}] ${note.title} :: ${note.body}`)
+        .join(' | ')
+        .slice(0, 320));
+
+/**
+ * EVERY ROW OF THE LOSS CORPUS, DRAWN, IN TWO ENGINES.
+ *
+ * `lossCorpus.test.ts` decides whether a loss is TOLD by reading the payload a
+ * tool returned. That is the ratio, and it is honest about what it measures.
+ * What it cannot say is the other half of the matrix's definition of told:
+ * that a person using the tool is shown it without doing anything, on the
+ * panel on `/tools` and on a canvas node's own face. This section is that
+ * half, for every row, read from the same file.
+ *
+ * Until round twenty-three five sections carried the rows a second time, by
+ * hand, and the copy had drifted the way copies do: row 3 was in none of
+ * them, rows 2, 14 and 15 had no node, rows 4 to 9 were one combined document,
+ * and a new row was two edits. Now a row is one edit and is driven here the
+ * run after it lands.
+ *
+ * WHAT EACH ROW IS HELD TO. The corpus's own `expect`, and the sharper words
+ * the old checks asserted, which moved into the row as `drawn`:
+ *
+ *   ON THE PAGE, a note drawn with a box, at the WARNING level, whose title
+ *   holds `expect.titleContains` and whose title and body hold every
+ *   `expect.mentions` and every `drawn.says` - one note, not the list's words
+ *   run together - with nothing in `drawn.unsaid` drawn anywhere, and the
+ *   output holding nothing in `drawn.outputLacks`.
+ *
+ *   ON A NODE, a finished run whose verdict is `lossy`, whose face begins
+ *   `Lossy ·` and holds `drawn.face` (the subject, by default), and whose
+ *   accessible name carries `lossy:` and `drawn.spoken`.
+ *
+ *   EVERY CONTROL - the row's `clean` document and any in `drawn.controls` -
+ *   on the page: no note about the subject at any level, no warning at all,
+ *   none of the row's `says`, and nothing drawn at all where the control is
+ *   `quiet`; on a node: a finished run whose verdict is `ok` and whose face
+ *   and name say nothing about loss.
+ */
+async function checkLossCorpus(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    for (const entry of LOSS_CORPUS.cases) {
+      if (entry.input === null) continue;
+      const row = `row ${String(entry.row)}, ${entry.id}`;
+      const { expect: expected, drawn } = entry;
+      const says = drawn.says ?? [];
+
+      /* -- the document that loses something, on the page ---------------- */
+      const lossy = await corpusOnPage(page, entry, entry.input);
+      const told =
+        lossy.failed === null
+          ? lossy.notes.find(
+              (note) =>
+                note.drawn &&
+                note.word === 'Warning' &&
+                mentions(note.title, expected.titleContains) &&
+                [...expected.mentions, ...says].every((part) =>
+                  mentions(`${note.title} ${note.body}`, part),
+                ),
+            )
+          : undefined;
+      const spoke =
+        lossy.failed === null
+          ? (drawn.unsaid ?? []).filter((part) =>
+              lossy.notes.some((note) => `${note.title} ${note.body}`.includes(part)),
+            )
+          : [];
+      const kept =
+        lossy.failed === null && lossy.output !== null
+          ? (drawn.outputLacks ?? []).filter((part) => lossy.output.includes(part))
+          : [];
+      check(
+        label,
+        `${row}: drawn on the tool page as a warning that names it, with nothing clicked`,
+        told !== undefined && spoke.length === 0 && kept.length === 0 && lossy.output !== null,
+        `${spoke.length > 0 ? `also says ${JSON.stringify(spoke)}; ` : ''}${kept.length > 0 ? `output still holds ${JSON.stringify(kept)}; ` : ''}${drawnSummary(lossy)}`,
+      );
+
+      /* -- the same document, on a node ---------------------------------- */
+      const node = await onNode(page, entry.tool, entry.options, entry.input, (text) =>
+        text.startsWith('Lossy'),
+      );
+      const face = drawn.face ?? expected.titleContains;
+      check(
+        label,
+        `${row}: printed on a canvas node's face and in its accessible name`,
+        node.drawn &&
+          node.verdict === 'lossy' &&
+          node.text.startsWith('Lossy ·') &&
+          mentions(node.text, face) &&
+          node.spoken.includes('lossy:') &&
+          (drawn.spoken === undefined || node.spoken.includes(drawn.spoken)),
+        JSON.stringify(node),
+      );
+
+      /* -- every control, on the page and on a node ---------------------- */
+      const controls = [
+        { input: entry.clean, quiet: drawn.quiet === true },
+        ...(drawn.controls ?? []),
+      ];
+      for (const [index, control] of controls.entries()) {
+        const which = index === 0 ? 'its clean document' : `control ${String(index)}`;
+        const clean = await corpusOnPage(page, entry, control.input);
+        const noise =
+          clean.failed === null
+            ? clean.notes.filter(
+                (note) =>
+                  note.word === 'Warning' ||
+                  mentions(note.title, expected.titleContains) ||
+                  says.some((part) => `${note.title} ${note.body}`.includes(part)),
+              )
+            : [];
+        check(
+          label,
+          `${row}: ${which} draws no note about it on the tool page${control.quiet ? ', and no note at all' : ''}`,
+          clean.failed === null &&
+            clean.output !== null &&
+            noise.length === 0 &&
+            (!control.quiet || clean.notes.length === 0),
+          drawnSummary(clean),
+        );
+
+        const quiet = await onNode(page, entry.tool, entry.options, control.input, () => true);
+        check(
+          label,
+          `${row}: ${which} leaves a node's face clean`,
+          quiet.drawn &&
+            quiet.verdict === 'ok' &&
+            !quiet.text.includes('Lossy') &&
+            !quiet.spoken.includes('lossy:'),
+          JSON.stringify(quiet),
+        );
+      }
+    }
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * THE REFUSALS THIS TOOL DRAWS, AND WHERE THEY POINT.
+ *
+ * A refusal is not a loss-corpus row - a document that is refused has not been
+ * converted, so no note about it exists to find - and it has two surfaces that
+ * carry different amounts of text: the panel on `/tools` shows the message,
+ * the code, the line and column, and the detail under them; a canvas node
+ * shows the MESSAGE alone, because a node has no detail line. So both are
+ * asked, of every sentence here:
+ *
+ *   1. THE VALUE MODEL. `$.a_nan is NaN, which JSON cannot represent` named a
  *      format that is in neither half of a YAML to YAML run. It names the value
- *      model now, it carries a LINE AND COLUMN for the first time, and it lists
- *      every offender rather than the first. The message is what a canvas node
- *      prints on its own face - a node has no detail line - so both surfaces
- *      are asked, which is the matrix's own bar for a sentence being told.
+ *      model now, carries a LINE AND COLUMN, and lists every offender rather
+ *      than the first.
  *   2. THE ROUNDING ADVICE. It used to say `Convert to CSV or TSV to keep the
  *      digits` whatever the target was, which is false on every target
  *      including those two. It fits the target now.
- *   3. `1 key became text`, corpus row 10, which nothing said at all.
+ *   3. THE PRESENTATION CENSUS AS ONE NOTE. Corpus rows 4 to 7 are each one
+ *      kind in one document, and `checkLossCorpus` drives them; what no row
+ *      holds is all four in ONE document, which is the note's whole design.
+ *   4. A POSITION EVERY ENGINE GETS. A JSON syntax error's line and column used
+ *      to be read out of the engine's own message, and JavaScriptCore's message
+ *      never has one - so this panel showed a position in Firefox and nothing
+ *      in WebKit. And two YAML and CSV refusals at the column they are about.
  *
  * jsdom can read every one of those strings out of a payload. What it cannot
  * do is answer whether the box holding them has a size, which is the whole of
- * the difference between a note existing and a person being told.
+ * the difference between a refusal existing and a person being told.
  */
 async function checkValueModel(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   const page = await context.newPage();
 
-  /**
-   * The error panel, DRAWN. `textContent` is satisfied by a panel of zero
-   * height, and a refusal nobody can read is the failure this whole round is
-   * about.
-   */
   /**
    * Runs one document and waits for the panel to settle on an answer.
    *
@@ -6314,6 +6900,37 @@ async function checkValueModel(browser, label) {
       error: await drawnError(page),
       notes: await drawnNotes(page, 'Structured data Detected notes'),
     };
+  };
+
+  /**
+   * One document from a fresh page, under a chosen source and target, settled
+   * on THIS run's own answer - its output or its error - because each run
+   * starts from a `goto` and "wait until nothing is drawn" is true on the first
+   * poll. Typed first, chosen second, read back: round eleven's order.
+   */
+  const runAs = async (text, source, target, settled) => {
+    await page.goto(`${ORIGIN}/tools/structured-data`, { waitUntil: 'networkidle' });
+    await page
+      .getByRole('heading', { level: 1, name: 'Structured data' })
+      .waitFor({ timeout: 15_000 });
+    await page.getByLabel('Structured data input').fill(text);
+    await page.getByRole('combobox', { name: 'Source format' }).click();
+    await page.getByRole('option', { name: source, exact: true }).click();
+    await page.getByRole('combobox', { name: 'Target format' }).click();
+    await page.getByRole('option', { name: target, exact: true }).click();
+
+    const typed = await page.getByLabel('Structured data input').inputValue();
+    if (typed !== text) return null;
+
+    await page.getByRole('button', { name: 'Run' }).click();
+    for (let attempt = 0; attempt < 150; attempt += 1) {
+      const converted = page.getByLabel('Structured data Converted');
+      const output = (await converted.count()) > 0 ? await converted.inputValue() : '';
+      const error = await drawnError(page);
+      if (settled(output, error)) return { output, error, notes: await drawnReportNotes(page) };
+      await page.waitForTimeout(100);
+    }
+    return null;
   };
 
   try {
@@ -6348,7 +6965,7 @@ async function checkValueModel(browser, label) {
       nan.error.text.slice(0, 320),
     );
 
-    /* -- 2: every offender, not the first --------------------------------- */
+    /* -- every offender, not the first ------------------------------------ */
     const six = await run('a: .nan\nb: .inf\nc: -.inf\nd: .nan\ne: .nan\nf: .nan\n', (error) =>
       error.text.includes('6 values'),
     );
@@ -6362,7 +6979,7 @@ async function checkValueModel(browser, label) {
       six.error.text.slice(0, 320),
     );
 
-    /* -- 3: the negative control for the refusal, on subject --------------- */
+    /* -- the negative control for the refusal, on subject ------------------ */
     const fine = await run('a: 1\nb: two\n', (error) => !error.drawn);
     check(
       label,
@@ -6371,7 +6988,7 @@ async function checkValueModel(browser, label) {
       fine.error.text.slice(0, 160),
     );
 
-    /* -- 4: SD-13, the advice fitted to the target ------------------------- */
+    /* -- 2: SD-13, the advice fitted to the target ------------------------- */
     const rounded = await run('id: 12345678901234567890\n', (_error, notes) =>
       notes.text.includes('rounded'),
     );
@@ -6385,321 +7002,113 @@ async function checkValueModel(browser, label) {
       rounded.notes.text.slice(0, 280),
     );
 
-    /* -- 5: corpus row 10 -------------------------------------------------- */
-    const key = await run('2024: launched\n', (_error, notes) => notes.text.includes('key'));
-    check(
-      label,
-      'a YAML key that was not text is drawn on the tool page, naming the key',
-      key.notes.drawn &&
-        key.notes.text.includes('1 key became text') &&
-        key.notes.text.includes('2024'),
-      key.notes.text.slice(0, 240),
-    );
-
-    // The control, and the sharp one: the same key, quoted by its author.
-    const quotedKey = await run('"2024": launched\n', (_error, notes) => !notes.drawn);
-    check(
-      label,
-      'and a key the author quoted draws no note, because nothing became text',
-      !quotedKey.notes.drawn && quotedKey.notes.text === '',
-      quotedKey.notes.text.slice(0, 160),
-    );
-
-    /* -- 6: both of them on a canvas node ---------------------------------- */
+    /* -- the refusal on a canvas node ------------------------------------- */
     const yamlToYaml = { source: 'yaml', target: 'yaml', indent: 2, delimiter: 'comma' };
-
     const refusedNode = await onNode(page, 'structured-data', yamlToYaml, 'a_nan: .nan\n', (text) =>
       text.includes('value model'),
     );
     check(
       label,
       'a node prints the refusal on its own face, in the words the panel used',
-      refusedNode !== null &&
-        refusedNode.drawn &&
+      refusedNode.drawn &&
         refusedNode.text.includes("$.a_nan is NaN, which this tool's value model cannot hold.") &&
         !refusedNode.text.includes('JSON'),
       JSON.stringify(refusedNode),
     );
 
-    const keyNode = await onNode(page, 'structured-data', yamlToYaml, '2024: launched\n', (text) =>
-      text.startsWith('Lossy'),
-    );
-    check(
-      label,
-      'and prints the key that became text, which is corpus row 10 on a node',
-      keyNode !== null &&
-        keyNode.drawn &&
-        keyNode.text.startsWith('Lossy ·') &&
-        keyNode.text.includes('key became text'),
-      JSON.stringify(keyNode),
-    );
-
-    // The control on the canvas: the quoted key loses nothing, so no `Lossy`.
-    const cleanNode = await onNode(
-      page,
-      'structured-data',
-      yamlToYaml,
-      '"2024": launched\n',
-      (text) => text.includes('1 key'),
-    );
-    check(
-      label,
-      'a node whose keys were already text says nothing about a key',
-      cleanNode !== null && cleanNode.drawn && !cleanNode.text.includes('Lossy'),
-      JSON.stringify(cleanNode),
-    );
-
-    /* ================================================================== *
-     * 7: round twelve - corpus rows 4 to 9, 11 and 12
-     * ================================================================== *
-     *
-     * EIGHT ROWS OF THE LOSS TABLE TURNED IN ONE ROUND, AND A PAYLOAD IS NOT
-     * VISIBILITY. The unit suite reads every one of these strings off a port;
-     * what it cannot say is whether the box holding them has a size, which is
-     * the whole of the difference between a note existing and a person being
-     * told. Both halves of the matrix's own definition of `lossy, told` are
-     * asserted here - the panel on /tools, and the node's own face - in two
-     * engines, with a control beside each that shares its subject.
-     */
-
     /*
-     * THE INPUT IS FILLED BEFORE EITHER LISTBOX IS OPENED, which is round
-     * eleven's fix rather than a style. `fill` landing in the window between a
-     * Radix listbox closing and focus arriving back at its trigger is silently
-     * discarded, and it presents as the tool reaching the wrong verdict about
-     * a document it was never given. The box is read back as well, so a run
-     * driven on input the harness failed to type says so instead.
+     * -- 3: four kinds in one document, as ONE note -------------------------
+     *
+     * Asked of each note rather than of the list's words run together: a
+     * census that wrote a note per kind would pass a check on the list's text,
+     * and the node's face - one line - would then carry only the first.
      */
-    const runAs = async (text, source, target, expected) => {
-      await page.goto(`${ORIGIN}/tools/structured-data`, { waitUntil: 'networkidle' });
-      await page.getByRole('heading', { level: 1, name: 'Structured data' }).waitFor({
-        timeout: 15_000,
-      });
-
-      await page.getByLabel('Structured data input').fill(text);
-
-      await page.getByRole('combobox', { name: 'Source format' }).click();
-      await page.getByRole('option', { name: source, exact: true }).click();
-      await page.getByRole('combobox', { name: 'Target format' }).click();
-      await page.getByRole('option', { name: target, exact: true }).click();
-
-      const typed = await page.getByLabel('Structured data input').inputValue();
-      if (typed !== text) {
-        return {
-          error: { drawn: false, text: '' },
-          notes: {
-            drawn: false,
-            text: `the harness could not type the document - the box holds ${typed.length.toString()} of ${text.length.toString()} characters`,
-          },
-        };
-      }
-
-      await page.getByRole('button', { name: 'Run' }).click();
-
-      /*
-       * THE CONVERTED DOCUMENT IS THE SETTLE SIGNAL, AND THAT MATTERS MOST FOR
-       * THE CONTROLS.
-       *
-       * Each of these runs starts from a fresh `goto`, so the page has no
-       * notes list at all until one arrives - which makes "wait until there
-       * are no notes" true on the FIRST poll, before Run has produced
-       * anything. That is an assertion that cannot fail, and round four found
-       * eighteen of exactly that shape in this file. Waiting for the
-       * `Converted` port to hold a string only THIS run can have put there is
-       * waiting for this run.
-       */
-      const converted = page.getByLabel('Structured data Converted');
-      await converted.waitFor({ timeout: 30_000 });
-      await expectValue(converted, expected);
-
-      return {
-        error: await drawnError(page),
-        notes: await drawnNotes(page, 'Structured data Detected notes'),
-      };
-    };
-
-    /* -- 7a: the four YAML presentation losses, as one note ---------------- */
     const RICH =
       '# why this exists\ndefaults: &defaults\n  retries: 3\nservice: *defaults\ncustom: !mytype\n  a: 1\ntext: >\n  one\n  two\n';
-
-    const rich = await runAs(RICH, 'YAML', 'JSON', '"retries": 3');
+    const rich = await runAs(RICH, 'YAML', 'JSON', (output) => output.includes('"retries": 3'));
+    const census =
+      rich?.notes.filter(
+        (note) => note.word === 'Warning' && note.title.startsWith('Not carried over'),
+      ) ?? [];
     check(
       label,
-      'a comment, an anchor, a tag and a block style are drawn as ONE note naming all four',
-      rich.notes.drawn &&
+      'a comment, an anchor, a tag and a block style are drawn as ONE warning naming all four',
+      census.length === 1 &&
+        census[0].drawn &&
         ['1 comment', '1 anchor', '1 tag', '1 block style'].every((part) =>
-          rich.notes.text.includes(part),
+          census[0].title.includes(part),
         ),
-      rich.notes.text.slice(0, 280),
-    );
-
-    check(
-      label,
-      'and the same panel says an anchor is expanded rather than dropped',
-      rich.notes.text.includes('EXPANDED') && rich.notes.text.includes('larger than the source'),
-      rich.notes.text.slice(0, 320),
+      rich === null ? 'did not settle' : drawnSummary({ failed: null, notes: rich.notes }),
     );
 
     /*
-     * THE CONTROL, ON SUBJECT AND PER KIND. A document with a comment and
-     * nothing else must produce a note that does NOT mention an anchor, a tag
-     * or a style - a census that named every kind whatever the document held
-     * would pass the check above on every YAML file ever pasted in.
+     * -- 4: a JSON syntax error's position, the same in both engines ---------
+     *
+     * Round sixteen. Each document below is one the old path gave no position
+     * for in at least one engine, measured, and each check asks for the SAME
+     * line and column in both: a check that accepted whatever this engine
+     * printed would be the test that hid it.
      */
-    const commentOnly = await runAs(
-      '# why this exists\nretries: 3\n',
-      'YAML',
-      'JSON',
-      '"retries": 3',
+    for (const [text, where] of [
+      ['{"a": }', 'Line 1, column 7'],
+      ['[1, 2,]', 'Line 1, column 7'],
+      ['{\n  "a": tru\n}', 'Line 2, column 8'],
+    ]) {
+      const bad = await runAs(text, 'JSON', 'YAML', (_output, error) => error.drawn);
+      check(
+        label,
+        `a JSON syntax error in ${JSON.stringify(text)} is drawn with its position, ${where}`,
+        bad !== null &&
+          bad.error.text.includes('That is not valid JSON') &&
+          bad.error.text.includes(where),
+        bad === null ? 'did not settle' : bad.error.text.slice(0, 220),
+      );
+    }
+
+    const good = await runAs('{"a": "zebra"}', 'JSON', 'YAML', (output) =>
+      output.includes('zebra'),
     );
     check(
       label,
-      'a YAML document with only a comment names only the comment',
-      commentOnly.notes.drawn &&
-        commentOnly.notes.text.includes('1 comment') &&
-        !commentOnly.notes.text.includes('anchor') &&
-        !commentOnly.notes.text.includes('tag') &&
-        !commentOnly.notes.text.includes('block style'),
-      commentOnly.notes.text.slice(0, 240),
+      'and valid JSON draws no error and no position',
+      good !== null && !good.error.drawn && !good.error.text.includes('column'),
+      good === null ? 'did not settle' : good.error.text.slice(0, 120),
     );
 
-    /*
-     * AND THE SHARPEST ONE, because it is the only place the note deliberately
-     * stays quiet about something that IS a YAML style: a literal block
-     * survives a YAML target, measured against the writer, so saying it did
-     * not would be a warning about a document that has not changed.
-     */
-    const literal = await runAs('text: |\n  one\n  two\n', 'YAML', 'YAML', 'text: |');
+    /* -- SD-8 and SD-14b: two refusals, drawn at their column --------------- */
+    const mistyped = await runAs('v: !!float abc\n', 'YAML', 'JSON', (_output, error) =>
+      error.text.includes('tagged'),
+    );
     check(
       label,
-      'a literal block on a YAML target draws no note, because the output still has one',
-      !literal.notes.drawn && literal.notes.text === '',
-      literal.notes.text.slice(0, 200),
+      'a value its tag cannot describe is refused on the tool page, with its line and column',
+      mistyped !== null &&
+        mistyped.error.drawn &&
+        mistyped.error.text.includes('"abc" is tagged !!float and is not one.') &&
+        mistyped.error.text.includes('Line 1, column 12'),
+      mistyped === null ? 'did not settle' : mistyped.error.text.slice(0, 240),
     );
 
-    /* -- 7b: corpus row 11, a trimmed CSV header --------------------------- */
-    const trimmed = await runAs('alpha, shipped at \n1,2\n', 'CSV', 'JSON', '"shipped at"');
+    const float = await runAs('v: !!float 1\n', 'YAML', 'JSON', (output) =>
+      output.includes('"v": 1'),
+    );
     check(
       label,
-      'a trimmed CSV header cell is drawn on the tool page, with its spaces shown',
-      trimmed.notes.drawn &&
-        trimmed.notes.text.includes('1 header cell was trimmed') &&
-        trimmed.notes.text.includes('" shipped at "'),
-      trimmed.notes.text.slice(0, 240),
+      'and !!float 1 is read as the number, not the string',
+      float !== null && !float.error.drawn && !float.output.includes('"1"'),
+      float === null ? 'did not settle' : float.output,
     );
 
-    const untrimmed = await runAs(
-      'alpha," shipped at "\n1,2\n',
-      'CSV',
-      'JSON',
-      '" shipped at ": "2"',
+    const duplicate = await runAs('alpha,beta,alpha\n1,2,3\n', 'CSV', 'JSON', (_output, error) =>
+      error.text.includes('Duplicate column'),
     );
     check(
       label,
-      'and a header cell the author quoted draws none, because nothing was removed',
-      !untrimmed.notes.drawn && untrimmed.notes.text === '',
-      untrimmed.notes.text.slice(0, 200),
-    );
-
-    /* -- 7c: corpus row 12, a duplicate JSON key --------------------------- */
-    const duplicate = await runAs('{"retries": 3, "retries": 5}', 'JSON', 'JSON', '"retries": 5');
-    check(
-      label,
-      'a discarded duplicate JSON key is drawn on the tool page, with the value that lost',
-      duplicate.notes.drawn &&
-        duplicate.notes.text.includes('1 duplicate key was discarded') &&
-        duplicate.notes.text.includes('$.retries discarded `3`'),
-      duplicate.notes.text.slice(0, 240),
-    );
-
-    const noDuplicate = await runAs(
-      '[{"retries": 3}, {"retries": 5}]',
-      'JSON',
-      'JSON',
-      '"retries": 5',
-    );
-    check(
-      label,
-      'and the same key in two sibling objects draws none, because it is two keys',
-      !noDuplicate.notes.drawn && noDuplicate.notes.text === '',
-      noDuplicate.notes.text.slice(0, 200),
-    );
-
-    /* -- 7d: all three on a canvas node ------------------------------------ */
-    const richNode = await onNode(page, 'structured-data', yamlToYaml, RICH, (text) =>
-      text.startsWith('Lossy'),
-    );
-    check(
-      label,
-      'the presentation census reaches a node face, which is where nobody opens a panel',
-      richNode !== null &&
-        richNode.drawn &&
-        richNode.text.startsWith('Lossy ·') &&
-        richNode.text.includes('Not carried over:') &&
-        richNode.text.includes('comment'),
-      JSON.stringify(richNode),
-    );
-
-    const cleanYamlNode = await onNode(
-      page,
-      'structured-data',
-      yamlToYaml,
-      'retries: 3\n',
-      (text) => text.includes('1 key'),
-    );
-    check(
-      label,
-      'and a YAML document with none of it leaves the node face clean',
-      cleanYamlNode !== null && cleanYamlNode.drawn && !cleanYamlNode.text.includes('Lossy'),
-      JSON.stringify(cleanYamlNode),
-    );
-
-    const csvToJson = { source: 'csv', target: 'json', indent: 2, delimiter: 'comma' };
-    const trimmedNode = await onNode(
-      page,
-      'structured-data',
-      csvToJson,
-      'alpha, shipped at \n1,2\n',
-      (text) => text.startsWith('Lossy'),
-    );
-    check(
-      label,
-      'the trimmed-header note reaches a node face too',
-      trimmedNode !== null &&
-        trimmedNode.drawn &&
-        trimmedNode.text.includes('1 header cell was trimmed'),
-      JSON.stringify(trimmedNode),
-    );
-
-    const jsonToJson = { source: 'json', target: 'json', indent: 2, delimiter: 'comma' };
-    const duplicateNode = await onNode(
-      page,
-      'structured-data',
-      jsonToJson,
-      '{"retries": 3, "retries": 5}',
-      (text) => text.startsWith('Lossy'),
-    );
-    check(
-      label,
-      'and so does the discarded duplicate key',
-      duplicateNode !== null &&
-        duplicateNode.drawn &&
-        duplicateNode.text.includes('1 duplicate key was discarded'),
-      JSON.stringify(duplicateNode),
-    );
-
-    const cleanJsonNode = await onNode(
-      page,
-      'structured-data',
-      jsonToJson,
-      '{"retries": 5}',
-      (text) => text.includes('1 key'),
-    );
-    check(
-      label,
-      'a JSON document with one of each key leaves the node face clean',
-      cleanJsonNode !== null && cleanJsonNode.drawn && !cleanJsonNode.text.includes('Lossy'),
-      JSON.stringify(cleanJsonNode),
+      'a duplicate column is refused at the column it is in, not at column 1',
+      duplicate !== null &&
+        duplicate.error.drawn &&
+        duplicate.error.text.includes('Line 1, column 12'),
+      duplicate === null ? 'did not settle' : duplicate.error.text.slice(0, 200),
     );
   } finally {
     await context.close().catch(() => {});
@@ -6707,32 +7116,22 @@ async function checkValueModel(browser, label) {
 }
 
 /**
- * THE TOOL THAT COULD NOT SPEAK, AND THE TABLE THAT IGNORED ALPHA.
+ * THE CONTRAST TABLE THAT IGNORED ALPHA, AND THE COMPOSITOR IT NOW AGREES WITH.
  *
- * `color-convert` was the only shipped tool that changes values and had no
- * `report` port, so no loss it had could reach the conversion matrix's own
- * definition of `lossy, told` - "on the panel on /tools AND on the canvas
- * node". Round nine gave it the port. That makes the claim testable for the
- * first time, and this is where it is tested, because both halves of the
- * definition are about DRAWING and jsdom draws nothing.
+ * `#aabbccdd` used to report contrast ratios byte-identical to `#aabbcc`. Two
+ * questions only a real engine can answer:
  *
- * Five questions:
+ *   1. DO THE RATIOS DIFFER? Read off the rendered table for both colours, and
+ *      the table must say on screen that it composites, and against what.
+ *   2. IS THE FORMULA THE PLATFORM'S? `compositeOver` claims to do what the
+ *      engine's own compositor does, so the engine is asked: the same colour is
+ *      painted over the same backdrop on a real 2D canvas and the pixel read
+ *      back. A formula chosen for tidiness would disagree here.
  *
- *   1. ON `/tools`, is the note drawn, with a box of non-zero size, with no
- *      click anywhere, naming the colour typed and the colour returned?
- *   2. ON A CANVAS NODE, does the node's own face carry it? The report is the
- *      fourth port of four, so without `lossSummary` reading it the sentence
- *      would exist only in a panel nobody opens.
- *   3. THE NEGATIVE CONTROL for both: an ordinary colour draws nothing.
- *   4. DOES THE CONTRAST TABLE STILL IGNORE ALPHA? `#aabbccdd` used to report
- *      ratios byte-identical to `#aabbcc`. The two are read off the rendered
- *      table and must differ, and the table must say that it composites.
- *   5. AND THE ORACLE FOR THE FORMULA. `compositeOver` claims to do what the
- *      platform's own compositor does, so the platform is asked: the same
- *      colour is painted over the same backdrop on a real 2D canvas and the
- *      pixel is read back. A formula chosen for tidiness would disagree here.
+ * The colour tool's NOTES - rows 1 to 3 of the loss corpus - are
+ * `checkLossCorpus`'s, on the page and on a node.
  */
-async function checkColourReports(browser, label) {
+async function checkColourContrast(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   const page = await context.newPage();
 
@@ -6745,11 +7144,9 @@ async function checkColourReports(browser, label) {
     );
 
   /**
-   * Runs one colour and waits for the answer rather than for the click.
-   *
-   * The previous result stays on screen while the next run is in flight, so
-   * waiting on the button would read the old panel - and this check is
-   * entirely about which panel is on screen.
+   * Runs one colour and waits for the answer rather than for the click: the
+   * previous result stays on screen while the next run is in flight, and this
+   * check is entirely about which table is on screen.
    */
   const convert = async (text, expected) => {
     // `Colour input`, not `Colour Colour`: the port name is only folded into
@@ -6766,53 +7163,19 @@ async function checkColourReports(browser, label) {
   };
 
   try {
-    /* -- 1: the tool page ------------------------------------------------- */
     await page.goto(`${ORIGIN}/tools/color-convert`, { waitUntil: 'networkidle' });
     await page.getByRole('heading', { level: 1, name: 'Colour' }).waitFor({ timeout: 15_000 });
 
-    const gamutRan = await convert('oklch(0.7 0.4 150)', '#00d600');
-    const gamut = await drawnNotes(page, 'Colour Report notes');
-    check(
-      label,
-      'an out-of-gamut colour is drawn on the tool page without opening anything',
-      gamutRan &&
-        gamut.drawn &&
-        gamut.text.includes('oklch(0.7 0.4 150)') &&
-        gamut.text.includes('#00d600'),
-      gamut.text.slice(0, 160),
-    );
-
-    const clampRan = await convert('hsl(361 110% -5%)', '#000000');
-    const clamp = await drawnNotes(page, 'Colour Report notes');
-    check(
-      label,
-      'a clamped hsl() names the components it clamped and the colour it produced',
-      clampRan &&
-        clamp.drawn &&
-        clamp.text.includes('saturation 110%') &&
-        clamp.text.includes('lightness -5%') &&
-        clamp.text.includes('#000000'),
-      clamp.text.slice(0, 160),
-    );
-
-    /* -- 3: the negative control, on the same page ------------------------ */
-    const cleanRan = await convert('#aabbcc', '#aabbcc');
-    const clean = await drawnNotes(page, 'Colour Report notes');
-    check(
-      label,
-      'an ordinary colour draws no note at all',
-      cleanRan && !clean.drawn && clean.text === '',
-      clean.text.slice(0, 120),
-    );
-
-    /* -- 4: the contrast table -------------------------------------------- */
+    /* -- 1: the contrast table -------------------------------------------- */
+    const opaqueRan = await convert('#aabbcc', '#aabbcc');
     const opaqueRatios = await ratiosOn();
     const alphaRan = await convert('#aabbccdd', '#aabbccdd');
     const alphaRatios = await ratiosOn();
     check(
       label,
       'a translucent colour no longer reports the opaque twin ratios',
-      alphaRan &&
+      opaqueRan &&
+        alphaRan &&
         opaqueRatios.length === 2 &&
         alphaRatios.length === 2 &&
         opaqueRatios.join() !== alphaRatios.join(),
@@ -6841,7 +7204,7 @@ async function checkColourReports(browser, label) {
       `${disclosure.caption} | ${disclosure.note.slice(0, 120)}`,
     );
 
-    /* -- 5: the engine own compositor as the oracle ----------------------- */
+    /* -- 2: the engine's own compositor as the oracle ---------------------- */
     const painted = await page.evaluate(() => {
       const canvas = document.createElement('canvas');
       canvas.width = 2;
@@ -6867,225 +7230,6 @@ async function checkColourReports(browser, label) {
       'this engine composites #aabbccdd to the same two colours the table names',
       painted !== null && painted.onBlack === '#93a2b1' && painted.onWhite === '#b5c4d3',
       JSON.stringify(painted),
-    );
-
-    /* -- 2 and 3: a canvas node ------------------------------------------- */
-    const lossyNode = await onNode(
-      page,
-      'color-convert',
-      { target: 'hex', precision: 5 },
-      'oklch(0.7 0.4 150)',
-      (text) => text.startsWith('Lossy'),
-    );
-    check(
-      label,
-      'a canvas node prints what the colour conversion changed on its own face',
-      lossyNode !== null &&
-        lossyNode.drawn &&
-        lossyNode.text.startsWith('Lossy ·') &&
-        lossyNode.text.includes('outside sRGB'),
-      JSON.stringify(lossyNode),
-    );
-
-    const spoken = await page.evaluate(
-      () => document.querySelector('[data-testid="node-n1"]')?.getAttribute('aria-label') ?? '',
-    );
-    check(
-      label,
-      'and the accessible name of the colour node carries it too',
-      spoken.includes('lossy:'),
-      spoken.replace(/\s+/g, ' ').slice(0, 160),
-    );
-
-    const cleanNode = await onNode(
-      page,
-      'color-convert',
-      { target: 'hex', precision: 5 },
-      '#aabbcc',
-      (text) => text.includes('#aabbcc'),
-    );
-    check(
-      label,
-      'a colour node that changed nothing says nothing about loss',
-      cleanNode !== null && cleanNode.drawn && !cleanNode.text.includes('Lossy'),
-      JSON.stringify(cleanNode),
-    );
-  } finally {
-    await context.close().catch(() => {});
-  }
-}
-
-/**
- * THE CENSUS ON THE MARKDOWN TARGET, DRAWN.
- *
- * `HTML → Markdown` reported nothing at all until round ten: three findings -
- * a dropped `<caption>`, a table cell's list flattened, an empty header row
- * invented - were one silence, because nothing compared the input with the
- * result. The unit suite asserts the notes exist; this asserts a person
- * READS them, which is a different claim and the one jsdom cannot make. A
- * report drawn at zero height, or behind the options panel, satisfies
- * `textContent` and satisfies nobody.
- *
- * AND THE CORRECTNESS HALF IN A REAL ENGINE. A cell containing a list used to
- * emit a literal newline, which ends a GFM row - so the output text box held a
- * table that renders wrongly. The output is read back here and asserted to be
- * three lines, every one a row, because that is the property the fix has and
- * the broken version did not.
- *
- * EVERY ASSERTION IS PAIRED. The last run on the tool page and the last node
- * are an ordinary HTML table whose header row is a plain `<tr>` of `<th>` -
- * the commonest shape there is, and the document that found a false `<thead>`
- * report shipped since round four. Nothing may be drawn for it.
- */
-async function checkMarkdownCensus(browser, label) {
-  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
-  const page = await context.newPage();
-
-  const CAPTION =
-    '<table><caption>Quarterly sales</caption><tr><th>Region</th></tr><tr><td>North</td></tr></table>';
-  const CELL_LIST =
-    '<table><tr><th>Region</th></tr><tr><td><ul><li>North</li><li>South</li></ul></td></tr></table>';
-  const HEADERLESS = '<table><tr><td>North</td><td>3</td></tr></table>';
-  // The control, and it is a control on SUBJECT rather than on wording: it is
-  // a table, converted by the same pass, that loses nothing.
-  const CLEAN = '<table><tr><th>Region</th></tr><tr><td>North</td></tr></table>';
-
-  /**
-   * Runs one document and waits for the ANSWER rather than for the click.
-   *
-   * The previous result stays on screen while the next run is in flight, so
-   * waiting on the button would read the old panel - and this check is
-   * entirely about which panel is on screen. The predicate is on the output
-   * text, because that is the one thing that is different per document.
-   *
-   * And it types only what the box does not already hold, then reads it back:
-   * the first document is typed before the two listboxes rather than after
-   * them, because a fill landing while Radix returns focus to a trigger is
-   * discarded (crash B). A box that does not hold the text returns null, which
-   * every caller's check reports.
-   */
-  const convert = async (text, settled) => {
-    const field = page.getByLabel('Text convert input');
-    if ((await field.inputValue()) !== text) await field.fill(text);
-    if ((await field.inputValue()) !== text) return null;
-    await page.getByRole('button', { name: 'Run' }).click();
-    const output = page.getByLabel('Text convert Converted');
-    await output.waitFor({ timeout: 30_000 });
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const value = await output.inputValue();
-      if (settled(value)) return value;
-      await page.waitForTimeout(100);
-    }
-    return null;
-  };
-
-  try {
-    /* -- 1: the tool page ------------------------------------------------- */
-    await page.goto(`${ORIGIN}/tools/text-convert`, { waitUntil: 'networkidle' });
-    await page
-      .getByRole('heading', { level: 1, name: 'Text convert' })
-      .waitFor({ timeout: 15_000 });
-
-    // Typed BEFORE the listboxes; see `convert`.
-    await page.getByLabel('Text convert input').fill(CAPTION);
-    await page.getByRole('combobox', { name: 'Source format' }).click();
-    await page.getByRole('option', { name: 'HTML', exact: true }).click();
-    await page.getByRole('combobox', { name: 'Target format' }).click();
-    await page.getByRole('option', { name: 'Markdown', exact: true }).click();
-
-    const captionOut = await convert(CAPTION, (value) => value.includes('Region'));
-    const caption = await drawnNotes(page, 'Text convert Report notes');
-    check(
-      label,
-      'a dropped table caption is drawn on the tool page without opening anything',
-      captionOut !== null &&
-        !captionOut.includes('Quarterly sales') &&
-        caption.drawn &&
-        caption.text.includes('could not carry') &&
-        caption.text.includes('<caption>'),
-      caption.text.slice(0, 200),
-    );
-
-    const listOut = await convert(CELL_LIST, (value) => value.includes('South'));
-    const list = await drawnNotes(page, 'Text convert Report notes');
-    check(
-      label,
-      'a table cell that was a list is reported, and names the elements that went',
-      list.drawn && list.text.includes('<ul>') && list.text.includes('<li>'),
-      list.text.slice(0, 200),
-    );
-
-    /* -- 2: TC-1, in a real engine ---------------------------------------- */
-    const rows = (listOut ?? '').split('\n').filter((line) => line !== '');
-    check(
-      label,
-      'and the table it produced is three lines, every one of them a row',
-      rows.length === 3 && rows.every((line) => line.startsWith('|') && line.endsWith('|')),
-      JSON.stringify(rows),
-    );
-
-    const headerlessOut = await convert(HEADERLESS, (value) => value.includes('North'));
-    const headerless = await drawnNotes(page, 'Text convert Report notes');
-    check(
-      label,
-      'an invented header row is reported, and says it is a header row',
-      headerlessOut !== null &&
-        headerless.drawn &&
-        headerless.text.includes('invented') &&
-        headerless.text.includes('header row'),
-      headerless.text.slice(0, 200),
-    );
-
-    /* -- 3: the negative control, on the same page ------------------------ */
-    const cleanOut = await convert(CLEAN, (value) => value.includes('Region'));
-    const clean = await drawnNotes(page, 'Text convert Report notes');
-    check(
-      label,
-      'an ordinary table draws no note at all on the way to Markdown',
-      cleanOut !== null && !clean.drawn && clean.text === '',
-      clean.text.slice(0, 200),
-    );
-
-    /* -- 4: a canvas node ------------------------------------------------- */
-    const lossyNode = await onNode(
-      page,
-      'text-convert',
-      { source: 'html', target: 'markdown' },
-      CAPTION,
-      (text) => text.startsWith('Lossy'),
-    );
-    check(
-      label,
-      'a canvas node prints what the Markdown conversion could not carry on its own face',
-      lossyNode !== null &&
-        lossyNode.drawn &&
-        lossyNode.text.startsWith('Lossy ·') &&
-        lossyNode.text.includes('could not carry'),
-      JSON.stringify(lossyNode),
-    );
-
-    const spoken = await page.evaluate(
-      () => document.querySelector('[data-testid="node-n1"]')?.getAttribute('aria-label') ?? '',
-    );
-    check(
-      label,
-      'and the accessible name of the text node carries it too',
-      spoken.includes('lossy:'),
-      spoken.replace(/\s+/g, ' ').slice(0, 200),
-    );
-
-    const cleanNode = await onNode(
-      page,
-      'text-convert',
-      { source: 'html', target: 'markdown' },
-      CLEAN,
-      (text) => text.includes('Region'),
-    );
-    check(
-      label,
-      'a text node whose table lost nothing says nothing about loss',
-      cleanNode !== null && cleanNode.drawn && !cleanNode.text.includes('Lossy'),
-      JSON.stringify(cleanNode),
     );
   } finally {
     await context.close().catch(() => {});
@@ -7128,6 +7272,10 @@ async function nodeFace(page) {
       drawn: rect.width > 0 && rect.height > 0,
       spoken: node?.getAttribute('aria-label') ?? '',
       status: node?.getAttribute('data-status') ?? '',
+      // `ok`, `lossy` or `after-loss`: the one word the footer and the LED
+      // agree on. `succeeded` in the name is no control - a lossy node's name
+      // says `succeeded, and lost something`.
+      verdict: node?.getAttribute('data-verdict') ?? '',
     };
   });
 }
@@ -7196,218 +7344,9 @@ async function onNode(page, tool, options, text, settled) {
     if (face !== null && FINISHED.has(face.status) && settled(face.text)) return face;
     if (Date.now() > deadline) {
       const why = `HARNESS: no finished run settled in 30s - status ${face?.status ?? 'none'}, face ${JSON.stringify(face?.text ?? null)}`;
-      return { text: why, drawn: false, spoken: why, status: face?.status ?? '' };
+      return { text: why, drawn: false, spoken: why, status: face?.status ?? '', verdict: '' };
     }
     await page.waitForTimeout(100);
-  }
-}
-
-/**
- * CORPUS ROWS 16, 17 AND 18 - three text-convert losses, each asked on the tool
- * page and on a canvas node, in the engine people actually paste into.
- *
- *   16  `<a class="btn">` emptied to `class=""` by the sanitiser. The census
- *       now carries class names, and the note has to be drawn.
- *   17  `<mark>` and `<kbd>` under "Keep the text, drop the tag". The fix is in
- *       the conversion, so the first assertion is on the OUTPUT - no
- *       emphasis, no code span - and the note that remains names both.
- *   18  `<ol reversed>`. The note has to say the numbers now count up.
- *
- * Every control converts a document of the same shape that loses nothing, and
- * waits for THAT document's output before asserting silence: the previous
- * run's answer stays on screen while the next is in flight.
- */
-async function checkClassAndSubstitution(browser, label) {
-  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
-  const page = await context.newPage();
-
-  const LINK = '<p><a class="btn" href="https://example.com/a">link</a></p>';
-  // `zebra`, not `plain`: a settle word must be one only THIS output holds,
-  // and `plain` is in the node's own description ("...HTML and plain text"),
-  // which is on its face before the run has produced anything. That exact
-  // control passed on a node still reading `running` on its first try.
-  const PLAIN_LINK = '<p><a href="https://example.com/b">zebra</a></p>';
-  const MARKED = '<p><mark>highlighted</mark> and <kbd>Esc</kbd></p>';
-  const EMPHASIS = '<p><em>emphasis</em> and <code>code</code></p>';
-  const REVERSED = '<ol reversed><li>three</li><li>two</li><li>one</li></ol>';
-  const COUNTING = '<ol><li>uno</li><li>dos</li></ol>';
-
-  /**
-   * Types the document BEFORE opening either listbox - round eleven's rule -
-   * reads the box back, runs, and waits for the output to hold `expected`.
-   */
-  const runAs = async (text, target, expected) => {
-    await page.goto(`${ORIGIN}/tools/text-convert`, { waitUntil: 'networkidle' });
-    await page
-      .getByRole('heading', { level: 1, name: 'Text convert' })
-      .waitFor({ timeout: 15_000 });
-    await page.getByLabel('Text convert input').fill(text);
-    await page.getByRole('combobox', { name: 'Source format' }).click();
-    await page.getByRole('option', { name: 'HTML', exact: true }).click();
-    await page.getByRole('combobox', { name: 'Target format' }).click();
-    await page.getByRole('option', { name: target, exact: true }).click();
-
-    const typed = await page.getByLabel('Text convert input').inputValue();
-    if (typed !== text)
-      return {
-        output: null,
-        notes: { drawn: false, text: `typed ${typed.length} of ${text.length}` },
-      };
-
-    await page.getByRole('button', { name: 'Run' }).click();
-    const output = page.getByLabel('Text convert Converted');
-    await output.waitFor({ timeout: 30_000 });
-    for (let attempt = 0; attempt < 150; attempt += 1) {
-      const value = await output.inputValue();
-      if (value.includes(expected))
-        return { output: value, notes: await drawnNotes(page, 'Text convert Report notes') };
-      await page.waitForTimeout(100);
-    }
-    return { output: null, notes: { drawn: false, text: 'the output never arrived' } };
-  };
-
-  try {
-    /* -- row 16, on the tool page ----------------------------------------- */
-    const link = await runAs(LINK, 'HTML (sanitised)', 'class=""');
-    check(
-      label,
-      'a class name the sanitiser took out of a kept attribute is drawn on the tool page',
-      link.notes.drawn &&
-        link.notes.text.includes('1 class name was removed by the sanitiser') &&
-        link.notes.text.includes('btn on <a>'),
-      link.notes.text.slice(0, 220),
-    );
-
-    const plain = await runAs(PLAIN_LINK, 'HTML (sanitised)', 'zebra');
-    check(
-      label,
-      'and a link that had no class draws no note at all',
-      plain.output !== null && !/class/i.test(plain.notes.text),
-      plain.notes.text.slice(0, 160),
-    );
-
-    /* -- row 17 ------------------------------------------------------------ */
-    const marked = await runAs(MARKED, 'Markdown', 'highlighted and Esc');
-    check(
-      label,
-      '<mark> and <kbd> keep their words and gain no formatting under the text policy',
-      marked.output !== null && !/[_*`]/.test(marked.output),
-      JSON.stringify(marked.output),
-    );
-    check(
-      label,
-      'and the note that remains names both and invents nothing',
-      marked.notes.drawn &&
-        marked.notes.text.includes('could not carry') &&
-        marked.notes.text.includes('<mark>') &&
-        marked.notes.text.includes('<kbd>') &&
-        !marked.notes.text.includes('invented'),
-      marked.notes.text.slice(0, 240),
-    );
-
-    const emphasis = await runAs(EMPHASIS, 'Markdown', '_emphasis_');
-    check(
-      label,
-      'emphasis and code that were already there draw no note',
-      emphasis.output !== null &&
-        !emphasis.notes.text.includes('could not carry') &&
-        !emphasis.notes.text.includes('invented'),
-      emphasis.notes.text.slice(0, 160),
-    );
-
-    /* -- row 18 ------------------------------------------------------------ */
-    const reversed = await runAs(REVERSED, 'Markdown', '1. three');
-    check(
-      label,
-      'a reversed list says its numbers now count up, on the tool page',
-      reversed.notes.drawn &&
-        reversed.notes.text.includes('reversed') &&
-        reversed.notes.text.includes('now count up'),
-      reversed.notes.text.slice(0, 240),
-    );
-
-    const counting = await runAs(COUNTING, 'Markdown', '1. uno');
-    check(
-      label,
-      'and a list that was never reversed draws no note',
-      counting.output !== null &&
-        !counting.notes.text.includes('count up') &&
-        !counting.notes.text.includes('could not carry'),
-      counting.notes.text.slice(0, 160),
-    );
-
-    /* -- all three on a canvas node ------------------------------------- */
-    const sanitised = { source: 'html', target: 'html-sanitised' };
-    const markdown = { source: 'html', target: 'markdown' };
-
-    const linkNode = await onNode(page, 'text-convert', sanitised, LINK, (text) =>
-      text.startsWith('Lossy'),
-    );
-    check(
-      label,
-      'the class-name note reaches a node face, and its accessible name',
-      linkNode !== null &&
-        linkNode.drawn &&
-        linkNode.text.includes('class name was removed') &&
-        linkNode.spoken.includes('lossy:'),
-      JSON.stringify(linkNode),
-    );
-
-    const plainNode = await onNode(page, 'text-convert', sanitised, PLAIN_LINK, (text) =>
-      text.includes('zebra'),
-    );
-    check(
-      label,
-      'a node holding a link with no class says nothing about loss',
-      plainNode !== null &&
-        plainNode.drawn &&
-        plainNode.text.includes('zebra') &&
-        plainNode.spoken.includes('succeeded') &&
-        !plainNode.text.includes('Lossy'),
-      JSON.stringify(plainNode),
-    );
-
-    const markedNode = await onNode(page, 'text-convert', markdown, MARKED, (text) =>
-      text.startsWith('Lossy'),
-    );
-    check(
-      label,
-      'the mark and kbd note reaches a node face',
-      markedNode !== null &&
-        markedNode.drawn &&
-        markedNode.text.includes('could not carry') &&
-        // The node's accessible name carries its output's summary: the fix,
-        // not only the note, has to be on the canvas. Without this the check
-        // passed with TC-4 reverted, because the old census said "could not
-        // carry" too.
-        markedNode.spoken.includes('highlighted and Esc'),
-      JSON.stringify(markedNode),
-    );
-
-    const reversedNode = await onNode(page, 'text-convert', markdown, REVERSED, (text) =>
-      text.startsWith('Lossy'),
-    );
-    check(
-      label,
-      'the reversed-list note reaches a node face',
-      reversedNode !== null && reversedNode.drawn && reversedNode.text.includes('could not carry'),
-      JSON.stringify(reversedNode),
-    );
-
-    const countingNode = await onNode(page, 'text-convert', markdown, COUNTING, (text) =>
-      text.includes('uno'),
-    );
-    check(
-      label,
-      'a node holding a list that was never reversed says nothing about loss',
-      countingNode !== null &&
-        countingNode.drawn &&
-        countingNode.spoken.includes('succeeded') &&
-        !countingNode.text.includes('Lossy'),
-      JSON.stringify(countingNode),
-    );
-  } finally {
-    await context.close().catch(() => {});
   }
 }
 
@@ -7423,7 +7362,12 @@ async function checkClassAndSubstitution(browser, label) {
  * none at all.
  *
  * Every settle word is `zebra`, which is in no description the page shows
- * before a run - see checkClassAndSubstitution for why that matters.
+ * before a run. A settle word must be one only THIS output holds: `plain` is in
+ * text-convert's own description ("...HTML and plain text"), which is on a
+ * node's face before the run has produced anything, and a control settling on
+ * it passed on a node still reading `running`. `onNode` now also waits for a
+ * finished run, so that cannot recur there; on the tool page the word still
+ * matters.
  */
 async function checkPastedCensus(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
@@ -7520,6 +7464,25 @@ async function checkPastedCensus(browser, label) {
       refused.notes.text.slice(0, 220),
     );
 
+    /*
+     * -- TC-1, the correctness half, in a real engine ----------------------
+     *
+     * A table cell holding a list used to emit a literal newline, which ends a
+     * GFM row - so the output box held a table that renders wrongly. Corpus row
+     * 14 holds the NOTE for this document; what no note can hold is that the
+     * table it wrote is still a table, so the output is read back and asserted
+     * three lines, every one a row.
+     */
+    const listed = LOSS_CORPUS.cases.find((entry) => entry.id === 'markdown-cell-list-flattened');
+    const cells = await runAs(listed?.input ?? '', 'Markdown', 'South');
+    const rows = (cells.output ?? '').split('\n').filter((line) => line !== '');
+    check(
+      label,
+      'a table cell that was a list still writes a table of three lines, every one a row',
+      rows.length === 3 && rows.every((line) => line.startsWith('|') && line.endsWith('|')),
+      JSON.stringify(rows),
+    );
+
     /* -- on a node's face, where only a warning goes -------------------- */
     const markdown = { source: 'html', target: 'markdown' };
     const normalised = { source: 'html', target: 'html' };
@@ -7564,221 +7527,6 @@ async function checkPastedCensus(browser, label) {
     );
   } finally {
     await context.close();
-  }
-}
-
-/**
- * CORPUS ROWS 19 AND 20, AND TWO REFUSALS - structured data.
- *
- *   19  a cell holding a tab, written to TSV in quotes: the note names the
- *       cell and the two readers that cannot read it.
- *   20  a YAML flow collection written back as a block: a fifth kind in the
- *       presentation census, which is still ONE line on a node.
- *   SD-8   `!!float abc` refused, where it used to become the string "abc".
- *   SD-14b the duplicate column's refusal drawn with the column it is in.
- *   JSON   a syntax error drawn with the same line and column in both engines
- *          (round sixteen; the position no longer comes from the engine).
- */
-async function checkTableCellsAndFlow(browser, label) {
-  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
-  const page = await context.newPage();
-
-  const TAB_CELL = '[{"note": "has\\ttab", "id": "1"}]';
-  const PLAIN_CELL = '[{"note": "no tab here", "id": "2"}]';
-  const FLOW = 'a: {b: 1}\nc: [1, 2]\n';
-  const BLOCK = 'a:\n  b: 7\n';
-
-  /** As in checkValueModel: typed first, read back, settled on this run's own answer. */
-  const runAs = async (text, source, target, settled) => {
-    await page.goto(`${ORIGIN}/tools/structured-data`, { waitUntil: 'networkidle' });
-    await page
-      .getByRole('heading', { level: 1, name: 'Structured data' })
-      .waitFor({ timeout: 15_000 });
-    await page.getByLabel('Structured data input').fill(text);
-    await page.getByRole('combobox', { name: 'Source format' }).click();
-    await page.getByRole('option', { name: source, exact: true }).click();
-    await page.getByRole('combobox', { name: 'Target format' }).click();
-    await page.getByRole('option', { name: target, exact: true }).click();
-
-    const typed = await page.getByLabel('Structured data input').inputValue();
-    if (typed !== text) return null;
-
-    await page.getByRole('button', { name: 'Run' }).click();
-    for (let attempt = 0; attempt < 150; attempt += 1) {
-      const converted = page.getByLabel('Structured data Converted');
-      const output = (await converted.count()) > 0 ? await converted.inputValue() : '';
-      const error = await drawnError(page);
-      if (settled(output, error))
-        return { output, error, notes: await drawnNotes(page, 'Structured data Detected notes') };
-      await page.waitForTimeout(100);
-    }
-    return null;
-  };
-
-  try {
-    /*
-     * -- a JSON syntax error's position, the same in both engines ------------
-     *
-     * Round sixteen. The position used to be read out of the engine's own
-     * message, and JavaScriptCore's message never has one, so this panel
-     * showed a line and column in Firefox and nothing in WebKit - and no check
-     * typed bad JSON on a tool page to see it. Each document below is one the
-     * old path gave no position for in at least one engine, measured, and each
-     * check asks for the SAME line and column in both: a check that accepted
-     * whatever this engine printed would be the test that hid it.
-     */
-    for (const [text, where] of [
-      ['{"a": }', 'Line 1, column 7'],
-      ['[1, 2,]', 'Line 1, column 7'],
-      ['{\n  "a": tru\n}', 'Line 2, column 8'],
-    ]) {
-      const bad = await runAs(text, 'JSON', 'YAML', (_output, error) => error.drawn);
-      check(
-        label,
-        `a JSON syntax error in ${JSON.stringify(text)} is drawn with its position, ${where}`,
-        bad !== null &&
-          bad.error.text.includes('That is not valid JSON') &&
-          bad.error.text.includes(where),
-        bad === null ? 'did not settle' : bad.error.text.slice(0, 220),
-      );
-    }
-
-    const good = await runAs('{"a": "zebra"}', 'JSON', 'YAML', (output) =>
-      output.includes('zebra'),
-    );
-    check(
-      label,
-      'and valid JSON draws no error and no position',
-      good !== null && !good.error.drawn && !good.error.text.includes('column'),
-      good === null ? 'did not settle' : good.error.text.slice(0, 120),
-    );
-
-    /* -- row 19 ------------------------------------------------------------ */
-    const tab = await runAs(TAB_CELL, 'JSON', 'TSV', (output) => output.includes('"has\ttab"'));
-    check(
-      label,
-      'a TSV cell holding a tab is written in quotes and drawn as a note naming it',
-      tab !== null &&
-        tab.notes.drawn &&
-        tab.notes.text.includes('1 cell holds a tab or a line break') &&
-        tab.notes.text.includes('$[0].note') &&
-        tab.notes.text.includes('cut and awk'),
-      tab === null ? 'did not settle' : tab.notes.text.slice(0, 240),
-    );
-
-    const plain = await runAs(PLAIN_CELL, 'JSON', 'TSV', (output) =>
-      output.includes('no tab here'),
-    );
-    check(
-      label,
-      'and a TSV with no such cell draws no warning about one',
-      plain !== null && !plain.notes.text.includes('tab or a line break'),
-      plain === null ? 'did not settle' : plain.notes.text.slice(0, 160),
-    );
-
-    /* -- row 20 ------------------------------------------------------------ */
-    const flow = await runAs(FLOW, 'YAML', 'YAML', (output) => output.includes('  - 2'));
-    check(
-      label,
-      'a flow collection written as a block is counted in the census on the tool page',
-      flow !== null &&
-        flow.notes.drawn &&
-        flow.notes.text.includes('Not carried over: 2 flow collections') &&
-        flow.notes.text.includes('$.a'),
-      flow === null ? 'did not settle' : flow.notes.text.slice(0, 240),
-    );
-
-    const block = await runAs(BLOCK, 'YAML', 'YAML', (output) => output.includes('b: 7'));
-    check(
-      label,
-      'and a document already written in blocks draws no note',
-      block !== null && !block.notes.text.includes('Not carried over'),
-      block === null ? 'did not settle' : block.notes.text.slice(0, 160),
-    );
-
-    /* -- SD-8 and SD-14b: two refusals, drawn -------------------------------- */
-    const mistyped = await runAs('v: !!float abc\n', 'YAML', 'JSON', (_output, error) =>
-      error.text.includes('tagged'),
-    );
-    check(
-      label,
-      'a value its tag cannot describe is refused on the tool page, with its line and column',
-      mistyped !== null &&
-        mistyped.error.drawn &&
-        mistyped.error.text.includes('"abc" is tagged !!float and is not one.') &&
-        mistyped.error.text.includes('Line 1, column 12'),
-      mistyped === null ? 'did not settle' : mistyped.error.text.slice(0, 240),
-    );
-
-    const float = await runAs('v: !!float 1\n', 'YAML', 'JSON', (output) =>
-      output.includes('"v": 1'),
-    );
-    check(
-      label,
-      'and !!float 1 is read as the number, not the string',
-      float !== null && !float.error.drawn && !float.output.includes('"1"'),
-      float === null ? 'did not settle' : float.output,
-    );
-
-    const duplicate = await runAs('alpha,beta,alpha\n1,2,3\n', 'CSV', 'JSON', (_output, error) =>
-      error.text.includes('Duplicate column'),
-    );
-    check(
-      label,
-      'a duplicate column is refused at the column it is in, not at column 1',
-      duplicate !== null &&
-        duplicate.error.drawn &&
-        duplicate.error.text.includes('Line 1, column 12'),
-      duplicate === null ? 'did not settle' : duplicate.error.text.slice(0, 200),
-    );
-
-    /* -- both notes on a canvas node --------------------------------------- */
-    const tabNode = await onNode(
-      page,
-      'structured-data',
-      { source: 'json', target: 'tsv', indent: 2, delimiter: 'comma' },
-      TAB_CELL,
-      (text) => text.startsWith('Lossy'),
-    );
-    check(
-      label,
-      'the TSV cell note reaches a node face',
-      tabNode !== null && tabNode.drawn && tabNode.text.includes('tab or a line break'),
-      JSON.stringify(tabNode),
-    );
-
-    const flowNode = await onNode(
-      page,
-      'structured-data',
-      { source: 'yaml', target: 'yaml', indent: 2, delimiter: 'comma' },
-      FLOW,
-      (text) => text.startsWith('Lossy'),
-    );
-    check(
-      label,
-      'the flow census reaches a node face as one line',
-      flowNode !== null && flowNode.drawn && flowNode.text.includes('flow collection'),
-      JSON.stringify(flowNode),
-    );
-
-    const blockNode = await onNode(
-      page,
-      'structured-data',
-      { source: 'yaml', target: 'yaml', indent: 2, delimiter: 'comma' },
-      BLOCK,
-      (text) => text.includes('1 key'),
-    );
-    check(
-      label,
-      'a node holding a block document says nothing about loss',
-      blockNode !== null &&
-        blockNode.drawn &&
-        blockNode.spoken.includes('succeeded') &&
-        !blockNode.text.includes('Lossy'),
-      JSON.stringify(blockNode),
-    );
-  } finally {
-    await context.close().catch(() => {});
   }
 }
 
@@ -17006,13 +16754,12 @@ const SECTIONS = [
   checkConsoleSilence,
   checkDeepLinks,
   checkStructuredData,
+  checkFileExtension,
   checkLossReports,
+  checkLossCorpus,
   checkValueModel,
-  checkColourReports,
-  checkMarkdownCensus,
-  checkClassAndSubstitution,
+  checkColourContrast,
   checkPastedCensus,
-  checkTableCellsAndFlow,
   checkClaimsAndHue,
   checkSerialisedFaces,
   checkLossAlongWires,

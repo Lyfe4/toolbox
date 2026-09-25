@@ -65,6 +65,12 @@ export interface Reading {
   /** Documents in the source: more than one for a YAML stream or JSON Lines. */
   readonly documents: number;
   readonly notes: readonly ToolNote[];
+  /**
+   * True when the FILE'S NAME decided the format, because nothing in the
+   * content could - see `readByName`. Absent for every other read, which is
+   * every read the content settled.
+   */
+  readonly byName?: true;
 }
 
 /**
@@ -2230,11 +2236,64 @@ export function parseAuto(source: string, configuredDelimiter: string): ToolResu
   return read.ok ? ok(read.value.data) : read;
 }
 
+/**
+ * The table format a file's NAME claims: `.csv` or `.tsv`, in any case, and
+ * nothing else. Null for a name that claims neither, and for no name at all -
+ * which is what pasted text, and bytes out of another tool, arrive with.
+ */
+export function formatNamedBy(filename: string | null): 'csv' | 'tsv' | null {
+  const extension = /\.([^./\\]+)$/u.exec(filename ?? '')?.[1]?.toLowerCase();
+  return extension === 'csv' ? 'csv' : extension === 'tsv' ? 'tsv' : null;
+}
+
+/**
+ * A one-column table, read because its file is named as one.
+ *
+ * THE ONLY DECISION IN THIS TOOL A NAME MAKES, and it is confined to the one
+ * place the content cannot make it. A column of ids or of email addresses has
+ * no delimiter in it, so nothing distinguishes it from prose, a log or a word
+ * list - see the refusal in `readAuto` - and any rule loose enough to call it a
+ * table would call every multi-line paste one. A file called `ids.csv` has
+ * said what it is, and that is evidence detection does not otherwise have.
+ *
+ * ONE COLUMN, UNDER EVERY DELIMITER THIS TOOL OFFERS. A `.csv` with several
+ * columns that detection could not read - a ragged one, say - is refused today,
+ * and the brief for this was that such a file must behave exactly as it did.
+ * So a single record that splits under comma, semicolon, tab or pipe returns
+ * null here and the refusal stands. Parsed rather than searched for, so a
+ * delimiter inside a quoted cell - `"Smith, John"` - is text, as it is to the
+ * reader.
+ *
+ * Null when the file is not one column, or when reading it as one fails; the
+ * caller then says what it would have said without the name.
+ */
+function readByName(
+  source: string,
+  named: 'csv' | 'tsv',
+  configuredDelimiter: string,
+  target?: Format,
+): ToolResult<Reading> | null {
+  const text = stripBom(source);
+  for (const delimiter of Object.values(DELIMITERS)) {
+    const rows = parseCsvRows(text, delimiter);
+    if (!rows.ok || rows.value.some((row) => row.fields.length > 1)) return null;
+  }
+
+  const delimiter = named === 'tsv' ? DELIMITERS.tab : configuredDelimiter;
+  const read = readSource(source, named, delimiter, target);
+  return read.ok ? ok({ ...read.value, byName: true }) : null;
+}
+
 /** Detects and reads. `target` is threaded for the reason `readSource` states. */
 export function readAuto(
   source: string,
   configuredDelimiter: string,
   target?: Format,
+  /**
+   * The format the input's FILE NAME claims, from `formatNamedBy`. Consulted
+   * only where the content settles nothing; see `readByName`.
+   */
+  named: 'csv' | 'tsv' | null = null,
 ): ToolResult<Reading> {
   const detected = detectSource(source, configuredDelimiter);
   const first = readSource(source, detected.format, detected.delimiter, target);
@@ -2266,6 +2325,15 @@ export function readAuto(
     }
 
     /*
+     * THE FILE'S NAME, AND ONLY HERE: after every signal the content has, the
+     * pipe suggestion included, because a delimiter in the text is better
+     * evidence than a name, and before the refusal below, because a name is
+     * better evidence than nothing. Content decides everything it can.
+     */
+    const byName = named === null ? null : readByName(source, named, configuredDelimiter, target);
+    if (byName !== null) return byName;
+
+    /*
      * No delimiter explains it either, and YAML got a scalar out of a document
      * whose lines it FOLDED TOGETHER - see `foldsLines`. A three-column header
      * over a two-column row came back as the string `"a,b,c 1,2"`: a ragged
@@ -2287,11 +2355,16 @@ export function readAuto(
      * one column read from a paragraph is the confident wrong answer round one
      * spent a round removing. So auto-detect refuses it, and says how to get
      * the table - which is the only part of the gap that was ever fixable.
+     *
+     * Round twenty-three closed the half of the gap that has evidence: a FILE
+     * named `.csv` or `.tsv` is read above, by `readByName`. What reaches this
+     * line is pasted text, bytes from another tool, and a file named anything
+     * else, and for all three the refusal and its instruction stand.
      */
     if (first.ok && foldsLines(stripBom(source))) {
       return fail('invalid-input', NOT_A_FORMAT, {
         detail:
-          'Read as YAML it is one long string with the line breaks turned into spaces, which is almost certainly not what it is. If it is a table with a single column, choose CSV as the source format: a file with one column has no delimiter in it for detection to find.',
+          'Read as YAML it is one long string with the line breaks turned into spaces, which is almost certainly not what it is. If it is a table with a single column, choose CSV as the source format: one column has no delimiter in it for detection to find. A file whose name ends in .csv or .tsv is read as a table without being asked.',
       });
     }
   }

@@ -428,7 +428,40 @@ export function summariseOutputs(
       ? undefined
       : entry.outputs.find((candidate) => candidate.id === port.measuredBy);
   const measured = measure ? outputs[measure.id] : undefined;
-  if (measure && measured) return summariseValue(measured, measure.presentation);
+  const summary =
+    measure && measured
+      ? summariseValue(measured, measure.presentation)
+      : summariseValue(value, port.presentation);
 
-  return summariseValue(value, port.presentation);
+  // The guess is the part that must survive, so it is the summary that gives
+  // up room for it: a clip of the whole line would cut the guess off first.
+  const guess = guessOf(entry, outputs);
+  return guess === null ? summary : `${clip(summary, SUMMARY_LIMIT - guess.length - 3)} · ${guess}`;
+}
+
+/** A guess is a few words; a longer one is clipped so the result keeps its room. */
+const GUESS_LIMIT = 40;
+
+/**
+ * A guess a tool says its answer rests on, which the answer itself gives no
+ * hint of: a report's `guess`, read off its `report` ports.
+ *
+ * ONE WRITER TODAY - `structured-data`, when a file's NAME decided its format -
+ * and the rule is about that kind of guess rather than that tool. Content
+ * detection is not here: `JSON (detected)` is a guess about the text the node
+ * was given, and the inspector's `Detected` says it. A name is evidence from
+ * outside the document, and `3 items` read because a file was called `ids.csv`
+ * looks exactly like `3 items` read from anything else, so the face says so
+ * where nobody has to open anything. A loss still outranks it - the face is
+ * `Lossy · …` then, and this stays in the accessible name with the summary.
+ */
+function guessOf(entry: ToolManifestEntry, outputs: ToolOutputs): string | null {
+  for (const port of entry.outputs) {
+    if (port.presentation !== 'report') continue;
+    const value = outputs[port.id];
+    if (value?.type !== 'json') continue;
+    const guess = stringAt(value.data, 'guess');
+    if (guess !== null) return clip(guess, GUESS_LIMIT);
+  }
+  return null;
 }

@@ -384,6 +384,44 @@ describe('which output a node summarises', () => {
  * if `measuredBy` stops being read, because the first half alone would pass
  * against a summariser that had simply learned these three sentences.
  */
+/*
+ * A GUESS THE ANSWER RESTS ON, which the answer gives no hint of - today only
+ * a file's name deciding its format. The guess is the part the face exists to
+ * carry, so it is the result that gives up room: a clip of the whole line would
+ * cut the guess off first on exactly the long results where it matters.
+ */
+describe('a guess a report says the answer rests on', () => {
+  const textConvert = getManifestEntry('text-convert');
+  const long = 'word '.repeat(40);
+
+  it('is printed whole beside a result long enough to be clipped', () => {
+    const face = summariseOutputs(textConvert, {
+      output: text(long),
+      report: json({ summary: 'x', guess: 'CSV by its name' }),
+    });
+    expect(face?.endsWith(' · CSV by its name')).toBe(true);
+    expect(face?.length).toBeLessThanOrEqual(SUMMARY_LIMIT);
+    expect(face?.startsWith('word word')).toBe(true);
+  });
+
+  it('is not there when no report carries one, which is every report the content decided', () => {
+    const face = summariseOutputs(textConvert, {
+      output: text('hello'),
+      report: json({ summary: 'x' }),
+    });
+    expect(face).toBe('hello');
+  });
+
+  it('is clipped itself when it is long, so it cannot take the whole line', () => {
+    const face = summariseOutputs(textConvert, {
+      output: text('hello'),
+      report: json({ summary: 'x', guess: 'g'.repeat(100) }),
+    });
+    expect(face?.startsWith('hello · ')).toBe(true);
+    expect(face?.length).toBeLessThanOrEqual(SUMMARY_LIMIT);
+  });
+});
+
 describe('a node whose answer is a serialised document', () => {
   const structured = getManifestEntry('structured-data');
   const diff = getManifestEntry('diff');

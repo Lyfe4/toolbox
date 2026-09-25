@@ -51,6 +51,8 @@ export interface ReportInput {
   readonly targetDelimiter: string | null;
   /** True when the source format was chosen on the panel rather than guessed. */
   readonly chosen: boolean;
+  /** The input file's name, when it came from one. Said only when it decided. */
+  readonly filename: string | null;
   /** Notes from the write half, which knows what the target could not hold. */
   readonly writeNotes: readonly ToolNote[];
   /** True when the writer really did put several documents in one file. */
@@ -100,11 +102,30 @@ function streamNotes(documents: number, wroteStream: boolean): readonly ToolNote
       ];
 }
 
+/**
+ * THE ONE GUESS MADE FROM A NAME, SAID AS ONE.
+ *
+ * Every other guess this tool makes is about the content, and the report
+ * already calls it `(detected)`. A format decided by the file's extension is a
+ * different kind of guess - evidence from outside the document, which the
+ * document itself could not confirm - so it gets its own words rather than
+ * sharing a label that would claim the content was read. Level `info`: nothing
+ * was lost, and a warning would put `Lossy` on a node that lost nothing.
+ */
+function nameNote(format: string, filename: string): ToolNote {
+  return noted(
+    `Read as ${format} because the file is named ${filename}`,
+    `It has one column, so there is no delimiter in it for detection to find, and nothing else in it says what it is. The name decided it: the only choice here made from a name rather than from the content. Choose a source format if it is not a table.`,
+  );
+}
+
 export function buildReport(input: ReportInput): JsonValue {
   const { reading, target, chosen } = input;
+  const byName = reading.byName === true && input.filename !== null ? input.filename : null;
 
   const notes: ToolNote[] = [
     ...input.inputNotes,
+    ...(byName === null ? [] : [nameNote(FORMAT_NAMES[reading.format], byName)]),
     ...reading.notes,
     ...streamNotes(reading.documents, input.wroteStream),
     ...input.writeNotes,
@@ -126,10 +147,20 @@ export function buildReport(input: ReportInput): JsonValue {
    * the measurement of the document through `measuredBy`. See
    * `features/canvas/resultSummary.ts`.
    */
-  const summary = `${chosen ? from : `${from} (detected)`} → ${to}${losses === null ? '' : ` · ${losses}`}`;
+  const how = chosen ? '' : byName === null ? ' (detected)' : ' (from the file name)';
+  const summary = `${from}${how} → ${to}${losses === null ? '' : ` · ${losses}`}`;
 
   return {
     summary,
+    /*
+     * What a node prints beside its result - see `guessOf` in the canvas's
+     * `resultSummary.ts`. Only for the name, because only the name is a guess
+     * a node's own answer gives no hint of: `3 items` read from a one-column
+     * file looks exactly like `3 items` read from anything else. Absent rather
+     * than null otherwise, so every report the content decided is the report it
+     * was before this existed, key for key.
+     */
+    ...(byName === null ? {} : { guess: `${from} by its name` }),
     from: {
       format: from,
       delimiter: delimiterName(reading.delimiter),

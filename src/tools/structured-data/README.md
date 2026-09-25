@@ -54,6 +54,11 @@ tests run from most specific to least, and the last one is the most permissive:
    one. Delimiters are tried in the order tab, the configured delimiter, comma,
    semicolon. Tab wins the format name **TSV**; anything else is **CSV**.
 6. Otherwise → **YAML**.
+7. If YAML found no structure in it: a delimiter detection never tried is
+   suggested first (pipe, in practice); then a FILE named `.csv` or `.tsv`
+   that is one column under every delimiter offered → **CSV** or **TSV**, by
+   the name alone, reported `(from the file name)`; then a document whose lines
+   YAML folded together is refused - known limitation 14.
 
 Five things about step 5 are load-bearing:
 
@@ -717,10 +722,17 @@ world\nGoodbye, world` satisfies every test for delimited text, because it is
 13. **A duplicate JSON key is resolved last-wins before this tool sees the
     document.** `JSON.parse` does it, as does every other reader. The discarded
     value is reported by path.
-14. **A one-column CSV cannot be auto-detected.** It has no delimiter in it, and
-    "several lines of one field each" is also what prose, a log and a word list
-    are — a detector that accepted it would accept everything. Auto-detect
-    refuses it and says to choose CSV as the source, which reads it. (SD-1.)
+14. **A one-column CSV cannot be auto-detected from its content.** It has no
+    delimiter in it, and "several lines of one field each" is also what prose, a
+    log and a word list are — a detector that accepted it would accept
+    everything. Pasted, auto-detect refuses it and says to choose CSV as the
+    source, which reads it. A FILE named `.csv` or `.tsv` is read as a table
+    instead, when it is one column under every delimiter this tool offers and
+    nothing in its content says otherwise; the report says
+    `(from the file name)` rather than `(detected)`, and a node prints the
+    guess beside its result: `3 items · CSV by its name`. The same bytes named
+    anything else, or with no name, are refused as pasted text is. (SD-1;
+    round twenty-three.)
 15. **A YAML flow collection is written back as a block.** `a: {b: 1}` comes
     back as a block mapping; reported in the presentation census, as a fifth
     kind. A document written ENTIRELY in flow is not counted — it is
