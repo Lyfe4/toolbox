@@ -1607,8 +1607,14 @@
     visibility var(--pb-motion-fast) var(--pb-ease);
 }
 
+/*
+ * KEYBOARD FOCUS, NOT ANY FOCUS. This was `:focus-within`, which a click on
+ * Share also satisfies in Gecko, and a tap does on a phone - so the note sat
+ * open over the canvas after every share until focus went somewhere else,
+ * the same leftover a ring after a click is. The pointer already has hover.
+ */
 .shareWrap:hover .shareNote,
-.shareWrap:focus-within .shareNote {
+.shareWrap:has(:focus-visible) .shareNote {
   opacity: 1;
   visibility: visible;
 }

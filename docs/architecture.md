@@ -17,6 +17,7 @@ way they are.
 - [The tool runner page](#the-tool-runner-page)
 - [Between tools](#between-tools)
 - [Notifications](#notifications)
+- [Focus, pressing and the browser's own marks](#focus-pressing-and-the-browsers-own-marks)
 - [State](#state)
 - [Build and deployment](#build-and-deployment)
 
@@ -4388,6 +4389,43 @@ in both engines. It was as true of the corner column before this. Docking above
 the sheet would put notifications at mid-screen over the canvas, and inside it
 would be a second layout for one state; neither is obviously better.
 
+### Beside the readout: measured, and declined
+
+Round nineteen asked for the narrow notifications to sit beside the readout,
+bottom right, rather than span the canvas. Measured on the production build at
+390px, in both engines, under a mouse and under a finger, it does not fit - and
+the reason is not close.
+
+- **The room.** The readout starts `--pb-space-md` (12px) from the left edge and
+  its right edge is not fixed: 215px for `5 nodes 0 wires idle 54%`, 229px for
+  a graph of twelve nodes and eleven wires, 249px once a run makes that
+  `running`, and 317px with `3 failed` beside it. With the same 12px
+  margin and gap on the right, that leaves 151px beside it at rest, 117px while
+  anything runs, and 49px with a failure count - and it changes on every run,
+  so a notification laid out beside it would reflow every time a keystroke
+  re-ran the pipeline.
+- **The fixed cost.** Before any text, one line of notification is its accent
+  border, padding, icon, close button and the gaps between them: 73px under a
+  mouse and 93px under a finger, where the close button is a 44px target; an
+  `Undo` adds 54px more.
+- **The text.** That leaves 78px for words at rest under a mouse, 58px under a
+  finger, and 4px under a finger with an `Undo`. The shortest title the canvas
+  raises is `File rejected` at 90px; `Connection refused` is 125px, and the
+  longest single word in any of them is 87px - so even wrapping one word to a
+  line does not fit under a finger. The shortest whole notification, `Deleted
+Base64` with its `Undo`, is 224px.
+
+So of the three ways to handle text that does not fit, none leaves a layout:
+wrapping cannot fit one word, truncating leaves about seven characters of a
+title and none of its sentence, and falling back to the full band for anything
+too long falls back for every notification the canvas can raise, at every phone
+width measured (320, 360, 390 and 430px). The band stays.
+
+What would fit, and was not built because it was not asked for: the same band,
+right-aligned and as wide as its content up to the full width. A receipt with
+an `Undo` would then take 224-244px at the right rather than the whole row; a
+refusal with a sentence would still span it.
+
 ### Why the clock is ours and not Radix's
 
 This is a fixed bug rather than a preference, and it is worth writing down
@@ -4439,6 +4477,93 @@ it goes. It took 55 s per engine and takes under 3. Shown against three breaks
   leaves the moment the pointer does - each red in both engines; the first was
   green in WebKit until a count taken the instant the clock stopped was replaced
   by one that must hold, because WebKit commits the dismissal a turn later.
+
+## Focus, pressing and the browser's own marks
+
+Three indicators belong to the application and one to the browser, and round
+nineteen found the browser's where nobody had asked for it and the keyboard's
+where it had not been earned.
+
+| Indicator                 | Whose       | Shown for                                                      |
+| ------------------------- | ----------- | -------------------------------------------------------------- |
+| The focus ring            | ours        | `:focus-visible` - the keyboard, never a pointer click         |
+| A control's pressed state | ours        | `:active`, on the shared Button and IconButton                 |
+| Selection                 | ours        | a selected wire's accent stroke, and the selection bar's count |
+| The tap highlight         | the browser | nothing - switched off                                         |
+
+### The tap highlight
+
+Tapping a wire on a phone flashed a blue box round it. A mobile browser paints a
+translucent box over whatever it decides was tapped, in its own colour -
+Chromium's computes to `rgba(51, 181, 229, 0.4)` on a mobile page - and Chromium
+decides by the pointer cursor, so it landed on the wire's grab band and drew
+that path's bounding box, which is why it was a box and not a curve. The same
+went for every element with `cursor: pointer`: buttons, links, the readout's
+zoom reset, the tool cards. A node (`grab`) and a port (`crosshair`) were
+spared.
+
+It was not the focus ring - that is amber in graphite, `reset.css` removes the
+browser's default ring, and nothing in the wire layer takes focus - and it was
+not the blueprint theme's accent, which is a similar cyan but only ever draws a
+wire as a stroke along the curve. `global.css` sets the property transparent on
+`:root`, and it is inherited, so that one declaration reaches the whole
+document; nothing re-declares it.
+
+**What is asserted, and what cannot be.** Neither engine `check:browsers`
+drives has a tap highlight at all: Gecko does not implement the property, and
+Playwright's WebKit has it on iOS only, so `CSS.supports` is false in both and
+there is no element whose value can be read. Chromium computes it, and could not
+be made to paint one - headless or headed, for a link, which a phone always
+highlights - so the paint itself has never been seen here. `checkTapHighlight`
+therefore holds the served stylesheets at 390px in both engines: the reset on
+`:root`, and no rule anywhere setting it back. It also reads every element's
+computed value wherever an engine supports the property, and records a skip
+naming why where one does not. And in both engines it checks the half that must
+survive: a finger still selects the wire and the wire still draws its selection.
+<!-- asserted: cross-browser-check.mjs › the served stylesheets set no tap highlight: transparent on :root, and nothing sets it back -->
+
+### A focus ring is for the keyboard
+
+Reported as **Copy as rich text keeping an orange outline after a click** that
+Copy HTML and Download beside it did not. It was never a focus ring: measured in
+both engines, the button had no outline after the click and `:focus-visible`
+was false. It carries an accent border on purpose - the copy most people want,
+said in the border rather than with a second primary button - and that border
+was losing to the Button's own hover rule. `.richCopy` was one class against
+the ghost variant's three-class hover selector, so the accent vanished while the
+pointer was on the button and came back when it left, which straight after a
+click is exactly how a leftover ring looks. At rest it was a one-class tie that
+this chunk's stylesheet won only by loading after the Button's - the same
+footgun as the 87px editor. It now outranks both, and is the same before,
+during and after a press.
+
+Looking for the real pattern across the app - every control on five routes
+clicked with the mouse, in both engines, and `:focus-visible` read afterwards -
+found two:
+
+- **Every Select trigger, after an option chosen with the pointer.** Radix hands
+  focus back with a plain `focus()`, and both engines' heuristics called that
+  visible: `All categories` on `/tools`, and a tool's format or mode on its page
+  and in the inspector. The trigger's return is ours now, and says which it is -
+  `focusVisible` false after a pointer, true after a key. Taking over only the
+  pointer's return was the first version, and it broke the keyboard in Gecko,
+  which carried the "not visible" into the next keyboard pick; the check drives
+  exactly that sequence.
+- **The Share note**, on `:focus-within`, which a click on Share satisfies in
+  Gecko and a tap does on a phone, so it stayed open over the canvas after every
+  share. It shows on hover and on keyboard focus now (`:has(:focus-visible)`).
+  WebKit does not focus a clicked button, so this one was Gecko's only and its
+  control fails there alone.
+
+After both fixes the same sweep - now scrolling every control into view and
+closing any dialog it opened with the pointer too - found nothing on any of the
+five routes. A text field still shows the ring when clicked into; that is the
+browser's rule for a control you are about to type into, and is left alone.
+
+`checkPointerFocus` holds all of it, with each "no ring" paired with proof that
+the click landed and that the keyboard route to the same control does show one.
+<!-- asserted: cross-browser-check.mjs › a Select given its value by the pointer takes focus back without a ring -->
+<!-- asserted: cross-browser-check.mjs › the keyboard still gets the ring on both copies -->
 
 ## State
 

@@ -15065,6 +15065,478 @@ async function checkSmoke(browser, label) {
   }
 }
 
+/* ========================================================================== *
+ * THE BROWSER'S TAP HIGHLIGHT
+ * ========================================================================== */
+
+/**
+ * No tap highlight on anything a finger can land on, at 390px under a finger.
+ *
+ * TAPPING A WIRE FLASHED A BLUE BOX. It was nobody's design: a mobile browser
+ * paints its own box over whatever it thinks was tapped - Chromium's is
+ * `rgba(51, 181, 229, 0.4)`, and it picks its target by the pointer cursor, so
+ * the wire's grab band got one the shape of the path's bounding box, and so
+ * did every button and link. `global.css` sets it transparent on `:root`, and
+ * the property is inherited.
+ *
+ * WHAT THIS CAN AND CANNOT SEE. Neither engine here has a tap highlight at
+ * all: Gecko does not implement the property, and this WebKit does not either
+ * - `CSS.supports` is false in both, because WebKit has it on iOS only.
+ * Chromium computes it, and neither headless nor headed Chromium could be made
+ * to PAINT one when it was tried by hand, for a link, which a phone always
+ * highlights. So the claim held in every engine is the served stylesheet's:
+ * the reset is on `:root` and no rule sets the property back. Where an engine
+ * does support it, every element in each document is also read - not a
+ * hand-picked list, so a component that sets its own colour later is caught -
+ * with the instrument shown reading a colour it is given, and the sweep shown
+ * to have covered a wire, a node, a button and a link. Where it does not,
+ * that half is recorded as a skip naming why, rather than as a pass.
+ *
+ * And the half that has to survive in both engines: the tap still selects the
+ * wire and still draws the selection, because removing the browser's box must
+ * not remove the application's own indicator.
+ */
+async function checkTapHighlight(engine, label) {
+  const browser = await launchTouchBrowser(engine);
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+
+  const sweep = () =>
+    page.evaluate(() => {
+      const alpha = (colour) => {
+        if (colour === 'transparent') return 0;
+        const parts = /rgba?\(([^)]*)\)/
+          .exec(colour)?.[1]
+          .split(/[\s,/]+/)
+          .filter(Boolean);
+        if (!parts) return 1;
+        return parts.length > 3 ? Number(parts[3]) : 1;
+      };
+      // The instrument, before anything is read with it: told red, it says red.
+      const probe = document.createElement('span');
+      probe.style.setProperty('-webkit-tap-highlight-color', 'rgb(255, 0, 0)');
+      document.body.append(probe);
+      const instrument = getComputedStyle(probe).getPropertyValue('-webkit-tap-highlight-color');
+      probe.remove();
+
+      const tappable = [...document.querySelectorAll('*')].filter(
+        (element) =>
+          element.matches(
+            'button, a[href], summary, input, textarea, select, [role="tab"], [role="switch"], [role="combobox"], [data-node-id], [data-edge-id] path',
+          ) || getComputedStyle(element).cursor === 'pointer',
+      );
+      const painted = tappable.filter(
+        (element) =>
+          alpha(getComputedStyle(element).getPropertyValue('-webkit-tap-highlight-color')) > 0,
+      );
+      const name = (element) =>
+        `${element.tagName.toLowerCase()}${element.getAttribute('aria-label') ? `[${element.getAttribute('aria-label')}]` : ''} ${getComputedStyle(element).getPropertyValue('-webkit-tap-highlight-color')}`;
+      return {
+        instrument,
+        count: tappable.length,
+        wire: tappable.some((element) => element.closest('[data-edge-id]') !== null),
+        node: tappable.some((element) => element.hasAttribute('data-node-id')),
+        button: tappable.some((element) => element.tagName === 'BUTTON'),
+        link: tappable.some((element) => element.tagName === 'A'),
+        painted: painted.length,
+        first: painted.slice(0, 3).map(name),
+      };
+    });
+
+  // Every stylesheet the pages below link, lazy chunks included, by href.
+  const sheets = new Set();
+  const collectSheets = async () => {
+    for (const href of await page.evaluate(() =>
+      [...document.querySelectorAll('link[rel="stylesheet"]')].map((link) => link.href),
+    )) {
+      sheets.add(href);
+    }
+  };
+
+  try {
+    // A first visit, so the introduction's own links are in the sweep.
+    await page.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+    await page.locator('#cold-open a[href]').first().waitFor({ timeout: 15_000 });
+    const supported = await page.evaluate(() =>
+      CSS.supports('-webkit-tap-highlight-color', 'transparent'),
+    );
+    const readings = [['the introduction', await sweep()]];
+    await collectSheets();
+
+    await page.goto(
+      `${ORIGIN}/?p=${shareParam({
+        v: 3,
+        n: [
+          ['a', 'base64', 0, 0, { mode: 'encode' }],
+          ['b', 'hash', 520, 160, {}],
+        ],
+        e: [['a', 'output', 'b', 'input']],
+      })}`,
+      { waitUntil: 'networkidle' },
+    );
+    await page.locator('[data-testid="node-b"]').waitFor({ timeout: 15_000 });
+    await setInspector(page, false);
+    await page.getByRole('button', { name: 'Fit' }).click();
+    await page.waitForTimeout(350);
+
+    /*
+     * The wire's midpoint from the root's rect and the plane's transform, the
+     * one answer every engine agrees on - see `wireMidpoint` in checkTouch.
+     */
+    const midpoint = await page.evaluate(() => {
+      const path = document.querySelector('[data-edge-id] path');
+      const plane = document.querySelector('[data-testid="canvas-plane"]');
+      const root = document.querySelector('[data-testid="canvas-root"]');
+      if (!path || !plane || !root) return null;
+      const transform = plane.style.transform;
+      const zoom = Number(/scale\(([\d.]+)\)/.exec(transform)?.[1] ?? '1');
+      const pan = /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(transform);
+      const mid = path.getPointAtLength(path.getTotalLength() / 2);
+      const rect = root.getBoundingClientRect();
+      return {
+        x: Math.round(rect.left + Number(pan?.[1] ?? '0') + mid.x * zoom),
+        y: Math.round(rect.top + Number(pan?.[2] ?? '0') + mid.y * zoom),
+      };
+    });
+    const stroke = () =>
+      page.evaluate(() => {
+        const drawn = document.querySelectorAll('[data-edge-id] path')[1];
+        return drawn ? getComputedStyle(drawn).stroke : null;
+      });
+    const before = await stroke();
+    if (midpoint) await page.touchscreen.tap(midpoint.x, midpoint.y);
+    await setInspector(page, false);
+    const bar = page.getByTestId('canvas-selection-bar');
+    const barText = (await bar.count()) > 0 ? (await bar.innerText()).replace(/\s+/g, ' ') : '';
+    const after = await stroke();
+    check(
+      label,
+      'at 390px a finger still selects a wire, and the wire still draws its selection',
+      midpoint !== null && /1 wire/i.test(barText) && before !== null && after !== before,
+      `bar "${barText}"; stroke ${String(before)} -> ${String(after)}`,
+    );
+    // Swept with the selection bar up, so its controls are in it.
+    readings.push(['the canvas', await sweep()]);
+    await collectSheets();
+
+    await page.goto(`${ORIGIN}/tools`, { waitUntil: 'networkidle' });
+    await page.locator('main a[href^="/tools/"]').first().waitFor({ timeout: 15_000 });
+    readings.push(['/tools', await sweep()]);
+    await collectSheets();
+    await page.goto(`${ORIGIN}/tools/text-convert`, { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: 'Run' }).waitFor({ timeout: 15_000 });
+    readings.push(['a tool page', await sweep()]);
+    await collectSheets();
+
+    /*
+     * WHAT THE PAINTER WOULD BE TOLD, from the bytes served. The property is
+     * inherited, so the claim is two halves: `:root` sets it transparent, and
+     * no rule anywhere sets it back. Read from the stylesheets themselves
+     * rather than the CSSOM, which drops a property the engine does not know -
+     * and here neither engine knows it. Fetched from this process, because the
+     * page's own policy is `connect-src 'none'`.
+     */
+    const declarations = [];
+    let resetOnRoot = false;
+    for (const href of sheets) {
+      const text = await (await fetch(href)).text();
+      if (/(^|})\s*:root\s*{[^}]*-webkit-tap-highlight-color:\s*transparent/.test(text)) {
+        resetOnRoot = true;
+      }
+      for (const match of text.matchAll(/-webkit-tap-highlight-color:\s*([^;}]+)/g)) {
+        declarations.push(match[1].trim());
+      }
+    }
+    const others = declarations.filter((value) => value !== 'transparent');
+    check(
+      label,
+      'the served stylesheets set no tap highlight: transparent on :root, and nothing sets it back',
+      sheets.size > 1 && resetOnRoot && others.length === 0,
+      `${String(sheets.size)} stylesheets; on :root ${String(resetOnRoot)}; other values ${others.join(', ') || 'none'}`,
+    );
+
+    if (!supported) {
+      skip(
+        label,
+        'no element at 390px computes a tap highlight',
+        'this engine does not implement -webkit-tap-highlight-color (CSS.supports is false: Gecko has none, WebKit has it on iOS only), so no element can be read for one',
+      );
+      return;
+    }
+
+    const all = readings.map(([, reading]) => reading);
+    check(
+      label,
+      'the tap-highlight sweep reads what it is given, and covered a wire, a node, a button and a link',
+      all.every((reading) => reading.instrument === 'rgb(255, 0, 0)') &&
+        all.some((reading) => reading.wire) &&
+        all.some((reading) => reading.node) &&
+        all.some((reading) => reading.button) &&
+        all.some((reading) => reading.link),
+      readings
+        .map(
+          ([where, reading]) =>
+            `${where}: ${String(reading.count)} (probe ${reading.instrument}${reading.wire ? ', wire' : ''}${reading.node ? ', node' : ''})`,
+        )
+        .join('; '),
+    );
+    const painted = readings.filter(([, reading]) => reading.painted > 0);
+    check(
+      label,
+      'no element at 390px computes a tap highlight',
+      all.every((reading) => reading.count > 0) && painted.length === 0,
+      painted.length === 0
+        ? `${String(all.reduce((sum, reading) => sum + reading.count, 0))} tappable elements, every one transparent`
+        : painted
+            .map(
+              ([where, reading]) =>
+                `${where}: ${String(reading.painted)}, e.g. ${reading.first.join(' | ')}`,
+            )
+            .join('; '),
+    );
+  } finally {
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
+  }
+}
+
+/* ========================================================================== *
+ * A FOCUS RING IS FOR THE KEYBOARD
+ * ========================================================================== */
+
+/**
+ * Nothing a POINTER does leaves a keyboard focus indicator behind, and the
+ * keyboard still gets every one of them.
+ *
+ * Reported as "Copy as rich text keeps an orange outline after a click, and
+ * its neighbours do not". It was never a focus ring: the button carries an
+ * accent border on purpose, and the Button's hover rule outranked it, so the
+ * accent vanished under the pointer and came back when it left - after a
+ * click, exactly the look of a ring left behind. Looking for the real pattern
+ * across the app, by clicking every control on five routes with the mouse and
+ * reading `:focus-visible` afterwards, found two that did leave one:
+ *
+ *   - every Select trigger, after an option chosen with the mouse. Radix
+ *     returns focus with a plain `focus()` and both engines' heuristics
+ *     answered "visible";
+ *   - the Share note, shown on `:focus-within`, which a click on Share
+ *     satisfies in Gecko (and a tap does on a phone).
+ *
+ * Each negative here is paired with the positive that makes it mean
+ * something: that focus really did land (a ring that is absent because focus
+ * went nowhere is not the claim), and that the keyboard route to the same
+ * control does show the indicator.
+ */
+async function checkPointerFocus(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+
+  const state = (locator) =>
+    locator.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        border: style.borderTopColor,
+        outline: style.outlineStyle,
+        focused: element === document.activeElement,
+        visible: element.matches(':focus-visible'),
+      };
+    });
+  const away = async () => {
+    await page.mouse.move(2, 2);
+    await page.waitForTimeout(250);
+  };
+
+  try {
+    /* -- The rich-text copy and its two neighbours ------------------------ */
+
+    await page.goto(`${ORIGIN}/tools/text-convert`, { waitUntil: 'networkidle' });
+    const editor = page.locator('textarea').first();
+    await editor.fill('# Pointer\n\nA *paragraph*.');
+    await page.getByRole('combobox', { name: 'Target format' }).click();
+    await page.getByRole('option', { name: 'HTML (normalised)', exact: true }).click();
+    await page.getByRole('button', { name: 'Run' }).click();
+    const group = page.getByRole('group', { name: /^Copy / });
+    await group.waitFor({ timeout: 20_000 });
+    const row = group.locator('..');
+    const rich = row.getByRole('button', { name: 'Copy as rich text', exact: true });
+    const html = row.getByRole('button', { name: 'Copy HTML', exact: true });
+    const download = row.getByRole('button', { name: 'Download', exact: true });
+    await away();
+
+    const richRest = await state(rich);
+    const htmlRest = await state(html);
+    await rich.hover();
+    await page.waitForTimeout(250);
+    const richHover = await state(rich);
+
+    const notifications = page.getByRole('region', { name: /notifications/i }).locator('li');
+    const clickedStates = [];
+    for (const [name, button, answer] of [
+      ['Copy HTML', html, /^(Copied|Could not copy)$/],
+      ['Copy as rich text', rich, /^(Copied as rich text|Could not copy as rich text)$/],
+      ['Download', download, /^Downloaded$/],
+    ]) {
+      await button.click();
+      /*
+       * The partner of "no ring": the click really landed, and was answered.
+       * By its own notification's title, not by the count going up - the run
+       * has already raised one, so the third click lands on a full stack and
+       * evicts, and a count reads the same before and after.
+       */
+      const answered = await notifications
+        .filter({ has: page.locator('[class*="title"]', { hasText: answer }) })
+        .first()
+        .waitFor({ timeout: 5_000 })
+        .then(
+          () => true,
+          () => false,
+        );
+      await away();
+      clickedStates.push({ name, answered, ...(await state(button)) });
+    }
+    const richAfter = clickedStates[1];
+
+    check(
+      label,
+      'the rich-text copy carries its accent at rest, where Copy HTML beside it does not',
+      richRest.border !== htmlRest.border,
+      `rich ${richRest.border}, html ${htmlRest.border}`,
+    );
+    check(
+      label,
+      'and keeps it under the pointer and after a click, so a click cannot seem to add it',
+      richHover.border === richRest.border && richAfter?.border === richRest.border,
+      `rest ${richRest.border}, hover ${richHover.border}, after a click ${String(richAfter?.border)}`,
+    );
+    const ringed = clickedStates.filter((entry) => entry.outline !== 'none' || entry.visible);
+    check(
+      label,
+      'a pointer click on Copy HTML, Copy as rich text or Download leaves no focus ring',
+      clickedStates.every((entry) => entry.answered) && ringed.length === 0,
+      clickedStates
+        .map(
+          (entry) =>
+            `${entry.name}: ${entry.answered ? 'answered' : 'NOT answered'}, outline ${entry.outline}, focus-visible ${String(entry.visible)}`,
+        )
+        .join('; '),
+    );
+
+    await html.focus();
+    await page.keyboard.press('Tab');
+    const richKeyed = await state(rich);
+    await page.keyboard.press('Shift+Tab');
+    const htmlKeyed = await state(html);
+    check(
+      label,
+      'the keyboard still gets the ring on both copies',
+      richKeyed.focused &&
+        richKeyed.visible &&
+        richKeyed.outline === 'solid' &&
+        htmlKeyed.focused &&
+        htmlKeyed.visible &&
+        htmlKeyed.outline === 'solid',
+      `rich: focused ${String(richKeyed.focused)}, outline ${richKeyed.outline}; html: focused ${String(htmlKeyed.focused)}, outline ${htmlKeyed.outline}`,
+    );
+
+    /* -- A Select, chosen with the pointer and with the keyboard ---------- */
+
+    await page.goto(`${ORIGIN}/tools`, { waitUntil: 'networkidle' });
+    const trigger = page.getByRole('combobox').first();
+    await trigger.waitFor({ timeout: 15_000 });
+    const firstValue = await trigger.innerText();
+    await trigger.click();
+    await page.getByRole('option').nth(1).click();
+    await away();
+    const picked = await state(trigger);
+    const pickedValue = await trigger.innerText();
+    check(
+      label,
+      'a Select given its value by the pointer takes focus back without a ring',
+      pickedValue !== firstValue && picked.focused && !picked.visible && picked.outline === 'none',
+      `"${firstValue}" -> "${pickedValue}"; focused ${String(picked.focused)}, focus-visible ${String(picked.visible)}, outline ${picked.outline}`,
+    );
+
+    /*
+     * STRAIGHT AFTER THE POINTER PICK, ON PURPOSE. That sequence is the one
+     * the first version of the fix broke: Gecko carried "no ring" from the
+     * pointer's return into the keyboard's, and a keyboard pick on its own
+     * would not have shown it. Each key waits for the state it causes - Radix
+     * moves focus between options a task later, and WebKit reads the old one.
+     */
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(
+      () => document.activeElement?.getAttribute('role') === 'option',
+      null,
+      { timeout: 5_000 },
+    );
+    const highlighted = await page.evaluate(() => document.activeElement?.textContent ?? '');
+    await page.keyboard.press('ArrowDown');
+    await page.waitForFunction(
+      (was) =>
+        document.activeElement?.getAttribute('role') === 'option' &&
+        document.activeElement.textContent !== was,
+      highlighted,
+      { timeout: 5_000 },
+    );
+    await page.keyboard.press('Enter');
+    await page.getByRole('listbox').waitFor({ state: 'detached', timeout: 5_000 });
+    const keyed = await state(trigger);
+    const keyedValue = await trigger.innerText();
+    check(
+      label,
+      'and one given its value by the keyboard takes it back with the ring',
+      keyedValue !== pickedValue && keyed.focused && keyed.visible && keyed.outline === 'solid',
+      `"${pickedValue}" -> "${keyedValue}"; focused ${String(keyed.focused)}, focus-visible ${String(keyed.visible)}, outline ${keyed.outline}`,
+    );
+
+    /* -- The Share note ---------------------------------------------------- */
+
+    await page.goto(
+      `${ORIGIN}/?p=${shareParam({ v: 3, n: [['a', 'base64', 0, 0, { mode: 'encode' }]], e: [] })}`,
+      { waitUntil: 'networkidle' },
+    );
+    const share = page.getByRole('button', { name: 'Share', exact: true });
+    await share.waitFor({ timeout: 15_000 });
+    const noteShown = (shown) =>
+      page
+        .waitForFunction(
+          (want) => {
+            const note = document.querySelector('[class*="shareNote"]');
+            return note !== null && (getComputedStyle(note).visibility === 'visible') === want;
+          },
+          shown,
+          { timeout: 3_000 },
+        )
+        .then(
+          () => true,
+          () => false,
+        );
+
+    await share.hover();
+    const onHover = await noteShown(true);
+    await share.click();
+    await away();
+    const afterClick = await noteShown(false);
+    await share.focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    const shareKeyed = await state(share);
+    const onKeyboard = await noteShown(true);
+    check(
+      label,
+      'the Share note shows on hover and on keyboard focus, and is gone once a clicking pointer leaves',
+      onHover && afterClick && shareKeyed.focused && onKeyboard,
+      `hover ${String(onHover)}; hidden after a click ${String(afterClick)}; keyboard ${String(onKeyboard)} (focused ${String(shareKeyed.focused)})`,
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 /*
  * EVERY SECTION OF A RUN, IN THE ORDER A FULL RUN DRIVES THEM.
  *
@@ -15106,8 +15578,10 @@ const SECTIONS = [
   checkOutputViews,
   checkHead,
   checkTouch,
+  checkTapHighlight,
   checkMobileLayout,
   checkPopovers,
+  checkPointerFocus,
   checkSoftKeyboard,
   checkBackgroundedTab,
   checkTwoTabs,
@@ -15135,6 +15609,7 @@ const SECTIONS = [
 const ON_ENGINE = new Set([
   checkInspectorTouch,
   checkTouch,
+  checkTapHighlight,
   checkMobileLayout,
   checkPopovers,
   checkSoftKeyboard,

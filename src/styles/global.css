@@ -49,6 +49,22 @@ body {
   color: var(--pb-selection-ink);
 }
 
+/*
+ * NO TAP HIGHLIGHT, anywhere. A mobile browser paints a box over whatever a
+ * finger lands on, in its own colour - Chromium's is rgba(51, 181, 229, 0.4),
+ * which is the blue box a tapped wire drew. Chromium picks its target by the
+ * pointer cursor, so it fell on every button, link and the wire's grab band,
+ * where the box is the SVG path's bounding box rather than anything shaped
+ * like a wire. It is nobody's design: selection is the wire's accent stroke
+ * and the selection bar, focus is the ring below, a press is each control's
+ * own :active. Inherited, so this one declaration reaches the whole document.
+ * Gecko implements no tap highlight at all, so there is nothing to remove
+ * there.
+ */
+:root {
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* -----------------------------------------------------------------------
  * Focus - ONE treatment for the entire application.
  *
