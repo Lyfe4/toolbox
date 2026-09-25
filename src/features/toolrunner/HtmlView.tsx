@@ -6,6 +6,7 @@ import { TextArea } from '@/components/TextArea';
 
 import styles from './html.module.css';
 import { previewDocument } from './previewDocument';
+import { textPreview, textPreviewHint } from './textPreview';
 import { ViewToggle } from './ViewToggle';
 
 /**
@@ -94,6 +95,7 @@ export function HtmlView({
   const [view, setView] = useState<'source' | 'preview'>('source');
   const noteId = useId();
   const preview = view === 'preview';
+  const source = textPreview(html);
 
   return (
     <div className={styles.stack}>
@@ -154,7 +156,8 @@ export function HtmlView({
         <TextArea
           className={styles.source}
           aria-label={label}
-          value={html}
+          // A preview past TEXT_PREVIEW_CHARS, for the reason textPreview.ts gives.
+          value={source.shown}
           readOnly
           spellCheck={false}
         />
@@ -176,11 +179,16 @@ export function HtmlView({
           THE TWO COPIES ARE A PAIR, and drawn as one.
           
           They used to be two identical ghost buttons in a row of four, beside
-          Download, with nothing to say that one of them was the whole point of
-          the tool. Grouping them says they are two answers to one question;
-          the accent on the rich one says which answer most people want; and
-          the note below says what the difference actually is, because no
-          amount of styling can explain a clipboard flavour.
+          Download, with nothing to say that they were two answers to one
+          question. Grouping them says that, and the note below says what the
+          difference actually is, because no amount of styling can explain a
+          clipboard flavour.
+
+          THE RICH ONE IS DRAWN LIKE ITS NEIGHBOURS. It carried an accent
+          border, as the copy most people want; in a row of plain controls
+          that read as the one control somebody had left a ring on, and it
+          was taken out on request in round twenty-one. The icon and the
+          note carry the difference now.
         */}
         <div className={styles.copyGroup} role="group" aria-label={`Copy ${label}`}>
           <Button
@@ -196,7 +204,6 @@ export function HtmlView({
           <Button
             size="sm"
             variant="ghost"
-            className={styles.richCopy}
             /*
              * The note is the button's description rather than nearby text, so
              * a screen reader reads the difference on the button itself rather
@@ -222,7 +229,7 @@ export function HtmlView({
         >
           Download
         </Button>
-        <span className={styles.hint}>{html.length} characters</span>
+        <span className={styles.hint}>{textPreviewHint(html, source)}</span>
       </div>
 
       <p className={styles.note} id={noteId}>

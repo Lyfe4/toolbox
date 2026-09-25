@@ -8,7 +8,15 @@ import { EMPTY_ANNOUNCEMENTS } from '@/lib/announce';
 import { Canvas } from './Canvas';
 import styles from './canvas.module.css';
 import { useCanvasStore } from './graphStore';
-import { countUpText, formatDuration, freshArrivals, motionMs, NO_FRESH_ARRIVALS } from './motion';
+import {
+  countUpText,
+  formatDuration,
+  freshArrivals,
+  GRID_DRAW_IN_MS,
+  gridDrawInInk,
+  motionMs,
+  NO_FRESH_ARRIVALS,
+} from './motion';
 import { NodeTiming } from './NodeTiming';
 import { DEFAULT_VIEWPORT, useViewportStore } from './viewportStore';
 
@@ -109,6 +117,44 @@ describe('the count-up text', () => {
   it('has nothing to count under a millisecond', () => {
     expect(countUpText(0.4, 0)).toBe('<1ms');
     expect(countUpText(0.4, 0.5)).toBe('<1ms');
+  });
+});
+
+/*
+ * The draw-in replaced a top-to-bottom sweep that read as a page loading. What
+ * it has to be instead is structure before detail: the heavy rule first, each
+ * finer rank after the one above it, and never a rank ahead of a coarser one.
+ */
+describe('the grid draw-in', () => {
+  const RANKS = [0, 1, 2, 3, 4];
+  const at = (ms: number): number[] => RANKS.map((rank) => gridDrawInInk(ms, rank));
+
+  it('starts empty and ends at exactly the grid at rest, at GRID_DRAW_IN_MS', () => {
+    expect(at(0)).toEqual([0, 0, 0, 0, 0]);
+    expect(at(GRID_DRAW_IN_MS)).toEqual([1, 1, 1, 1, 1]);
+    expect(at(GRID_DRAW_IN_MS - 1).at(-1)).toBeLessThan(1);
+    expect(GRID_DRAW_IN_MS).toBe(400);
+  });
+
+  it('never shows a finer rank ahead of a coarser one, and never takes ink back', () => {
+    let previous = at(0);
+    for (let ms = 0; ms <= GRID_DRAW_IN_MS; ms += 1) {
+      const now = at(ms);
+      for (const rank of RANKS.slice(1)) {
+        expect(now[rank] ?? 0).toBeLessThanOrEqual(now[rank - 1] ?? 0);
+      }
+      for (const rank of RANKS) expect(now[rank] ?? 0).toBeGreaterThanOrEqual(previous[rank] ?? 0);
+      previous = now;
+    }
+  });
+
+  it('has a moment of heavy rules alone, and one where every rank is on the way', () => {
+    const early = at(50);
+    expect(early[0]).toBeGreaterThan(0);
+    expect(early.slice(1).every((ink) => ink === 0)).toBe(true);
+    // Overlapping ramps rather than steps: at some instant three ranks are part-way.
+    const partWay = (ms: number): number => at(ms).filter((ink) => ink > 0 && ink < 1).length;
+    expect(Math.max(...RANKS.map((rank) => partWay(rank * 60 + 130)))).toBeGreaterThanOrEqual(3);
   });
 });
 

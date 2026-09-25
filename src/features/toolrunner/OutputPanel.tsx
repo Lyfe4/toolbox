@@ -13,6 +13,7 @@ import { JwtView } from './JwtView';
 import { RegexView } from './RegexView';
 import { ReportView } from './ReportView';
 import styles from './runner.module.css';
+import { textPreview, textPreviewHint } from './textPreview';
 
 /* -------------------------------------------------------------------------- *
  * Errors
@@ -186,6 +187,8 @@ export function OutputView({
        * matches the floor `.result` clamps the measured path to.
        */
       const rows = Math.min(Math.max(value.text.split('\n').length, 2), 20);
+      // The box is a preview past TEXT_PREVIEW_CHARS; Copy and Download are not.
+      const preview = textPreview(value.text);
 
       return (
         <div className={styles.stack}>
@@ -193,7 +196,7 @@ export function OutputView({
             className={styles.result}
             rows={rows}
             aria-label={label}
-            value={value.text}
+            value={preview.shown}
             readOnly
             spellCheck={false}
           />
@@ -219,7 +222,7 @@ export function OutputView({
             >
               Download
             </Button>
-            <span className={styles.hint}>{value.text.length} characters</span>
+            <span className={styles.hint}>{textPreviewHint(value.text, preview)}</span>
           </div>
         </div>
       );

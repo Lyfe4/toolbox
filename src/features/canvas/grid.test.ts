@@ -15,6 +15,7 @@ import {
   gridStrengths,
   gridWeights,
   layerPlacement,
+  layerStep,
 } from './grid';
 import { zoomFactorForNotches } from './wheel';
 
@@ -712,7 +713,7 @@ describe('where the layer sits', () => {
 
   it('covers the whole host, and overhangs it by less than one step', () => {
     for (const dpr of DENSITIES) {
-      const step = Number.isInteger(dpr) ? 1 : 1 / dpr;
+      const step = layerStep(dpr) / dpr;
       for (const box of BOXES) {
         const placed = layerPlacement(box, dpr);
         if (!placed) throw new Error('no placement');
@@ -750,10 +751,47 @@ describe('where the layer sits', () => {
     }
   });
 
-  it('gives a 1080-pixel phone a 1080-pixel bitmap, where clientWidth gave 1079', () => {
+  it('covers all of a 1080-pixel phone, where clientWidth gave a 1079-pixel bitmap', () => {
     const phone = { left: 0, top: 50, right: 1080 / 2.625, bottom: 914.2857 };
     expect(Math.round(Math.round(phone.right) * 2.625)).toBe(1079);
-    expect(layerPlacement(phone, 2.625)?.bitmapWidth).toBe(1080);
+    // One 21-pixel step past the host's 1080, which the host clips.
+    expect(layerPlacement(phone, 2.625)?.bitmapWidth).toBe(1092);
+  });
+
+  /*
+   * Chromium and WebKit lay out in sixty-fourths of a CSS pixel and Gecko in
+   * sixtieths. A layer at 2.625x placed on whole DEVICE pixels had a top of
+   * -0.095238px, laid out at -0.09375px, and Chromium filtered the bitmap into
+   * the difference: every 3px rule 4px and smeared, at every fractional density
+   * measured. A quarter CSS pixel is stated exactly by all three.
+   */
+  it('puts every edge on a quarter CSS pixel at a fractional density, and a whole device pixel', () => {
+    for (const dpr of [1.25, 1.5, 1.75, 2.625, 2.75, 3.5]) {
+      const step = layerStep(dpr);
+      expect(Number.isInteger(step)).toBe(true);
+      expect(((step / dpr) * 4) % 1).toBeCloseTo(0, 9);
+      // Whole-pixel boxes: the host's own edges are already stated exactly.
+      for (const box of [
+        { left: 0, top: 50, right: 412, bottom: 915 },
+        { left: 0, top: 49.75, right: 389.5, bottom: 843.25 },
+      ]) {
+        const placed = layerPlacement(box, dpr);
+        if (!placed) throw new Error('no placement');
+        for (const value of [
+          placed.width,
+          placed.height,
+          box.left + placed.left,
+          box.top + placed.top,
+        ]) {
+          expect(Math.abs(value * 4 - Math.round(value * 4))).toBeLessThan(1e-9);
+        }
+      }
+    }
+    expect(layerStep(2.625)).toBe(21);
+    expect(layerStep(2.75)).toBe(11);
+    expect(layerStep(1.5)).toBe(3);
+    expect(layerStep(3)).toBe(3);
+    expect(layerStep(Math.PI)).toBe(1);
   });
 
   it('places nothing for an empty host or a density that is not one', () => {

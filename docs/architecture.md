@@ -1241,18 +1241,20 @@ whole and smeared where it is not, and a seam where it slips a pixel.
   box. `layerPlacement` in `grid.ts` covers the host's box outward in whole
   pixels and sizes the bitmap to exactly that.
 
-**What could not be reproduced, and is said rather than claimed.** The report's
-own pictures were not reproduced. Neither gate engine can render a fractional
-CSS viewport — Playwright asks for whole CSS pixels, and Gecko ignores
-`deviceScaleFactor` altogether — so the fractional-density case exists here
-only as arithmetic, in `grid.test.ts`, and the build before this passes a
-fractional-host fixture at 1x and 3x, because both engines snap a canvas's paint
-rectangle to whole pixels and a half-pixel box snaps onto the bitmap the old
-arithmetic made. If the phone was a 390px iPhone at 3x, where everything is
-whole and the screen matched exactly, then neither mechanism explains those
-screenshots and the cause has not been found. One candidate outside the app:
-the page allows the browser's own pinch-zoom, as it must, and a browser zoom
-scales the whole page — bitmap included — by a factor the app is never told.
+**What round twenty could not reproduce, and round twenty-one did.** This
+paragraph used to say that neither gate engine could render a fractional
+density, so the case existed only as arithmetic, and that if the phone had been
+a 3x iPhone the cause was not found. Both halves were wrong. The screenshots
+came from **Chrome on Windows in its phone emulation**, which is Chromium at a
+fractional density such as 2.625x; and WebKit's Playwright build renders a
+fractional `deviceScaleFactor` too - nobody had asked it for one. Asked, both
+failed every comparison at 1.25x, 1.5x, 1.75x, 2.625x and 2.75x: 80 of 80 in
+WebKit, and every fractional case in Chromium, with every 3px rule 4px and
+smeared on screen. The cause is the paragraph below. Whether it is all of what
+the screenshots showed cannot be said from here: a smear across the whole layer
+is not by itself a band a third of the way down, and the device-toolbar zoom
+further down is a second candidate that would add one.
+<!-- asserted: cross-browser-check.mjs › the page renders at the density it asked for -->
 
 **The step is a whole CSS pixel at a whole-number density**, and that was
 found by the check rather than designed. The first version placed the layer on
@@ -1260,16 +1262,43 @@ whole device pixels at every density, which at 3x can mean a layer 793.67 CSS px
 tall — a length WebKit, which lays out in sixty-fourths of a CSS pixel, cannot
 state. It then scales the bitmap by a hair and filters it: every horizontal rule
 4px where it was drawn 3. At 1x, 2x and 3x a whole CSS pixel is a whole number of
-device pixels and exact in every engine; at a fractional density no step is
-whole in both units, and the engines that ship those densities lay out in
-device pixels, so there the step is one device pixel.
+device pixels and exact in every engine.
+
+**At a fractional density the step was one device pixel, on a belief that was
+false**: that the engines shipping those densities lay out in device pixels.
+Chromium lays out in sixty-fourths of a CSS pixel, as WebKit does, and Gecko in
+sixtieths. At 2.625x the layer's top of -0.095238px was laid out at
+-0.09375px - a quarter of a device pixel off - and its width of 412.19px at
+412.1875px, a scale of 0.99999, and the bitmap was filtered into that box. So
+`layerStep` places the layer on the smallest multiple of a quarter CSS pixel -
+a length all three engines state exactly - that is also a whole number of device
+pixels: 8 CSS px (21 device) at 2.625x, 4 at 1.25x, 1.75x and 2.75x, 2 at 1.5x.
+The layer overhangs its host by less than a step on each side, and the host
+clips it. The last round's fix for a bitmap one pixel short of its box was
+right and not enough: the box itself also has to be one an engine can state.
+
+`image-rendering: pixelated` was tried first and rejected. It stopped the smear
+
+- a mapping that is 1:1 to a hundredth of a pixel stays 1:1 when sampled nearest
+- but left a seam where one row slipped, and it treats the resampling rather
+  than removing the reason for it.
+
+**Not reproduced, and outside the app:** Chrome's device toolbar scales the
+emulated page to fit the window whenever its zoom is not 100%, and a pinch-zoom
+does the same on a real phone. Either resamples the whole page, bitmap
+included, by a factor the app is never told. If a screenshot was taken at a
+device-toolbar zoom other than 100%, some of what it shows is that.
 
 `checkCanvasGrid` holds it at 390px: along three rows and three columns, one in
 each third of the viewport, every rule the bitmap drew at more than half ink is
 on screen at the same pixel and width, nothing on screen is outside one, and the
 full-ink rules are one width and spaced at no more than two neighbouring whole
 numbers of device pixels — at 50%, 59%, 71% and 100%, as the page comes and with
-the host made fractional, at 1x in both engines and at 3x in WebKit.
+the host made fractional, at 1x in both engines and at 3x in WebKit, and at
+1.25x, 1.5x, 1.75x, 2.625x and 2.75x at 412px in WebKit (and in Chromium, which
+is opt-in: `pnpm check:browsers --only=canvasgrid --engine=chromium`). The
+comparison covers only pixels the host covers entirely, now on all four sides,
+since the layer overhangs the near edges too.
 `checkInspectorMotion` holds the slide frame by frame, and at 390px that the
 sheet opening and closing leaves every pixel of grid above it the same bytes.
 Against a bitmap one device pixel short of its box every grid assertion fails in
@@ -1790,13 +1819,13 @@ name `styles` had been blind to nine references in both directions.
 Five things move on the canvas, and each of them acknowledges something
 somebody just did:
 
-| What                           | Length             | Curve              | Started by                                                           |
-| ------------------------------ | ------------------ | ------------------ | -------------------------------------------------------------------- |
-| A new wire draws in            | `--pb-motion-base` | `--pb-ease-out`    | a connection, by any route                                           |
-| A new node settles from 96%    | `--pb-motion-fast` | `--pb-ease-out`    | the palette, a preset, a duplicate                                   |
-| Both ports of a new wire flick | 33ms, a literal    | none, a held value | a connection                                                         |
-| The timing figure counts up    | `--pb-motion-fast` | linear             | the first figure a node gets after it arrived or a wire landed on it |
-| The grid draws in, top down    | 400ms, a literal   | linear             | the first moment the grid can be seen in this page load              |
+| What                             | Length             | Curve              | Started by                                                           |
+| -------------------------------- | ------------------ | ------------------ | -------------------------------------------------------------------- |
+| A new wire draws in              | `--pb-motion-base` | `--pb-ease-out`    | a connection, by any route                                           |
+| A new node settles from 96%      | `--pb-motion-fast` | `--pb-ease-out`    | the palette, a preset, a duplicate                                   |
+| Both ports of a new wire flick   | 33ms, a literal    | none, a held value | a connection                                                         |
+| The timing figure counts up      | `--pb-motion-fast` | linear             | the first figure a node gets after it arrived or a wire landed on it |
+| The grid assembles, coarse first | 400ms, literals    | linear, per rank   | the first moment the grid can be seen in this page load              |
 
 **Every one is started by an event and runs for a fixed length.** Nodes here
 run in 1-8ms, which is under a frame, so motion paced by how long something
@@ -1853,9 +1882,70 @@ sampler.<!-- asserted: cross-browser-check.mjs › a new wire is simply there, w
 ink for 33ms, two frames at 60Hz; an animation's clock starts on the first frame
 that draws it, so that frame is always the bright one and a late second frame
 only shortens the flick. The grid is the whole backdrop, once, at a moment
-nobody is aiming at anything, and at 180ms a viewport of rows arrives as a
+nobody is aiming at anything, and at 180ms five ranks arriving in turn is one
 blink. Both are written at the line with this reasoning. Neither is a token,
 because a token is a promise that other things will use the value.
+
+#### The grid assembles; it does not sweep
+
+Until round twenty-one the grid drew in top to bottom: a clip travelling down
+the layer. It was reported as reading like a page loading - a backdrop
+arriving slowly from the top is exactly what a slow page looks like - where the
+wanted feeling was an instrument powering on, structure before detail.
+
+**What it does now.** The ranks of the ladder arrive in the order the ladder is
+built: the heavy rule first, then each finer rank `GRID_DRAW_IN_STAGGER_MS`
+(60ms) after the one above it, each fading from nothing to its resting ink over
+`GRID_DRAW_IN_RAMP_MS` (160ms). The finest of five is whole at 4 × 60 + 160 =
+**400ms, the length the sweep had**, so it did not need to be longer. Every
+rule is in its final place on every frame; only its ink moves, so the picture
+converges on the grid at rest instead of travelling across the screen.
+`gridDrawInInk` in `motion.ts` is the whole shape, and `motion.test.tsx` holds
+its properties: empty at 0, exactly at rest at 400ms, no finer rank ever ahead
+of a coarser one, and no ink ever taken back. `checkCanvasMotion` holds the
+same of the real bitmap in both engines, frame by frame, with every rule on the
+row it reads sorted into its rank by where it falls between two heavy rules.
+<!-- asserted: cross-browser-check.mjs › the grid assembles coarse to fine: heavy rules first, no finer rank ever ahead of a coarser one -->
+
+**Three readings were built and compared frame by frame** off the bitmap in
+Gecko, cropped to the same patch every 40ms:
+
+| Reading                                                     | Kept    | Why                                                                                                                                                                                                   |
+| ----------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rank cascade: each rank 60ms after the one above            | **yes** | Reads as subdivision - heavy squares, then halves, then quarters - which is how the grid is actually built. Overlapping ramps, so it is one motion rather than five pops                              |
+| Two stages: heavy rules, then every finer rank together     | no      | Right order, but one step of structure then a wash of detail; the subdivision itself, which is the part that reads as assembling, is lost                                                             |
+| Converging: finer rules grow out of the heavy rules to meet | no      | The most literal "converging", and the busiest: mid-way it is a field of ticks and crosses, a picture that exists at no zoom, and it paints a rect per rule per heavy line where the others paint one |
+
+A fourth, the cascade with each rank stepping on rather than fading, was
+rejected without building: a pop every 80ms is a stutter, and a pop is what the
+grid's own fade exists to remove.
+
+**The placement fix is untouched by it, by construction and by measurement.**
+It is one bitmap, redrawn once a frame for the 400ms, and every one of those
+frames goes through `draw` and so through `layerPlacement` - the same path as a
+frame at rest and as a resize, with nothing on the element. There is no second
+bitmap to keep in register and no CSS between the bitmap and the screen. The
+cost is one full repaint a frame for 400ms, which is what a pan already costs
+every frame. `checkCanvasMotion` reads the bitmap each frame and holds that no
+frame is a bitmap other than its box, none carries an animation or a clip, and
+no pixel is inked that the grid at rest leaves bare; `checkCanvasGrid` and
+`checkInspectorMotion`, last round's placement assertions, pass unchanged in both
+engines with the draw-in in place.<!-- asserted: cross-browser-check.mjs › every frame of the grid arriving is a bitmap its own box, with every rule already in its place -->
+
+**Frame zero is painted in the revealing commit**, and that was found by
+looking at frames rather than designed. Behind the cold open the bitmap already
+holds the finished grid, and the commit that reveals it changes none of the draw
+effect's inputs - so the first build left frame zero to the first animation
+tick, and the first frame anybody saw was the whole grid, then nothing, then the
+draw-in. The harness now reads the first frame after the click for exactly
+that.<!-- asserted: cross-browser-check.mjs › the first frame after the cold open comes down is not the finished grid -->
+
+**Reduced motion never starts it.** The draw-in is paced in JavaScript now, so
+global.css's 1ms override does not reach it at all - there is no animation for
+it to shorten. Under the preference the draw-in is spent without running, and
+the harness asserts that every frame after the click is, on the row it reads,
+byte for byte the grid at rest - rather than that no partial frame happened to
+be sampled.<!-- asserted: cross-browser-check.mjs › the grid is simply there, with no draw-in at all -->
 
 #### What it costs on a large canvas
 
@@ -1893,9 +1983,14 @@ recorded rather than rounded away.
   nearly every node here.
 - **Settling nodes that a document or a redo brought back.** Restoring is not
   arriving; a whole canvas settling on load is an app being friendly.
-- **Easing the grid and the count.** Both are sweeps across a set of equal
-  things - rows, digits - and a decelerating sweep spends its last third on the
-  last few. Linear is the absence of a curve, not an invented one.
+- **Easing the grid and the count.** The count is a sweep across a set of
+  equal things - digits - and a decelerating sweep spends its last third on the
+  last few. The grid's ramps are linear for the neighbouring reason: an eased
+  ramp spends its tail on ink nobody can tell from full. Linear is the absence
+  of a curve, not an invented one.
+- **Sweeping the grid in from the top.** Built, shipped, and replaced in round
+  twenty-one: it read as a page loading. See [the grid
+  assembles](#the-grid-assembles-it-does-not-sweep).
 - **The accent for the flick.** An armed port already is the accent while a
   drag is over it, so at the moment of release the flick would change nothing.
 - **Drawing the grid in behind the cold open.** It would spend the page load's
@@ -1934,12 +2029,41 @@ with thirty seconds as a ceiling; against a count armed on every keystroke it
 fails in both engines, which the six-second window could only do in Gecko when
 Gecko happened to be quick.
 
-**The keystroke cost is a finding, not fixed here.** Typing into a very large
-input on the canvas is janky in Firefox by a second or more per key; WebKit
-pays a fraction of it. Where it goes - React re-rendering a four-megabyte
-controlled value, the graph store copying it, or the save that follows - was not
-measured, and nothing asserts it.
-<!-- unverified: the split of the Gecko keystroke cost between rendering, the store and the save was not measured -->
+**Round twenty-one measured where it goes, and fixed the half that was ours.**
+Every piece of work the app does over the value, timed on its own in Gecko at
+the check's sizes, is small: the cache key's hash over 4.2M characters 17ms,
+the summary's whitespace pass over the 5.6 MB result 7ms, a localStorage write
+5ms, `JSON.stringify` 3ms. The stall was two things, and both were the engines'
+own textareas:
+
+| Per keystroke, main thread held                 | Gecko | WebKit |
+| ----------------------------------------------- | ----- | ------ |
+| Bare page, no app: a key into a 4 MB textarea   | 225ms | 630ms  |
+| The app: the key, to the next frame             | 265ms | 870ms  |
+| Bare page: mounting a read-only 5.6 MB textarea | 575ms | 6.3s   |
+| The app: after the debounced run lands          | 620ms | 1.3s   |
+| The app, output box capped at 64 Ki characters  | **0** | **0**  |
+
+The second row is the engine: a textarea holding four megabytes costs that much
+to type into with nothing else on the page, and the app adds about 40ms in
+Gecko on top of it. **That is a known limitation**, not something a debounce
+can reach - the cost is inside the keystroke's own default action.
+
+The fourth row was the app's. A running node says "Running" rather than showing
+a stale answer, so the inspector re-mounts its output box after every run, and
+that box held the whole 5.6 MB base64 result - about the cost of the third row,
+once per keystroke upstream, landing just in time to block the next one. A box a
+few hundred pixels tall now holds at most `TEXT_PREVIEW_CHARS` and says so
+beside Copy and Download, which still take the whole value; the post-run stall
+is gone in both engines. The same cap applies to the HTML source view, and to
+both on the tool page, which mounts the same components.
+<!-- asserted: cross-browser-check.mjs › a multi-megabyte result is previewed in its box, not laid out whole, and says so -->
+
+The harness's thirty-second window stays: it ends on a state, and the typing
+itself is still slow in both engines for the reason in the second row. The line
+this replaced said WebKit paid "a fraction" of Gecko's cost; measured on a quiet
+machine it pays more per keystroke, and Gecko's seconds were the check's figure
+under a full parallel run.
 
 ### Announcements are a log, not a variable
 
@@ -4676,8 +4800,13 @@ the ghost variant's three-class hover selector, so the accent vanished while the
 pointer was on the button and came back when it left, which straight after a
 click is exactly how a leftover ring looks. At rest it was a one-class tie that
 this chunk's stylesheet won only by loading after the Button's - the same
-footgun as the 87px editor. It now outranks both, and is the same before,
-during and after a press.
+footgun as the 87px editor. Round twenty made it outrank both.
+
+**Round twenty-one took the accent out.** Holding steady under the pointer did
+not stop it reading as the one control in a plain row that something had been
+left on, and the report came back in those words. The rich copy is now drawn
+exactly like Copy HTML and Download; the copy icon and the note under the row
+say what it does.<!-- asserted: cross-browser-check.mjs › the rich-text copy is drawn like Copy HTML beside it, at rest, under the pointer and after a click -->
 
 Looking for the real pattern across the app - every control on five routes
 clicked with the mouse, in both engines, and `:focus-visible` read afterwards -
@@ -4810,7 +4939,7 @@ different failure that every other check here would report anyway.
 
 Three times a style here was decided by which stylesheet loaded last: the input
 editor that was 200px in the build and 87px in dev, its own hover rule, and the
-rich-text copy button's accent border. Each was fixed where it was found, by
+rich-text copy button's accent border (removed since). Each was fixed where it was found, by
 out-specifying the rule it tied with, and each was found by somebody looking at
 a screen. Round twenty asked whether the CLASS could be stopped.
 

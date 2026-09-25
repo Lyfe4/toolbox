@@ -1382,7 +1382,8 @@
  * FOUR ACKNOWLEDGEMENTS, AND WHAT THEY HAVE IN COMMON.
  *
  * A wire drawing in, a node settling, a port flicking when a wire lands, and
- * the grid drawing in once per page load. Each is started by an EVENT - see
+ * - paced in GridLayer.tsx rather than here, because it is a bitmap - the grid
+ * assembling once per page load. Each is started by an EVENT - see
  * `Arrivals` in graphStore.ts - and runs for a fixed length, because nodes run
  * in 1-8ms and motion paced by a real duration would be over before it was
  * painted. None of them overshoots, none loops, and none is on anything that
@@ -1463,35 +1464,6 @@
 }
 
 /*
- * THE GRID DRAWS IN, ONCE PER PAGE LOAD, top to bottom. Each horizontal rule is
- * a device pixel high, so a clip travelling down the layer uncovers the rows
- * one at a time; linear, because a sweep that decelerated would spend its last
- * third on the bottom few rows. See `GridLayer` for when, and why only once.
- *
- * 400MS IS A LITERAL, AND LONGER THAN ANYTHING ON THE MOTION SCALE, which tops
- * out at 180ms because it describes UI transitions. This is not one: it is
- * the whole backdrop, once, at a moment nobody is aiming at anything, and at
- * 180ms a viewport of rows arrives as a blink rather than a sweep. It runs
- * while a loaded canvas is mounting, so it was measured there: a 48-node share
- * link, frames over the first 600ms, against the build before this and against
- * this build under reduced motion. The worst frame is the mount's in all three
- * and the draw-in does not move it. It never runs again in the life of the page.
- */
-.gridDrawing {
-  animation: grid-draw 400ms linear;
-}
-
-@keyframes grid-draw {
-  from {
-    clip-path: inset(0 0 100% 0);
-  }
-
-  to {
-    clip-path: inset(0);
-  }
-}
-
-/*
  * REMOVED UNDER REDUCED MOTION, NOT SHORTENED - and the difference is the
  * reason this block exists rather than trusting the shared override. global.css
  * collapses every animation to 1ms, deliberately, so the inspector's
@@ -1505,8 +1477,7 @@
 @media (prefers-reduced-motion: reduce) {
   .wireArriving,
   .nodeArriving,
-  .portContact,
-  .gridDrawing {
+  .portContact {
     animation: none;
   }
 }

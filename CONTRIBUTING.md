@@ -25,6 +25,11 @@ Playwright's browsers are only needed for `pnpm check:browsers` and
 pnpm exec playwright install firefox webkit
 ```
 
+`--engine=chromium` is also accepted, for one question the gate engines only
+half answer - whether the grid's bitmap reaches the screen at the densities
+Chrome's phone emulation uses - and it needs `playwright install chromium`. It
+is never part of a full run, and only `checkCanvasGrid` has been run in it.
+
 ## The six gates
 
 Everything below must pass. CI runs all six on every pull request, and a

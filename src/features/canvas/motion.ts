@@ -146,3 +146,32 @@ export function motionMs(value: string): number | null {
   const amount = Number(match[1]);
   return match[2] === 's' ? amount * 1000 : amount;
 }
+
+/**
+ * THE GRID'S DRAW-IN: HOW MUCH OF EACH RANK'S INK IS SHOWING, `elapsedMs` IN.
+ *
+ * Coarsest first. The heavy rule arrives first and each finer rank follows it
+ * `GRID_DRAW_IN_STAGGER_MS` later, so the surface assembles the way the ladder
+ * is built - structure, then the subdivisions between it - rather than
+ * travelling across the screen. Every rule is in its final place on every
+ * frame; only its ink changes, which is why a finished draw-in is exactly the
+ * grid at rest and nothing about the placement can differ between the two.
+ *
+ * OVERLAPPING RAMPS RATHER THAN STEPS. Five ranks stepping on in turn is a pop
+ * every 80ms, and a pop is the thing the grid's own fade exists to remove; with
+ * each ramp longer than the stagger, at most three ranks are part-way at once
+ * and the eye reads one motion. Linear, for the reason the old sweep was: an
+ * eased ramp spends its tail on ink nobody can tell from full.
+ *
+ * Rank `r` starts at `r * STAGGER` and is whole `RAMP` later, so the finest of
+ * five is whole at `4 * 60 + 160` = `GRID_DRAW_IN_MS`, the same 400ms the
+ * sweep took. A rank past the ladder is simply whole.
+ */
+export const GRID_DRAW_IN_STAGGER_MS = 60;
+export const GRID_DRAW_IN_RAMP_MS = 160;
+export const GRID_DRAW_IN_MS = 4 * GRID_DRAW_IN_STAGGER_MS + GRID_DRAW_IN_RAMP_MS;
+
+export function gridDrawInInk(elapsedMs: number, rank: number): number {
+  const into = elapsedMs - rank * GRID_DRAW_IN_STAGGER_MS;
+  return Math.min(1, Math.max(0, into / GRID_DRAW_IN_RAMP_MS));
+}

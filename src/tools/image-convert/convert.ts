@@ -428,6 +428,13 @@ export function buildNotes(
     });
   }
 
+  /*
+   * ONLY LOCATION IS A WARNING, ON PURPOSE. Nearly every photograph carries
+   * EXIF, and a warning on every conversion trains people to ignore the place
+   * warnings appear - the node's face, where a dropped frame or a lost location
+   * has to still be noticed. The rest is said in the report at `info`. A
+   * decision, recorded in this tool's README; not a bug.
+   */
   if (header.metadata.length > 0) {
     const carriesLocation = header.metadata.includes('GPS location');
     notes.push({

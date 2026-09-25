@@ -805,6 +805,12 @@ describe('what the user is told', () => {
     expect(note?.body).toContain('None of it is in the output');
   });
 
+  /*
+   * THE OTHER HALF OF THE SAME DECISION. EXIF and colour profiles are on
+   * nearly every photograph, and a warning on every conversion teaches people
+   * to stop reading warnings - including the GPS one above. Deliberate; see
+   * the README's "Only location is a warning".
+   */
   it('mentions other metadata without raising it to a warning', () => {
     const notes = notesFor(png({ before: [pngChunk('iCCP', ascii('p\0\0'))] }));
     const note = notes.find((entry) => entry.title.includes('Metadata'));

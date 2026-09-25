@@ -100,30 +100,6 @@ textarea.source {
   border-radius: var(--pb-radius-control);
 }
 
-/*
- * The one most people are looking for, said in the border rather than in a
- * second primary button competing with Run.
- *
- * AT EVERY POINTER STATE, OR IT READS AS A FOCUS RING. This was `.richCopy`
- * alone, one class against the Button's one-class `.ghost`: a tie at rest,
- * won only because this chunk's stylesheet happens to load after the
- * Button's, and a loss on hover, where `.ghost:is(:hover, ...):not(:disabled)`
- * is three classes deep. So the accent vanished while the pointer was on the
- * button and came back the moment it left - which, straight after a click,
- * is exactly what a focus ring left behind by the click looks like, and was
- * reported as one. It is not one: no outline, and `:focus-visible` false in
- * both engines. Two rules that outrank the Button's at rest and on hover, so
- * the accent is the same before, during and after a press.
- */
-.copyGroup .richCopy:not(:disabled),
-.copyGroup .richCopy:is(:hover, [data-force='hover']):not(:disabled) {
-  border-color: var(--pb-border-accent);
-}
-
-.richCopy {
-  color: var(--pb-ink-primary);
-}
-
 .note,
 .previewNote {
   margin: 0;
@@ -136,11 +112,4 @@ textarea.source {
 .note strong {
   font-weight: var(--pb-label-weight);
   color: var(--pb-ink-secondary);
-}
-
-@media (forced-colors: active) {
-  .copyGroup .richCopy:not(:disabled),
-  .copyGroup .richCopy:is(:hover, [data-force='hover']):not(:disabled) {
-    border-color: Highlight;
-  }
 }

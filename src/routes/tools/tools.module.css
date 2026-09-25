@@ -38,6 +38,27 @@
   color: var(--pb-ink-secondary);
 }
 
+/*
+ * The Privacy panel's text: two columns once there is room for two at a
+ * readable length, each filling its half. 44ch is the narrowest a column may
+ * be before the pair stacks; the widest, on a 1920px page, is about 110
+ * characters, which is long for prose and was chosen over leaving two thirds
+ * of the box empty.
+ */
+.policy {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 44ch), 1fr));
+  gap: var(--pb-space-sm) var(--pb-space-2xl);
+}
+
+.policyText {
+  margin: 0;
+  font-family: var(--pb-font-prose);
+  font-size: var(--pb-body-size);
+  line-height: var(--pb-body-leading);
+  color: var(--pb-ink-secondary);
+}
+
 /* --- Filters ------------------------------------------------------------ */
 
 .filters {

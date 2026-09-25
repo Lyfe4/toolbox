@@ -378,14 +378,13 @@ export interface LayerPlacement {
  * px, which it cannot state, and the bitmap is then scaled by a hair and
  * filtered - measured, every horizontal rule 4px where it was drawn 3. A whole
  * CSS pixel is a whole number of device pixels at 1x, 2x and 3x and exact in
- * every engine. At a fractional density no step is whole in both units, and
- * the engines that ship those densities lay out in device pixels, so there the
- * step is one device pixel.
+ * every engine. At a fractional density the step is `layerStep`'s: see there
+ * for why "one device pixel", which this used to say, was wrong.
  */
 export function layerPlacement(box: LayerBox, dpr: number): LayerPlacement | null {
   if (!Number.isFinite(dpr) || dpr <= 0) return null;
 
-  const step = Number.isInteger(dpr) ? dpr : 1;
+  const step = layerStep(dpr);
   const x0 = Math.floor((box.left * dpr) / step) * step;
   const y0 = Math.floor((box.top * dpr) / step) * step;
   const bitmapWidth = Math.ceil((box.right * dpr) / step) * step - x0;
@@ -400,4 +399,39 @@ export function layerPlacement(box: LayerBox, dpr: number): LayerPlacement | nul
     bitmapWidth,
     bitmapHeight,
   };
+}
+
+/**
+ * The layer's placement step, in DEVICE pixels: the smallest length that is a
+ * whole number of device pixels AND a length every layout engine can state.
+ *
+ * WHY NOT ONE DEVICE PIXEL. That is what this was at a fractional density, on
+ * the belief that the engines shipping those densities lay out in device
+ * pixels. Chromium does not: like WebKit it lays out in sixty-fourths of a CSS
+ * pixel, and Gecko in sixtieths. At 2.625x one device pixel is 0.38095 CSS px,
+ * so the layer's top of -0.095238px was laid out at -0.09375px - a quarter of a
+ * device pixel off - and 412.19px wide at 412.1875px, a scale of 0.99999.
+ * Chromium filtered the bitmap into that box and every 3px rule came out 4px
+ * wide and smeared: measured in round twenty-one at 1.75x, 2.625x and 2.75x,
+ * which is Chrome's own phone emulation and most Android phones, in every one
+ * of forty-eight cases the harness's grid check compares. It is what the phone
+ * screenshots of round twenty were.
+ *
+ * A QUARTER OF A CSS PIXEL IS THE LENGTH ALL THREE CAN STATE: it is a whole
+ * number of sixty-fourths and of sixtieths. So the step is the smallest
+ * multiple of a quarter CSS pixel that is also whole in device pixels - 8 CSS
+ * px (21 device) at 2.625x, 4 at 1.25x, 1.75x and 2.75x, 2 at 1.5x - and the
+ * layer overhangs its host by less than one step, which the host clips. A
+ * density with no such multiple under 16 CSS px (an irrational-looking float)
+ * falls back to one device pixel, which is the old behaviour and no worse.
+ *
+ * At a whole-number density this is a whole CSS pixel, as before.
+ */
+export function layerStep(dpr: number): number {
+  if (Number.isInteger(dpr)) return dpr;
+  for (let quarters = 1; quarters <= 64; quarters += 1) {
+    const device = (quarters / 4) * dpr;
+    if (Math.abs(device - Math.round(device)) < 1e-6) return Math.round(device);
+  }
+  return 1;
 }

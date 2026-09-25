@@ -96,6 +96,30 @@ comments`. Location is promoted from a list item to its own warning, because it
 is the one with consequences. The cross-browser check greps the produced file
 for the EXIF header and for a comment it planted in the source.
 
+#### Only location is a warning, and that is a decision, not an oversight
+
+Everything else the tool removes - EXIF, a colour profile, XMP, IPTC, text
+comments - is an `info` note: it is in the report, and it never reaches the
+node's face, where only `warn` notes are shown. That split was made in the
+first build and not written down, so it is written down here (round twenty-one)
+to stop it being re-opened as a bug.
+
+**A warning on every photograph trains people to ignore warnings.** Nearly
+every file a phone or a camera produces carries EXIF, and a good share carry a
+colour profile, so a warning for those would fire on almost every conversion
+anyone makes. A warning that is always there says nothing; worse, it teaches
+the reader to look past the place warnings appear - which is also where GPS
+removal, a dropped animation or a flattened transparency appear. This project
+has spent many rounds keeping that place meaningful - one verdict per node, and
+a loss that follows a wire, in [architecture.md](../../../docs/architecture.md). Removing a camera model or a capture date is the tool doing
+what it says; removing a location is the one removal whose absence a person
+would act on. So it keeps its own headline and its warning, and the rest is
+said in the report without being raised.
+
+`image.test.ts` holds both halves: `names GPS location specifically, and warns
+rather than informs`, and `mentions other metadata without raising it to a
+warning`. Changing either is changing this decision, not fixing a bug.
+
 #### `report.to.metadata` used to be the literal `[]`
 
 It was written as a promise — _a canvas re-encode carries pixels and nothing

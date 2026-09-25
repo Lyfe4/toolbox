@@ -154,24 +154,34 @@ export function ToolsIndexPage() {
         SENTENCE is here; the reminder is there.
       */}
       <Panel title="Privacy" footer="No network access is possible from any page here">
-        <p className={styles.lede}>
-          Every tool on this list runs entirely in your browser. The page&rsquo;s
-          Content-Security-Policy sets <code>connect-src &apos;none&apos;</code>, so the browser
-          itself refuses any attempt to send your input anywhere &mdash; it is enforced, not merely
-          promised.
-        </p>
         {/*
-          WHAT ELSE THE POLICY ADMITS, said where the claim is made. The
-          policy grew two stylesheet hashes in 2026-09 (see public/_headers),
-          and a privacy panel that described a policy narrower than the one
-          served would be a claim that had stopped being true.
+          TWO COLUMNS ON A WIDE SCREEN, each as wide as its half. The panel
+          spans the whole page, and these used to sit at the lede's 68ch in
+          the left third of it - a box of mostly nothing, reported as looking
+          bunched up. Side by side, the text fills the box and a line stays a
+          readable length; below two columns' worth they stack.
         */}
-        <p className={styles.lede}>
-          The same policy decides what may run and what may style the page: this site&rsquo;s own
-          files, plus a handful of inline pieces allowed by their exact fingerprint &mdash; two
-          start-up scripts, the text preview&rsquo;s stylesheet, the rule that hides a list&rsquo;s
-          scrollbar, and an empty stylesheet. Anything else written into the page is refused.
-        </p>
+        <div className={styles.policy}>
+          <p className={styles.policyText}>
+            Every tool on this list runs entirely in your browser. The page&rsquo;s
+            Content-Security-Policy sets <code>connect-src &apos;none&apos;</code>, so the browser
+            itself refuses any attempt to send your input anywhere &mdash; it is enforced, not
+            merely promised.
+          </p>
+          {/*
+            WHAT ELSE THE POLICY ADMITS, said where the claim is made. The
+            policy grew two stylesheet hashes in 2026-09 (see public/_headers),
+            and a privacy panel that described a policy narrower than the one
+            served would be a claim that had stopped being true.
+          */}
+          <p className={styles.policyText}>
+            The same policy decides what may run and what may style the page: this site&rsquo;s own
+            files, plus a handful of inline pieces allowed by their exact fingerprint &mdash; two
+            start-up scripts, the text preview&rsquo;s stylesheet, the rule that hides a
+            list&rsquo;s scrollbar, and an empty stylesheet. Anything else written into the page is
+            refused.
+          </p>
+        </div>
       </Panel>
     </div>
   );

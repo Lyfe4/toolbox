@@ -26,7 +26,7 @@ import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
-import { firefox, webkit } from 'playwright';
+import { chromium, firefox, webkit } from 'playwright';
 
 import { fileURLToPath } from 'node:url';
 
@@ -3666,13 +3666,81 @@ async function checkCanvasMotion(browser, label) {
  * nothing is asserted about it.
  */
 const MOTION_PAGE = () => {
-  const bottomInset = (clip) => {
-    // `inset(0px 0px 98.66%)` -> 98.66. `none` is a grid with no clip at all.
-    const match = /inset\(([^)]*)\)/.exec(clip);
-    if (!match) return 0;
-    const parts = match[1].trim().split(/\s+/);
-    const bottom = parts.length >= 3 ? parts[2] : parts[0];
-    return Number.parseFloat(bottom);
+  /*
+   * THE GRID, READ OFF ITS BITMAP AND SORTED BY RANK.
+   *
+   * The draw-in changes only the ink of each rank, on one bitmap with nothing
+   * on the element, so the bitmap is the whole of what the screen shows - and
+   * `ruled` below asserts the "nothing on the element" half every frame.
+   *
+   * The baseline is taken BEHIND THE COLD OPEN, where the layer already holds
+   * the finished grid at the viewport the draw-in will use. One row, the
+   * quietest, so it crosses the vertical rules and no horizontal one. A rule's
+   * rank is read from where it falls between two heavy rules - the heavy ones
+   * are the runs in the major ink at full alpha - at sixteenths of the heavy
+   * pitch: a rule at 8/16 is the rank below heavy, at 4/16 and 12/16 the next,
+   * and so on down, which is how the ladder subdivides.
+   */
+  const gridRow = (canvas, y) => canvas.getContext('2d').getImageData(0, y, canvas.width, 1).data;
+  const baseline = () => {
+    const canvas = document.querySelector('[data-testid="canvas-grid"]');
+    const context = canvas.getContext('2d');
+    const { width, height } = canvas;
+    const all = context.getImageData(0, 0, width, height).data;
+    let row = 0;
+    let quietest = Infinity;
+    for (let y = 0; y < height; y += 1) {
+      let sum = 0;
+      for (let x = 0; x < width; x += 1) sum += all[(y * width + x) * 4 + 3];
+      if (sum < quietest) {
+        quietest = sum;
+        row = y;
+      }
+    }
+    const data = gridRow(canvas, row);
+    const probe = document.createElement('canvas').getContext('2d');
+    probe.fillStyle = getComputedStyle(canvas).getPropertyValue('--pb-canvas-grid-major').trim();
+    probe.fillRect(0, 0, 1, 1);
+    const major = probe.getImageData(0, 0, 1, 1).data;
+
+    const runs = [];
+    for (let x = 0; x < width; x += 1) {
+      if (data[x * 4 + 3] === 0) continue;
+      if (runs.length > 0 && runs.at(-1).end === x) runs.at(-1).end = x + 1;
+      else runs.push({ start: x, end: x + 1 });
+    }
+    const isMajor = (x) =>
+      data[x * 4 + 3] === 255 && [0, 1, 2].every((c) => Math.abs(data[x * 4 + c] - major[c]) <= 2);
+    const heavy = runs.filter((run) => isMajor(run.start)).map((run) => run.start);
+    const gaps = heavy
+      .slice(1)
+      .map((at, i) => at - heavy[i])
+      .sort((a, b) => a - b);
+    const pitch = gaps[Math.floor(gaps.length / 2)] ?? 0;
+    const rankOf = new Int8Array(width).fill(-1);
+    for (const run of runs) {
+      const before = heavy.filter((at) => at <= run.start).at(-1) ?? (heavy[0] ?? 0) - pitch;
+      let k = Math.round(((run.start - before) / pitch) * 16) % 16;
+      let rank = 0;
+      if (k !== 0) {
+        rank = 4;
+        while (k % 2 === 0) {
+          k /= 2;
+          rank -= 1;
+        }
+      }
+      for (let x = run.start; x < run.end; x += 1) rankOf[x] = rank;
+    }
+    const full = [0, 0, 0, 0, 0];
+    for (let x = 0; x < width; x += 1) if (rankOf[x] >= 0) full[rankOf[x]] += data[x * 4 + 3];
+    window.__gridBaseline = { row, rankOf: [...rankOf], full, finalRow: [...data] };
+    return {
+      row,
+      pitch,
+      heavy: heavy.length,
+      ranks: full.map((sum) => sum > 0),
+      width,
+    };
   };
   const rect = (element) => {
     if (!element) return null;
@@ -3701,16 +3769,45 @@ const MOTION_PAGE = () => {
   };
 
   const readers = {
+    /*
+     * Each rank's ink on the baseline row as a share of its ink at rest, plus
+     * the three things a frame must never do: ink a pixel the finished grid
+     * leaves bare (a rule that travels), hold a bitmap that is not its box
+     * (the stretch last round fixed), or carry CSS that makes the screen differ
+     * from the bitmap.
+     */
     grid: () => {
       const grid = document.querySelector('[data-testid="canvas-grid"]');
-      return grid
-        ? {
-            inset: bottomInset(getComputedStyle(grid).clipPath),
-            animationName: getComputedStyle(grid).animationName,
-            drawing: grid.className.includes('gridDrawing'),
-            running: named(grid, 'grid-draw').length,
-          }
-        : null;
+      const base = window.__gridBaseline;
+      if (!grid || !base) return null;
+      const data = gridRow(grid, base.row);
+      const sums = [0, 0, 0, 0, 0];
+      let stray = 0;
+      let exact = data.length === base.finalRow.length;
+      for (let x = 0; x < grid.width; x += 1) {
+        const alpha = data[x * 4 + 3];
+        if (base.rankOf[x] >= 0) sums[base.rankOf[x]] += alpha;
+        else if (alpha > 0) stray += 1;
+        for (let c = 0; c < 4 && exact; c += 1) {
+          if (data[x * 4 + c] !== base.finalRow[x * 4 + c]) exact = false;
+        }
+      }
+      const dpr = window.devicePixelRatio;
+      const box = grid.getBoundingClientRect();
+      const style = getComputedStyle(grid);
+      return {
+        ink: sums.map((sum, rank) =>
+          base.full[rank] > 0 ? Math.round((sum / base.full[rank]) * 1000) / 1000 : null,
+        ),
+        stray,
+        exact,
+        boxed:
+          grid.width === Math.round(box.width * dpr) &&
+          grid.height === Math.round(box.height * dpr),
+        ruled:
+          style.animationName === 'none' && (style.clipPath === 'none' || style.clipPath === ''),
+        drawing: grid.hasAttribute('data-draw-in'),
+      };
     },
     settle: ({ still }) => {
       const nodes = [...document.querySelectorAll('[data-node-id]')];
@@ -3771,6 +3868,7 @@ const MOTION_PAGE = () => {
 
   window.__motion = {
     inkPrimary,
+    gridBaseline: baseline,
     /**
      * Runs `act`, then samples `reader` every frame for `ms`. `act` is a
      * selector to click, so a click and the first sample are in the same task
@@ -3831,35 +3929,62 @@ async function motionPass(page, label, reduced) {
    * behind the introduction would be the one draw-in this page gets, spent
    * where nobody can see it.
    */
+  const base = await page.evaluate(() => window.__motion.gridBaseline());
   const behind = await sample('grid', {}, 150);
   check(
     label,
     say('the grid does not draw in behind the cold open, where nobody can see it'),
     behind.samples.length > 0 &&
-      behind.samples.every(
-        (reading) => reading !== null && !reading.drawing && reading.running === 0,
-      ),
+      behind.samples.every((reading) => reading !== null && !reading.drawing && reading.exact),
     `${String(behind.samples.length)} frames behind the panel, ${String(
       behind.samples.filter((reading) => reading?.drawing).length,
-    )} of them drawing`,
+    )} of them drawing; baseline row ${String(base.row)}, heavy pitch ${String(base.pitch)}px, ranks ${base.ranks
+      .map((on, rank) => (on ? String(rank) : '-'))
+      .join('')}`,
   );
 
   const sweep = await sample('grid', {}, 700, '#cold-open-start');
-  const insets = sweep.samples
-    .filter((reading) => reading !== null)
-    .map((reading) => reading.inset);
+  const frames = sweep.samples.filter((reading) => reading !== null);
+  /** The ranks this zoom actually draws, coarsest first. */
+  const ranks = base.ranks.flatMap((on, rank) => (on ? [rank] : []));
+  const finest = ranks.at(-1);
+  const inkOf = (reading, rank) => reading.ink[rank] ?? 0;
+  const strip = (reading) => ranks.map((rank) => inkOf(reading, rank).toFixed(2)).join('/');
+
+  /*
+   * THE PLACEMENT HOLDS ON EVERY FRAME, in both passes: the bitmap is its box,
+   * nothing is on the element, and no pixel is inked that the grid at rest
+   * leaves bare. The last is what "converging rather than travelling" means
+   * as a state - every rule is in its final place from its first frame.
+   */
+  check(
+    label,
+    say(
+      'every frame of the grid arriving is a bitmap its own box, with every rule already in its place',
+    ),
+    frames.length > 0 &&
+      ranks.length >= 3 &&
+      frames.every((reading) => reading.boxed && reading.ruled && reading.stray === 0),
+    `${String(frames.filter((reading) => !reading.boxed).length)} unboxed, ${String(
+      frames.filter((reading) => !reading.ruled).length,
+    )} with CSS on the layer, ${String(
+      frames.reduce((sum, reading) => sum + reading.stray, 0),
+    )} stray pixels, over ${String(frames.length)} frames`,
+  );
+
   if (reduced) {
     check(
       label,
       say('the grid is simply there, with no draw-in at all'),
-      sweep.samples.length > 0 &&
-        sweep.samples.every(
-          (reading) => reading !== null && reading.inset === 0 && reading.animationName === 'none',
-        ),
-      `insets ${[...new Set(insets)].join(',')}; animation ${String(sweep.samples.at(-1)?.animationName)}`,
+      frames.length > 0 && frames.every((reading) => reading.exact && !reading.drawing),
+      `${String(frames.filter((reading) => !reading.exact).length)} of ${String(
+        frames.length,
+      )} frames not the grid at rest; first ${frames[0] ? strip(frames[0]) : 'none'}`,
     );
   } else {
-    const partWay = between(insets, 0, 100);
+    const partWay = frames.filter((reading) =>
+      ranks.some((rank) => inkOf(reading, rank) > 0 && inkOf(reading, rank) < 1),
+    );
     if (partWay.length === 0 && (sweep.firstFrameMs ?? 0) > 400) {
       skip(
         label,
@@ -3867,13 +3992,42 @@ async function motionPass(page, label, reduced) {
         `first frame ${String(sweep.firstFrameMs)}ms after the click, past the 400ms draw-in`,
       );
     } else {
+      /*
+       * No frame of the finished grid first. The bitmap behind the panel IS
+       * the finished grid, so a draw-in that begins a tick late shows it for a
+       * frame and then takes it away - which the first build of this did.
+       */
       check(
         label,
-        'the grid draws in from the top once the cold open comes down, rows uncovered in order',
-        new Set(partWay).size >= 3 && monotone(insets, -1) && insets.at(-1) === 0,
-        `${String(new Set(partWay).size)} part-way clips over ${String(insets.length)} frames, first ${String(
-          insets[0],
-        )}%, last ${String(insets.at(-1))}%`,
+        'the first frame after the cold open comes down is not the finished grid',
+        frames.length > 0 && ranks.every((rank) => inkOf(frames[0], rank) < 1),
+        `first frame ${frames[0] ? strip(frames[0]) : 'none'}, ${String(sweep.firstFrameMs)}ms after the click`,
+      );
+      const ordered = frames.every((reading) =>
+        ranks.every(
+          (rank, i) => i === 0 || inkOf(reading, rank) <= inkOf(reading, ranks[i - 1]) + 0.02,
+        ),
+      );
+      const rising = ranks.every((rank) =>
+        monotone(
+          frames.map((reading) => inkOf(reading, rank)),
+          1,
+        ),
+      );
+      const structureFirst = frames.some(
+        (reading) => inkOf(reading, ranks[0]) > 0 && inkOf(reading, finest) === 0,
+      );
+      check(
+        label,
+        'the grid assembles coarse to fine: heavy rules first, no finer rank ever ahead of a coarser one',
+        structureFirst && ordered && rising && partWay.length >= 3 && frames.at(-1).exact,
+        `${String(partWay.length)} part-way frames; heavy-alone ${String(structureFirst)}, ordered ${String(
+          ordered,
+        )}, rising ${String(rising)}, ends at rest ${String(frames.at(-1)?.exact)}; ${[
+          ...new Set(frames.map(strip)),
+        ]
+          .slice(0, 12)
+          .join(' ')}`,
       );
     }
   }
@@ -3896,19 +4050,29 @@ async function motionPass(page, label, reduced) {
     label,
     say('coming back to the canvas from /tools does not draw the grid in again'),
     back.samples.length > 0 &&
-      back.samples.every(
-        (reading) =>
-          reading !== null && !reading.drawing && reading.running === 0 && reading.inset === 0,
-      ),
+      back.samples.every((reading) => reading !== null && !reading.drawing && reading.exact),
     `${String(back.samples.filter((reading) => reading?.drawing).length)} of ${String(back.samples.length)} frames drawing`,
   );
   await page.reload({ waitUntil: 'networkidle' });
   const reloaded = await page.evaluate(
     () =>
-      document.querySelector('[data-testid="canvas-grid"]')?.className.includes('gridDrawing') ??
-      false,
+      document.querySelector('[data-testid="canvas-grid"]')?.hasAttribute('data-draw-in') ?? false,
   );
-  check(label, say('a reload is a cold open, and draws the grid in again'), reloaded, '');
+  /*
+   * Under the preference a reload spends the draw-in without running it, so
+   * the attribute - "this mount drew the grid in" - is absent there, which is
+   * the partner of the no-draw-in check above rather than a gap in this one.
+   */
+  check(
+    label,
+    say(
+      reduced
+        ? 'a reload does not draw the grid in either'
+        : 'a reload is a cold open, and draws the grid in again',
+    ),
+    reduced ? !reloaded : reloaded,
+    '',
+  );
 
   /* -- 2. A node settles -------------------------------------------------- */
 
@@ -3989,6 +4153,32 @@ async function motionPass(page, label, reduced) {
     (id) => document.querySelector(`[data-testid="node-${id}"]`)?.dataset.status === 'ok',
     first,
     { timeout: 30_000 },
+  );
+
+  /*
+   * THE OUTPUT BOX IS A PREVIEW AT THIS SIZE. A textarea is laid out whole,
+   * and re-mounting one that holds the 5.6 MB base64 of this input after every
+   * run held Gecko's main thread for ~620ms and WebKit's for ~1.3s per
+   * keystroke upstream (round twenty-one; none once capped). Read as a state:
+   * every read-only box holds at most the cap, and the one that was clipped
+   * says so. The partner is that the value really is bigger than the box.
+   */
+  const boxes = await page.evaluate(() => {
+    const inspector = document.querySelector('[data-testid="node-inspector"]');
+    const areas = [...(inspector?.querySelectorAll('textarea[readonly]') ?? [])];
+    return {
+      lengths: areas.map((area) => area.value.length),
+      hint:
+        inspector?.textContent?.match(/Showing the first [\d,]+ of [\d,]+ characters/)?.[0] ?? null,
+    };
+  });
+  check(
+    label,
+    say('a multi-megabyte result is previewed in its box, not laid out whole, and says so'),
+    boxes.lengths.length > 0 &&
+      boxes.lengths.every((length) => length <= 65_536) &&
+      boxes.hint === 'Showing the first 65,536 of 5,592,408 characters',
+    `box lengths ${boxes.lengths.join(',')}; ${String(boxes.hint)}`,
   );
   await setInspector(page, false);
   await page.waitForTimeout(400);
@@ -12158,6 +12348,40 @@ async function checkToolIndex(browser, label) {
         .waitFor({ timeout: 15_000 });
       await page.waitForTimeout(200);
 
+      /*
+       * THE PRIVACY TEXT FILLS ITS BOX. It sat at a 68ch measure in the left
+       * third of a panel as wide as the page, reported in round twenty-one as
+       * bunched up. Two columns where there is room, stacked where there is
+       * not - and either way the text reaches across the panel's body rather
+       * than stopping short of it.
+       */
+      const policy = await page
+        .getByText('Every tool on this list runs entirely')
+        .evaluate((first) => {
+          const second = first.nextElementSibling;
+          const host = first.parentElement.getBoundingClientRect();
+          const a = first.getBoundingClientRect();
+          const b = second?.getBoundingClientRect();
+          return b
+            ? {
+                sideBySide: Math.abs(a.top - b.top) < 1 && b.left > a.right,
+                span: (Math.max(a.right, b.right) - Math.min(a.left, b.left)) / host.width,
+              }
+            : null;
+        });
+      // Two columns fit from about 720px; the widths either side of that are pinned.
+      const columns = width >= 1280 ? true : width <= 390 ? false : null;
+      check(
+        label,
+        `${at}: the privacy text ${columns === true ? 'sits in two columns across' : columns === false ? 'stacks and fills' : 'fills'} its panel`,
+        policy !== null &&
+          (columns === null || policy.sideBySide === columns) &&
+          policy.span >= 0.97,
+        policy === null
+          ? 'second paragraph missing'
+          : `side by side ${String(policy.sideBySide)}, spans ${String(Math.round(policy.span * 100))}% of the panel`,
+      );
+
       const probe = await page.evaluate(() => {
         const cards = [...document.querySelectorAll('ul li > a')].map((card) => {
           const rect = card.getBoundingClientRect();
@@ -14000,6 +14224,14 @@ const INSTALL_GRID_LINES = () => {
     const host = canvas.parentElement.getBoundingClientRect();
     const width = Math.min(layer.width, shot.width - ox, Math.floor(host.right * dpr) - ox);
     const height = Math.min(layer.height, shot.height - oy, Math.floor(host.bottom * dpr) - oy);
+    /*
+     * And on the near sides too. At a fractional density the layer is placed
+     * on a lattice several device pixels coarse (see `layerStep`), so it
+     * overhangs the host's top and left as well, and that strip is clipped -
+     * the header shows through it.
+     */
+    const startX = Math.max(0, Math.ceil(host.left * dpr) - ox);
+    const startY = Math.max(0, Math.ceil(host.top * dpr) - oy);
 
     const alpha = (x, y) => layer.data[(y * layer.width + x) * 4 + 3];
     const lum = (x, y) => {
@@ -14029,9 +14261,9 @@ const INSTALL_GRID_LINES = () => {
       return lines;
     };
 
-    const runsOf = (length, value, threshold) => {
+    const runsOf = (length, value, threshold, start = 0) => {
       const runs = [];
-      for (let p = 0; p < length; p += 1) {
+      for (let p = start; p < length; p += 1) {
         const v = value(p);
         if (v <= threshold) continue;
         const last = runs.at(-1);
@@ -14042,6 +14274,8 @@ const INSTALL_GRID_LINES = () => {
           runs.push([p, 1, v]);
         }
       }
+      // A run that begins on a clipped edge is part of a rule, on both sides.
+      if (start > 0 && runs[0]?.[0] === start) runs.shift();
       return runs;
     };
 
@@ -14059,12 +14293,13 @@ const INSTALL_GRID_LINES = () => {
       const layerAt = axis === 'row' ? (p) => alpha(p, at) : (p) => alpha(at, p);
       const screenAt = axis === 'row' ? (p) => lum(p, at) : (p) => lum(at, p);
       const backdrop = backdropOf(length, screenAt);
+      const start = axis === 'row' ? startX : startY;
       return {
         axis,
         at,
         length,
-        layer: runsOf(length, layerAt, 0),
-        screen: runsOf(length, (p) => Math.abs(screenAt(p) - backdrop), 2),
+        layer: runsOf(length, layerAt, 0, start),
+        screen: runsOf(length, (p) => Math.abs(screenAt(p) - backdrop), 2, start),
       };
     };
 
@@ -14700,12 +14935,12 @@ async function checkCanvasGrid(browser, label) {
    */
   const phoneZooms = [0.5, 0.59, 0.71, 1];
 
-  const phonePass = async (context, density) => {
+  const phonePass = async (context, density, width = 390) => {
     const phone = await context.newPage();
     try {
       await gotoCanvas(phone);
       await phone.locator('[data-testid="canvas-grid"]').waitFor({ timeout: 15_000 });
-      // Past the once-per-load draw-in, which clips the layer while it runs.
+      // Past the once-per-load draw-in, which inks the ranks part-way while it runs.
       await phone.waitForTimeout(600);
       await phone.evaluate(INSTALL_SET_ZOOM);
       await phone.evaluate(INSTALL_GRID_LINES);
@@ -14719,14 +14954,14 @@ async function checkCanvasGrid(browser, label) {
       if (reported !== density && density !== 1) {
         skip(
           label,
-          `390px at ${String(density)}x: the screen is the bitmap`,
+          `${String(width)}px at ${String(density)}x: the screen is the bitmap`,
           `this engine renders at ${String(reported)}x whatever deviceScaleFactor asks for`,
         );
         return;
       }
       check(
         label,
-        `390px at ${String(density)}x: the page renders at the density it asked for`,
+        `${String(width)}px at ${String(density)}x: the page renders at the density it asked for`,
         reported === density,
         `devicePixelRatio ${String(reported)}`,
       );
@@ -14741,7 +14976,7 @@ async function checkCanvasGrid(browser, label) {
             [...(await gridShot(phone))],
           );
           const verdict = judgeGridLines(reading);
-          const where = `390px at ${String(density)}x, ${String(Math.round(reached * 100))}%${fractional ? ', a fractional canvas' : ''}`;
+          const where = `${String(width)}px at ${String(density)}x, ${String(Math.round(reached * 100))}%${fractional ? ', a fractional canvas' : ''}`;
 
           check(
             label,
@@ -14794,6 +15029,32 @@ async function checkCanvasGrid(browser, label) {
     await phonePass(threeX, 3);
   } finally {
     await threeX.close();
+  }
+
+  /*
+   * AND AT FRACTIONAL DENSITIES, WHICH THIS SECTION USED TO SAY NO GATE
+   * ENGINE COULD RENDER. WebKit's build does, and so does Chromium (opt-in,
+   * `--engine=chromium`). 2.625x and 2.75x are Android phones and Chrome's
+   * own phone emulation; 1.25x, 1.5x and 1.75x are Windows display scaling.
+   * Placed on whole device pixels, as the layer was until round twenty-one,
+   * every one of these failed in both - rules drawn 3px wide on screen 4px and
+   * smeared, 80 of 80 comparisons in WebKit, because both lay out in
+   * sixty-fourths of a CSS pixel - and on `layerStep`'s lattice none does.
+   * Not Gecko, which renders at 1x whatever it is asked for.
+   */
+  if (browser.browserType().name() !== 'firefox') {
+    for (const density of [1.25, 1.5, 1.75, 2.625, 2.75]) {
+      const fractional = await browser.newContext({
+        viewport: { width: 412, height: 915 },
+        hasTouch: true,
+        deviceScaleFactor: density,
+      });
+      try {
+        await phonePass(fractional, density, 412);
+      } finally {
+        await fractional.close();
+      }
+    }
   }
 }
 
@@ -16048,8 +16309,8 @@ async function checkTapHighlight(engine, label) {
  * keyboard still gets every one of them.
  *
  * Reported as "Copy as rich text keeps an orange outline after a click, and
- * its neighbours do not". It was never a focus ring: the button carries an
- * accent border on purpose, and the Button's hover rule outranked it, so the
+ * its neighbours do not". It was never a focus ring: the button carried an
+ * accent border on purpose (since removed), and the Button's hover rule outranked it, so the
  * accent vanished under the pointer and came back when it left - after a
  * click, exactly the look of a ring left behind. Looking for the real pattern
  * across the app, by clicking every control on five routes with the mouse and
@@ -16075,6 +16336,7 @@ async function checkPointerFocus(browser, label) {
       const style = getComputedStyle(element);
       return {
         border: style.borderTopColor,
+        ink: style.color,
         outline: style.outlineStyle,
         focused: element === document.activeElement,
         visible: element.matches(':focus-visible'),
@@ -16135,18 +16397,27 @@ async function checkPointerFocus(browser, label) {
     }
     const richAfter = clickedStates[1];
 
+    /*
+     * DRAWN LIKE ITS NEIGHBOURS, at rest, under the pointer and after a click.
+     * It used to carry an accent border on purpose, and that was reversed in
+     * round twenty-one: in a row of plain controls it read as a leftover ring.
+     * Compared against Copy HTML in the same state, so the claim is "the same
+     * as the one beside it" rather than a colour this file would have to know.
+     */
+    await html.hover();
+    await page.waitForTimeout(250);
+    const htmlHover = await state(html);
+    const htmlAfter = clickedStates[0];
     check(
       label,
-      'the rich-text copy carries its accent at rest, where Copy HTML beside it does not',
-      richRest.border !== htmlRest.border,
-      `rich ${richRest.border}, html ${htmlRest.border}`,
+      'the rich-text copy is drawn like Copy HTML beside it, at rest, under the pointer and after a click',
+      richRest.border === htmlRest.border &&
+        richRest.ink === htmlRest.ink &&
+        richHover.border === htmlHover.border &&
+        richAfter?.border === htmlAfter?.border,
+      `rest ${richRest.border}/${htmlRest.border}, ink ${richRest.ink}/${htmlRest.ink}, hover ${richHover.border}/${htmlHover.border}, after a click ${String(richAfter?.border)}/${String(htmlAfter?.border)}`,
     );
-    check(
-      label,
-      'and keeps it under the pointer and after a click, so a click cannot seem to add it',
-      richHover.border === richRest.border && richAfter?.border === richRest.border,
-      `rest ${richRest.border}, hover ${richHover.border}, after a click ${String(richAfter?.border)}`,
-    );
+    await away();
     const ringed = clickedStates.filter((entry) => entry.outline !== 'none' || entry.visible);
     check(
       label,
@@ -20014,6 +20285,7 @@ async function checkBuildIsCurrent(label, when) {
  *                               of these, case-insensitively, `check` optional:
  *                               `--only=popovers,valuemodel`
  *   --engine=firefox|webkit     one engine rather than both
+ *   --engine=chromium           opt-in, and never part of a full run
  *   --list                      the section names, and exit
  *
  * A full run is ~2,900 checks in both engines and every round runs it several
@@ -20034,6 +20306,14 @@ async function checkBuildIsCurrent(label, when) {
 const ENGINES = {
   firefox: [firefox, 'Firefox (Gecko)'],
   webkit: [webkit, 'WebKit - the engine behind Safari, not Safari itself'],
+  /*
+   * OPT-IN AND NEVER PART OF A FULL RUN. Added in round twenty-one for one
+   * question the two gate engines could not answer: Chromium honours a
+   * fractional `deviceScaleFactor`, and a fractional density is where the
+   * grid's bitmap stopped matching its box (see `layerStep`). Only
+   * `checkCanvasGrid` has been run here; nothing else is claimed.
+   */
+  chromium: [chromium, 'Chromium - opt-in, not a gate engine'],
 };
 
 function sectionsToRun(argv) {
@@ -20054,7 +20334,7 @@ function sectionsToRun(argv) {
 
   const engineName = flags.get('engine');
   if (engineName !== undefined && !(engineName in ENGINES)) {
-    console.error(`cross-browser: --engine=${engineName} - use firefox or webkit`);
+    console.error(`cross-browser: --engine=${engineName} - use firefox, webkit or chromium`);
     process.exit(2);
   }
 

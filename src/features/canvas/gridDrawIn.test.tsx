@@ -1,7 +1,6 @@
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import styles from './canvas.module.css';
 import { GridLayer } from './GridLayer';
 import { DEFAULT_VIEWPORT } from './viewportStore';
 
@@ -14,9 +13,7 @@ import { DEFAULT_VIEWPORT } from './viewportStore';
 describe('the grid', () => {
   it('draws in once per page load, and only once it can be seen', () => {
     const drawing = (container: HTMLElement): boolean =>
-      container
-        .querySelector('[data-testid="canvas-grid"]')
-        ?.classList.contains(styles.gridDrawing ?? '') ?? false;
+      container.querySelector('[data-testid="canvas-grid"]')?.hasAttribute('data-draw-in') ?? false;
 
     // Behind the cold open: nothing yet, and the draw-in is not spent.
     const hidden = render(<GridLayer viewport={DEFAULT_VIEWPORT} revealed={false} />);

@@ -1,9 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { cx } from '@/lib/cx';
-
 import styles from './canvas.module.css';
 import { gridLevels, gridRules, layerPlacement } from './grid';
+import { GRID_DRAW_IN_MS, gridDrawInInk, REDUCED_MOTION } from './motion';
 
 import type { LayerPlacement } from './grid';
 import type { Viewport } from './viewportStore';
@@ -141,7 +140,17 @@ function placementOf(canvas: HTMLCanvasElement, dpr: number): LayerPlacement | n
  * it was given, and the comparison would then never be equal.
  */
 const placedAs = new WeakMap<HTMLCanvasElement, string>();
-function draw(canvas: HTMLCanvasElement, viewport: Viewport, dpr: number): void {
+/**
+ * `drawIn` is how far into the draw-in this frame is, in ms, or null for the
+ * grid at rest. It scales each rank's ink and touches nothing else, so a frame
+ * of the draw-in is placed by exactly the arithmetic a frame at rest is.
+ */
+function draw(
+  canvas: HTMLCanvasElement,
+  viewport: Viewport,
+  dpr: number,
+  drawIn: number | null,
+): void {
   const context = canvas.getContext('2d');
   // jsdom has no 2D context at all, and a lost context returns null too.
   if (!context) return;
@@ -195,6 +204,9 @@ function draw(canvas: HTMLCanvasElement, viewport: Viewport, dpr: number): void 
      * level is fading in. One fill of a self-overlapping path paints each pixel
      * once whatever crosses it.
      */
+    const shown = drawIn === null ? 1 : gridDrawInInk(drawIn, index);
+    if (shown <= 0) continue;
+
     const path = new Path2D();
     for (const rule of columns) {
       if (rule.level === index) path.rect(rule.at, 0, thickness, height);
@@ -222,12 +234,12 @@ function draw(canvas: HTMLCanvasElement, viewport: Viewport, dpr: number): void 
     const weight = ink.crossfade ? level.weight : Math.round(level.weight);
 
     if (weight < 1) {
-      context.globalAlpha = level.strength;
+      context.globalAlpha = level.strength * shown;
       context.fillStyle = ink.minor;
       context.fill(path);
     }
     if (weight > 0) {
-      context.globalAlpha = level.strength * weight;
+      context.globalAlpha = level.strength * weight * shown;
       context.fillStyle = ink.major;
       context.fill(path);
     }
@@ -236,26 +248,39 @@ function draw(canvas: HTMLCanvasElement, viewport: Viewport, dpr: number): void 
   context.globalAlpha = 1;
 }
 
+/** One draw of whatever `state` says, including where the draw-in is. */
+function paint(
+  canvas: HTMLCanvasElement,
+  state: { viewport: Viewport; dpr: number; drawInFrom: number | null },
+): void {
+  const { drawInFrom } = state;
+  draw(
+    canvas,
+    state.viewport,
+    state.dpr,
+    drawInFrom === null ? null : Math.max(0, performance.now() - drawInFrom),
+  );
+}
+
 export function GridLayer({ viewport, revealed }: GridLayerProps) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   /*
-   * THE DRAW-IN, decided the first time the grid is visible, and decided in
-   * RENDER rather than in an effect: the frame that first shows the grid has
-   * to have the clip on it already, or it is one frame of the finished grid
-   * and then a sweep that starts by taking it away. The class stays on
-   * afterwards and does nothing - the animation is not held, and nothing ever
-   * takes the class away and puts it back, so it cannot run twice.
+   * THE DRAW-IN, decided the first time the grid is visible, in RENDER, so the
+   * commit that reveals the grid is the commit that starts it - see the layout
+   * effect below for why that matters to the first frame.
    *
-   * Under reduced motion the class is still written and the stylesheet removes
-   * the animation, which is the whole of the preference here: this layer has no
-   * end event to wait for and nothing else to skip.
+   * UNDER REDUCED MOTION IT IS SPENT WITHOUT RUNNING, rather than shortened.
+   * The draw-in is paced here, in JavaScript, so global.css's 1ms override
+   * never reaches it; the preference is answered by never starting it, and a
+   * grid that is simply there from its first frame. It is still spent, so a
+   * preference changed later in the page's life does not produce one either.
    */
   const [drawingIn, setDrawingIn] = useState(false);
-  if (revealed && !drawingIn && !drawnInThisDocument) setDrawingIn(true);
-  useEffect(() => {
-    if (drawingIn) markDrawnIn();
-  }, [drawingIn]);
+  if (revealed && !drawingIn && !drawnInThisDocument) {
+    if (window.matchMedia(REDUCED_MOTION).matches) markDrawnIn();
+    else setDrawingIn(true);
+  }
 
   /**
    * WHAT MAKES THE GRID REDRAW, beyond the viewport moving.
@@ -273,8 +298,16 @@ export function GridLayer({ viewport, revealed }: GridLayerProps) {
     typeof window === 'undefined' ? 1 : window.devicePixelRatio,
   );
 
-  /** What the last draw was of, for a redraw that cannot wait for React. */
-  const latest = useRef({ viewport, dpr });
+  /**
+   * What the last draw was of, for a redraw that cannot wait for React - and
+   * when the draw-in started, if one is running, so a resize in the middle of
+   * it draws the same frame of it that the next tick would.
+   */
+  const latest = useRef<{ viewport: Viewport; dpr: number; drawInFrom: number | null }>({
+    viewport,
+    dpr,
+    drawInFrom: null,
+  });
 
   useEffect(() => {
     const canvas = ref.current;
@@ -304,7 +337,7 @@ export function GridLayer({ viewport, revealed }: GridLayerProps) {
     const resize =
       typeof ResizeObserver === 'function'
         ? new ResizeObserver(() => {
-            draw(canvas, latest.current.viewport, latest.current.dpr);
+            paint(canvas, latest.current);
           })
         : undefined;
     if (host) resize?.observe(host);
@@ -355,6 +388,50 @@ export function GridLayer({ viewport, revealed }: GridLayerProps) {
   }, [dpr]);
 
   /*
+   * THE DRAW-IN RUNS ON ONE BITMAP, REDRAWN ONCE A FRAME FOR ITS LENGTH, and
+   * every one of those frames goes through `draw` - so every one is placed and
+   * sized by `layerPlacement` exactly as a frame at rest is. There is no second
+   * bitmap to keep in register with the first, and no CSS on the element: what
+   * the bitmap holds is what the screen shows.
+   *
+   * IT PAINTS FRAME ZERO HERE, IN THE REVEALING COMMIT. The bitmap behind the
+   * cold open already holds the finished grid - drawn at rest, for whenever
+   * the panel came down - and the draw effect below does not run on a commit
+   * that changes none of its inputs. Leave frame zero to the first tick and the
+   * first frame anybody sees is the whole grid, then nothing, then the
+   * draw-in. The first build of this did exactly that; the harness now reads
+   * the first frame for it.
+   *
+   * The cost is one full repaint a frame for 400ms, which is what a pan
+   * already costs every frame. A hidden tab stops the ticks and not the clock,
+   * so a grid revealed in the background finishes on its first visible frame.
+   */
+  useLayoutEffect(() => {
+    const canvas = ref.current;
+    if (!drawingIn || !canvas) return undefined;
+    markDrawnIn();
+
+    const state = latest.current;
+    const from = performance.now();
+    state.drawInFrom = from;
+    paint(canvas, state);
+
+    let frame = 0;
+    const tick = (): void => {
+      const done = performance.now() - from >= GRID_DRAW_IN_MS;
+      if (done) state.drawInFrom = null;
+      paint(canvas, state);
+      if (!done) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      state.drawInFrom = null;
+    };
+  }, [drawingIn]);
+
+  /*
    * A LAYOUT EFFECT, so the grid and the plane move in the same frame.
    *
    * The plane's transform is an inline style set during this render, so it is on
@@ -363,15 +440,19 @@ export function GridLayer({ viewport, revealed }: GridLayerProps) {
    * nodes - visible as the whole backdrop lagging whatever is on it.
    */
   useLayoutEffect(() => {
-    latest.current = { viewport, dpr };
+    const state = latest.current;
+    state.viewport = viewport;
+    state.dpr = dpr;
     const canvas = ref.current;
-    if (canvas) draw(canvas, viewport, dpr);
+    if (canvas) paint(canvas, state);
   }, [viewport, dpr, epoch]);
 
   return (
     <canvas
       ref={ref}
-      className={cx(styles.grid, drawingIn && styles.gridDrawing)}
+      className={styles.grid}
+      // A state for the harness: this mount is the one that drew the grid in.
+      data-draw-in={drawingIn ? '' : undefined}
       aria-hidden="true"
       data-testid="canvas-grid"
     />
