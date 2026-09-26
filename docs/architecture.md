@@ -72,19 +72,30 @@ Two things are load-bearing in that picture:
 
 ## The registry
 
-Two files describe every tool, and a test stops them disagreeing.
+Each tool describes itself once, in its own `meta.ts`: id, name, summary,
+category, keywords, input and output ports, execution strategy, size limits,
+and which option keys hold secrets. Its `index.ts` spreads that object into
+its definition, so the eager half and the lazy half are one object.
 
-[`manifest.ts`](../src/features/registry/manifest.ts) holds the eager half: id,
-name, summary, category, keywords, input and output ports, execution strategy,
-size limits, and which option keys hold secrets. It is in the initial bundle.
+[`manifest.ts`](../src/features/registry/manifest.ts) imports every `meta.ts`
+eagerly - the metadata is in the initial bundle, grouped into one small chunk
+by `vite.config.ts` - and lists them in the order the index and the palette
+show, which is what gives `ToolId` its literal union. A `meta.ts` may import
+types and nothing else, or it would pull tool code into every first load.
 
-[`loader.ts`](../src/features/registry/loader.ts) maps each id to a dynamic
-`import()`. Each tool is therefore its own chunk, fetched when a node is added
-or a tool page is opened.
+[`loader.ts`](../src/features/registry/loader.ts) is an `import.meta.glob`
+over `src/tools/*/index.ts`, which the bundler expands into one literal
+`import()` per tool. Each tool is therefore its own chunk, fetched when a node
+is added or a tool page is opened, and no directory can lack a loader.
 
-`registry.test.ts` loads every implementation for real and asserts the two
-descriptions agree — so a port added to a tool but not to its manifest entry
-fails the build rather than producing a node with a missing socket.
+**Until round twenty-six there were three lists.** The manifest held a second
+copy of every tool's metadata, the loader a hand-written map of imports, and
+`registry.test.ts` compared the copy with the original - a check that the file
+agreed with the module beside it, which generating or removing the copy makes
+unnecessary. What that test asserts now is what can still go wrong: a
+directory with no manifest line or a line with no directory, a directory whose
+name is not its tool's id, a `meta.ts` that imports code, and an `index.ts`
+that writes a field again after the spread.
 
 ### Ports are checked at compile time
 
@@ -115,19 +126,23 @@ tool.
 
 ### The whole set, as it stands
 
-| Tool              | In                                                         | Out                                                                                                               |
-| ----------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `base64`          | `input` Input · text, bytes                                | `output` Result · text, bytes — `report` Report · json                                                            |
-| `structured-data` | `input` Document · text, json, bytes                       | `output` Converted · text — `data` Parsed data · json — `report` Detected · json                                  |
-| `hash`            | `input` Input · text, bytes                                | `output` Digest · text                                                                                            |
-| `jwt-decode`      | `input` Token · text                                       | `output` Decoded · json — `report` Report · json                                                                  |
-| `diff`            | `original` Original, `changed` Changed · text, json, bytes | `output` Unified patch · text — `changes` Changes · json                                                          |
-| `regex-tester`    | `input` Subject · text, bytes                              | `output` Result · text — `matches` Matches · json                                                                 |
-| `color-convert`   | `input` Colour · text, color                               | `output` Converted · text — `swatch` Swatch · color — `all` Notations · json — `report` Report · json             |
-| `image-convert`   | `input` Image · bytes                                      | `output` Converted · bytes — `report` Report · json                                                               |
-| `text-convert`    | `input` Document · text, bytes                             | `output` Converted · text — `rendered` Rendered HTML · text — `detected` Detected · text — `report` Report · json |
-| `video-remux`     | `input` Video · bytes                                      | `output` Repackaged · bytes — `report` Report · json                                                              |
-| `timestamp`       | `input` Timestamp · text, json                             | `output` Converted · text — `all` Notations · json — `report` Report · json                                       |
+<!-- manifest:port-set:begin -->
+
+| Tool              | In                                                                              | Out                                                                                                               |
+| ----------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `base64`          | `input` Input · text, bytes                                                     | `output` Result · text, bytes — `report` Report · json                                                            |
+| `structured-data` | `input` Document · text, json, bytes                                            | `output` Converted · text — `data` Parsed data · json — `report` Detected · json                                  |
+| `hash`            | `input` Input · text, bytes                                                     | `output` Digest · text                                                                                            |
+| `jwt-decode`      | `input` Token · text                                                            | `output` Decoded · json — `report` Report · json                                                                  |
+| `diff`            | `original` Original · text, json, bytes — `changed` Changed · text, json, bytes | `output` Unified patch · text — `changes` Changes · json                                                          |
+| `regex-tester`    | `input` Subject · text, bytes                                                   | `output` Result · text — `matches` Matches · json                                                                 |
+| `color-convert`   | `input` Colour · text, color                                                    | `output` Converted · text — `swatch` Swatch · color — `all` Notations · json — `report` Report · json             |
+| `image-convert`   | `input` Image · bytes                                                           | `output` Converted · bytes — `report` Report · json                                                               |
+| `video-remux`     | `input` Video · bytes                                                           | `output` Repackaged · bytes — `report` Report · json                                                              |
+| `text-convert`    | `input` Document · text, bytes                                                  | `output` Converted · text — `rendered` Rendered HTML · text — `detected` Detected · text — `report` Report · json |
+| `timestamp`       | `input` Timestamp · text, json                                                  | `output` Converted · text — `all` Notations · json — `report` Report · json                                       |
+
+<!-- manifest:port-set:end -->
 
 Four `report` ports were added in round three and a fifth in round nine, and
 they are one idea rather than five: a tool that loses something needs somewhere
@@ -158,7 +173,7 @@ is unchanged, so no share link and no saved canvas moved.
 
 ### The conventions, and what each one is worth
 
-**A tool's first output is `output`.** It was on eight of the nine and `hash`
+**A tool's first output is `output`.** Only `hash` did otherwise: it
 called its answer `digest`. That mattered because a node summarises its FIRST
 declared output on the grounds that the first port is the tool's answer and the
 rest are its working — a rule that was a per-tool lookup rather than something
@@ -381,8 +396,8 @@ preset wire goes through `firstRefusedEdge` in `ports.test.ts`.
 
 ## Where a value's bytes are
 
-A `bytes` value used to be a whole `Uint8Array`, and inside every tool but one
-it still is. It carries a **`BinaryData`** now, which says where the bytes are
+A `bytes` value used to be a whole `Uint8Array`, and inside every tool but the video
+tool it still is. It carries a **`BinaryData`** now, which says where the bytes are
 rather than holding them:
 
 | Kind       | Holds                                  | Where it comes from                     |
@@ -432,7 +447,7 @@ signature from its ports.
 
 | Class      | `run` receives | Tools                      |
 | ---------- | -------------- | -------------------------- |
-| `resident` | `bytes`        | the other ten              |
+| `resident` | `bytes`        | every other tool           |
 | `windowed` | `source`       | `video-remux`, and only it |
 
 A windowed tool's input **has no `bytes` member at all.** That absence is the
@@ -578,7 +593,8 @@ Those requests are **replayed onto the fresh worker**, not failed. A tool is a
 pure function of its inputs and options - which the result cache relies on too,
 and which [`determinism.test.ts`](../src/features/registry/determinism.test.ts)
 holds by running every tool twice with the clock moved decades, since round
-twenty-five found a tool that was not - so running it again produces the answer
+twenty-five found a tool that was not (the image tool, which jsdom cannot run,
+is run twice by `checkImageDeterminism` in two real engines) - so running it again produces the answer
 it would have produced, and reporting a failure on a node the user did nothing
 to is the outcome worth avoiding. A base64 node beside a runaway regex used to
 sit there for its own full 15 seconds and then report a timeout it never had.
@@ -935,7 +951,10 @@ expiry on the face would need a clock on every node, and was not done.
 The rule is held rather than written:
 [`determinism.test.ts`](../src/features/registry/determinism.test.ts) runs every
 tool twice with the clock moved decades and `Math.random` reseeded, and fails a
-tool whose two answers differ; `jwtValidity.test.tsx` decodes at one moment and
+tool whose two answers differ - and names, for the one tool jsdom cannot run,
+the `check:browsers` section that runs it twice instead (`checkImageDeterminism`,
+with the clock and the draw replaced in the page and in the tool's worker);
+`jwtValidity.test.tsx` decodes at one moment and
 reads at another on a canvas node and on the tool page; and `checkJwtValidity`
 does the same in two real engines with Playwright's clock.
 
@@ -1817,6 +1836,26 @@ question and the first one's honest list is what made this one possible.
 - **Escape the on-screen keyboard's effect on the sheet** beyond what
   `keyboardInset` already does.
 
+### Moving one node renders one node
+
+The node component is memoised, and its comment always said why: panning,
+zooming and moving one node must not re-render the other forty-nine. The
+first two were true. The third was not - the canvas rebuilt each node's list
+of typed input ports and of wired ports as a fresh array and a fresh `Set` on
+every graph change, so moving one node gave every node new props, and every
+step of a drag re-rendered all of them. The test that stood guard asserted a
+time per step, `perOp < 30` milliseconds, which a machine can pass or fail on
+its own; it was replaced in round twenty-six by a count of renders, and the
+count found this.
+
+The two lists now reach the node as strings - one port per line, the wired ones
+sorted so edge order cannot move them - which compare by value, so a node the
+change did not touch keeps equal props and its `memo` holds. The node splits
+them back inside a `useMemo`. `performance.test.tsx` counts every render by
+node id through a wrapper with the same comparison as the real component:
+sixty pans and forty zooms render nothing, a sixty-step drag renders the
+dragged node on every step and no other node at all.
+
 ### The travelling dash that had never been drawn
 
 Found while adding the reverse half of `cssModules.test.ts`, and worth writing
@@ -2549,8 +2588,8 @@ had it stopped existing.
 A node is 224px wide with two clamped lines. Its summary box already switched
 between the tool's description, the reason it is blocked and the error that
 broke it; once a node has run, its **result** is its situation, so that is the
-fourth case. Only the first declared output is summarised — ten of the eleven
-tools have more than one, and the manifest's order is not arbitrary: the first
+fourth case. Only the first declared output is summarised — every tool but `hash`
+has more than one, and the manifest's order is not arbitrary: the first
 port is the tool's answer and the rest are its working. Since the [port
 audit](#the-port-set) that first port is called `output` on every tool, and
 `ports.test.ts` asserts it, so "the first output" and "the tool's answer"
@@ -2646,7 +2685,7 @@ against a deliberately content-sized box it reads 174/161/161.
 The rule above has one exception — text, summarised as its first non-empty
 line, "because plain text is already the answer". That is true of prose and
 false of every format with a syntax, and `text` is the data type of a string
-rather than a promise that a person wrote it. Three of the eleven tools put a
+rather than a promise that a person wrote it. Three tools put a
 **serialised document** on that port, and each of them drew the same string for
 every document of its kind:
 
@@ -3458,8 +3497,8 @@ would sail past a "both ran" assertion.
 ## The tool runner page
 
 `/tools/:id` is the plain view of one tool. It is generated entirely from the
-manifest entry plus the tool's own `optionFields`, so eleven tools share one
-component and adding a twelfth adds no UI.
+manifest entry plus the tool's own `optionFields`, so every tool shares one
+component and adding another adds no UI.
 
 ### Four regions, in reading order
 
@@ -3621,7 +3660,7 @@ whose accessibility has to be rebuilt by hand too. The summary reads
 `1 INPUT · 4 OUTPUTS` rather than "Ports", because the panel's title bar already
 says that and this page fixed the same duplication on its output port labels.
 
-**The Privacy panel was identical boilerplate on all ten tool pages**, and the
+**The Privacy panel was identical boilerplate on every tool page**, and the
 claim it makes is on the home page, in the README and in SECURITY.md. What it
 added to a tool page was 165px of prose that says the same thing every time.
 
@@ -3774,6 +3813,40 @@ answer is remembered, and a `localStorage` that throws lands on the default. The
 half it cannot — that the hidden element occupies no height and the panel is
 therefore 104px shorter — is `checkOptionNotes`, in two engines, with the toggle
 driven from the keyboard.
+
+### A select's label fits its trigger, on one line
+
+Reported from a screenshot of `/tools/timestamp`: with Convert to set to its
+default, "A date for a number, a number for a date", the label wrapped onto two
+lines of a trigger one control tall - clipped at the bottom and run into the
+arrow. Measured in both engines before anything changed, it was the only label
+of the set that did it, and it did it wherever the options sit in the 300px
+rail (every width from 1000px up), at 320px, and in the inspector's rail; at
+320px its open list was also wider than the screen. Nothing at 800px - the
+screenshot was a crop, and the panel edge at its right is the Output column.
+
+**The fix is in three layers, and the order is the argument.** The label is
+now "Date for a number, and back": a label is written to fit, and this one was
+a sentence. The trigger's value is one line that ends in an ellipsis and can
+never squeeze the arrow, so a label nobody has measured yet degrades into
+something legible instead of two clipped lines. And the open list is capped at
+the width Radix reports as available, with rows that grow rather than clip.
+The second and third layers are not permission to write long labels:
+`checkSelectLabels` fails on a label that is cut off as well as on one that
+wraps, so the ellipsis can never become the accepted state.
+
+**Rejected:** a wider rail (it is 300px by arithmetic - see the breakpoint
+above - and one long label does not move it), a two-line trigger (every select
+on every page gets taller for one option), and a tooltip on a truncated label
+(a label you have to hover to read is one a finger cannot read).
+
+`checkSelectLabels` puts every option label of every tool's selects into its
+trigger at every width a tool page is measured at anywhere in the harness, and
+in the inspector's sheet and rail, and opens every list at 320px and in the
+sheet. It measures substituted text rather than choosing each option - the
+value element and its stylesheet are the real ones - and carries a label
+written to be too long as its own control.
+<!-- asserted: cross-browser-check.mjs › select labels: every option of every tool select fits its trigger on one line, clear of the arrow -->
 
 ### The rail's containing block, and the thing it was allowed to paint over
 
@@ -3970,8 +4043,8 @@ module graph - the same mechanism, thirty times larger.
 `engine.prefetch(toolId)` now sits in the effect that already loads the options.
 Two things about it are asserted rather than assumed:
 
-- **It warms nothing where nothing will run.** `/tools` lists eleven tools and
-  runs none, and warming all eleven from an index would be the hover-prefetch the
+- **It warms nothing where nothing will run.** `/tools` lists every tool and
+  runs none, and warming them all from an index would be the hover-prefetch the
   engine's own comment rules out. `checkWorkerWarmth` replaces `window.Worker`
   before any application code runs and counts: **0 on the index, 1 on a tool
   page**, before Run is ever pressed.
@@ -4123,9 +4196,9 @@ arithmetic, because jsdom can see an attribute and cannot see a height;
 **An output port is named only where the name distinguishes something.** Base64
 declared its single output as "Output", under a panel heading that says
 "Output" — two labels for one value, and when this was written the same
-duplication sat on five of the nine tools. The input editors already followed
+duplication sat on most of the tools there were. The input editors already followed
 this rule. Since then every tool but `hash` has come to declare more than
-one output, a `report` on most of them, so the rule now drops one label on one of eleven: hash's
+one output, a `report` on most of them, so the rule now drops one label, on one tool: hash's
 "Digest". A tool with two or more outputs keeps their labels, because there
 the name is the only thing telling the swatch from the converted string. Nothing is lost by
 dropping the rest: the Ports footnote names every port on the page, and the
@@ -5092,6 +5165,38 @@ in and the ones with the most components on screen, and a component added later
 is covered when a route renders it, not before.
 <!-- asserted: cross-browser-check.mjs › no two CSS modules tie for a property and leave the winner to load order -->
 
+### The verification skill is part of the run
+
+The skill in `.claude/skills/verify-patchbay` drives the deployed site, and was
+described in every round as the way to prove a change there. Nothing ran it.
+Its evidence directory - the only record a run leaves - held nothing between
+2026-09-24 and the day round twenty-five went looking and found both probes
+broken against every deploy, one of them throwing before it opened a browser.
+
+`checkVerificationSkill` runs every script in it, whole, against the build the
+harness is serving, in both engines: `PATCHBAY_ORIGIN` at the harness's server
+and `PATCHBAY_ENGINE` at the engine of the pass. Each must exit 0 and name that
+server in its output, so a script that fell back to its default - the live
+site - cannot pass on somebody else's deploy. Its first run found three things:
+the skill's manifest reader parsed nothing once the metadata moved into each
+tool's `meta.ts`; in WebKit, where the skill had never been run, every
+screenshot's own injected stylesheet was refused by the CSP and failed the
+drive's console check; and the popover probe counted that refusal as the app's.
+<!-- asserted: cross-browser-check.mjs › the verification skill's -->
+
+### A fixed wait is not a control
+
+A check that does something, waits a fixed time and asserts that nothing
+happened passes when nothing happened and when the machine was too busy for
+anything to have happened yet. Round twenty-six went through all 160 fixed
+waits in this file for that shape, rather than fixing the one it was pointed
+at, and found five with no positive partner: the loss-report control, console
+silence while adding a tool, the long diff line, the long file name and the
+selection bar under the sheet. Each now waits for its own result - the run's
+"finished" notification, the node reaching `ok`, the long row drawn, the file
+named, the sheet's `data-state="open"` - and asserts it. `setInspector` waits
+for the panel at rest instead of 200ms, which settles every caller at once.
+
 ### The worker boundary, with text no encoder would produce
 
 `wireFidelity.integration.test.ts` answers what a wire does to a value exactly —
@@ -5560,9 +5665,9 @@ would then have ended at its last visible row with nothing to say it goes on.
 #### What looking at every Radix component found
 
 Select in the three places a reader meets it (the index, a tool page's options,
-the canvas inspector's bottom sheet) and on the styleguide — not in the theme
-editor, which holds the other two of its five call sites and which
-`checkPopovers` does not open — Tabs, Tooltip and Toast, at phone widths,
+the canvas inspector's bottom sheet), on the styleguide and - since round
+twenty-six - in the theme editor, which holds the other two of its five call
+sites; Tabs, Tooltip and Toast, at phone widths,
 with a refusal recorder on for the page's whole life. Only Select refused
 anything. But the Tooltip was **off screen**: `side="right"` on a 320px screen
 drew a 240px box at x = −40 in both engines. Floating UI shifts a side-placed
@@ -5629,6 +5734,18 @@ build that somehow skipped the plugin produces an obviously broken policy
 rather than a quietly permissive one. The same instinct runs through
 `index-html.ts`: the failure modes it guards against are all silent ones, and
 the build is the last moment anybody is looking.
+
+### A script hash is taken of what the browser hashes
+
+The HTML parser normalises line endings before any element exists - CR LF and a
+lone CR both become LF - and a browser computes an inline script's hash over
+that text. `csp-hash.ts` hashed the raw bytes. Round twenty-six built a
+document with Windows line endings by accident, and the plugin wrote hashes for
+text no browser ever sees: both inline scripts were refused, so the cold open
+was left standing over every page and the theme bootstrap never ran, from a
+build that reported success. `.gitattributes` keeps a checkout LF; the plugin
+now normalises before hashing, as the preview stylesheet's hash already did,
+and `csp-hash.test.ts` holds a CRLF and a CR document to the LF hash.
 
 ### Source maps are built, and nothing points at them
 

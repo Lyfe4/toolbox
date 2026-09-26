@@ -1,11 +1,12 @@
 import fc from 'fast-check';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ToolResult } from '@/features/registry/types';
 import { binarySize } from '@/lib/binary';
 
-import { describeAvc, describeHevc, splitAnnexB } from './annexb';
+import { BitReader, describeAvc, describeHevc, splitAnnexB } from './annexb';
 import { readAvi } from './avi';
+import { LIMITS } from './containers';
 import {
   annexB,
   avcConfig,
@@ -13,6 +14,7 @@ import {
   avcSlice,
   avcSps,
   avcSpsHigh,
+  countingSource,
   ebml,
   hevcPps,
   hevcSlice,
@@ -31,6 +33,48 @@ import { readIsoBmff } from './isobmff';
 import { readMatroska } from './matroska';
 import { readMpegTs } from './mpegts';
 import { remux } from './remux';
+
+/*
+ * WORK, COUNTED IN THE FILE'S OWN UNITS.
+ *
+ * Every bound in this file used to be a stopwatch - under a second for one
+ * remux, fifteen for a property - and a stopwatch in a suite running a hundred
+ * files at once measures the machine: they failed under load with the reader
+ * correct, and round twenty-six found three that could not fail against the
+ * guard they were written for at all. What they stood for is that a hostile
+ * file cannot make the reader do more work than the file justifies, and that
+ * is countable: the bytes a reader asks its source for, and the bits a
+ * parameter-set parse consumes.
+ *
+ * A healthy remux reads each byte about twice - its index, then its copy -
+ * measured at 1.8 times the file for a valid MP4 and at most 1.9 over four
+ * hundred damaged ones. Eight times is room for every container and nowhere
+ * near what a believed count asks for: the smallest table bomb here is four
+ * megabytes of reads out of a file of one kilobyte. A reader that never
+ * returns at all is failed by vitest's own timeout, which is the one clock
+ * left and is not asserted.
+ */
+const READ_BUDGET = (size: number): number => size * 8 + 4096;
+
+function remuxCounted(
+  bytes: Uint8Array,
+  operation: 'container' | 'audio',
+): { readonly done: ReturnType<typeof remux>; readonly read: number } {
+  const counted = countingSource(bytes);
+  const done = remux(counted.source, operation);
+  return { done, read: counted.read() };
+}
+
+/** The bits a parameter-set parse consumed while `run` ran. */
+function bitsReadBy(run: () => void): number {
+  const spy = vi.spyOn(BitReader.prototype, 'u');
+  try {
+    run();
+    return spy.mock.calls.reduce((total, [count]) => total + count, 0);
+  } finally {
+    spy.mockRestore();
+  }
+}
 
 /**
  * ADVERSARIAL INPUT, WHICH IS WHERE THE FIRST REAL BUG WAS ALWAYS GOING TO BE.
@@ -189,15 +233,17 @@ describe('a declared count that the file has no room for', () => {
       // The count sits four bytes into the body for every one of these, and
       // eight for `stsz`, whose first field is the uniform size.
       const countAt = at + 4 + 4 + (table === 'stsz' ? 4 : 0);
-      const started = Date.now();
-      const result = remux(
-        sourceOf(withBytesAt(validMp4, countAt, [0xff, 0xff, 0xff, 0xff])),
+      const { done: result, read } = remuxCounted(
+        withBytesAt(validMp4, countAt, [0xff, 0xff, 0xff, 0xff]),
         'container',
       );
-      // Refused or repackaged, but bounded either way, and the elapsed time is
-      // the only observable proof: a reader that believed the count would
-      // still be allocating.
-      expect(Date.now() - started).toBeLessThan(1000);
+      // Refused or repackaged, but bounded either way - and the bound is on the
+      // bytes read, which a reader that believed the count would multiply by
+      // the table it thought it had. This was the elapsed time until round
+      // twenty-six, and the comment called the time "the only observable
+      // proof"; the reads are a better one and do not depend on the machine.
+      expect(read).toBeGreaterThan(0);
+      expect(read).toBeLessThanOrEqual(READ_BUDGET(validMp4.byteLength));
       if (result.ok) expect(binarySize(result.value.bytes)).toBeLessThan(validMp4.byteLength * 4);
     },
   );
@@ -220,9 +266,19 @@ describe('a declared count that the file has no room for', () => {
     const at = indexOfTag(validMp4, 'stsz');
     const bomb = withBytesAt(validMp4, at + 8, [0, 0, 0, 1]);
     bomb.set([0xff, 0xff, 0xff, 0xff], at + 12);
-    const started = Date.now();
-    expectRefused(remux(sourceOf(bomb), 'container'));
-    expect(Date.now() - started).toBeLessThan(1000);
+    const { done, read } = remuxCounted(bomb, 'container');
+    expectRefused(done);
+    expect(read).toBeLessThanOrEqual(READ_BUDGET(bomb.byteLength));
+    /*
+     * NOT OBSERVABLE FROM HERE, AND SAID SO. This carried a one-second
+     * stopwatch until round twenty-six, and it could not fail against the
+     * guard it names: with `Math.ceil(bytes.size / uniform) + 1` removed the
+     * file is refused with the same message, after the same 1,522 bytes read,
+     * in 35 ms - the table is bounded by `LIMITS.maxSamplesPerTrack` either
+     * way, and the index after it refuses the track. So the guard is held by
+     * nothing outside the reader. Recorded rather than dressed up.
+     */
+    expect(LIMITS.maxSamplesPerTrack).toBeLessThanOrEqual(1_000_000);
   });
 });
 
@@ -504,33 +560,25 @@ describe('a transport stream that lies about its own shape', () => {
 
   it('answers for a corrupted transport stream, whatever the damage', () => {
     /*
-     * THE TIME BOUND IS ON THE WHOLE PROPERTY, NOT ON EACH CASE, AND THAT IS
-     * THE DIFFERENCE BETWEEN MEASURING THIS READER AND MEASURING THIS MACHINE.
+     * THE BOUND IS ON THE WORK, PER CASE, AND HAS NO CLOCK IN IT.
      *
-     * It used to be `expect(Date.now() - started).toBeLessThan(500)` per case,
-     * which failed about one full `pnpm test` in four and passed six times out
-     * of six when this file was run alone. Measured on an idle machine, 300
-     * cases: median 1.8ms, p95 12.3ms, slowest 23ms, one second in total. So
-     * the per-case bound had twenty-two times the headroom it needed and was
-     * still being crossed - by the scheduler, with a hundred and twenty test
-     * files in flight, rather than by anything this code did.
-     *
-     * A total is the same statement about the reader and a much weaker one
-     * about the scheduler: one stalled case cannot cross it, and a reader that
-     * resynchronised through the file forever would cross it on the first. The
-     * budget is fifteen times the measured cost.
-     *
-     * The size bound below stays per case, because it has no clock in it.
+     * It was `expect(Date.now() - started).toBeLessThan(500)` per case, which
+     * failed about one full `pnpm test` in four and passed six times out of
+     * six alone - the scheduler crossing it, not this reader. Round four moved
+     * it to fifteen seconds on the whole property, which the scheduler crossed
+     * less often and which was still a statement about the machine. Round
+     * twenty-six counts what the stopwatch stood for: a reader that
+     * resynchronised through the file forever reads it forever, and that is a
+     * number of bytes on any machine. See `READ_BUDGET`.
      */
-    const started = Date.now();
-
     fc.assert(
       fc.property(
         fc.integer({ min: 0, max: validTs.byteLength - 1 }),
         fc.integer({ min: 0, max: 255 }),
         (at, value) => {
           const damaged = withBytesAt(validTs, at, [value]);
-          const done = remux(sourceOf(damaged), 'container');
+          const { done, read } = remuxCounted(damaged, 'container');
+          expect(read).toBeLessThanOrEqual(READ_BUDGET(damaged.byteLength));
           // A repackage copies, so it can never honestly produce meaningfully
           // more media than it was given - and for this container that bound
           // covers the assembly buffer as well as the output.
@@ -541,8 +589,6 @@ describe('a transport stream that lies about its own shape', () => {
       ),
       { numRuns: 300 },
     );
-
-    expect(Date.now() - started).toBeLessThan(15_000);
   });
 
   it('reads or refuses any bytes laid out on a packet grid', () => {
@@ -593,9 +639,15 @@ describe('a parameter set that cannot be parsed', () => {
       ],
     });
 
-    const started = Date.now();
-    const done = remux(sourceOf(source), 'container');
-    expect(Date.now() - started).toBeLessThan(500);
+    const { done, read } = remuxCounted(source, 'container');
+    /*
+     * This carried a 500 ms stopwatch "for the cap" until round twenty-six,
+     * and the cap is not reached from here: the bits the parser consumes
+     * through `remux` were counted, and the count was zero - the track is
+     * refused before its parameter set is parsed, which the test below
+     * already said. The cap is counted there, on the parser itself.
+     */
+    expect(read).toBeLessThanOrEqual(READ_BUDGET(source.byteLength));
 
     /*
      * And the refusal says the right thing about it, which is a separate
@@ -616,7 +668,18 @@ describe('a parameter set that cannot be parsed', () => {
     // Called without a container around it, because `remux` refuses so much
     // before a parser is reached that the case above proves less than it looks.
     const zeros = new Uint8Array([0x67, ...new Array<number>(3000).fill(0)]);
-    expect(describeAvc([zeros], [avcPps()])).toBeNull();
+    const bits = bitsReadBy(() => {
+      expect(describeAvc([zeros], [avcPps()])).toBeNull();
+    });
+    /*
+     * The cap, counted. With it the first exp-Golomb code gives up after 32
+     * zeros and marks the reader overrun, so the parse reads a few dozen bits
+     * of a 24,000-bit parameter set; without it that one code reads all of
+     * them. (Linear, not quadratic, as the comment above once said: the
+     * overrun check stops every code after the first.)
+     */
+    expect(bits).toBeGreaterThan(0);
+    expect(bits).toBeLessThan(200);
     // And a real one succeeds, so the null above is a fact about those bytes.
     expect(describeAvc([avcSps()], [avcPps()])?.width).toBe(640);
   });
@@ -687,7 +750,16 @@ describe('a parameter set that cannot be parsed', () => {
     // that has none makes the reader walk lists made of whatever follows.
     const sps = avcSpsHigh();
     const flipped = new Uint8Array(sps);
-    flipped[5] = 0xff;
+    /*
+     * `seq_scaling_matrix_present_flag` is the last bit of byte 4: the NAL
+     * header and three bytes of profile, then five fields of 1, 3, 1, 1 and
+     * 1 bits. This flipped byte 5 to 0xff until round twenty-six, which never
+     * reached the flag - the parse read 26 bits and described a 16x16 picture,
+     * so no list was ever walked and the stopwatch around it timed nothing.
+     * Counted: with the flag set the reader walks 78 bits and refuses; with
+     * the overrun check removed from `ue` it walks 428.
+     */
+    flipped[4] = (flipped[4] ?? 0) | 0x01;
 
     const source = makeTransportStream({
       streams: [{ pid: 0x0100, streamType: 0x1b }],
@@ -696,9 +768,15 @@ describe('a parameter set that cannot be parsed', () => {
       ],
     });
 
-    const started = Date.now();
-    expect(() => remux(sourceOf(source), 'container')).not.toThrow();
-    expect(Date.now() - started).toBeLessThan(500);
+    // The walk is bounded by the parameter set: a reader past its end reads
+    // nothing more, because every code after the first overrun stops at once.
+    // Twelve lists of sixty-four codes read past the end would be thousands of
+    // bits; this parameter set has a few hundred.
+    const bits = bitsReadBy(() => {
+      expect(() => remux(sourceOf(source), 'container')).not.toThrow();
+    });
+    expect(bits).toBeGreaterThan(0);
+    expect(bits).toBeLessThanOrEqual(flipped.length * 8 + 64);
   });
 
   it('does not spend the file on a stream of nothing but start codes', () => {
@@ -716,13 +794,39 @@ describe('a parameter set that cannot be parsed', () => {
       units: [{ pid: 0x0100, payload: codes, pts: 0, dts: 0 }],
     });
 
-    const started = Date.now();
-    expect(() => remux(sourceOf(source), 'container')).not.toThrow();
-    expect(Date.now() - started).toBeLessThan(1000);
+    const { read } = remuxCounted(source, 'container');
+    expect(read).toBeLessThanOrEqual(READ_BUDGET(source.byteLength));
     // Every unit is zero bytes long, so none of them survives the trim - and
     // a NAL unit of no length is a sample of no length, which an MP4 writes
     // out perfectly happily as a frame that shows nothing.
     expect(splitAnnexB(codes, 0, codes.length)).toHaveLength(0);
+  });
+
+  /*
+   * THE NODE BOUND ITSELF, which the test above names and never reaches: its
+   * sixty kilobytes are twenty thousand units, and the bound is four million
+   * steps. It carried a one-second stopwatch, which a sixty-kilobyte walk
+   * passes with or without the bound.
+   *
+   * What the bound does is observable without a clock: the walk stops, so a
+   * unit that starts after it is not separated from the start codes before
+   * it. That is the bound's price as well as its proof - a file that
+   * pathological loses its tail - and the price is what makes it a bound.
+   */
+  it('stops walking at maxNodes steps, and a unit past them is not separated', () => {
+    const steps = LIMITS.maxNodes + 1;
+    const tail = steps * 3;
+    const codes = new Uint8Array(tail + 5);
+    for (let at = 2; at < tail; at += 3) codes[at] = 1;
+    codes.set([0, 0, 1, 0x65, 0x88], tail);
+
+    const found = splitAnnexB(codes, 0, codes.length);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.start ?? tail).toBeLessThan(tail);
+
+    // The control: the same unit within the bound is found on its own.
+    const near = new Uint8Array([0, 0, 1, 0, 0, 1, 0x65, 0x88]);
+    expect(splitAnnexB(near, 0, near.length)).toEqual([{ start: 6, end: 8 }]);
   });
 });
 
@@ -773,17 +877,16 @@ describe('an AVI that lies about its own shape', () => {
   });
 
   it('answers for a corrupted AVI, whatever the damage', () => {
-    // The time bound is on the whole property. See the transport-stream
-    // version above for the measurements behind that.
-    const started = Date.now();
-
+    // The bound is on the bytes read, per case. See the transport-stream
+    // version above, and `READ_BUDGET`.
     fc.assert(
       fc.property(
         fc.integer({ min: 0, max: validAvi.byteLength - 1 }),
         fc.integer({ min: 0, max: 255 }),
         (at, value) => {
           const damaged = withBytesAt(validAvi, at, [value]);
-          const done = remux(sourceOf(damaged), 'audio');
+          const { done, read } = remuxCounted(damaged, 'audio');
+          expect(read).toBeLessThanOrEqual(READ_BUDGET(damaged.byteLength));
           if (done.ok) {
             expect(binarySize(done.value.bytes)).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
           }
@@ -791,8 +894,6 @@ describe('an AVI that lies about its own shape', () => {
       ),
       { numRuns: 300 },
     );
-
-    expect(Date.now() - started).toBeLessThan(15_000);
   });
 
   it('reads or refuses any bytes claiming to be a RIFF AVI', () => {
@@ -888,17 +989,15 @@ describe('the properties that must hold for any bytes at all', () => {
     ['MP4', validMp4],
     ['Matroska', validMkv],
   ])('answers for a corrupted %s, whatever the damage', (_name, valid) => {
-    // As above: one budget for the property rather than a stopwatch on each of
-    // four hundred cases, which is a measurement of the scheduler.
-    const started = Date.now();
-
+    // As above: the bytes read, per case, rather than a stopwatch of any size.
     fc.assert(
       fc.property(
         fc.integer({ min: 0, max: valid.byteLength - 1 }),
         fc.integer({ min: 0, max: 255 }),
         (at, value) => {
           const damaged = withBytesAt(valid, at, [value]);
-          const done = remux(sourceOf(damaged), 'container');
+          const { done, read } = remuxCounted(damaged, 'container');
+          expect(read).toBeLessThanOrEqual(READ_BUDGET(damaged.byteLength));
           if (done.ok) {
             expect(binarySize(done.value.bytes)).toBeLessThanOrEqual(damaged.byteLength * 2 + 4096);
           }
@@ -906,8 +1005,6 @@ describe('the properties that must hold for any bytes at all', () => {
       ),
       { numRuns: 400 },
     );
-
-    expect(Date.now() - started).toBeLessThan(15_000);
   });
 
   it('answers for a file cut short at any point', () => {

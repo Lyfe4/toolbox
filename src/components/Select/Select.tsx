@@ -88,7 +88,7 @@ export function Select({
         aria-invalid={invalid}
         className={cx(styles.trigger, className)}
       >
-        <RadixSelect.Value placeholder={placeholder} />
+        <RadixSelect.Value className={styles.value} placeholder={placeholder} />
         <RadixSelect.Icon className={styles.icon}>
           <ChevronDownIcon size={12} />
         </RadixSelect.Icon>

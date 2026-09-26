@@ -8,6 +8,13 @@ import { getManifestEntry, isToolId, searchTools, TOOL_MANIFEST } from './manife
 
 const ids = TOOL_MANIFEST.map((entry) => entry.id);
 
+/** Every tool's meta.ts, as text. */
+const META_SOURCES = import.meta.glob<string>('../../tools/*/meta.ts', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+});
+
 describe('manifest integrity', () => {
   it('has at least one tool', () => {
     expect(TOOL_MANIFEST.length).toBeGreaterThan(0);
@@ -21,8 +28,31 @@ describe('manifest integrity', () => {
     expect(id).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
   });
 
+  /*
+   * The loader is a glob over src/tools, so this is the check that a directory
+   * and the manifest agree: a tool directory the manifest does not list fails
+   * here, and so does a manifest entry with no directory.
+   */
   it('has a loader for every manifest entry and nothing more', () => {
     expect([...loadableToolIds()].toSorted()).toEqual([...ids].toSorted());
+  });
+
+  it('gives every tool directory a meta.ts, and the manifest exactly those', () => {
+    const metas = Object.keys(META_SOURCES).map((path) => path.split('/').at(-2));
+    expect(metas.toSorted()).toEqual([...ids].toSorted());
+  });
+
+  /*
+   * A meta.ts is in the initial bundle, because the manifest imports it
+   * eagerly. One import that is not a type would pull code - the tool's
+   * options, a parser, a dependency - into every first page load, and
+   * bundle:check would notice only once it crossed a budget. So a meta file
+   * may import types and nothing else.
+   */
+  it.each(Object.entries(META_SOURCES))('%s imports types and nothing else', (_, source) => {
+    const imports = [...source.matchAll(/^import\s+(?!type\s)[^;]*;/gm)].map((match) => match[0]);
+    expect(imports).toEqual([]);
+    expect(source).toMatch(/^import type /m);
   });
 
   it.each(ids)('%s has a one-line summary', (id) => {
@@ -33,9 +63,11 @@ describe('manifest integrity', () => {
 });
 
 /**
- * The manifest is hand-written so it can be imported eagerly, which means it
- * could drift from the implementation it describes. These tests are the thing
- * that stops that: they load every tool for real and compare.
+ * The manifest entry and the implementation are one object since round
+ * twenty-six - `index.ts` spreads its `meta.ts` - so these can no longer fail
+ * for a copy that drifted. What they still catch is an `index.ts` that writes a
+ * field again after the spread, which would give the eager and the lazy half
+ * two answers; they load every tool for real and compare.
  */
 describe.each(ids)('tool %s', (id) => {
   it('resolves to a real module', async () => {

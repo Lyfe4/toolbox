@@ -5,7 +5,7 @@ description: Drive the deployed Patchbay site (https://patchbay-tools.netlify.ap
 
 # Verify Patchbay
 
-Patchbay is a fully offline, client-side developer toolbox: eleven tools that run on an infinite node canvas, plus a plain `/tools` list for running one at a time. This skill drives **the deployed site** by default, and a local production build when `PATCHBAY_ORIGIN` points at one - see [Proving a fix before it ships](#proving-a-fix-before-it-ships). Never a dev server: it has no CSP.
+Patchbay is a fully offline, client-side developer toolbox: tools that run on an infinite node canvas, plus a plain `/tools` list for running one at a time. This skill drives **the deployed site** by default, and a local production build when `PATCHBAY_ORIGIN` points at one - see [Proving a fix before it ships](#proving-a-fix-before-it-ships). Never a dev server: it has no CSP.
 
 **Target:** `https://patchbay-tools.netlify.app` — override with `PATCHBAY_ORIGIN` for a branch or deploy preview.
 
@@ -98,7 +98,13 @@ Use these. Do not use coordinates or tab order.
 | Tool index                 | heading `Every tool`, `data-testid="tool-count"`, cards are `a[href^="/tools/"]`                                                                                |
 | Cold open                  | `#cold-open`, dismissed via `#cold-open-start`                                                                                                                  |
 
-The eleven tool ids: `base64`, `structured-data`, `hash`, `jwt-decode`, `diff`, `regex-tester`, `color-convert`, `image-convert`, `video-remux`, `text-convert`, `timestamp`.
+The tool ids, in the order the index lists them:
+
+<!-- manifest:tool-ids:begin -->
+
+`base64`, `structured-data`, `hash`, `jwt-decode`, `diff`, `regex-tester`, `color-convert`, `image-convert`, `video-remux`, `text-convert`, `timestamp`
+
+<!-- manifest:tool-ids:end -->
 
 ### The two things that trip up every first attempt
 
@@ -193,4 +199,4 @@ Keep `features/` honest as the app changes when routes, tools, or selectors move
 
 **Check that a new file here shows up in `git status`.** Claude Code's runtime keeps its own block of patterns in `.git/info/exclude`, which is per clone and not reviewable, and on this machine that block once held `.claude/skills/verify-*/`. That line hid this directory even after `.gitignore` stopped doing so. A file that is already committed stays tracked whatever an exclude says, but a new probe would be silently ignored. `git check-ignore -v <file>` names the rule that is hiding it.
 
-This skill drives the deployed site. A check that has to hold on every commit belongs in `scripts/cross-browser-check.mjs`, which runs against `dist/`.
+This skill drives the deployed site by default, and **`pnpm check:browsers` runs all of it against `dist/`** - `doctor.mjs`, `drive.mjs all`, `probe-search.mjs` and `probe-popover.mjs`, in Firefox and WebKit, through `checkVerificationSkill`, which sets `PATCHBAY_ORIGIN` to its own server and `PATCHBAY_ENGINE` to the engine it is in. Each has to exit 0 and name that server in its output. Until round twenty-six nothing ran this skill between the days somebody remembered to - its probes crashed against every deploy for a round before anyone noticed - so a change here that breaks a script now fails the pre-commit run. `PATCHBAY_ENGINE` is also the way to run any script in another engine by hand; the default is Chromium. In WebKit a screenshot's own injected stylesheet is refused by the CSP and reported as a console error; `shot` takes back exactly that one, matched by its event.

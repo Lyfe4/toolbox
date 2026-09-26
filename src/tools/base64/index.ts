@@ -2,6 +2,7 @@ import { defineTool, eraseTool, ok, type ErasedTool } from '@/features/registry/
 import { lossLine, lost, notesToJson, type ToolNote } from '@/lib/notes';
 
 import { bytesToText, encodeBase64, readBase64, textToBytes } from './codec';
+import { base64Meta } from './meta';
 import { base64DefaultOptions, base64OptionFields, base64OptionsSchema } from './options';
 
 /**
@@ -15,88 +16,11 @@ import { base64DefaultOptions, base64OptionFields, base64OptionsSchema } from '.
  *      function has to narrow on the tag before it can touch the payload.
  */
 export const base64Tool = defineTool({
-  id: 'base64',
-  name: 'Base64',
-  summary: 'Encode text or files to base64, and decode base64 back to bytes.',
-  category: 'encoding',
-
-  inputs: [
-    {
-      id: 'input',
-      label: 'Input',
-      // Two admissible types. Because of this, `inputs.input` below is a union
-      // and the compiler forces the `.type` check before either payload is read.
-      types: ['text', 'bytes'],
-      required: true,
-      description: 'Text to encode, base64 to decode, or a dropped file.',
-    },
-  ],
-
-  outputs: [
-    {
-      id: 'output',
-      /*
-       * 'Result', where it was 'Output' - and the rename is forced by the port
-       * beside it rather than by taste.
-       *
-       * Every other converter in the set names its first output for the value
-       * it carries - 'Converted', 'Digest', 'Decoded' - and this one cannot,
-       * because what it carries depends on the mode: base64 text one way,
-       * decoded bytes the other. 'Output' was the honest answer to that while
-       * this tool had ONE output, because the runner prints a port's label only
-       * when there is more than one to tell apart.
-       *
-       * There are two now, so the label is drawn - under a panel whose heading
-       * is the word "Output". Two labels for one value is the exact duplication
-       * `ToolRunner.layout.test.tsx` exists to prevent, and it was found by that
-       * test rather than by reading this file. 'Result' is mode-neutral for the
-       * same reason 'Output' was, and it is the word `regex-tester` already
-       * uses for a value whose kind depends on a setting.
-       *
-       * A LABEL, NOT AN ID. The id is still `output`, so no share link, no
-       * saved canvas and no preset changes - see retiredPorts.ts for what a
-       * rename of the other kind costs.
-       */
-      label: 'Result',
-      // Encoding produces text; decoding produces bytes. One port, two types.
-      types: ['text', 'bytes'],
-      description: 'Base64 text when encoding, the decoded bytes when decoding.',
-    },
-    {
-      /*
-       * THE ONE THING A DECODE CAN CHANGE ABOUT THE TEXT.
-       *
-       * `QQ==` and `QR==` both decode to the byte `A`, because the last
-       * character's unused bits are ignored rather than required to be zero -
-       * which RFC 4648 section 3.5 permits and most decoders do. The bytes are
-       * right either way; what is not right is that `base64 -> bytes -> base64`
-       * silently returns a DIFFERENT STRING from the one that went in, and the
-       * input is usually a signature or a digest somebody is comparing.
-       *
-       * A second port rather than an error, because nothing is wrong: the
-       * decode succeeded and the bytes are correct. It is a fact about the
-       * input, and it needed somewhere to be said.
-       */
-      id: 'report',
-      label: 'Report',
-      types: ['json'],
-      description: 'Anything about the input worth knowing that the output cannot carry.',
-      presentation: 'report',
-    },
-  ],
+  ...base64Meta,
 
   optionsSchema: base64OptionsSchema,
   defaultOptions: base64DefaultOptions,
   optionFields: base64OptionFields,
-
-  execution: {
-    // Worker, not main: this accepts files up to 32 MB and encoding one on the
-    // main thread would drop frames.
-    strategy: 'worker',
-    requiresOffscreenCanvas: false,
-    timeoutMs: 15_000,
-    maxInputBytes: 32 * 1024 * 1024,
-  },
 
   run: ({ inputs, options }) => {
     const { input } = inputs;

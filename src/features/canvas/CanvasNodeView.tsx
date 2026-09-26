@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 
 import { Button } from '@/components/Button';
 import { PortIcon, SignalIcon, SlidersIcon } from '@/components/Icon';
@@ -144,8 +144,17 @@ export interface CanvasNodeViewProps {
    * The node no longer draws an editor for them - that moved to the inspector
    * - but it still has to know which ports are waiting on the user in order to
    * say so. See `hintFor`.
+   *
+   * ONE PORT ID PER LINE, AND A STRING ON PURPOSE. `memo` compares props by
+   * identity, and the canvas rebuilds its per-node lists on every graph change
+   * - so as an array this was a new object for every node each time any node
+   * moved, and moving one node re-rendered all of them, on every step of a
+   * drag. A string compares by value: a node whose ports did not change gets
+   * an equal prop and does not render. Found in round twenty-six, when the
+   * timing bound that was supposed to catch per-node work was replaced by a
+   * count of it.
    */
-  readonly typedInputPorts: readonly string[];
+  readonly typedInputPorts: string;
   /**
    * Input ports holding a file whose bytes this session still has.
    *
@@ -167,7 +176,8 @@ export interface CanvasNodeViewProps {
   readonly armedPort: string | null;
   /** The port that just refused a drop, if it is on this node. */
   readonly refusedPort: string | null;
-  readonly connectedPorts: ReadonlySet<string>;
+  /** Ports on this node with a wire, as `portKey`s, one per line - a string for the reason `typedInputPorts` is. */
+  readonly connectedPorts: string;
   readonly onPortPointerDown: (ref: PortRef, side: PortSide) => void;
   /**
    * Whether this node is the ONLY thing selected.
@@ -211,18 +221,24 @@ export interface CanvasNodeViewProps {
   readonly countArmed: number | null;
 }
 
+/** A per-node list the canvas passes as one string, back into its items. */
+function linesOf(lines: string): readonly string[] {
+  return lines === '' ? [] : lines.split('\n');
+}
+
 /**
  * One node.
  *
  * `memo` matters here: panning and zooming change only the plane's transform,
- * and moving one node must not re-render the other forty-nine.
+ * and moving one node must not re-render the other forty-nine - which
+ * `performance.test.tsx` counts, render by render, since round twenty-six.
  */
 export const CanvasNodeView = memo(function CanvasNodeView({
   node,
   selected,
   connections,
   run,
-  typedInputPorts,
+  typedInputPorts: typedInputLines,
   fileInputPorts,
   dropTarget,
   linking,
@@ -230,7 +246,7 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   heldPort,
   armedPort,
   refusedPort,
-  connectedPorts,
+  connectedPorts: connectedLines,
   onPortPointerDown,
   soleSelected,
   onConnect,
@@ -240,6 +256,8 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   countArmed,
 }: CanvasNodeViewProps) {
   const entry: ToolManifestEntry = getManifestEntry(node.toolId);
+  const typedInputPorts = useMemo(() => linesOf(typedInputLines), [typedInputLines]);
+  const connectedPorts = useMemo(() => new Set(linesOf(connectedLines)), [connectedLines]);
   const Glyph = CATEGORY_GLYPHS[entry.category] ?? SignalIcon;
   const height = nodeHeight(entry);
   /** The space the two port stacks reserve, so the footer sits below them. */

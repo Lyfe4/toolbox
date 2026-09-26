@@ -148,7 +148,7 @@ export interface ExecutionEngine {
    * Imports a tool's chunk ahead of time, in whichever context will run it.
    *
    * Called when a node is added, which is a deliberate act. Deliberately NOT
-   * called on hover across the palette: prefetching eleven tools to save one
+   * called on hover across the palette: prefetching every tool to save one
    * fetch trades a small latency problem for a large bandwidth one.
    */
   readonly prefetch: (id: ToolId) => void;

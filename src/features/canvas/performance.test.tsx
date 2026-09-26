@@ -1,5 +1,5 @@
 import { act, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ToastProvider } from '@/components/Toast';
 import { usePipelineStore } from '@/features/execution/pipelineStore';
@@ -9,18 +9,51 @@ import { Canvas } from './Canvas';
 import { useCanvasStore } from './graphStore';
 import { DEFAULT_VIEWPORT, useViewportStore } from './viewportStore';
 
+import type * as NodeViewModule from './CanvasNodeView';
 import type { CanvasNode, GraphData } from './types';
 
 /**
  * A fifty-node graph, laid out in a grid, wired in a chain.
  *
- * jsdom has no compositor, so these numbers are not frame times - they measure
- * the JavaScript half: how long React spends reconciling. That is the half a
- * bug would land in. Real frame timings are measured in a browser and reported
- * separately; this test exists to catch a regression that reintroduces
- * per-node work on every pan.
+ * jsdom has no compositor, so the numbers printed here are not frame times -
+ * they are how long React spends reconciling, and they are REPORTED, never
+ * asserted. This test exists to catch a regression that reintroduces per-node
+ * work on every pan, and it catches it by counting that work rather than by
+ * timing it: a node component rendered during a pan is the regression itself,
+ * on any machine. Until round twenty-six it asserted `perOp < 20` and
+ * `perOp < 30` milliseconds, which measured the machine - `pnpm test` runs
+ * over a hundred files at once, and both were seen failing under that load
+ * with the code correct.
  */
 const NODE_COUNT = 50;
+
+/**
+ * Every render of a node component, by node id. The real component is
+ * wrapped in a memo with the SAME comparison, so it renders exactly when the
+ * real one would - the count is the component's own behaviour, observed.
+ */
+const nodeRenders: string[] = [];
+
+vi.mock('./CanvasNodeView', async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeViewModule>();
+  const { createElement, memo } = await import('react');
+  const real = actual.CanvasNodeView as unknown as {
+    readonly type: (props: { readonly node: { readonly id: string } }) => unknown;
+    readonly compare: ((a: unknown, b: unknown) => boolean) | null;
+  };
+  const Counted = memo((props: { readonly node: { readonly id: string } }) => {
+    nodeRenders.push(props.node.id);
+    return createElement(real.type as never, props as never);
+  }, real.compare ?? undefined);
+  return { ...actual, CanvasNodeView: Counted };
+});
+
+/** Which nodes rendered while `run` ran. */
+function rendersDuring(run: () => void): readonly string[] {
+  const from = nodeRenders.length;
+  run();
+  return nodeRenders.slice(from);
+}
 
 function bigGraph(): GraphData {
   const nodes: Record<string, CanvasNode> = {};
@@ -97,15 +130,21 @@ beforeEach(() => {
 
 describe(`canvas with ${NODE_COUNT.toString()} nodes`, () => {
   it('renders every node and wire', () => {
-    measure('initial render', 1, () => {
-      render(
-        <ToastProvider>
-          <Canvas />
-        </ToastProvider>,
-      );
+    const rendered = rendersDuring(() => {
+      measure('initial render', 1, () => {
+        render(
+          <ToastProvider>
+            <Canvas />
+          </ToastProvider>,
+        );
+      });
     });
 
     expect(screen.getAllByRole('group')).toHaveLength(NODE_COUNT);
+    // The counter's positive partner: it sees every node the first time, so
+    // an empty count during a pan below is the component not rendering, not
+    // the counter not looking.
+    expect(new Set(rendered).size).toBe(NODE_COUNT);
     expect(screen.getByRole('application')).toBeInTheDocument();
   });
 
@@ -118,10 +157,14 @@ describe(`canvas with ${NODE_COUNT.toString()} nodes`, () => {
 
     const before = nodeElements();
 
-    const perOp = measure('60 pan steps', 60, () => {
-      act(() => {
+    const rendered = rendersDuring(() => {
+      measure('60 pan steps', 60, () => {
+        // One commit per step, as sixty pointer moves are: a single act()
+        // batches them into one render, which would hide per-step work.
         for (let step = 0; step < 60; step += 1) {
-          useViewportStore.getState().panBy({ x: 3, y: 2 });
+          act(() => {
+            useViewportStore.getState().panBy({ x: 3, y: 2 });
+          });
         }
       });
     });
@@ -138,7 +181,9 @@ describe(`canvas with ${NODE_COUNT.toString()} nodes`, () => {
       expect(after.get(id)).toBe(element);
     }
 
-    expect(perOp).toBeLessThan(20);
+    // And not one of them RENDERED: the per-node work on every pan that
+    // `perOp < 20` used to stand in for, counted instead of timed.
+    expect(rendered).toEqual([]);
   });
 
   it('zooms without touching a single node', () => {
@@ -149,13 +194,16 @@ describe(`canvas with ${NODE_COUNT.toString()} nodes`, () => {
     );
     const before = nodeElements();
 
-    measure('40 zoom steps', 40, () => {
-      act(() => {
+    const rendered = rendersDuring(() => {
+      measure('40 zoom steps', 40, () => {
         for (let step = 0; step < 40; step += 1) {
-          useViewportStore.getState().zoomAt(1.02, { x: 400, y: 300 });
+          act(() => {
+            useViewportStore.getState().zoomAt(1.02, { x: 400, y: 300 });
+          });
         }
       });
     });
+    expect(rendered).toEqual([]);
 
     const after = nodeElements();
     // Keyed by data-node-id, so a lost attribute collapses the map to one
@@ -174,13 +222,19 @@ describe(`canvas with ${NODE_COUNT.toString()} nodes`, () => {
     );
     const before = nodeElements();
 
-    const perOp = measure('60 single-node drag steps', 60, () => {
-      act(() => {
-        useCanvasStore.getState().beginMove(['n1']);
+    const rendered = rendersDuring(() => {
+      measure('60 single-node drag steps', 60, () => {
+        act(() => {
+          useCanvasStore.getState().beginMove(['n1']);
+        });
         for (let step = 1; step <= 60; step += 1) {
-          useCanvasStore.getState().dragMove({ x: step * 2, y: step });
+          act(() => {
+            useCanvasStore.getState().dragMove({ x: step * 2, y: step });
+          });
         }
-        useCanvasStore.getState().endMove();
+        act(() => {
+          useCanvasStore.getState().endMove();
+        });
       });
     });
 
@@ -198,7 +252,11 @@ describe(`canvas with ${NODE_COUNT.toString()} nodes`, () => {
       expect(after.get(id)).toBe(element);
     }
 
-    expect(perOp).toBeLessThan(30);
+    // The node being dragged renders on every step, and no other node renders
+    // at all: `perOp < 30`, counted. Every other node re-rendered on every
+    // step until round twenty-six, and the timing bound never noticed.
+    expect(rendered.filter((id) => id === 'n1').length).toBeGreaterThanOrEqual(60);
+    expect([...new Set(rendered)]).toEqual(['n1']);
   });
 
   it('keeps the whole drag as a single undo step', () => {

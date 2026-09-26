@@ -45,7 +45,7 @@ describe('naming conventions across the whole set', () => {
   /*
    * `resultSummary` shows the FIRST declared output on a node, on the grounds
    * that "the first port is the tool's answer and the rest are its working".
-   * That was true of eight of the nine tools and `hash` called its answer
+   * That was true of every tool except `hash`, which called its answer
    * `digest`, which made the rule a per-tool lookup rather than something the
    * shape of the set guaranteed. The rename cost a migration; this is what it
    * bought.

@@ -19,6 +19,7 @@
  * Deliberately NOT part of the CI gate: it needs ~165 MB of browser binaries.
  * Run it with `pnpm check:browsers` after `pnpm build`.
  */
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { deflateRawSync, deflateSync, inflateRawSync } from 'node:zlib';
 import { createWriteStream } from 'node:fs';
@@ -710,7 +711,9 @@ async function checkChromeWidths(browser, label) {
         const controls = [...bar.querySelectorAll('button')].map((el) => {
           const box = el.getBoundingClientRect();
           return {
-            text: (el.textContent ?? '').trim().slice(0, 24),
+            // The accessible name: the Inspector toggle is an icon button when
+            // compact, and its text content is then nothing at all.
+            text: (el.getAttribute('aria-label') ?? el.textContent ?? '').trim().slice(0, 24),
             right: box.right,
             clipped: el.scrollWidth > el.clientWidth + 1,
           };
@@ -745,11 +748,20 @@ async function checkChromeWidths(browser, label) {
         };
       });
 
+      /*
+       * The three the shortcuts reference promises a finger at every width
+       * (`TOUCH_ROUTES`: "Add tool, Fit, Inspector - on the toolbar at every
+       * width"). This held Fit alone until round twenty-six, so the other two
+       * were a promise the list made and nothing checked.
+       */
+      const missing = ['Add tool', 'Fit', 'Inspector'].filter(
+        (name) => !chrome.barLabels.includes(name),
+      );
       check(
         label,
-        `Fit is on the bar at ${width.toString()}px, not behind the overflow menu`,
-        chrome.barLabels.some((name) => name === 'Fit'),
-        chrome.barLabels.join(', '),
+        `Add tool, Fit and Inspector are on the bar at ${width.toString()}px, not behind the overflow menu`,
+        missing.length === 0,
+        `missing [${missing.join(', ')}] from ${chrome.barLabels.join(', ')}`,
       );
 
       check(
@@ -850,7 +862,18 @@ async function setInspector(page, open) {
    * not own.
    */
   await panel.waitFor({ state: open ? 'attached' : 'detached', timeout: 10_000 });
-  await page.waitForTimeout(200);
+  /*
+   * AND OPEN MEANS AT REST. This paused 200 ms after the panel attached, and
+   * the slide is its own animation: a sheet still rising has its top further
+   * down the screen, so "the bar is not under the sheet" and "the grid above
+   * the sheet did not move" both passed on a panel caught mid-slide (round
+   * twenty-six's audit of fixed waits). The panel says when it has arrived.
+   */
+  if (open) {
+    await page
+      .locator('[data-testid="node-inspector"][data-state="open"]')
+      .waitFor({ timeout: 10_000 });
+  }
 }
 
 /**
@@ -1334,14 +1357,21 @@ async function checkInspector(browser, label) {
     await narrowPage.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
     await narrowPage.getByTestId('dialog-option-base64').click();
     await narrowPage.waitForTimeout(400);
+    // The node really arrived, so "no panel" is about a canvas with a node on
+    // it rather than one the click had not reached yet.
+    const narrowNode = await narrowPage
+      .locator('[data-testid="node-n1"]')
+      .waitFor({ timeout: 10_000 })
+      .then(() => true)
+      .catch(() => false);
 
     // Closed on arrival here too, and here it always was: the sheet covers the
     // thing it is describing.
     check(
       label,
       'the inspector is closed by default where it would cover the canvas',
-      (await narrowPage.getByTestId('node-inspector').count()) === 0,
-      '',
+      narrowNode && (await narrowPage.getByTestId('node-inspector').count()) === 0,
+      narrowNode ? '' : 'the node never arrived',
     );
 
     await setInspector(narrowPage, true);
@@ -3211,13 +3241,18 @@ async function checkInspectorMotion(browser, label) {
     await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
     await page.getByTestId('dialog-option-hash').click();
     await page.waitForTimeout(400);
+    const arrived = await page
+      .locator('[data-testid="node-n1"]')
+      .waitFor({ timeout: 10_000 })
+      .then(() => true)
+      .catch(() => false);
 
     /* -- It starts closed, and remembers ---------------------------------- */
     check(
       label,
       'the inspector is closed on a first load rather than explaining itself',
-      (await page.getByTestId('node-inspector').count()) === 0,
-      '',
+      arrived && (await page.getByTestId('node-inspector').count()) === 0,
+      arrived ? '' : 'the node never arrived',
     );
 
     await setInspector(page, true);
@@ -6103,7 +6138,16 @@ async function checkConsoleSilence(browser, label) {
       heard.length = 0;
       await page.goto(`${ORIGIN}${path}`, { waitUntil: 'networkidle' });
       await page.waitForTimeout(400);
-      check(label, `${name} says nothing to the console`, heard.length === 0, heard.join(' | '));
+      // The route drew something: a blank page says nothing to the console too.
+      const rendered = await page.evaluate(
+        () => (document.querySelector('main')?.textContent ?? '').trim().length > 0,
+      );
+      check(
+        label,
+        `${name} says nothing to the console`,
+        rendered && heard.length === 0,
+        rendered ? heard.join(' | ') : 'the route rendered nothing',
+      );
     }
 
     // And while actually doing something, not merely sitting there.
@@ -6112,8 +6156,31 @@ async function checkConsoleSilence(browser, label) {
     await page.getByRole('button', { name: 'Add tool' }).click();
     await page.locator('[role="option"]').first().waitFor({ timeout: 10_000 });
     await page.getByTestId('dialog-option-base64').click();
-    await page.waitForTimeout(600);
-    check(label, 'adding and running a tool stays silent', heard.length === 0, heard.join(' | '));
+    /*
+     * THE POSITIVE PARTNER. This waited 600 ms after the click and asserted
+     * nothing had been logged - which a click the app had not processed yet,
+     * or a tool that never ran, satisfies as well as a quiet one. Now the
+     * node has to exist and actually run to `ok` on typed input first.
+     */
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 10_000 });
+    await page.locator('[data-testid="node-n1"]').focus();
+    await page.keyboard.press('Enter');
+    await page.locator('[data-inspector-input]').first().fill('hello');
+    const ran = await page
+      .waitForFunction(
+        () =>
+          document.querySelector('[data-testid="node-n1"]')?.getAttribute('data-status') === 'ok',
+        undefined,
+        { timeout: 30_000 },
+      )
+      .then(() => true)
+      .catch(() => false);
+    check(
+      label,
+      'adding and running a tool stays silent',
+      ran && heard.length === 0,
+      ran ? heard.join(' | ') : 'the node never ran to ok',
+    );
   } finally {
     await context.close().catch(() => {});
   }
@@ -6513,16 +6580,31 @@ async function checkLossReports(browser, label) {
       lossy.text.slice(0, 160),
     );
 
-    // The negative control, on the same page, one run later.
-    await page.getByLabel('Structured data input').fill('{"id": 42}');
-    await page.getByRole('button', { name: 'Run' }).click();
-    await page.waitForTimeout(500);
-    const clean = await drawnNotes(page, 'Structured data Detected notes');
+    /*
+     * THE NEGATIVE CONTROL, SETTLED ON ITS OWN RUN.
+     *
+     * This clicked Run on the same page and waited a fixed 500 ms before
+     * asserting that no note was drawn - which a run still in flight satisfies
+     * exactly as well as a clean one, because a running page draws no notes
+     * list at all. Round fifteen found it and left it; round twenty-six made it
+     * wait for this run's own "finished" notification on a fresh page, the way
+     * `corpusOnPage` settles every corpus control, and made the converted
+     * document its positive partner: the control now passes only on a run that
+     * finished and produced `{"id": 42}`.
+     */
+    const clean = await corpusOnPage(
+      page,
+      { tool: 'structured-data', drawn: { choose: {} } },
+      '{"id": 42}',
+    );
     check(
       label,
       'a conversion that loses nothing draws no note at all',
-      !clean.drawn && clean.text === '',
-      clean.text.slice(0, 120),
+      clean.failed === null &&
+        clean.output !== null &&
+        JSON.stringify(JSON.parse(clean.output)) === '{"id":42}' &&
+        clean.notes.length === 0,
+      drawnSummary(clean),
     );
 
     /* -- 2 and 3: a canvas node ------------------------------------------- */
@@ -8567,7 +8649,22 @@ async function checkDiff(browser, label) {
     await page.getByLabel('Diff Original input').fill(long);
     await page.getByLabel('Diff Changed input').fill(`y${'abcdefghij'.repeat(400)}`);
     await page.getByRole('button', { name: 'Run' }).click();
-    await page.waitForTimeout(500);
+    /*
+     * ON THE RESULT, NOT AFTER A PAUSE. This waited 500 ms and measured - and
+     * the page before the result is drawn is exactly as wide as the viewport,
+     * so a run still in flight passed. The long row has to be on the page.
+     */
+    const drawn = await page
+      .waitForFunction(
+        () =>
+          [...document.querySelectorAll('ol li')].some((row) =>
+            (row.textContent ?? '').includes('yabcdefghij'),
+          ),
+        undefined,
+        { timeout: 30_000 },
+      )
+      .then(() => true)
+      .catch(() => false);
 
     const overflow = await page.evaluate(() => ({
       document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -8575,8 +8672,8 @@ async function checkDiff(browser, label) {
     check(
       label,
       'a 4,000-character line does not make the page scroll sideways',
-      overflow.document <= 1,
-      `${String(overflow.document)}px`,
+      drawn && overflow.document <= 1,
+      drawn ? `${String(overflow.document)}px` : 'the long row was never drawn',
     );
 
     /* -- A dropped file keeps its CRLF, which a textarea would have eaten - */
@@ -10677,7 +10774,55 @@ async function checkPopovers(engine, label) {
          * the screen cannot be clicked, which is the very failure this check
          * is for, and it has to arrive as a named FAIL rather than as a
          * timeout that ends the whole run.
+         *
+         * SCROLLED FIRST, AND SETTLED, where the list scrolls. Round
+         * twenty-six's full run lost this pick in Gecko with the list still
+         * open, as round twenty's did, and neither recurred alone. The list
+         * on a phone on its side shows 98px of 312, so Playwright scrolls the
+         * option into view itself - and the scroll-up button Radix mounts in
+         * answer is in the list's flex column, above the viewport, so it
+         * pushes every row down after Playwright has checked what is under
+         * its pointer. Under a long run's load the click lands on the button:
+         * nothing chosen, focus on the listbox, a second Escape closes it -
+         * exactly the recorded detail. A finger sees the button arrive before
+         * it taps. So the scroll is done here, and the click waits for the
+         * button that scroll must produce and for the row to hold still,
+         * wholly inside the viewport, for two frames.
          */
+        if (overflow?.overflows === true) {
+          await page.getByRole('option', { name: 'Hashing', exact: true }).evaluate((el) => {
+            el.setAttribute('data-harness-pick', '');
+            el.scrollIntoView({ block: 'center' });
+          });
+          await page
+            .waitForFunction(
+              () =>
+                new Promise((resolve) => {
+                  const box = () => {
+                    const option = document.querySelector('[data-harness-pick]');
+                    const viewport = document.querySelector('[data-radix-select-viewport]');
+                    const up = document.querySelector('[data-select-scroll="up"]');
+                    if (!option || !viewport || !up || up.getBoundingClientRect().height === 0)
+                      return null;
+                    const o = option.getBoundingClientRect();
+                    const v = viewport.getBoundingClientRect();
+                    return o.top >= v.top && o.bottom <= v.bottom
+                      ? `${String(o.top)},${String(o.bottom)}`
+                      : null;
+                  };
+                  const first = box();
+                  requestAnimationFrame(() =>
+                    requestAnimationFrame(() => {
+                      resolve(first !== null && box() === first);
+                    }),
+                  );
+                }),
+              null,
+              { timeout: 10_000 },
+            )
+            // Unsettled, the click below still runs and records what it hit.
+            .catch(() => {});
+        }
         const chose = await page
           .getByRole('option', { name: 'Hashing', exact: true })
           .click({ timeout: 10_000 })
@@ -10807,6 +10952,64 @@ async function checkPopovers(engine, label) {
         await page.waitForTimeout(250);
         assertOnScreen(at, 'the open list', await measurePopover(page, '[role="listbox"]'));
         await page.keyboard.press('Escape');
+        await assertQuiet(page, errors, at);
+      } finally {
+        await context.close().catch(() => {});
+      }
+    }
+
+    /* -- The theme editor's two Selects, the last two of the five --------- */
+    {
+      /*
+       * Two of the Select's five call sites are in the theme editor, and this
+       * section never opened either (round sixteen's list of what was still
+       * open). They are the same component, and they sit in panels of their
+       * own on a page whose layout is nothing like a tool page's - which is
+       * where a list gets positioned against a container nobody measured.
+       */
+      const at = 'the theme editor selects, small phone';
+      const { context, page, errors } = await open({
+        viewport: { width: 320, height: 568 },
+        hasTouch: true,
+      });
+      try {
+        await page.goto(`${ORIGIN}/styleguide`, { waitUntil: 'networkidle' });
+        const pick = async (name) => {
+          const trigger = page.getByRole('combobox', { name, exact: true });
+          await trigger.scrollIntoViewIfNeeded();
+          const before = ((await trigger.textContent()) ?? '').trim();
+          await trigger.click();
+          await page.getByRole('listbox').waitFor({ timeout: 10_000 });
+          await page.waitForTimeout(250);
+          assertOnScreen(at, `the ${name} list`, await measurePopover(page, '[role="listbox"]'));
+          const options = page.getByRole('option');
+          const labels = (await options.allTextContents()).map((text) => text.trim());
+          const other = labels.find((text) => text !== before) ?? null;
+          if (other === null) {
+            await page.keyboard.press('Escape');
+            return { before, other, after: before };
+          }
+          await page.getByRole('option', { name: other, exact: true }).click({ timeout: 10_000 });
+          await page.getByRole('listbox').waitFor({ state: 'detached', timeout: 10_000 });
+          return { before, other, after: ((await trigger.textContent()) ?? '').trim() };
+        };
+
+        const source = await pick('Start from');
+        check(
+          label,
+          `${at}: a choice in Start from lands`,
+          source.other !== null && source.after === source.other,
+          JSON.stringify(source),
+        );
+
+        await page.getByRole('button', { name: 'Create theme' }).click();
+        const base = await pick('Base');
+        check(
+          label,
+          `${at}: a choice in Base lands`,
+          base.other !== null && base.after === base.other,
+          JSON.stringify(base),
+        );
         await assertQuiet(page, errors, at);
       } finally {
         await context.close().catch(() => {});
@@ -10979,7 +11182,9 @@ async function checkSoftKeyboard(engine, label) {
     await page.getByRole('button', { name: 'Add tool' }).click();
     await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
     await page.getByTestId('dialog-option-base64').click();
-    await page.waitForTimeout(600);
+    // A node on the plane, because `scrollHeight` counts overflow and an empty
+    // plane has none to count.
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 10_000 });
 
     const canvasScroll = await page.evaluate(() => {
       const root = document.querySelector('[role="application"]');
@@ -12299,7 +12504,7 @@ async function checkRunProgress(browser, label) {
  * calls `prefetch` when a node is added; this page never called it at all.
  *
  * THE COST IS A WORKER, so it must be paid only where a tool is actually going
- * to run. `/tools` lists eleven of them and runs none, and warming all eleven from an
+ * to run. `/tools` lists every one of them and runs none, and warming them all from an
  * index would be the hover-prefetch this engine's comment already rules out.
  * The count is taken by replacing the constructor before any application code
  * runs, because "did a worker start" is not otherwise observable from a page.
@@ -12740,8 +12945,8 @@ async function checkToolIndex(browser, label) {
        * bottom edge is doing nothing that today's content can see.
        *
        * Today's content cannot see it because the metadata is now two lines on
-       * every card. That is a fact about the eleven tools in the registry, not
-       * about the layout, and the twelfth tool is exactly the case the rule
+       * every card. That is a fact about the tools in the registry today, not
+       * about the layout, and the next tool is exactly the case the rule
        * exists for.
        *
        * So one card's summary is made taller than its neighbours' - through
@@ -12959,6 +13164,282 @@ async function checkNodeSummaryBox(browser, label) {
       'a short result is within twenty pixels of the first port row',
       short !== null && short.toFirstPort <= 20,
       short === null ? 'no node' : `${String(short.toFirstPort)}px`,
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/* ========================================================================== *
+ * Every option of every select, on one line
+ * ========================================================================== */
+
+/** Every width a tool page is measured at anywhere in this file. */
+const SELECT_PAGE_WIDTHS = [320, 360, 390, 430, 768, 999, 1000, 1280, 1439, 1440, 1920];
+/** The inspector's two shapes: a sheet below 1000px, the narrowest rail at and above. */
+const SELECT_INSPECTOR_WIDTHS = [1440, 1000, 999, 768, 390, 320];
+
+/**
+ * Every option label of every visible select trigger, substituted into the
+ * trigger one at a time and measured where it is drawn: how many lines the
+ * text takes, whether it runs past the value's own box or into the arrow, and
+ * whether it leaves the trigger. The trigger's own text is put back after.
+ *
+ * SUBSTITUTED, NOT CHOSEN: choosing every option of every select at every
+ * width is thousands of listbox round trips. The value element and its
+ * stylesheet are the real ones - only the text is swapped, which is what
+ * choosing an option does to it.
+ */
+function measureSelectLabels(labels) {
+  const out = [];
+  for (const trigger of document.querySelectorAll('button[role="combobox"]')) {
+    const box = trigger.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0) continue;
+    const name = (
+      trigger.getAttribute('aria-label') ??
+      trigger.labels?.[0]?.textContent ??
+      ''
+    ).trim();
+    const value = trigger.querySelector(':scope > span');
+    const icon = trigger.lastElementChild;
+    if (value === null || icon === null || icon === value) continue;
+    const kept = [...value.childNodes];
+    for (const text of labels[name] ?? []) {
+      value.textContent = text;
+      const range = document.createRange();
+      range.selectNodeContents(value);
+      const rects = [...range.getClientRects()].filter((rect) => rect.width > 0);
+      const valueBox = value.getBoundingClientRect();
+      const iconBox = icon.getBoundingClientRect();
+      const right = Math.max(...rects.map((rect) => rect.right));
+      const bottom = Math.max(...rects.map((rect) => rect.bottom));
+      out.push({
+        name,
+        text,
+        width: Math.round(box.width),
+        lines: new Set(rects.map((rect) => Math.round(rect.top))).size,
+        cut: right > valueBox.right + 0.5,
+        intoArrow: right > iconBox.left + 0.5,
+        outOfTrigger: bottom > box.bottom + 0.5 || right > box.right + 0.5,
+      });
+    }
+    value.replaceChildren(...kept);
+  }
+  return out;
+}
+
+/** The option labels of every select on the page, keyed by the field's label. */
+async function selectLabelsOf(page) {
+  const labels = {};
+  const triggers = page.locator('button[role="combobox"]');
+  for (let index = 0; index < (await triggers.count()); index += 1) {
+    const trigger = triggers.nth(index);
+    if (!(await trigger.isVisible())) continue;
+    const name = await trigger.evaluate((button) =>
+      (button.getAttribute('aria-label') ?? button.labels?.[0]?.textContent ?? '').trim(),
+    );
+    await trigger.scrollIntoViewIfNeeded();
+    await trigger.click();
+    await page.getByRole('option').first().waitFor({ timeout: 10_000 });
+    labels[name] = (await page.getByRole('option').allTextContents()).map((text) => text.trim());
+    await page.keyboard.press('Escape');
+    await page.getByRole('listbox').waitFor({ state: 'detached', timeout: 10_000 });
+  }
+  return labels;
+}
+
+/** The rows of the open list: one line each, inside their row, inside the screen. */
+function measureOpenRows() {
+  const vw = document.documentElement.clientWidth;
+  return [...document.querySelectorAll('[role="option"]')].map((row) => {
+    const text = row.querySelector(':scope > span:last-child') ?? row;
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const rects = [...range.getClientRects()].filter((rect) => rect.width > 0);
+    const box = row.getBoundingClientRect();
+    return {
+      text: (row.textContent ?? '').trim(),
+      lines: new Set(rects.map((rect) => Math.round(rect.top))).size,
+      cut:
+        Math.max(...rects.map((rect) => rect.right)) > box.right + 0.5 ||
+        Math.max(...rects.map((rect) => rect.bottom)) > box.bottom + 0.5,
+      offscreen: box.left < -0.5 || box.right > vw + 0.5,
+    };
+  });
+}
+
+const labelFault = (row) =>
+  row.lines > 1 || row.cut || row.intoArrow || row.outOfTrigger
+    ? `${row.name} "${row.text}" at ${String(row.width)}px: ${[
+        row.lines > 1 ? `${String(row.lines)} lines` : '',
+        row.cut ? 'cut off' : '',
+        row.intoArrow ? 'into the arrow' : '',
+        row.outOfTrigger ? 'out of its trigger' : '',
+      ]
+        .filter(Boolean)
+        .join(', ')}`
+    : null;
+
+/**
+ * EVERY OPTION OF EVERY SELECT FITS ITS TRIGGER ON ONE LINE, IN EVERY TOOL.
+ *
+ * Reported from a screenshot of the timestamp tool: with Convert to set to "A
+ * date for a number, a number for a date" the label wrapped onto two lines in
+ * a trigger one line tall, clipped at the bottom and running into the arrow.
+ * It was the longest label in the set, and nothing here could have seen it:
+ * jsdom has no layout, and no check ever put a long option into a trigger.
+ * Measured when it was found, both engines: that one label, on the tool page
+ * at 320px and at every width from 1000 up, and in the inspector's rail - and
+ * at 320px its open list was wider than the screen.
+ *
+ * So every label of every select of every tool goes into its trigger at every
+ * width a tool page is measured at anywhere in this file, and in the
+ * inspector's sheet and rail, and must be one line, uncut, clear of the arrow
+ * and inside the trigger. The open list is measured where it has least room,
+ * a tool page at 320px and the inspector's sheet at 390px: every row one line,
+ * inside its row and inside the screen.
+ *
+ * ITS OWN CONTROL: a label written to be too long is put through the same
+ * measurement first, and has to be reported - a measurement that could not
+ * see a long label would pass every tool in exactly the way a working one
+ * does. And every width must measure every label it was given, so a trigger
+ * the query stopped finding reads as a failure rather than as nothing wrong.
+ */
+async function checkSelectLabels(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${ORIGIN}/tools`, { waitUntil: 'networkidle' });
+    const tools = await page.$$eval('a[href^="/tools/"]', (links) => [
+      ...new Set(links.map((link) => link.getAttribute('href').slice('/tools/'.length))),
+    ]);
+
+    /* -- the instrument, against a label written to be too long ------------ */
+    await page.goto(`${ORIGIN}/tools/base64`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1 }).waitFor({ timeout: 15_000 });
+    await page.setViewportSize({ width: 320, height: 900 });
+    const control = await page.evaluate(measureSelectLabels, {
+      Mode: ['A label far too long for any trigger this page could ever draw'],
+    });
+    check(
+      label,
+      'select labels: a label written to be too long is reported as not fitting',
+      control.length === 1 && labelFault(control[0]) !== null,
+      JSON.stringify(control),
+    );
+
+    const labelsByTool = {};
+    const faults = [];
+    const shortfalls = [];
+    let measured = 0;
+
+    /* -- the tool page, at every width ----------------------------------- */
+    for (const tool of tools) {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.goto(`${ORIGIN}/tools/${tool}`, { waitUntil: 'networkidle' });
+      await page.getByRole('heading', { level: 1 }).waitFor({ timeout: 15_000 });
+      const labels = await selectLabelsOf(page);
+      labelsByTool[tool] = labels;
+      const expected = Object.values(labels).reduce((total, list) => total + list.length, 0);
+      for (const width of SELECT_PAGE_WIDTHS) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.waitForFunction((w) => document.documentElement.clientWidth === w, width);
+        const rows = await page.evaluate(measureSelectLabels, labels);
+        measured += rows.length;
+        if (rows.length !== expected)
+          shortfalls.push(
+            `${tool} page at ${String(width)}px: ${String(rows.length)} of ${String(expected)}`,
+          );
+        for (const row of rows) {
+          const fault = labelFault(row);
+          if (fault !== null) faults.push(`${tool} page: ${fault}`);
+        }
+      }
+    }
+
+    /* -- the inspector, as a rail and as a sheet ------------------------ */
+    for (const tool of tools) {
+      const labels = labelsByTool[tool] ?? {};
+      const expected = Object.values(labels).reduce((total, list) => total + list.length, 0);
+      if (expected === 0) continue;
+      await page.setViewportSize({ width: SELECT_INSPECTOR_WIDTHS[0], height: 900 });
+      // A share link opens the inspector on its first node by itself.
+      await page.goto(`${ORIGIN}/?p=${shareParam({ v: 3, n: [['n1', tool, 0, 0, {}]], e: [] })}`, {
+        waitUntil: 'networkidle',
+      });
+      const panel = page.getByTestId('node-inspector');
+      await panel.waitFor({ timeout: 15_000 });
+      for (const width of SELECT_INSPECTOR_WIDTHS) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.waitForFunction((w) => document.documentElement.clientWidth === w, width);
+        await panel.waitFor({ timeout: 15_000 });
+        const rows = await page.evaluate(measureSelectLabels, labels);
+        measured += rows.length;
+        if (rows.length !== expected)
+          shortfalls.push(
+            `${tool} inspector at ${String(width)}px: ${String(rows.length)} of ${String(expected)}`,
+          );
+        for (const row of rows) {
+          const fault = labelFault(row);
+          if (fault !== null) faults.push(`${tool} inspector: ${fault}`);
+        }
+      }
+    }
+
+    check(
+      label,
+      'select labels: every label of every tool select was measured at every width, on the page and in the inspector',
+      measured > 0 && shortfalls.length === 0,
+      `${String(measured)} measured; ${shortfalls.slice(0, 6).join('; ') || 'none short'}`,
+    );
+    check(
+      label,
+      'select labels: every option of every tool select fits its trigger on one line, clear of the arrow',
+      measured > 0 && faults.length === 0,
+      faults.slice(0, 8).join(' | ') || `${String(measured)} labels, all on one line`,
+    );
+
+    /* -- the open lists, where they have least room ---------------------- */
+    const rowFaults = [];
+    let rowsSeen = 0;
+    const openEvery = async (scope, where) => {
+      const triggers = scope.locator('button[role="combobox"]');
+      for (let index = 0; index < (await triggers.count()); index += 1) {
+        const trigger = triggers.nth(index);
+        if (!(await trigger.isVisible())) continue;
+        await trigger.scrollIntoViewIfNeeded();
+        await trigger.click();
+        await page.getByRole('option').first().waitFor({ timeout: 10_000 });
+        for (const row of await page.evaluate(measureOpenRows)) {
+          rowsSeen += 1;
+          if (row.lines > 1 || row.cut || row.offscreen)
+            rowFaults.push(
+              `${where}: "${row.text}" ${[row.lines > 1 ? `${String(row.lines)} lines` : '', row.cut ? 'cut off' : '', row.offscreen ? 'off screen' : ''].filter(Boolean).join(', ')}`,
+            );
+        }
+        await page.keyboard.press('Escape');
+        await page.getByRole('listbox').waitFor({ state: 'detached', timeout: 10_000 });
+      }
+    };
+    for (const tool of tools) {
+      if (Object.keys(labelsByTool[tool] ?? {}).length === 0) continue;
+      await page.setViewportSize({ width: 320, height: 900 });
+      await page.goto(`${ORIGIN}/tools/${tool}`, { waitUntil: 'networkidle' });
+      await page.getByRole('heading', { level: 1 }).waitFor({ timeout: 15_000 });
+      await openEvery(page, `${tool} page at 320px`);
+      await page.setViewportSize({ width: 390, height: 900 });
+      await page.goto(`${ORIGIN}/?p=${shareParam({ v: 3, n: [['n1', tool, 0, 0, {}]], e: [] })}`, {
+        waitUntil: 'networkidle',
+      });
+      await page.getByTestId('node-inspector').waitFor({ timeout: 15_000 });
+      await openEvery(page.getByTestId('node-inspector'), `${tool} inspector at 390px`);
+    }
+    check(
+      label,
+      'select labels: every row of every open tool list is one line and on screen, at 320px and in the sheet',
+      rowsSeen > 0 && rowFaults.length === 0,
+      rowFaults.slice(0, 8).join(' | ') || `${String(rowsSeen)} rows`,
     );
   } finally {
     await context.close().catch(() => {});
@@ -17181,6 +17662,7 @@ const SECTIONS = [
   checkTwoTabs,
   checkRichTextClipboard,
   checkTruncation,
+  checkSelectLabels,
   checkOptionNotes,
   checkRunProgress,
   checkWorkerWarmth,
@@ -17192,11 +17674,13 @@ const SECTIONS = [
   checkCanvasFileInput,
   checkFileInputTouch,
   checkImageConvert,
+  checkImageDeterminism,
   checkOffscreenFallback,
   checkVideoRemux,
   checkLargeVideo,
   checkThemeEditor,
   checkNotifications,
+  checkVerificationSkill,
 ];
 
 /** The sections that launch their own browser, for touch or a phone viewport. */
@@ -18658,7 +19142,18 @@ async function checkFileInputTouch(engine, label) {
         mimeType: 'text/plain',
         buffer: Buffer.from('alpha\nbeta\n'),
       });
-    await phonePage.waitForTimeout(600);
+    /*
+     * The summary naming the file, first. This paused 600 ms and measured the
+     * drop zone - which exists before any file is chosen - so a page that had
+     * not taken the file yet passed on the empty control.
+     */
+    const named = await phonePage
+      .locator('[data-testid="node-inspector"] [class*="fileSummary"]')
+      .filter({ hasText: 'a-rather-long-file-name' })
+      .first()
+      .waitFor({ timeout: 10_000 })
+      .then(() => true)
+      .catch(() => false);
 
     const overflow = await phonePage.evaluate(() => {
       const panel = document.querySelector('[data-testid="node-inspector"]');
@@ -18678,7 +19173,8 @@ async function checkFileInputTouch(engine, label) {
     check(
       label,
       'a long filename stays inside the panel rather than widening the page',
-      !overflow.docScrollsSideways &&
+      named &&
+        !overflow.docScrollsSideways &&
         overflow.boxes.length > 0 &&
         overflow.boxes.every((box) => box.right <= overflow.width + 1 && !box.overflows),
       JSON.stringify(overflow),
@@ -18711,6 +19207,221 @@ async function checkFileInputTouch(engine, label) {
  * turns "the fallback produces an identical result" from a claim in the README
  * into something asserted.
  */
+/**
+ * Replaces `Date` and `Math.random` in whatever global it runs in - the page or
+ * a worker - with a fixed moment and a fixed draw. `new Date()` with no
+ * argument is the moment too, which replacing `Date.now` alone would miss.
+ */
+function fixTheMoment([moment, draw]) {
+  const Real = globalThis.__realDate ?? Date;
+  globalThis.__realDate = Real;
+  class Fixed extends Real {
+    constructor(...args) {
+      if (args.length === 0) super(moment);
+      else super(...args);
+    }
+    static now() {
+      return moment;
+    }
+  }
+  globalThis.Date = Fixed;
+  Math.random = () => draw;
+  return Date.now();
+}
+
+/**
+ * IMAGE-CONVERT, RUN TWICE DECADES APART - THE ONE TOOL THE UNIT SUITE CANNOT.
+ *
+ * `determinism.test.ts` runs every tool twice with the clock moved sixty years
+ * and `Math.random` reseeded, and requires equal results, because a node's
+ * result is cached on its inputs and re-served for as long as they stay the
+ * same (round twenty-five). It could not run this tool - jsdom has no canvas -
+ * so round twenty-five checked it by reading its code, and reading is not a
+ * check.
+ *
+ * So it runs here, in the engine that encodes it: the same PNG through the
+ * tool page twice, each time on a fresh page with the moment and the draw
+ * replaced in the page AND in the worker the page warmed for the tool, since
+ * that is the thread that converts where `OffscreenCanvas` exists. The encoded
+ * bytes and the report must be identical.
+ *
+ * THE PARTNERS: the replaced clock is read back from every thread it was put
+ * in, and where the engine has `OffscreenCanvas` that must include a worker -
+ * a clock moved in a thread the tool did not run on proves nothing. And the
+ * comparison has to be able to see a difference at all: the same image at
+ * another quality must NOT compare equal.
+ */
+async function checkImageDeterminism(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await context.addInitScript(() => {
+    const original = URL.createObjectURL.bind(URL);
+    window.__lastBlob = null;
+    URL.createObjectURL = (blob) => {
+      window.__lastBlob = blob;
+      return original(blob);
+    };
+  });
+  const page = await context.newPage();
+  const swatch = { name: 'swatch.png', mimeType: 'image/png', buffer: makeSwatchPng() };
+
+  const runAt = async (moment, draw, quality) => {
+    await page.goto(`${ORIGIN}/tools/image-convert`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Image' }).waitFor({ timeout: 15_000 });
+    // The page warms one worker for the tool before Run is pressed
+    // (`checkWorkerWarmth`); where the engine can convert off the main thread
+    // it is the one that will.
+    const offscreen = await page.evaluate(() => typeof OffscreenCanvas !== 'undefined');
+    if (offscreen && page.workers().length === 0) {
+      await page.waitForEvent('worker', { timeout: 10_000 }).catch(() => null);
+    }
+    const seen = [await page.evaluate(fixTheMoment, [moment, draw])];
+    for (const worker of page.workers())
+      seen.push(await worker.evaluate(fixTheMoment, [moment, draw]));
+
+    await page.locator('input[type="file"]').setInputFiles(swatch);
+    await page.getByLabel('Quality').fill(String(quality));
+    await page.getByRole('button', { name: 'Run' }).click();
+    await page.getByRole('button', { name: 'Raw' }).click({ timeout: 30_000 });
+    const report = await page.evaluate(
+      () =>
+        [...document.querySelectorAll('textarea[readonly]')].find((box) =>
+          box.value.includes('changePercent'),
+        )?.value ?? null,
+    );
+    await page.getByRole('button', { name: 'Download' }).first().click();
+    const encoded = await page.evaluate(async () => {
+      const blob = window.__lastBlob;
+      if (!blob) return null;
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      let binary = '';
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return btoa(binary);
+    });
+    return { offscreen, seen, workers: seen.length - 1, report, encoded };
+  };
+
+  try {
+    const first = await runAt(Date.UTC(2001, 0, 1), 0.1, 0.85);
+    const second = await runAt(Date.UTC(2061, 6, 1, 12, 34, 56), 0.9, 0.85);
+    const other = await runAt(Date.UTC(2001, 0, 1), 0.1, 0.4);
+
+    check(
+      label,
+      'image determinism: the moved clock reached every thread that could run the tool',
+      first.seen.every((value) => value === Date.UTC(2001, 0, 1)) &&
+        second.seen.every((value) => value === Date.UTC(2061, 6, 1, 12, 34, 56)) &&
+        (!first.offscreen || (first.workers >= 1 && second.workers >= 1)),
+      `offscreen=${String(first.offscreen)}, workers ${String(first.workers)}/${String(second.workers)}`,
+    );
+    check(
+      label,
+      'image determinism: the comparison can see a difference - another quality is another file',
+      other.encoded !== null && first.encoded !== null && other.encoded !== first.encoded,
+      `${String(first.encoded?.length)} vs ${String(other.encoded?.length)} base64 characters`,
+    );
+    check(
+      label,
+      'image-convert produces the same file and the same report, sixty years and a reseed apart',
+      first.encoded !== null &&
+        first.report !== null &&
+        first.encoded === second.encoded &&
+        first.report === second.report,
+      first.encoded === second.encoded
+        ? first.report === second.report
+          ? `${String(first.encoded?.length)} base64 characters, report identical`
+          : 'the reports differ'
+        : 'the files differ',
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/* ========================================================================== *
+ * The verification skill, run against this build
+ * ========================================================================== */
+
+/** The skill's scripts, each run whole, as a person runs them. */
+const SKILL = '.claude/skills/verify-patchbay';
+const SKILL_RUNS = [
+  ['doctor.mjs'],
+  ['drive.mjs', 'all'],
+  ['probe-search.mjs'],
+  ['probe-popover.mjs'],
+];
+
+/**
+ * THE VERIFICATION SKILL IS PART OF THE RUN, NOT A DESCRIPTION OF ONE.
+ *
+ * Round twenty-five found both of its probes broken against every deploy -
+ * one threw before opening a browser - and nobody had noticed, because nothing
+ * ran them: the evidence directory, the only record a run leaves, had nothing
+ * between 2026-09-24 and the day round twenty-five went looking, across eight
+ * rounds that each described the skill as the way to prove a change on the
+ * live site. A check that runs only when somebody remembers is a check that
+ * exists in the documents.
+ *
+ * So every script in it runs here, whole, against the build this harness is
+ * serving - `PATCHBAY_ORIGIN` pointed at this server, `PATCHBAY_ENGINE` at the
+ * engine this pass is in - and has to exit 0. That is its "prove a fix before
+ * it ships" mode, which the skill documents; the live-site mode stays what a
+ * person runs after a deploy. A startup crash, a selector the app no longer
+ * has, a stale count or a probe that disagrees with the manifest now fails the
+ * run that would ship it.
+ *
+ * THE PARTNER: each script's own output has to name this server as its target,
+ * so a script that silently fell back to the live site - its default - cannot
+ * pass here on the strength of somebody else's deploy.
+ */
+async function checkVerificationSkill(browser, label) {
+  void browser;
+  const engine = /webkit/i.test(label)
+    ? 'webkit'
+    : /chromium/i.test(label)
+      ? 'chromium'
+      : 'firefox';
+  for (const [script, ...args] of SKILL_RUNS) {
+    const outcome = await new Promise((resolveRun) => {
+      execFile(
+        process.execPath,
+        [join(ROOT, SKILL, script), ...args],
+        {
+          cwd: ROOT,
+          env: { ...process.env, PATCHBAY_ORIGIN: ORIGIN, PATCHBAY_ENGINE: engine },
+          timeout: 300_000,
+          maxBuffer: 16 * 1024 * 1024,
+        },
+        (error, stdout, stderr) => {
+          resolveRun({
+            code: error === null ? 0 : (error.code ?? 'killed'),
+            out: `${stdout}\n${stderr}`,
+          });
+        },
+      );
+    });
+    const fails = outcome.out
+      .split('\n')
+      // A FAIL line, or the error a crash printed - which, for a script that
+      // threw before its first check, is the whole of what it has to say.
+      .filter((line) => /^\s*FAIL\b|^\w*Error\b/.test(line))
+      .slice(0, 4)
+      .join(' | ');
+    check(
+      label,
+      `the verification skill's ${[script, ...args].join(' ')} passes against this build`,
+      outcome.code === 0 && outcome.out.includes(ORIGIN),
+      outcome.code === 0
+        ? outcome.out.includes(ORIGIN)
+          ? `exit 0, against ${ORIGIN}`
+          : `exit 0, but the output never names ${ORIGIN}`
+        : `exit ${String(outcome.code)}: ${fails || outcome.out.trim().split('\n').slice(-3).join(' | ')}`.slice(
+            0,
+            400,
+          ),
+    );
+  }
+}
+
 async function checkImageConvert(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 
@@ -20483,7 +21194,13 @@ const SOURCE_ROOTS = ['src', 'public', 'vite', 'index.html', 'vite.config.ts', '
  * everything it loads, printed at the start so a run can be matched to a tree,
  * and asserted unchanged at the end.
  */
-const HARNESS_FILES = ['scripts/cross-browser-check.mjs', 'scripts/serve-dist.mjs'];
+const HARNESS_FILES = [
+  'scripts/cross-browser-check.mjs',
+  'scripts/serve-dist.mjs',
+  // The skill runs inside the harness since round twenty-six, so it is part of
+  // what a run means.
+  ...['harness.mjs', ...SKILL_RUNS.map(([script]) => script)].map((file) => `${SKILL}/${file}`),
+];
 
 async function harnessDigest() {
   const digest = createHash('sha256');

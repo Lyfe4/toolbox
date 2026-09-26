@@ -6,7 +6,9 @@ import {
   type JsonValue,
 } from '@/features/registry/types';
 import { lossLine, lost, notesToJson, type ToolNote } from '@/lib/notes';
+import { someOf } from '@/lib/someOf';
 
+import { jwtDecodeMeta } from './meta';
 import { jwtDefaultOptions, jwtOptionFields, jwtOptionsSchema } from './options';
 import { decodeToken, describeClaims } from './token';
 import { verifySignature } from './verify';
@@ -21,75 +23,11 @@ import { verifySignature } from './verify';
  * fifteen-second edit can forge.
  */
 export const jwtDecodeTool = defineTool({
-  id: 'jwt-decode',
-  name: 'JWT',
-  summary: 'Decode a JSON Web Token, and verify its signature when you supply the key.',
-  category: 'encoding',
-
-  inputs: [
-    {
-      id: 'input',
-      label: 'Token',
-      types: ['text'],
-      required: true,
-      description: 'A compact JWT: header.payload.signature.',
-    },
-  ],
-
-  outputs: [
-    {
-      id: 'output',
-      label: 'Decoded',
-      types: ['json'],
-      description: 'Signature verdict first, then the header and payload.',
-      /*
-       * Not a JSON tree. The verdict is the reason anybody opens a JWT
-       * decoder, and as `JSON.stringify` it is a line of braces among other
-       * braces - directly above claims that base64 makes trivial to forge.
-       * See JwtView.
-       */
-      presentation: 'jwt',
-    },
-    {
-      /*
-       * A SECOND PORT, AND NOT THE ONE THAT WAS ARGUED AGAINST.
-       *
-       * The port audit rejected a `payload` output carrying just the claims,
-       * because its entire effect would be to detach the claims from the
-       * signature verdict - which is the one thing this tool's design exists to
-       * prevent. That argument is about a port carrying CLAIMS. This one
-       * carries none.
-       *
-       * What it carries is the loss the matrix has recorded since round one: a
-       * `sub` or a `jti` that is a 64-bit key or a snowflake is rounded by
-       * `JSON.parse`, so the decoder shows a different number from the one the
-       * issuer signed. There is no way to avoid that in a JavaScript program
-       * and no reason to be quiet about it, and a `ToolResult` is a value or an
-       * error, so it needed somewhere to go.
-       */
-      id: 'report',
-      label: 'Report',
-      types: ['json'],
-      description: 'Anything about the token the decoded value cannot carry exactly.',
-      presentation: 'report',
-    },
-  ],
+  ...jwtDecodeMeta,
 
   optionsSchema: jwtOptionsSchema,
   defaultOptions: jwtDefaultOptions,
   optionFields: jwtOptionFields,
-
-  /** The key is a user secret and is stripped before a graph is shared. */
-  secretOptionKeys: ['key'],
-
-  execution: {
-    strategy: 'worker',
-    requiresOffscreenCanvas: false,
-    timeoutMs: 10_000,
-    // A JWT in a header is a few kB at most; anything far past that is not a
-    // token and should be refused before a parser sees it.
-    maxInputBytes: 256 * 1024,
-  },
 
   run: async ({ inputs, options }) => {
     const decoded = decodeToken(inputs.input.text);
@@ -138,12 +76,9 @@ export const jwtDecodeTool = defineTool({
               rounded.length === 1
                 ? `The claim at ${rounded[0]?.path ?? ''} was rounded`
                 : `${rounded.length.toString()} claims were rounded`,
-              `JavaScript has one numeric type and it is a double, so an integer past 2^53 cannot be held exactly. ${rounded[0]?.source ?? ''} became ${(rounded[0]?.value ?? 0).toString()}. A 64-bit database key, a snowflake or a nanosecond timestamp in a claim is therefore NOT the number the issuer signed, at ${rounded
-                .slice(0, 5)
-                .map((entry) => entry.path)
-                .join(
-                  ', ',
-                )}. The signature is still verified against the original bytes, which this rounding does not touch.`,
+              `JavaScript has one numeric type and it is a double, so an integer past 2^53 cannot be held exactly. ${rounded[0]?.source ?? ''} became ${(rounded[0]?.value ?? 0).toString()}. A 64-bit database key, a snowflake or a nanosecond timestamp in a claim is therefore NOT the number the issuer signed, at ${someOf(
+                rounded.map((entry) => entry.path),
+              )}. The signature is still verified against the original bytes, which this rounding does not touch.`,
               // The decoded token. The signature verdict on the same port is
               // unaffected - the note says so - but the claims are the port.
               ['output'],

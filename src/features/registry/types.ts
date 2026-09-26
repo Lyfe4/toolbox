@@ -142,8 +142,8 @@ interface BytesFacts {
  *
  *   - A tool that reads binary input RESIDENTLY is handed `bytes`, a
  *     `Uint8Array`, which is byte for byte the shape every tool has always
- *     been handed. Ten of the eleven tools are in this class and not one line of
- *     any of them changed.
+ *     been handed. Every tool but the video tool is in this class, and not one line
+ *     of any of them changed.
  *   - A tool that reads binary input in WINDOWS is handed `source`, and there
  *     IS NO `bytes` MEMBER on it. That absence is the whole mechanism: the
  *     failure this was not built to avoid for a long time is a streaming value
@@ -197,7 +197,7 @@ export type AnyValue = ToolValue | ResidentValue | WindowedValue;
  * a port accepting either type should hand its tool.
  *
  * It defaults to the RESIDENT family because tools are what read it, and the
- * resident family is what ten of the eleven are handed.
+ * resident family is what every tool but the video tool is handed.
  */
 export type ValueOfType<T extends DataType, F extends AnyValue = ResidentValue> = Extract<
   F,
@@ -452,12 +452,15 @@ export type OptionField<TOptions> =
   | (OptionFieldBase<TOptions> & {
       readonly control: 'text';
       readonly placeholder?: string;
-      /**
-       * Renders as a password field and is never echoed in a share link.
-       * Options DO travel in share links, so a secret must opt out - see
-       * `secretOptionKeys` on the tool definition.
+      /*
+       * There is no `secret` flag here, and there was one until round
+       * twenty-six: it drew a password field and its comment said the value
+       * was "never echoed in a share link". No field set it, the one secret in
+       * the set - the JWT key - is multiline and so could never have been a
+       * password field, and keeping a value out of a share link is
+       * `secretOptionKeys`' job, not this flag's. A flag whose comment promises
+       * what the list does is a flag somebody sets expecting the promise.
        */
-      readonly secret?: boolean;
       readonly multiline?: boolean;
     });
 
@@ -479,7 +482,7 @@ export type ExecutionStrategy = 'worker' | 'main';
  * A FIELD EARNS ITS PLACE WHEN SOMETHING READS IT.
  *
  * `requiresWasm: boolean` and `wasmModules: string[]` were declared here and
- * set on all nine tools, and nothing in `src/`, `scripts/` or `vite/` ever
+ * set on every tool, and nothing in `src/`, `scripts/` or `vite/` ever
  * read either one. They were exactly what `image` and `datetime` were before
  * the port audit removed them: a distinction the type system carried and
  * nothing acted on, plus a line every future tool author had to copy without
@@ -556,9 +559,44 @@ export interface ToolRunContext {
  * only ever show nothing - found by the documentation audit, which read the
  * skill's list of five and the select's six. Removed, the way `datetime` left
  * `DATA_TYPES`; `ports.test.ts` now asserts every entry holds a tool.
+ *
+ * Back since round twenty-six, holding the date tool it was made for. The
+ * timestamp tool had been filed under `encoding` as the nearest category that
+ * existed, which is where nobody looking for a date converter looks.
  */
-export const TOOL_CATEGORIES = ['encoding', 'data', 'text', 'colour', 'hashing'] as const;
+export const TOOL_CATEGORIES = ['encoding', 'data', 'text', 'colour', 'hashing', 'time'] as const;
 export type ToolCategory = (typeof TOOL_CATEGORIES)[number];
+
+/**
+ * Eager metadata for one tool: everything the index, the search box, the
+ * canvas and the execution engine need before a line of the tool is loaded.
+ *
+ * Each tool writes it once, in its own `meta.ts`. The manifest imports that
+ * file eagerly and the tool's `index.ts` spreads it into its definition, so
+ * the eager half and the lazy half are one object rather than a copy kept in
+ * step by a test.
+ */
+export interface ToolManifestEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly summary: string;
+  readonly category: ToolCategory;
+  /** Extra search terms that do not appear in the name or summary. */
+  readonly keywords: readonly string[];
+  readonly inputs: readonly InputPort[];
+  readonly outputs: readonly OutputPort[];
+  /**
+   * Also eager, because the execution engine has to choose worker vs main
+   * thread and enforce the input-size limit BEFORE it fetches the tool.
+   */
+  readonly execution: ExecutionMeta;
+  /**
+   * Option keys holding user secrets. Eager, unlike the rest of the tool,
+   * because share links are built without loading a single tool module and the
+   * encoder has to know what to leave out before it can do that.
+   */
+  readonly secretOptionKeys?: readonly string[];
+}
 
 /* ========================================================================== *
  * Deriving the run signature from the ports

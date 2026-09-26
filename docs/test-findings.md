@@ -5187,3 +5187,348 @@ in-process and checked - Pacific/Kiritimati (+14) and America/St_Johns
 - Unchanged: Safari itself, the generation recommendations, image metadata level,
   `TOUCH_ROUTES`, `checkPopovers`' theme-editor selects, `OptionField.secret`,
   `checkLossReports`' 500 ms control, `someOf`, the wall-clock sites.
+
+## Round twenty-six, done — adding a tool made cheap, and the checks that were only described
+
+2026-09-26, against `49d26a3`. A consolidation round before about eighteen
+more tools: make adding one cheap, make every stale claim fail something, close
+the holes rounds twenty-four and twenty-five found, settle round twenty-three's
+leftovers, and a dropdown reported from a screenshot.
+
+|                                                      | Before                                                                 | After                                                                                                                                                    |
+| ---------------------------------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Places a tool's metadata is written                  | 3: the tool, a 60-line copy in the manifest, a loader line             | **1**: its `meta.ts`, spread by the tool and imported by the manifest; the loader is a glob                                                              |
+| An exact tool, added and removed (`url-encode`)      | round twenty-four's estimate for this kind: about twenty edits         | **11 files**: 5 new, the manifest line, and 5 follow-ups each named by a failing test                                                                    |
+| Sentences stating how many tools there are           | 42 found by the new rule's first run; `COUNTS` checked six phrasings   | **0**, and a rule that fails one in any of the three shapes the stale ones took                                                                          |
+| Tables restating the manifest                        | 3, compared with nothing                                               | 3 blocks compared with the manifest, plus presence checks: a matrix section, a README and a row in the loss-routing table per tool                       |
+| image-convert run twice with the clock moved         | read, not run                                                          | run in both engines, in the thread that converts (`checkImageDeterminism`)                                                                               |
+| The verification skill                               | run on 2026-09-24 and then not until round twenty-five found it broken | run in every `check:browsers`, in both engines (`checkVerificationSkill`); its first run found three defects                                             |
+| Fixed-duration negative controls                     | 1 known (the 500 ms one)                                               | 5 found in an audit of all 160 fixed waits, all given a positive partner; 5 borderline ones recorded                                                     |
+| Wall-clock assertions in the unit suite              | 11                                                                     | **0** that bound work (1 lower bound left, argued); 3 found unable to fail against their own guard; 1 hid a real defect                                  |
+| Dropdown labels that do not fit, any tool, any width | unmeasured                                                             | 1 label and 1 list, fixed; **1,207** labels measured per engine, and a check                                                                             |
+| Deliberate breaks, each shown red                    | -                                                                      | **32**, plus one recorded as unobservable                                                                                                                |
+| `pnpm test`                                          | 9,833 (round twenty-five)                                              | **9,872** passed, 150 files, with `dist/` moved aside                                                                                                    |
+| `check:browsers`, full run, idle                     | 3,590 passed, 0 failed, 13 skipped                                     | **3,624 passed, 0 failed, 13 skipped** (the same thirteen), 2,430 s of sections - the second run; the first failed two checks, on the harness race below |
+
+### 1. The per-tool cost
+
+**Each of round twenty-four's recommendations was checked before it was built,
+and one was built differently.**
+
+**The manifest entry is not generated; the copy is gone.** Round twenty-four
+proposed generating it by a build step, as the route tree is, with a check that
+the generated file is current. Moving each tool's metadata into its own
+`meta.ts`, which the tool spreads into `defineTool` and the manifest imports,
+does the same without a generator or a currency check: there is one object, so
+there is nothing to be stale. What the manifest keeps is the ORDER (the index
+and palette order, an editorial choice) and the literal `ToolId` union, which
+is why it stays a hand-written list of imports rather than a glob. It weakened
+nothing: `registry.test.ts`'s comparison of the copy with the original was
+internal consistency, and it now catches the one thing that can still differ -
+an `index.ts` writing a field again after the spread (break B2). New holds: a
+`meta.ts` may import types only, since it is in the initial bundle (B1), and
+every tool directory has a manifest line and every line a directory (B3).
+
+One cost, measured and paid back: Rolldown gave each shared `meta.ts` a chunk
+of its own, so the first load preloaded eleven files under a kilobyte each
+(+0.7 kB). A `codeSplitting` group makes them one chunk: +0.3 kB and one file
+against the build before.
+
+**The loader is a glob, and nothing was weakened.** `Record<ToolId, …>` made a
+missing loader a compile error; a glob over `src/tools/*/index.ts` makes it
+impossible for any directory with an `index.ts`, and the registry test holds
+the rest (a directory whose name is not its id, a manifest id with no
+directory). Chunking is unchanged - Vite expands the glob into one literal
+`import()` per file.
+
+**The counts are removed, and the gate now fails one.** See the doc-gate
+finding below. 42 phrases on the rule's first run, and more
+the rule's shapes cannot see ("the other ten", "all eleven", "any of the
+eleven ids"), found by a second search for the spelled-out totals. Every one
+was rewritten to say what the number stood for - "every tool but `hash`",
+"every tool but the video tool", "every tool page" - and the few below five
+that count a named subset ("the three tools whose answer is a serialisation")
+were left, because the test that names the subset holds them. One exemption,
+with its reason: a composition test's five-node chain.
+
+**The tables are compared, not generated by hand.** The README's table of
+tools, architecture's port set and the skill's id list are blocks between
+`manifest:` markers, rendered from the manifest by `manifestTables.test.ts`,
+which prints the replacement when one differs (B4-B6). The README's "Does"
+column became the manifest summaries, which is what `/tools` shows anyway.
+
+**Not generated, as the brief said:** named test lists and matrix verdicts. But
+PRESENCE is not a judgement, and the throwaway tool showed three things a new
+tool could leave out with every gate green: a section in the conversion
+matrix, a README beside its code, and a row in the matrix's table of where its
+losses travel. All three are now held (B31, B32) without writing a word of
+their content.
+
+#### The doc gate: the description was wrong AND the gate had a hole
+
+The handover said the gate holds "names, counts and file references".
+CONTRIBUTING said "a count the code can count is counted". The gate held counts
+**only in the phrasings `COUNTS` enumerated** - six for the number of tools - so
+a count phrased any other way was invisible to it, by construction. Both were
+true: the description overstated the gate, and the gate had a hole the size of
+every phrasing nobody had listed yet.
+
+They agree now in both directions. CONTRIBUTING says a count is checked "in the
+phrasings `COUNTS` lists, and only in those", and that the same number phrased
+otherwise is not checked at all. And for the number that bit, the gate fails
+closed: rule 5 refuses a number of five or more before "tools", a number of
+five or more after "of the", and "every tool but" a number, anywhere but the
+dated records (B7, B8), with an exemption table that fails when an entry is no
+longer needed (B9). Five, because composition sentences here stop at four and
+the registry's own number is past ten. What it still cannot see - a count with
+no noun after it - is written into both the rule's comment and CONTRIBUTING.
+
+#### What adding a tool costs now
+
+Measured by adding `url-encode` - percent-encoding, one text port, no report
+port, the cheapest kind - following the rewritten adding-a-tool.md literally,
+and then removing it and diffing the tree back to what it was:
+
+| Step                                                                                         | Files | Found by                                                |
+| -------------------------------------------------------------------------------------------- | ----: | ------------------------------------------------------- |
+| options, meta, index, a test, a README                                                       |     5 | the page                                                |
+| the manifest line                                                                            |     1 | the page                                                |
+| the README, port-set and skill blocks                                                        |     3 | `manifestTables.test.ts`, which prints each replacement |
+| a determinism sample                                                                         |     1 | `determinism.test.ts`                                   |
+| a section in the conversion matrix                                                           |     1 | `manifestTables.test.ts` (new this round)               |
+| typecheck, lint, format, build, bundle:check                                                 |     0 | nothing failed                                          |
+| `checkSelectLabels`, `checkToolIndex`, `checkAxe`, `checkPopovers`, `checkVerificationSkill` |     0 | nothing failed                                          |
+
+**Eleven files, and five failures on the first run, each naming its fix.**
+Round twenty-four's ledger put this kind at "roughly twenty edits", of which
+about half were counts and tables; the counts are gone, the tables are pastes,
+and the manifest entry and loader line are one line. For a lossy tool the
+intrinsic work - an oracle and its generator - still dominates and nothing here
+touches it; its extra chain (a corpus row per loss, `LOSSY_RUNS`, the report
+list) is named lists, deliberately still by hand.
+
+**What would have gone stale unnoticed.** Nothing, for this tool - but a search
+for every paragraph that names five tools or more found two passages round
+twenty-four had already left stale with every gate green: the matrix's list of
+tools with a report port and its table of where each tool's losses travel,
+both without `timestamp`. The first no longer enumerates; the second is held
+by a presence check.
+
+### 2. The holes rounds twenty-four and twenty-five found
+
+**image-convert runs twice, in the engine that encodes it.**
+`checkImageDeterminism` converts the same PNG on a fresh page twice with `Date`
+and `Math.random` replaced - `new Date()` too - in the page AND in the worker
+the tool page warms, via Playwright's `worker.evaluate`, sixty years and a
+reseed apart, and requires the same bytes and the same report. Partners: the
+moved clock is read back from every thread it was put in and must include a
+worker where the engine has `OffscreenCanvas` (Gecko: 1 worker; WebKit: the
+main-thread fallback), and a different quality must produce a different file.
+Deterministic in both engines. Shown red with the report stamped with
+`Date.now()` (B27).
+
+**A new tool cannot be silently left out**, before or after: the named list
+fails until it has a sample. It is by hand, and should be - a sample is a real
+input the tool answers - but "not run here" can no longer mean "read": an
+excused tool must name the harness section that runs it, which must exist, be
+in `SECTIONS` and drive the tool's page (B22, B23).
+
+**The skill was not being run.** Its evidence directory, the only record a run
+leaves, has runs on 2026-09-24 and then nothing until round twenty-five went
+looking - eight rounds, each of which described the skill as the way to prove a
+change on the live site. It was part of the process only in the documents.
+`checkVerificationSkill` now runs all four scripts, whole, against the build
+`check:browsers` serves, in both engines, and each must exit 0 and name that
+server (B25: round twenty-five's crash reintroduced; B26: a skill ignoring
+`PATCHBAY_ORIGIN` exited 0 four times against the live site and was caught
+only by the partner). Its first run found three defects: this round's own
+metadata move had broken the skill's manifest reader; in WebKit, where the
+skill had never run, every screenshot's injected stylesheet is refused by the
+CSP and failed the drive's console check; and the popover probe counted that
+refusal as the app's. What is still manual is the live-site mode, after a
+deploy - and `check:browsers` itself is not CI.
+
+### 3. Round twenty-three's leftovers
+
+| Item                                  | Outcome                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `checkLossReports`' 500 ms control    | **Fixed**, and the shape audited: all 160 fixed waits read, 5 vacuous controls found and given partners - the 500 ms one, console silence while adding a tool, a long diff line, a long file name, the selection bar under a sheet still sliding. `setInspector` waits for `data-state="open"` instead of 200 ms. Four borderline checks also got partners (the inspector closed on arrival, twice; the canvas's scroll; route silence). Shown red with a late run carrying a note (B28), which the 500 ms read would have missed. |
+| `someOf`                              | **Fixed**: one helper, `src/lib/someOf.ts`, for thirteen copies across three tools. Found on the way: jwt-decode's copy named five rounded claims and dropped the count (B10).                                                                                                                                                                                                                                                                                                                                                     |
+| The wall-clock sites                  | **Fixed**, and worse than listed: 11 assertions, not 3 files. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Image metadata level                  | **Already decided**, in round twenty-one, in the tool's README and its code; the "open" listing was stale, and the matrix cell still said "No reason for that split is recorded". The cell and both statements of the warn rule now name the exception and its reason.                                                                                                                                                                                                                                                             |
+| `TOUCH_ROUTES`                        | **Fixed**: every route names the tests that exercise it (B12, B13) - which found "Add tool, Fit, Inspector on the toolbar at every width" held for Fit alone. The harness now reads accessible names (the compact Inspector toggle is an icon) and holds all three (B30).                                                                                                                                                                                                                                                          |
+| `checkPopovers`' theme editor selects | **Fixed**: both opened at 320px under touch, measured on screen, a choice made, refusals read (B29).                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `OptionField.secret`                  | **Removed.** No field set it, the one secret is a multiline textarea that could never be a password field, and its comment promised the share-link stripping that is `secretOptionKeys`' job - a trap for the next author.                                                                                                                                                                                                                                                                                                         |
+
+**The wall-clock sites.** The canvas performance test's `perOp < 20` and
+`< 30` became counts of node renders, through a wrapper with the real
+component's own `memo` comparison - and the count found that **moving one node
+re-rendered every node, on every step of a drag**: the canvas rebuilt each
+node's port lists as fresh objects on every graph change. The component's own
+comment said it must not. Fixed by passing the two lists as value-comparable
+strings (B14, B15). The diff's 5 s bound became structural, plus a test of the
+edit budget that nothing held - whose first version passed against its own
+break, because the yield rule declined the pair before the budget could (B16).
+`malformed.test.ts`'s eight clocks became a counting `ByteSource` (a healthy
+remux reads 1.8x its file; 400 damaged MP4s at most 1.9x; the budget is 8x) and
+a count of bits the parameter-set parser consumes. Doing that found three of
+the eight could never have failed against the guard they were named for: the
+uniform-sample-size bound is unobservable from outside the reader (recorded as
+such), the zero-parameter-set "cap" test never reached the parser through
+`remux` (the count moved to the direct parse; B18), and the scaling-list test
+flipped a byte that never reached the scaling flag - 26 bits read, a 16x16
+picture, no list walked (the fixture now flips the flag; B19 was green until
+it did). The start-codes test never reached `maxNodes`; a new test holds the
+bound by what it does to a unit past it (B20). **Left:** `regex.test.ts`'s
+`timeFor` lower bound, which documents V8's exponential backtracking rather
+than anything this code does; it can pass vacuously only under a scheduler
+stall of 200 ms inside one sub-millisecond call.
+
+### 4. The dropdown
+
+Measured before anything changed, in both engines, on the tool page at ten
+widths and in the inspector at six: **one** label of all of them does not fit -
+timestamp's "A date for a number, a number for a date", two lines and clipped,
+at 320px and every width from 1000px (the 300px rail), and in the inspector's
+rail - and at 320px that select's open list is wider than the screen. The fix,
+argued in architecture.md: the label is now "Date for a number, and back"; the
+trigger's value ends in an ellipsis on one line and can never squeeze the
+arrow; the list is capped at the available width with rows that grow. The
+check fails on truncation as well as wrapping, so the fallback cannot become
+the norm. `checkSelectLabels` was shown red against the unfixed build in both
+engines with its own control and coverage green (B24): 1,207 labels measured
+per engine.
+
+**At 800px nothing overflows** - measured at every tool page width in both
+engines, `scrollWidth` equal to the viewport - and the label does not wrap
+there (a 754px trigger). The screenshot was a crop of a wider window; the panel
+edge is the Output column of the three-column layout.
+
+**The breadcrumb.** "Encoding" was the nearest category that existed, not a
+decision - nothing in round twenty-four records one. `TOOL_CATEGORIES` had a
+`time` category "from the first commit, for a date tool nobody wrote", removed
+in round seventeen for being empty. The date tool exists; `time` is back with
+it in, and the palette's order and the skill's docs follow.
+
+### Found on the way
+
+- **The CSP hash was taken of bytes no browser hashes.** Browsers normalise
+  line endings before hashing an inline script; `csp-hash.ts` hashed the raw
+  bytes, so a CRLF `index.html` built "successfully" into a page whose own
+  scripts were refused. Found because this round's own tooling wrote CRLF (B21).
+- **The manifest order slipped** when I rebuilt it from memory, swapping video
+  and text-convert - caught by `resultSummary.test.ts`'s named list, not by the
+  generated tables, which agreed with whatever order they were given. A
+  generated block restates the manifest; it cannot know the manifest is wrong.
+
+- **A race in the harness, found by the pre-commit run.** The first full run
+  of this round failed two checks in Gecko: the Category filter on a phone on
+  its side, still open ten seconds after picking Hashing - the failure round
+  twenty recorded and could not reproduce. It passed three runs alone. The list
+  there shows 98px of 312, so Playwright scrolls the option into view itself,
+  and the scroll-up button Radix mounts in answer sits in the list's flex
+  column above the viewport: it pushes every row down after Playwright has
+  checked what is under its pointer. Under a long run's load the click lands
+  on the button - nothing chosen, focus on the listbox, a second Escape closes
+  it, which is the recorded detail exactly. A finger sees the button arrive
+  before it taps, so this is the harness, not the app. The check now scrolls
+  the option itself and clicks once the button that scroll must produce is
+  drawn and the row has held still inside the viewport for two frames. **The
+  mechanism is inferred, not reproduced**: no break I could write narrows the
+  window deterministically, so the evidence is the recorded detail matching
+  it and the second full run below.
+
+### Proving test, per check
+
+Every break applied by a script, run, and restored, with the restore checked by hash.
+
+| #   | Break                                                                                      | Caught by                                                                                                                              |
+| --- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| B1  | `hash/meta.ts` imports `./options`                                                         | `registry.test.ts` › a `meta.ts` imports types and nothing else                                                                        |
+| B2  | `hash/index.ts` sets `name` again after the spread                                         | `registry.test.ts` › matches the manifest metadata                                                                                     |
+| B3  | `timestampMeta` dropped from the manifest                                                  | `registry.test.ts` › a loader for every entry; a meta for every directory (2 red)                                                      |
+| B4  | hash's summary edited in its `meta.ts`                                                     | `manifestTables.test.ts` › the README's tools block                                                                                    |
+| B5  | a port-set row's id altered                                                                | `manifestTables.test.ts` › architecture's port-set block                                                                               |
+| B6  | a port added to hash's `meta.ts`                                                           | the same, with the replacement printed                                                                                                 |
+| B7  | the cold open says "twelve tools"                                                          | `docClaims.test.ts` › states the number of tools nowhere                                                                               |
+| B8  | a comment says "every tool but two"                                                        | the same                                                                                                                               |
+| B9  | the exempted composition test retitled                                                     | `docClaims.test.ts` › the stale-exemption half                                                                                         |
+| B10 | jwt-decode's rounded-claims list cut at five with no count (the code before this round)    | `jwt.test.ts` › names five of seven and says how many more there are                                                                   |
+| B11 | `someOf` drops the count                                                                   | `someOf.test.ts` and structured-data's report tests                                                                                    |
+| B12 | a test a touch route names, renamed                                                        | `shortcuts.test.ts` › names the tests that exercise every route                                                                        |
+| B13 | a touch route naming no test                                                               | the same                                                                                                                               |
+| B14 | each node's wired ports a fresh object on every graph change (the shape before this round) | `performance.test.tsx` › a drag renders the dragged node and no other                                                                  |
+| B15 | an inline port handler, new on every render                                                | `performance.test.tsx` › pan, zoom and drag                                                                                            |
+| B16 | diff refinement without its edit budget                                                    | `diff.test.ts` › abandons refinement past `MAX_REFINE_EDITS` (green at first: the yield rule decided the pair; the lines were rebuilt) |
+| B17 | the sample table reader believes the declared count                                        | `malformed.test.ts` › clamps `stsz`, and the corrupted-MP4 property, by bytes read                                                     |
+| B18 | exp-Golomb without its 32-zero cap                                                         | `malformed.test.ts` › refuses the parameter set, by bits consumed                                                                      |
+| B19 | exp-Golomb reading on after an overrun                                                     | the scaling-list test, by bits - green until the fixture flipped the real flag                                                         |
+| B20 | Annex B splitting without `maxNodes`                                                       | `malformed.test.ts` › stops walking at `maxNodes` steps                                                                                |
+| -   | the uniform-sample-size bound removed                                                      | **nothing**: the same refusal from the same 1,522 bytes. Unobservable from outside the reader, and recorded so                         |
+| B21 | `csp-hash.ts` hashing the raw bytes of a CRLF document                                     | `csp-hash.test.ts` › a CRLF or CR document hashes as its LF form                                                                       |
+| B22 | `checkImageDeterminism` dropped from `SECTIONS`                                            | `determinism.test.ts` › run twice by a named section                                                                                   |
+| B23 | that section driving `/tools/base64`                                                       | the same                                                                                                                               |
+| B24 | the reported label and the Select stylesheet before this round                             | `checkSelectLabels`, trigger fit and open rows, both engines; its control and coverage green                                           |
+| B25 | round twenty-five's probe crash put back                                                   | `checkVerificationSkill` › probe-search                                                                                                |
+| B26 | the skill ignoring `PATCHBAY_ORIGIN`                                                       | `checkVerificationSkill`'s partner: all four scripts exited 0 against the live site, and all four were red                             |
+| B27 | image-convert stamping `Date.now()` into its report                                        | `checkImageDeterminism`, both engines (worker in Gecko, main thread in WebKit)                                                         |
+| B28 | structured-data answering `{"id": 42}` after 1.5 s with a note                             | `checkLossReports` › loses nothing, draws no note - both engines; a 500 ms read comes before that note                                 |
+| B29 | the theme editor's Base select ignoring a choice                                           | `checkPopovers` › a choice in Base lands                                                                                               |
+| B30 | the compact toolbar's Inspector toggle renamed                                             | `checkChromeWidths` › Add tool, Fit and Inspector are on the bar at 320px                                                              |
+| B31 | a matrix section renamed `## Hashes`                                                       | `manifestTables.test.ts` › every tool has a section                                                                                    |
+| B32 | both timestamp rows taken out of the loss-routing table                                    | `manifestTables.test.ts` › a row per reporting tool (the first version matched the wrong table and failed everything)                  |
+
+**Four first versions passed against their own break** - B16, B19, the
+parameter-set cap before it moved to the direct parse, and B32. Each was caught by
+applying the break, not by reading the check, and is the reason the table has a
+column for it.
+
+### Looked for and NOT found
+
+- **A second dropdown label that wraps or is cut**, in any tool, on either
+  surface, at any width the harness uses: none of 1,207, both engines.
+- **Horizontal overflow on a tool page** at 320, 390, 768, 800, 999, 1000,
+  1280, 1439, 1440 or 1920px: none.
+- **A tool besides jwt-decode whose output depends on the clock**: image-convert
+  is deterministic in both engines and both threads.
+- **A `meta.ts` that imports code**, a directory without a manifest line, a
+  file left with CRLF after the normalisation: none.
+- **A fixed-wait control of the vacuous shape beyond the five**: five
+  borderline, recorded rather than changed - touch during a dialog (calibrated
+  only by an earlier check), the fine-pointer halves of the keyboard check, a
+  window-resize inset logged but not asserted, "the index starts no worker"
+  (calibrated by the next check), and the rich copy's hover state (no proof
+  either hover applied).
+
+### Anything in the framing I think is wrong
+
+1. **"Names, counts and file references."** Both halves of the either/or:
+   counts only in enumerated phrasings, so the description was wrong and the
+   gate had a hole.
+2. **"Generate the manifest entry."** Removing the copy did it better than
+   generating one would have: no generator, nothing to go stale.
+3. **"Is the skill run, or is its failure not read?"** Not run - and the
+   documents described it as the way changes were proved.
+4. **"Six of these have been found here before."** Five more of the same shape
+   were in the file, one of them in the same section as the one named.
+5. **"The wall-clock sites."** Eleven assertions; three could not fail against
+   their own guard; one hid a real defect.
+6. **"Image metadata level" as open.** Decided in round twenty-one; the list
+   was stale.
+7. **"At roughly 800px."** Nothing happens at 800px; the wrap is in the 300px
+   rail and at 320px.
+
+### Still open
+
+- **One section stalled in the passing run**: `checkCanvasGrid` in WebKit took
+  901 s against 54.5 s in the first run and 62.4 s alone afterwards, every
+  check in it green and the same output but for frame counts. No power event
+  in the run's window. Cause not found; it is written here so that the next
+  one is compared with it, not explained away.
+- The live-site mode of the skill is still run by hand after a deploy, and
+  `check:browsers` is still not in CI.
+- The five borderline fixed waits above.
+- `regex.test.ts`'s `timeFor` lower bound.
+- A count of tools phrased with no noun ("the other ten") is not caught.
+- Unchanged: Safari itself, cached `timeout` and `internal` errors, the node
+  face and expiry, the `Converted` limit on corpus rows.

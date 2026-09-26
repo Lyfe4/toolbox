@@ -37,6 +37,7 @@ import { locateJsonSyntaxError } from '@/lib/jsonSyntax';
 import { lost, noted, type ToolNote } from '@/lib/notes';
 import { counted } from '@/lib/plural';
 import { setOwnProperty } from '@/lib/safeObject';
+import { someOf } from '@/lib/someOf';
 import { positionFromLineColumn, positionFromOffset, stripBom } from '@/lib/textPosition';
 
 import { parseCsvRows, readRecords, readSepDirective, writeCsv, type Written } from './csv';
@@ -127,9 +128,7 @@ function roundedNumberNotes(
 ): ToolNote[] {
   if (rounded.length === 0) return [];
 
-  const shown = rounded.slice(0, 5);
-  const paths = shown.map((entry) => entry.path).join(', ');
-  const rest = rounded.length - shown.length;
+  const paths = someOf(rounded.map((entry) => entry.path));
   const first = rounded[0];
 
   return [
@@ -139,9 +138,7 @@ function roundedNumberNotes(
         : `${rounded.length.toString()} numbers were rounded`,
       `JavaScript has one numeric type and it is a double, so an integer past 2^53 cannot be held exactly.${
         first === undefined ? '' : ` ${first.source} became ${first.value.toString()}.`
-      } At ${paths}${rest > 0 ? `, and ${rest.toString()} more` : ''}.${
-        first === undefined ? '' : ` ${keepTheDigits(first.source, target)}`
-      }`,
+      } At ${paths}.${first === undefined ? '' : ` ${keepTheDigits(first.source, target)}`}`,
       /*
        * BOTH DATA PORTS, because this one happens in the READ half. The parser
        * produced the rounded number, so it is in the parsed structure as well
@@ -175,18 +172,14 @@ function roundedNumberNotes(
 function duplicateKeyNotes(duplicates: readonly DuplicateKey[]): ToolNote[] {
   if (duplicates.length === 0) return [];
 
-  const shown = duplicates.slice(0, 5);
-  const rest = duplicates.length - shown.length;
-  const where = shown.map((entry) => `${entry.path} discarded \`${entry.discarded}\``).join(', ');
+  const where = someOf(duplicates.map((entry) => `${entry.path} discarded \`${entry.discarded}\``));
 
   return [
     lost(
       duplicates.length === 1
         ? '1 duplicate key was discarded'
         : `${duplicates.length.toString()} duplicate keys were discarded`,
-      `JSON allows the same key twice in one object and leaves the behaviour undefined; every reader in use keeps the LAST one, so the earlier value is gone before this tool sees the document. ${where}${
-        rest > 0 ? `, and ${rest.toString()} more` : ''
-      }. Rename one of them to keep both.`,
+      `JSON allows the same key twice in one object and leaves the behaviour undefined; every reader in use keeps the LAST one, so the earlier value is gone before this tool sees the document. ${where}. Rename one of them to keep both.`,
       /*
        * BOTH DATA PORTS. `JSON.parse` resolved the duplicate, so the parsed
        * structure on `data` holds the surviving value and nothing else -
@@ -1432,16 +1425,12 @@ function nonStringKeyNotes(documents: readonly Document.Parsed[]): ToolNote[] {
   if (found.length === 0) return [];
 
   const one = found.length === 1;
-  const shown = found.slice(0, 5);
-  const rest = found.length - shown.length;
-  const where = shown.map((entry) => `${entry.key} at ${entry.at}`).join(', ');
+  const where = someOf(found.map((entry) => `${entry.key} at ${entry.at}`));
 
   return [
     lost(
       one ? '1 key became text' : `${found.length.toString()} keys became text`,
-      `YAML allows a number, a boolean or null as a mapping key, and the value model every conversion here goes through has text keys only. So ${where}${
-        rest > 0 ? `, and ${rest.toString()} more` : ''
-      } ${one ? 'is' : 'are'} text from here on, and a YAML target writes ${
+      `YAML allows a number, a boolean or null as a mapping key, and the value model every conversion here goes through has text keys only. So ${where} ${one ? 'is' : 'are'} text from here on, and a YAML target writes ${
         one ? 'it' : 'them'
       } back quoted. ${KNOWN_LIMITATION}`,
       // Both, because the stringifying happened in the READ half: the parsed
@@ -1463,13 +1452,6 @@ const STANDARD_TAG = /^tag:yaml\.org,2002:(.+)$/u;
 function tagAsWritten(tag: string): string {
   const standard = STANDARD_TAG.exec(tag);
   return standard === null ? tag : `!!${standard[1] ?? ''}`;
-}
-
-/** Up to `limit` of them named, and the rest counted. The bargain every note here strikes. */
-function someOf(items: readonly string[], limit: number): string {
-  const shown = items.slice(0, limit);
-  const rest = items.length - shown.length;
-  return `${shown.join(', ')}${rest > 0 ? `, and ${rest.toString()} more` : ''}`;
 }
 
 interface Presentation {
@@ -1722,6 +1704,7 @@ function yamlPresentationNotes(
     because.push(
       `A comment is not part of any value, so no target has anywhere to put one: ${someOf(
         found.comments.map((entry) => `\`# ${entry}\``),
+        ', ',
         3,
       )}.`,
     );
@@ -1731,6 +1714,7 @@ function yamlPresentationNotes(
       found.aliases > 0
         ? `${someOf(
             found.anchors.map((entry) => `\`${entry}\``),
+            ', ',
             3,
           )} ${found.anchors.length === 1 ? 'is' : 'are'} EXPANDED rather than dropped: the ${counted(
             found.aliases,
@@ -1740,6 +1724,7 @@ function yamlPresentationNotes(
           } full ${found.aliases === 1 ? 'copy' : 'copies'} of the value, so the output is larger than the source and holds no reference at all.`
         : `${someOf(
             found.anchors.map((entry) => `\`${entry}\``),
+            ', ',
             3,
           )} ${found.anchors.length === 1 ? 'has' : 'have'} no alias pointing at ${
             found.anchors.length === 1 ? 'it' : 'them'
@@ -1750,6 +1735,7 @@ function yamlPresentationNotes(
     because.push(
       `The value model has no place for a tag, so ${someOf(
         [...new Set(found.tags)].map((entry) => `\`${entry}\``),
+        ', ',
         3,
       )} ${found.tags.length === 1 ? 'is' : 'are'} gone and the value under ${
         found.tags.length === 1 ? 'it' : 'them'
@@ -1758,7 +1744,7 @@ function yamlPresentationNotes(
   }
   if (found.styles.length > 0) {
     because.push(
-      `A scalar's style is not part of its value, so ${someOf(found.styles, 3)} ${
+      `A scalar's style is not part of its value, so ${someOf(found.styles, ', ', 3)} ${
         found.styles.length === 1 ? 'comes' : 'come'
       } back however the target spells a string.${
         found.folded
@@ -1770,7 +1756,7 @@ function yamlPresentationNotes(
 
   if (found.flows.length > 0) {
     because.push(
-      `A collection's flow style - \`{a: 1}\` or \`[1, 2]\` on one line - is not part of its value either, and this writer spells every non-empty collection as a block, so ${someOf(found.flows, 3)} ${
+      `A collection's flow style - \`{a: 1}\` or \`[1, 2]\` on one line - is not part of its value either, and this writer spells every non-empty collection as a block, so ${someOf(found.flows, ', ', 3)} ${
         found.flows.length === 1 ? 'is' : 'are'
       } now written one entry to a line.`,
     );

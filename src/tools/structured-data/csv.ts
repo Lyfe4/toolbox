@@ -9,6 +9,7 @@ import {
 import { pathStep } from '@/lib/jsonNumbers';
 import { lost, noted, type ToolNote } from '@/lib/notes';
 import { setOwnProperty } from '@/lib/safeObject';
+import { someOf } from '@/lib/someOf';
 import { positionFromOffset } from '@/lib/textPosition';
 
 /** What a CSV write produced, and what the table could not hold. */
@@ -432,21 +433,17 @@ function trimmedHeaderNotes(
 ): readonly ToolNote[] {
   if (trimmed.length === 0) return [];
 
-  const shown = trimmed.slice(0, 5);
-  const rest = trimmed.length - shown.length;
-  const first = shown[0];
-  const where = shown
-    .map((entry) => `${JSON.stringify(entry.written)} became \`${entry.name}\``)
-    .join(', ');
+  const first = trimmed[0];
+  const where = someOf(
+    trimmed.map((entry) => `${JSON.stringify(entry.written)} became \`${entry.name}\``),
+  );
 
   return [
     lost(
       trimmed.length === 1
         ? '1 header cell was trimmed'
         : `${trimmed.length.toString()} header cells were trimmed`,
-      `An unquoted header cell has its leading and trailing spaces removed, because \` name, age\` is how hand-typed CSV looks and a key of \` age\` helps nobody. ${where}${
-        rest > 0 ? `, and ${rest.toString()} more` : ''
-      }. ${
+      `An unquoted header cell has its leading and trailing spaces removed, because \` name, age\` is how hand-typed CSV looks and a key of \` age\` helps nobody. ${where}. ${
         first === undefined ? '' : `Quote the cell - \`"${first.written}"\` - `
       }to keep the spaces in the name.`,
       /*
@@ -675,14 +672,12 @@ export function writeCsv(data: JsonValue, delimiter: string): ToolResult<Written
   ];
 
   if (nested.length > 0) {
-    const shown = nested.slice(0, 5);
-    const rest = nested.length - shown.length;
     notes.push(
       lost(
         nested.length === 1
-          ? `The nested value at ${shown[0] ?? ''} was written into the cell as JSON`
+          ? `The nested value at ${nested[0] ?? ''} was written into the cell as JSON`
           : `${nested.length.toString()} nested values were written into their cells as JSON`,
-        `A table cell holds text, so an object or an array becomes compact JSON inside it. Reading the file back gives that TEXT, not the structure. At ${shown.join(', ')}${rest > 0 ? `, and ${rest.toString()} more` : ''}.`,
+        `A table cell holds text, so an object or an array becomes compact JSON inside it. Reading the file back gives that TEXT, not the structure. At ${someOf(nested)}.`,
         /*
          * THE WRITTEN DOCUMENT ONLY. This is the write half: the table is
          * where the object had to become text, and `data` - the parsed source
@@ -696,12 +691,10 @@ export function writeCsv(data: JsonValue, delimiter: string): ToolResult<Written
 
   if (missing.size > 0) {
     const names = [...missing];
-    const shown = names.slice(0, 5);
-    const rest = names.length - shown.length;
     notes.push(
       lost(
         `${names.length.toString()} column${names.length === 1 ? ' was' : 's were'} absent from some rows`,
-        `CSV has one spelling for "this row has no such key" and for "this row's value is the empty string", and it is an empty cell. Reading the file back cannot tell them apart. The ${names.length === 1 ? 'column is' : 'columns are'} ${shown.join(', ')}${rest > 0 ? `, and ${rest.toString()} more` : ''}.`,
+        `CSV has one spelling for "this row has no such key" and for "this row's value is the empty string", and it is an empty cell. Reading the file back cannot tell them apart. The ${names.length === 1 ? 'column is' : 'columns are'} ${someOf(names)}.`,
         // The written document only, for the same reason as the note above.
         ['output'],
       ),
@@ -722,14 +715,12 @@ export function writeCsv(data: JsonValue, delimiter: string): ToolResult<Written
    * this one says so for the absent key, and this says it for the null.
    */
   if (nulls.length > 0) {
-    const shown = nulls.slice(0, 5);
-    const rest = nulls.length - shown.length;
     notes.push(
       lost(
         nulls.length === 1
-          ? `The null at ${shown[0] ?? ''} became an empty cell`
+          ? `The null at ${nulls[0] ?? ''} became an empty cell`
           : `${nulls.length.toString()} null values became empty cells`,
-        `CSV has no null, so a null is written as an empty cell - the same cell an empty string and an absent key are written as. Reading the file back gives the empty string. At ${shown.join(', ')}${rest > 0 ? `, and ${rest.toString()} more` : ''}.`,
+        `CSV has no null, so a null is written as an empty cell - the same cell an empty string and an absent key are written as. Reading the file back gives the empty string. At ${someOf(nulls)}.`,
         // The written document only, for the same reason as the notes above.
         ['output'],
       ),
@@ -744,14 +735,12 @@ export function writeCsv(data: JsonValue, delimiter: string): ToolResult<Written
    * come out.
    */
   if (unspellable.length > 0) {
-    const shown = unspellable.slice(0, 5);
-    const rest = unspellable.length - shown.length;
     notes.push(
       lost(
         unspellable.length === 1
           ? '1 cell holds a tab or a line break'
           : `${unspellable.length.toString()} cells hold a tab or a line break`,
-        `TSV has no spelling for either inside a cell - its registration forbids a tab outright - so ${unspellable.length === 1 ? 'it is' : 'they are'} written in double quotes, the way CSV does it. Python's csv, pandas, polars, DuckDB, Papa Parse and d3-dsv all read that back as one cell; cut and awk, which split on every tab and every line, do not, and nothing written here could make them. At ${shown.join(', ')}${rest > 0 ? `, and ${rest.toString()} more` : ''}. Choose CSV if the file is going to something that splits by hand.`,
+        `TSV has no spelling for either inside a cell - its registration forbids a tab outright - so ${unspellable.length === 1 ? 'it is' : 'they are'} written in double quotes, the way CSV does it. Python's csv, pandas, polars, DuckDB, Papa Parse and d3-dsv all read that back as one cell; cut and awk, which split on every tab and every line, do not, and nothing written here could make them. At ${someOf(unspellable)}. Choose CSV if the file is going to something that splits by hand.`,
         ['output'],
       ),
     );

@@ -19,6 +19,7 @@
  *   node .claude/skills/verify-patchbay/probe-search.mjs
  */
 import {
+  ORIGIN,
   manifestTools,
   compareWithManifest,
   openBrowser,
@@ -88,7 +89,7 @@ const QUERIES = [
 
 const dir = evidenceDir('search');
 const check = makeChecker(dir);
-log(dir, `search probe - oracle built from ${String(TOOLS.length)} manifest entries`);
+log(dir, `search probe @ ${ORIGIN} - oracle built from ${String(TOOLS.length)} manifest entries`);
 
 const { browser, page, consoleErrors } = await openBrowser();
 const readings = [];

@@ -2,27 +2,25 @@ import type { ToolId } from './manifest';
 import type { ErasedTool } from './types';
 
 /**
- * Lazy tool loading.
+ * Lazy tool loading: one chunk per directory under src/tools.
  *
- * Each entry is a separate `import()` with a literal path. That literalness is
- * load-bearing: a bundler can only split a chunk it can see statically, so
- * `import('@/tools/' + id)` would either fail or drag every tool into one
- * chunk. `Record<ToolId, ...>` makes the map exhaustive - adding an id to the
- * manifest without adding a loader here is a compile error.
+ * `import.meta.glob` is expanded by the bundler, at build time, into one
+ * literal `import()` per matching file - which is what lets it split each tool
+ * into a chunk of its own, exactly as the hand-written
+ * `import('@/tools/base64')` entries this replaced did. What it adds is that it
+ * cannot miss a directory. The hand-written list was one more line adding a
+ * tool had to remember, and the compile error that caught a missing one came
+ * from `Record<ToolId, ...>`; now a missing loader is impossible for any
+ * directory that has an `index.ts`, and `registry.test.ts` holds both
+ * directions - every manifest id has a loader, every loader has a manifest id -
+ * and that a directory's name is its tool's id.
  */
-const LOADERS: Record<ToolId, () => Promise<{ readonly default: ErasedTool }>> = {
-  base64: () => import('@/tools/base64'),
-  'structured-data': () => import('@/tools/structured-data'),
-  hash: () => import('@/tools/hash'),
-  'jwt-decode': () => import('@/tools/jwt-decode'),
-  diff: () => import('@/tools/diff'),
-  'regex-tester': () => import('@/tools/regex-tester'),
-  'color-convert': () => import('@/tools/color-convert'),
-  'image-convert': () => import('@/tools/image-convert'),
-  'text-convert': () => import('@/tools/text-convert'),
-  'video-remux': () => import('@/tools/video-remux'),
-  timestamp: () => import('@/tools/timestamp'),
-};
+const MODULES = import.meta.glob<{ readonly default: ErasedTool }>('../../tools/*/index.ts');
+
+/** Keyed by directory name, which the registry test holds to the tool's id. */
+const LOADERS = new Map(
+  Object.entries(MODULES).map(([path, load]) => [path.split('/').at(-2) ?? '', load]),
+);
 
 /** Resolved tools, so switching back to a tool does not re-await the import. */
 const cache = new Map<ToolId, ErasedTool>();
@@ -31,12 +29,15 @@ export async function loadTool(id: ToolId): Promise<ErasedTool> {
   const cached = cache.get(id);
   if (cached) return cached;
 
-  const module = await LOADERS[id]();
+  const load = LOADERS.get(id);
+  // Unreachable while registry.test.ts passes: every manifest id has a directory.
+  if (load === undefined) throw new Error(`No tool directory for "${id}"`);
+  const module = await load();
   cache.set(id, module.default);
   return module.default;
 }
 
-/** Every tool id that has a loader. Used by the registry test. */
-export function loadableToolIds(): readonly ToolId[] {
-  return Object.keys(LOADERS) as readonly ToolId[];
+/** Every directory under src/tools with an `index.ts`. Used by the registry test. */
+export function loadableToolIds(): readonly string[] {
+  return [...LOADERS.keys()];
 }

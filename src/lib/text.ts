@@ -3,9 +3,9 @@ import { fail, ok, type ToolResult } from '@/features/registry/types';
 /**
  * BYTES ARRIVING AT A PORT THAT WANTS A DOCUMENT.
  *
- * Four tools now declare `bytes` alongside `text` on an input that is going to
- * be read as a document — `structured-data`, `diff`, `regex-tester` and
- * `text-convert` — and all four need the same answer to the same question, so
+ * Every tool whose input is going to be read as a document declares `bytes`
+ * alongside `text` — `structured-data`, `diff`, `regex-tester` and
+ * `text-convert` today — and all of them need the same answer to the same question, so
  * it is written once. It lived in `structured-data/convert.ts` while that tool
  * was the only one that accepted bytes; a second copy would have been the bug
  * `retiredTools.ts` has a paragraph about.

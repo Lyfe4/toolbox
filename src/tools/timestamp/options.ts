@@ -51,7 +51,14 @@ export const timestampOptionFields: readonly OptionField<TimestampOptions>[] = [
     label: 'Convert to',
     control: 'select',
     choices: [
-      { value: 'auto', label: 'A date for a number, a number for a date' },
+      /*
+       * Short enough for the trigger it is drawn in. The sentence this was - "A
+       * date for a number, a number for a date" - wrapped onto two lines of a
+       * one-line trigger at 320px and in every 300px rail, clipped and run into
+       * the arrow, and at 320px its open list was wider than the screen
+       * (`checkSelectLabels`, round twenty-six).
+       */
+      { value: 'auto', label: 'Date for a number, and back' },
       { value: 'utc', label: 'RFC 3339 in UTC' },
       { value: 'local', label: 'RFC 3339 in the time zone' },
       { value: 'rfc9557', label: 'RFC 3339 with the zone name' },

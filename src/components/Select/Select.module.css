@@ -40,14 +40,35 @@
   color: var(--pb-ink-muted);
 }
 
+/*
+ * ONE LINE, AND NEVER INTO THE ARROW. The trigger is one control tall, so a
+ * label that wrapped was two lines in a box with room for one: clipped at the
+ * bottom and run into the chevron - which is what the timestamp tool's longest
+ * label did in every 300px rail. A label is written to fit (`checkSelectLabels`
+ * fails on one that does not, cut or wrapped, at every width a tool page is
+ * measured at); this is what a label the check has not seen yet does instead
+ * of that: it ends in an ellipsis, on one line, clear of the arrow.
+ */
+.value {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .icon {
   display: flex;
+  flex-shrink: 0;
   color: var(--pb-ink-muted);
 }
 
 .content {
   z-index: var(--pb-z-popover);
   min-inline-size: var(--radix-select-trigger-width);
+  /* The list sized itself to its longest row, so at 320px the timestamp
+     tool's was wider than the screen. Capped at the room Radix reports. */
+  max-inline-size: var(--radix-select-content-available-width);
   max-block-size: var(--radix-select-content-available-height);
   overflow: hidden;
 
@@ -80,7 +101,9 @@
   align-items: center;
   gap: var(--pb-space-xs);
 
-  block-size: var(--pb-control-height-sm);
+  /* A floor rather than a height, so a row the cap above has made wrap grows
+     to hold it instead of clipping its second line. */
+  min-block-size: var(--pb-control-height-sm);
   padding-inline: var(--pb-space-xs);
 
   font-family: var(--pb-font-ui);
@@ -129,7 +152,7 @@
   }
 
   .item {
-    block-size: 44px;
+    min-block-size: 44px;
   }
 }
 

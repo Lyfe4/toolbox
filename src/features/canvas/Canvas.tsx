@@ -113,6 +113,7 @@ export const PALETTE_CATEGORY_ORDER = [
   'data',
   'colour',
   'hashing',
+  'time',
 ] as const satisfies readonly ToolCategory[];
 
 /** Pipelines lead, then the tool categories. */
@@ -2276,6 +2277,12 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
    */
   const orderedNodeIds = useMemo(() => spatialOrder(graph), [graph]);
 
+  /*
+   * Each node's wired ports as one sorted string - see `connectedPorts` on the
+   * node for why a string: a node the change did not touch gets an EQUAL value
+   * and its `memo` holds. Sorted, so the order edges sit in the document
+   * cannot change it.
+   */
   const connectedPorts = useMemo(() => {
     const map = new Map<NodeId, Set<string>>();
     for (const id of graph.edgeOrder) {
@@ -2288,7 +2295,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
       into.add(portKey('input', edge.to.portId));
       map.set(edge.to.nodeId, into);
     }
-    return map;
+    return new Map([...map].map(([id, keys]) => [id, [...keys].sort().join('\n')]));
   }, [graph]);
 
   /**
@@ -2842,7 +2849,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
                 selected={selectedNodes.has(id)}
                 connections={connectionCount(graph, id)}
                 run={runStates[id] ?? idleState()}
-                typedInputPorts={typedInputFor.get(id) ?? EMPTY_PORTS}
+                typedInputPorts={(typedInputFor.get(id) ?? EMPTY_PORTS).join('\n')}
                 fileInputPorts={fileInputFor.get(id) ?? EMPTY_PORTS}
                 dropTarget={dropTarget === id}
                 linking={draft !== null}
@@ -2860,7 +2867,7 @@ export function Canvas({ shareParam }: CanvasProps = {}) {
                 refusedPort={
                   refused?.ref.nodeId === id ? portKey(refused.side, refused.ref.portId) : null
                 }
-                connectedPorts={connectedPorts.get(id) ?? emptySet}
+                connectedPorts={connectedPorts.get(id) ?? ''}
                 onPortPointerDown={onPortPointerDown}
                 soleSelected={selection.nodes.length === 1 && selectedNodes.has(id)}
                 /*

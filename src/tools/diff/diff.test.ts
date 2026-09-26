@@ -10,6 +10,7 @@ import {
   lineEndingOf,
   linesOf,
   MAX_EDIT_DISTANCE,
+  MAX_REFINE_EDITS,
   MAX_REFINE_LINE_LENGTH,
   MAX_REFINE_TOTAL_CHARS,
   MAX_ROWS,
@@ -608,27 +609,55 @@ describe('word-level refinement', () => {
     expect(changed.some((part) => part.text.trim() === '')).toBe(true);
   });
 
-  it('finishes quickly on two long, wholly different lines', () => {
+  it('declines to refine two long, wholly different lines', () => {
     /*
      * THE HANG. Refinement had no bound at all, and it is the same O(ND) Myers
      * search: two dissimilar 34 kB lines - a pair of minified bundles, which
      * is precisely what someone pastes into a diff tool - took 124 seconds, so
      * the 20-second worker timeout fired and the answer was "it took too
-     * long". Bounded, the same comparison returns in milliseconds.
+     * long". Two bounds stop it now, each held below by a test of its own:
+     * `MAX_REFINE_LINE_LENGTH` and `MAX_REFINE_EDITS`.
      *
-     * The bound is generous because the point is to catch an UNBOUNDED
-     * regression, which is three orders of magnitude away, not to police
-     * milliseconds on a busy machine.
+     * This asserted `Date.now() - started < 5_000` until round twenty-six,
+     * which measured the machine rather than the bound: the regression it was
+     * for is a two-minute run, which vitest's own timeout fails without being
+     * asked, and a 5-second stopwatch in a suite running a hundred files at
+     * once is a failure waiting for a busy afternoon. What is asserted is the
+     * mechanism: this pair is not refined.
      */
     const left = Array.from({ length: 4_000 }, (_, index) => `f${index.toString()}(a,b);`).join('');
     const right = Array.from({ length: 4_000 }, (_, index) => `g${index.toString()}(x,y,z);`).join(
       '',
     );
 
-    const started = Date.now();
     const result = report(left, right);
-    expect(Date.now() - started).toBeLessThan(5_000);
     expect(result.rows).toHaveLength(2);
+    expect(result.rows.every((row) => row.parts === null)).toBe(true);
+  });
+
+  it('abandons refinement past MAX_REFINE_EDITS word edits, and keeps it within them', () => {
+    /*
+     * THE OTHER BOUND, which nothing held: the edit budget that makes a
+     * hopeless comparison give up in milliseconds instead of minutes. Two lines
+     * of 660 words, well under the length limit and mostly in common - so the
+     * length bound and the yield rule both let them through, and only the
+     * budget decides. One word in six changed is 110 removals and 110
+     * additions, past the budget of 200; one in fifteen is 88, inside it.
+     */
+    const line = (every: number, prefix: string): string =>
+      Array.from({ length: 660 }, (_, index) =>
+        index % every === 0 ? `${prefix}${index.toString()}` : `w${index.toString()}`,
+      ).join(' ');
+    expect(line(6, 'a').length).toBeLessThan(MAX_REFINE_LINE_LENGTH);
+    expect((660 / 6) * 2).toBeGreaterThan(MAX_REFINE_EDITS);
+    expect((660 / 15) * 2).toBeLessThan(MAX_REFINE_EDITS);
+
+    const tooMany = report(line(6, 'a'), line(6, 'b'));
+    expect(tooMany.rows.every((row) => row.parts === null)).toBe(true);
+
+    // The positive partner: fewer edits over the same lines are refined.
+    const few = report(line(15, 'a'), line(15, 'b'));
+    expect(few.rows.some((row) => row.parts !== null)).toBe(true);
   });
 
   it('does not look inside a line too long to read word by word', () => {

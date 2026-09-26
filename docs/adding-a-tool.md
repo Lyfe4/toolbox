@@ -2,16 +2,19 @@
 
 A complete worked example: a tool that converts text between cases. Small
 enough to read in one go, and it touches every part of the tool itself —
-options, a schema, a port, the manifest, the loader, tests and a README.
+options, its metadata, a port, the manifest, tests and a README.
 
-**The tool is five files and two edits; getting it merged is more.** This page
-used to stop at the tool and say so in its first line, and the timestamp round
-measured what that left out by following it literally: the closing command
-below found eight failures on its first run, in files this page never named,
-and a grep afterwards found ten more sentences the gates cannot see. Sections 1
-to 6 are the tool. [The rest of the chain](#7-the-rest-of-the-chain) is
-everything else, sorted by which kind of tool needs it, and
-[Then](#then) is the command that actually has to pass.
+**The tool is five files and one line in the manifest; getting it merged is
+more.** Round twenty-four measured the chain by following this page literally
+and found eight failures in files it never named and ten more sentences no gate
+could see; round twenty-six made most of that unnecessary - the metadata is
+written once, the loader finds the tool by itself, nothing states how many
+tools there are, and the tables that list every tool are compared with the
+manifest - and measured it again by adding a throwaway tool and removing it
+(see the round's record in [test-findings.md](test-findings.md)). Sections 1 to
+6 are the tool. [The rest of the chain](#7-the-rest-of-the-chain) is
+everything else, sorted by which kind of tool needs it, and [Then](#then) is
+the command that actually has to pass.
 
 ## 1. The options
 
@@ -57,20 +60,27 @@ export const caseOptionFields: readonly OptionField<CaseOptions>[] = [
 ];
 ```
 
-## 2. The implementation
+## 2. The metadata
 
-`src/tools/case-convert/index.ts`
+`src/tools/case-convert/meta.ts`
+
+Everything the rest of the app needs to know about the tool before a line of
+it is loaded: the index, the search box and the canvas list it and decide which
+wires are legal from this, and the execution engine chooses worker or main
+thread and enforces the size limit from it. The manifest imports it eagerly -
+it is in the initial bundle - so it is data and nothing else:
+`registry.test.ts` fails a `meta.ts` that imports anything but types.
 
 ```ts
-import { defineTool, eraseTool, fail, ok, type ErasedTool } from '@/features/registry/types';
+import type { ToolManifestEntry } from '@/features/registry/types';
 
-import { caseDefaultOptions, caseOptionFields, caseOptionsSchema } from './options';
-
-export const caseConvertTool = defineTool({
+export const caseConvertMeta = {
   id: 'case-convert',
   name: 'Case',
   summary: 'Convert text between upper, lower, title, snake and kebab case.',
   category: 'text',
+  // Terms people search for that are not in the name or summary.
+  keywords: ['camel', 'pascal', 'capitalise', 'capitalize', 'slug'],
 
   inputs: [
     {
@@ -91,10 +101,6 @@ export const caseConvertTool = defineTool({
     },
   ],
 
-  optionsSchema: caseOptionsSchema,
-  defaultOptions: caseDefaultOptions,
-  optionFields: caseOptionFields,
-
   execution: {
     // Main thread: this is a string transform on text a person typed. A worker
     // would cost more in postMessage than the work itself.
@@ -103,11 +109,36 @@ export const caseConvertTool = defineTool({
     timeoutMs: 5_000,
     maxInputBytes: 2 * 1024 * 1024,
   },
+} as const satisfies ToolManifestEntry;
+```
+
+`as const` keeps the literal types - the port ids and data types - that the
+implementation's `run` signature is derived from, and `satisfies` checks the
+shape without widening them.
+
+## 3. The implementation
+
+`src/tools/case-convert/index.ts`
+
+```ts
+import { defineTool, eraseTool, fail, ok, type ErasedTool } from '@/features/registry/types';
+
+import { caseConvertMeta } from './meta';
+import { caseDefaultOptions, caseOptionFields, caseOptionsSchema } from './options';
+
+export const caseConvertTool = defineTool({
+  // The metadata, spread rather than copied: the eager half and the lazy half
+  // are one object, so they cannot disagree.
+  ...caseConvertMeta,
+
+  optionsSchema: caseOptionsSchema,
+  defaultOptions: caseDefaultOptions,
+  optionFields: caseOptionFields,
 
   run: ({ inputs, options }) => {
     // `inputs.input` is narrowed to the text variant by the single declared
-    // type above. Declare `['text', 'bytes']` and the compiler would force a
-    // check on `input.type` before letting you read either payload.
+    // type in meta.ts. Declare `['text', 'bytes']` and the compiler would force
+    // a check on `input.type` before letting you read either payload.
     const source = options.trim ? inputs.input.text.trim() : inputs.input.text;
 
     if (source === '') {
@@ -161,7 +192,7 @@ them, for every tool.) The reasoning for each is in
   decodes them through [`lib/text.ts`](../src/lib/text.ts) — strictly, so bytes
   that are not text say so instead of being processed as mojibake. A port that
   takes a short literal (a token, a colour) does not. _Not generic:_ the
-  assertion names the six tools whose ports read a document, so a new one is
+  assertion names the tools whose ports read a document, so a new one is
   held to it only once it is added to that list.
 - **A data type earns its place when a port carries it.** Adding a member to
   `DATA_TYPES` for a tool you are about to write is fine; leaving one there for
@@ -195,56 +226,30 @@ on both routes. Labels are free to change. Pick ids you can live with.
 `convert` is ordinary code and lives in its own file — `case.ts` — so it can be
 unit-tested without going near the registry.
 
-## 3. The manifest entry
+## 4. The manifest line
 
-`src/features/registry/manifest.ts` — add to `TOOL_MANIFEST`:
-
-```ts
-{
-  id: 'case-convert',
-  name: 'Case',
-  summary: 'Convert text between upper, lower, title, snake and kebab case.',
-  category: 'text',
-  // Terms people search for that are not in the name or summary.
-  keywords: ['camel', 'pascal', 'capitalise', 'capitalize', 'slug'],
-  inputs: [
-    { id: 'input', label: 'Text', types: ['text'], required: true,
-      description: 'The text to convert.' },
-  ],
-  outputs: [
-    { id: 'output', label: 'Converted', types: ['text'],
-      description: 'The text, in the chosen case.' },
-  ],
-  execution: {
-    strategy: 'main', requiresOffscreenCanvas: false,
-    timeoutMs: 5_000, maxInputBytes: 2 * 1024 * 1024,
-  },
-},
-```
-
-This duplication is deliberate. The manifest is **eager** — it is in the initial
-bundle so the index, the search box and the canvas can list tools and decide
-which ports may legally connect, none of which needs a line of the tool's actual
-code. `registry.test.ts` loads every implementation for real and asserts the two
-descriptions agree, so they cannot drift.
-
-## 4. The loader entry
-
-`src/features/registry/loader.ts`:
+`src/features/registry/manifest.ts` - an import, and the metadata in
+`TOOL_MANIFEST` where the tool should appear:
 
 ```ts
-const LOADERS: Record<ToolId, () => Promise<{ readonly default: ErasedTool }>> = {
+import { caseConvertMeta } from '@/tools/case-convert/meta';
+
+export const TOOL_MANIFEST = [
   // …
-  'case-convert': () => import('@/tools/case-convert'),
-};
+  caseConvertMeta,
+] as const satisfies readonly ToolManifestEntry[];
 ```
 
-The literal path matters: a bundler can only split a chunk it can see
-statically, so `import('@/tools/' + id)` would either fail or pull every tool
-into one chunk.
+That is the whole of it. The list is written by hand for two reasons a
+directory listing cannot supply: the ORDER, which is the order the index and
+the palette show, and a literal `ToolId` union, which is what makes a typo in a
+tool id a compile error anywhere in the app. `registry.test.ts` fails if a
+directory under `src/tools` has no entry here or an entry has no directory.
 
-`Record<ToolId, …>` makes this map exhaustive — adding the manifest entry
-without adding a loader is a compile error, not a runtime one.
+**There is no loader entry.** `loader.ts` finds every `src/tools/*/index.ts`
+with `import.meta.glob`, which the bundler expands into one literal `import()`
+per tool - one chunk each, as a hand-written list gave - and the registry test
+holds a directory's name to its tool's id.
 
 ## 5. Tests
 
@@ -292,27 +297,33 @@ case does not capitalise "of".
 
 ## 7. The rest of the chain
 
-**Every tool** needs these, and none of them is found by the compiler:
+**Every tool** needs these, and each fails a gate until it is done:
 
-- **The counts.** `vite/docClaims.test.ts` holds every sentence that states how
-  many tools there are, in any of the phrasings its `COUNTS` table lists, to the
-  number of directories under `src/tools`, in every document and every comment.
-  Adding a tool fails it in eight places, one of them the cold open's own
-  sentence in `index.html`, which is the first thing a visitor reads. Its
-  patterns catch the present-tense phrasings; a count phrased any other way is
-  caught by nothing - the timestamp round found ten - so after fixing the eight,
-  search for the old number spelled out.
-- **The lists the gates do not read.** The README's table of tools and its
-  table of what each conversion is held to; the port-set table in
-  [architecture.md](architecture.md#the-whole-set-as-it-stands); and the
-  verification skill's list of tool ids in its `SKILL.md`. Its probes compare
-  the live `/tools` page with the manifest itself, so they need no edit.
+- **The tables that list every tool.** The README's table of tools, the
+  port-set table in [architecture.md](architecture.md#the-whole-set-as-it-stands)
+  and the verification skill's list of tool ids sit between `manifest:` markers,
+  and `manifestTables.test.ts` fails until each says what the manifest says -
+  its failure prints the replacement, so the fix is a paste.
+- **A sample in `determinism.test.ts`,** which runs the tool twice with the
+  clock moved decades and requires the same answer. A tool jsdom cannot run
+  names the `check:browsers` section that runs it twice instead, and that
+  section has to exist, be in `SECTIONS` and drive the tool's page.
 - **A name in backticks must exist.** In a document or a code comment, the doc
   gate refuses a backticked identifier the code does not define - somebody
   else's (a Go function, a specification's abstract operation) included. Write
   it plain, or add it to the gate's exemption table with a reason.
-- **A category** is an entry in `TOOL_CATEGORIES`, which is shared: every
-  entry must hold a tool, so a new one is a decision rather than a line.
+- **A category** is an entry in `TOOL_CATEGORIES`, which is shared: every entry
+  must hold a tool, and the palette's `PALETTE_CATEGORY_ORDER` must list every
+  one, so a new category is a decision rather than a line.
+- **Option labels that fit.** `checkSelectLabels` puts every option label into
+  its trigger on the tool page and in the inspector at every width the harness
+  measures, and fails one that wraps, is cut off or runs into the arrow. At
+  320px a trigger holds about twenty-seven characters of the value font.
+
+**Nothing states how many tools there are,** so there is no count to update:
+the doc gate fails a sentence that states it - see
+[Claims in documents](../CONTRIBUTING.md#claims-in-documents) for the shapes it
+reads. What it cannot read is a count phrased another way; do not write one.
 
 **A tool that can lose something** - it declares a `report` port:
 
@@ -331,17 +342,19 @@ case does not capitalise "of".
     it as `<Tool name> Converted`, as a text box's value. A tool whose first
     output is not text, has a view of its own, or is labelled anything else
     cannot have a row until the harness learns to read it - relabelling a port
-    to fit is not the fix. This is an accident of the four tools that had rows,
-    kept as a stated limit. Four of the eight tools with a report port are
-    outside it today - base64 (`Result`), jwt-decode (the verdict view),
-    image-convert and video-remux (bytes) - so none of their losses can be a
-    row.
+    to fit is not the fix. This is an accident of the tools that had rows,
+    kept as a stated limit. Base64 (`Result`), jwt-decode (the verdict view),
+    image-convert and video-remux (bytes) are outside it today, so none of
+    their losses can be a row.
   - **`choose` only drives a select.** An option typed into a text field has to
     be carried in the row's input. Deliberate enough: every option a loss has
     depended on so far is a select, and a typed one would need the harness to
     know which control it is, which the page does not say.
 - **Warn is a promise.** A `warn` note is something that went in and did not
   come out, and it is printed on the node's face; everything else is `info`.
+  The one exception is image-convert's metadata other than a location, kept at
+  `info` because nearly every photograph has some - the reasoning is in its
+  README. A second exception needs a reason written down as that one is.
 
 **A tool that converts** needs a section in the
 [conversion matrix](conversion-matrix.md), with the evidence for each verdict,
@@ -369,10 +382,12 @@ pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build && p
 pnpm check:browsers
 ```
 
-`registry.test.ts` will tell you if the manifest and the implementation
-disagree. `bundle:check` will tell you if your tool leaked into the initial
-payload instead of becoming its own chunk. `check:browsers` needs the network
-and an idle machine; see [CONTRIBUTING](../CONTRIBUTING.md#three-more-that-are-not-in-ci).
+`registry.test.ts` will tell you if a directory and the manifest disagree, or
+if a `meta.ts` imports code. `bundle:check` will tell you if your tool leaked
+into the initial payload instead of becoming its own chunk. `check:browsers`
+needs the network and an idle machine, and since round twenty-six it runs the
+verification skill against the build too (`checkVerificationSkill`); see
+[CONTRIBUTING](../CONTRIBUTING.md#three-more-that-are-not-in-ci).
 Record the round in [test-findings.md](test-findings.md).
 
 The tool then appears in the index, in canvas search, in the palette, and can
@@ -381,6 +396,9 @@ having been edited.
 
 ## What you did not have to do
 
+- Write the metadata twice. `index.ts` spreads `meta.ts`.
+- Add a loader entry. The glob finds the directory.
+- Update a count of tools. There is none to update.
 - Register a route. `/tools/:toolId` is generic.
 - Write any UI. `OptionField[]` is rendered by the shared runner and by the
   node inspector.

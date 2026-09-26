@@ -35,7 +35,7 @@ This directory is the maintained source for verifying the user-facing behaviour 
 | ------------- | -------------------------------- | ---------------------------------------------------------------- | --------- |
 | `canvas`      | [canvas.md](canvas.md)           | Cold open, palette, nodes, inspector, reactive execution         | yes       |
 | `pipelines`   | [pipelines.md](pipelines.md)     | Wiring tools together, share links, data flowing down a chain    | yes       |
-| `tools-index` | [tools-index.md](tools-index.md) | `/tools` — browsing, searching and filtering the eleven tools    | yes       |
+| `tools-index` | [tools-index.md](tools-index.md) | `/tools` — browsing, searching and filtering every tool          | yes       |
 | `tool-page`   | [tool-page.md](tool-page.md)     | `/tools/<id>` — running one tool standalone with an explicit Run | yes       |
 | `appearance`  | [appearance.md](appearance.md)   | `/styleguide`, theme presets, the theme editor, persistence      | partly    |
 
@@ -52,7 +52,7 @@ Deeper probes, run on their own when the feature they cover changes:
 
 Named here rather than left to be discovered as a silent gap:
 
-- **Per-tool correctness for every tool but two.** `drive.mjs` proves `base64` and `hash` against Node oracles. `diff`, `jwt-decode`, `regex-tester`, `color-convert`, `image-convert`, `video-remux`, `text-convert`, `timestamp` and `structured-data`'s full format matrix are covered by the unit suite and `pnpm check:browsers`, not here. Add a drive when one of them changes.
+- **Per-tool correctness beyond `base64` and `hash`.** `drive.mjs` proves those two against Node oracles. Every other tool, and `structured-data`'s full format matrix, is covered by the unit suite and `pnpm check:browsers`, not here. Add a drive when one of them changes.
 - **File input and download.** Every tool accepts a dropped file and offers Download; no drive exercises either. Use Playwright's `setInputFiles` and `waitForEvent('download')` when you need it.
 - **Touch, pinch-zoom and narrow widths.** `pnpm check:browsers` covers these against `dist/`, including every Radix popover at phone widths (`checkPopovers`). Reproduce here with a `viewport` + `hasTouch` context if a mobile bug is reported. A console error seen at one width is a question about every width - `probe-popover.mjs` is the pattern.
 - **The service worker / offline mode.** Fresh contexts have no registration, so no drive ever exercises the cached path.

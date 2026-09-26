@@ -184,7 +184,23 @@ export default defineConfig({
      * that still exist.
      */
     sourcemap: 'hidden',
-    rolldownOptions: { output: ASSET_NAMES },
+    rolldownOptions: {
+      output: {
+        ...ASSET_NAMES,
+        /*
+         * EVERY TOOL'S meta.ts IN ONE CHUNK. The manifest imports each one
+         * eagerly and each tool's own chunk imports it too, and a module
+         * shared between the entry and one lazy chunk is given a chunk of its
+         * own - so the first page load preloaded eleven files of under a
+         * kilobyte each, measured when the metadata moved out of manifest.ts
+         * (round twenty-six). Grouped, it is one small initial chunk and the
+         * tool chunks import from it.
+         */
+        codeSplitting: {
+          groups: [{ name: 'manifest', test: /[\\/]src[\\/]tools[\\/][^\\/]+[\\/]meta\.ts$/ }],
+        },
+      },
+    },
   },
 
   test: {

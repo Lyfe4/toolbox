@@ -2,6 +2,7 @@ import { defineTool, eraseTool, ok, type ErasedTool } from '@/features/registry/
 import { textToBytes } from '@/lib/base64';
 
 import { digestChunks, formatDigest, isBroken } from './digest';
+import { hashMeta } from './meta';
 import { hashDefaultOptions, hashOptionFields, hashOptionsSchema } from './options';
 
 /** 1 MB slices, so MD5 folds a large input in without a second copy. */
@@ -25,51 +26,11 @@ function* sliceOf(bytes: Uint8Array): Generator<Uint8Array> {
  * fingerprinted, in one pipeline.
  */
 export const hashTool = defineTool({
-  id: 'hash',
-  name: 'Hash',
-  summary: 'MD5, SHA-1, SHA-256, SHA-384 and SHA-512 digests of text or files.',
-  category: 'hashing',
-
-  inputs: [
-    {
-      id: 'input',
-      label: 'Input',
-      types: ['text', 'bytes'],
-      required: true,
-      description: 'Text or a file to fingerprint.',
-    },
-  ],
-
-  /*
-   * `output`, not `digest`, and the rename cost a migration.
-   *
-   * Every other tool in the set calls its first output `output`, and that
-   * ordering is load-bearing: `resultSummary` shows the FIRST declared output
-   * on a node because "the first port is the tool's answer and the rest are
-   * its working". One tool spelling it differently made that a per-tool lookup
-   * instead of a structural fact, and `ports.test.ts` now asserts the
-   * convention for every tool at once. The LABEL stays "Digest" - the id is
-   * the wiring identity, the label is the human word for the value.
-   */
-  outputs: [
-    {
-      id: 'output',
-      label: 'Digest',
-      types: ['text'],
-      description: 'The fingerprint, in the chosen encoding and case.',
-    },
-  ],
+  ...hashMeta,
 
   optionsSchema: hashOptionsSchema,
   defaultOptions: hashDefaultOptions,
   optionFields: hashOptionFields,
-
-  execution: {
-    strategy: 'worker',
-    requiresOffscreenCanvas: false,
-    timeoutMs: 30_000,
-    maxInputBytes: 64 * 1024 * 1024,
-  },
 
   run: async ({ inputs, options }) => {
     const { input } = inputs;

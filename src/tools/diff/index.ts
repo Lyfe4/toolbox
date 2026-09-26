@@ -9,6 +9,7 @@ import {
 import { decodeDocument, hasByteOrderMark } from '@/lib/text';
 
 import { computeDiff, toJson, toUnified } from './compute';
+import { diffMeta } from './meta';
 import { diffDefaultOptions, diffOptionFields, diffOptionsSchema } from './options';
 
 /**
@@ -57,63 +58,11 @@ function asText(value: ValueOfType<'text' | 'json' | 'bytes'>, label: string): T
  * reader gets "line 12, removed: ..." rather than a wall of prefixed text.
  */
 export const diffTool = defineTool({
-  id: 'diff',
-  name: 'Diff',
-  summary: 'Compare two texts line by line, with word-level highlighting.',
-  category: 'text',
-
-  inputs: [
-    {
-      id: 'original',
-      label: 'Original',
-      types: ['text', 'json', 'bytes'],
-      required: true,
-      description: 'The text to compare against.',
-    },
-    {
-      id: 'changed',
-      label: 'Changed',
-      types: ['text', 'json', 'bytes'],
-      required: true,
-      description: 'The text to compare.',
-    },
-  ],
-
-  outputs: [
-    {
-      id: 'output',
-      label: 'Unified patch',
-      types: ['text'],
-      description: 'Standard unified diff, ready to paste into a review or apply.',
-      /*
-       * A patch's first line is `--- original` whatever the two documents
-       * were, and an identical pair produces an empty patch, so a node said
-       * either one constant or `Empty` and never `+12 -3`. `changes` is the
-       * same comparison as a structure, and `diffSummary` already reads it.
-       */
-      measuredBy: 'changes',
-    },
-    {
-      id: 'changes',
-      label: 'Changes',
-      types: ['json'],
-      description: 'Row-by-row structure, rendered here as an accessible diff.',
-      presentation: 'diff',
-    },
-  ],
+  ...diffMeta,
 
   optionsSchema: diffOptionsSchema,
   defaultOptions: diffDefaultOptions,
   optionFields: diffOptionFields,
-
-  execution: {
-    strategy: 'worker',
-    requiresOffscreenCanvas: false,
-    // Myers is O(ND); two large and wholly different files are the slow case,
-    // and the row cap in compute.ts stops the pathological end of it.
-    timeoutMs: 20_000,
-    maxInputBytes: 8 * 1024 * 1024,
-  },
 
   run: ({ inputs, options }) => {
     const original = asText(inputs.original, 'Original');

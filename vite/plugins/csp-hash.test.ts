@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 
 import { describe, expect, it } from 'vitest';
 
-import { radixViewportStylesheet } from './csp-hash';
+import { inlineScriptHashes, radixViewportStylesheet } from './csp-hash';
 
 /**
  * The Radix Select viewport stylesheet, which `style-src` admits by its hash.
@@ -60,5 +60,25 @@ describe('radixViewportStylesheet', () => {
     // Built by concatenation so the fixture holds a literal `${`.
     const source = '__html: `[data-radix-select-viewport]{width:$' + '{w}px}`';
     expect(() => radixViewportStylesheet(source)).toThrow(/no longer a fixed string/);
+  });
+});
+
+describe('inlineScriptHashes', () => {
+  const lf = '<script>\n  document.documentElement.dataset.x = "1";\n</script>';
+  const expected = `'sha256-${createHash('sha256').update('\n  document.documentElement.dataset.x = "1";\n', 'utf8').digest('base64')}'`;
+
+  it('hashes an LF document to what the browser computes', () => {
+    expect(inlineScriptHashes(lf)).toEqual([expected]);
+  });
+
+  // The browser normalises line endings before it hashes; a CRLF document's
+  // raw bytes name a script it never sees, and the page's own script is refused.
+  it('hashes a CRLF or CR document to the same, because the browser normalises first', () => {
+    expect(inlineScriptHashes(lf.replace(/\n/g, '\r\n'))).toEqual([expected]);
+    expect(inlineScriptHashes(lf.replace(/\n/g, '\r'))).toEqual([expected]);
+  });
+
+  it('leaves a script with a src alone', () => {
+    expect(inlineScriptHashes('<script src="/a.js"></script>')).toEqual([]);
   });
 });

@@ -61,19 +61,38 @@ const ENGINES = { chromium, firefox, webkit };
  */
 export function manifestTools() {
   const root = join(SKILL_DIR, '..', '..', '..');
-  const source = readFileSync(join(root, 'src', 'features', 'registry', 'manifest.ts'), 'utf8');
-  const body = source.slice(source.indexOf('export const TOOL_MANIFEST'));
-  const entryRe =
-    /\n {4}id: '([^']+)',\n {4}name: '([^']+)',\n {4}summary: '([^']+)',\n {4}category: '([^']+)',\n {4}keywords: \[([^\]]*)\]/g;
+  /*
+   * Each tool's own meta.ts, since round twenty-six: the manifest is a list of
+   * imports now, and the entries it used to hold live beside each tool. This
+   * parsed manifest.ts and found nothing the day that changed - and threw, as
+   * the check below exists to make it, when check:browsers ran it
+   * (`checkVerificationSkill`). The ORDER is still the manifest's.
+   */
+  const manifest = readFileSync(join(root, 'src', 'features', 'registry', 'manifest.ts'), 'utf8');
+  const dirOf = new Map(
+    [...manifest.matchAll(/import \{ (\w+) \} from '@\/tools\/([^/']+)\/meta';/g)].map((m) => [
+      m[1],
+      m[2],
+    ]),
+  );
+  const list = manifest.slice(manifest.indexOf('export const TOOL_MANIFEST'));
+  const order = [...list.slice(0, list.indexOf('] as const')).matchAll(/^ {2}(\w+),$/gm)].map(
+    (m) => dirOf.get(m[1]) ?? `?${m[1]}`,
+  );
+  const field = (source, name) => new RegExp(`\\n {2}${name}: '([^']+)',`).exec(source)?.[1] ?? '';
 
   const tools = [];
-  for (let m = entryRe.exec(body); m !== null; m = entryRe.exec(body)) {
+  for (const dir of order) {
+    const metaPath = join(root, 'src', 'tools', dir, 'meta.ts');
+    if (!existsSync(metaPath)) continue;
+    const source = readFileSync(metaPath, 'utf8');
+    const keywords = /\n {2}keywords: \[([\s\S]*?)\]/.exec(source)?.[1] ?? '';
     tools.push({
-      id: m[1],
-      name: m[2],
-      summary: m[3],
-      category: m[4],
-      keywords: m[5]
+      id: field(source, 'id'),
+      name: field(source, 'name'),
+      summary: field(source, 'summary'),
+      category: field(source, 'category'),
+      keywords: keywords
         .split(',')
         .map((s) => s.trim().replace(/^'|'$/g, ''))
         .filter(Boolean),
@@ -161,6 +180,13 @@ export function partitionConsoleErrors(errors) {
 }
 
 /**
+ * The engine a drive uses when it names none: Chromium, unless
+ * `PATCHBAY_ENGINE` says otherwise - which is how `check:browsers` runs this
+ * skill in the two engines it drives (`checkVerificationSkill`).
+ */
+export const DEFAULT_ENGINE = process.env.PATCHBAY_ENGINE ?? 'chromium';
+
+/**
  * Opens a browser and a fresh context.
  *
  * FRESH IS THE POINT: every context is a first-time visitor, which is what
@@ -169,7 +195,7 @@ export function partitionConsoleErrors(errors) {
  * drives order-dependent in a way that is very hard to see afterwards.
  */
 export async function openBrowser({
-  engine = 'chromium',
+  engine = DEFAULT_ENGINE,
   viewport = { width: 1440, height: 900 },
 } = {}) {
   const launcher = ENGINES[engine];
@@ -184,9 +210,13 @@ export async function openBrowser({
     if (message.type() === 'error') consoleErrors.push(message.text());
   });
   page.on('pageerror', (error) => consoleErrors.push(`pageerror: ${error.message}`));
+  CONSOLE_ERRORS.set(page, consoleErrors);
 
   return { browser, context, page, consoleErrors };
 }
+
+/** Each page's console-error list, so `shot` can take back the line it caused. */
+const CONSOLE_ERRORS = new WeakMap();
 
 /**
  * Takes the cold open down, if this page is showing one.
@@ -308,7 +338,37 @@ let shotIndex = 0;
 export async function shot(page, dir, name) {
   shotIndex += 1;
   const file = join(dir, `${String(shotIndex).padStart(2, '0')}-${name}.png`);
+  /*
+   * THE REFUSAL A SCREENSHOT CAUSES IS OURS, AND ONLY THAT ONE IS TAKEN BACK.
+   *
+   * WebKit applies the page's CSP to the stylesheet Playwright injects to take
+   * a screenshot - whatever the options, measured - refuses it, and logs the
+   * refusal as one of the page's own console errors. Every drive's "no
+   * console errors" check then failed on this skill's own evidence, in the one
+   * engine it had never been run in until check:browsers ran it there (round
+   * twenty-six). So exactly one refusal per screenshot is removed, matched by
+   * the console event that arrives for it; a refusal the APP causes in the
+   * same moment is a second event and stays. If a future WebKit stops
+   * logging, the wait times out and nothing is removed.
+   */
+  const errors = CONSOLE_ERRORS.get(page);
+  const ours =
+    page.context().browser()?.browserType().name() === 'webkit' && errors !== undefined
+      ? page
+          .waitForEvent('console', {
+            predicate: (message) =>
+              message.type() === 'error' &&
+              message.text().startsWith('Refused to apply a stylesheet'),
+            timeout: 3_000,
+          })
+          .catch(() => null)
+      : null;
   await page.screenshot({ path: file, fullPage: false });
+  const caused = ours === null ? null : await ours;
+  if (caused !== null && errors !== undefined) {
+    const at = errors.lastIndexOf(caused.text());
+    if (at !== -1) errors.splice(at, 1);
+  }
   log(dir, `    shot  ${name}.png`);
   return file;
 }

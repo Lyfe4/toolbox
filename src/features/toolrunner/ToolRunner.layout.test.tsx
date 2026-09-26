@@ -721,7 +721,7 @@ describe('an output port label', () => {
    *
    * Base64 used to declare its single output as "Output", under a panel whose
    * heading is "Output" - two labels for one value, and the same duplication on
-   * five of the nine tools. The rule that came out of it is that a port's label
+   * most of the tools of the day. The rule that came out of it is that a port's label
    * is drawn only where it distinguishes something, which for a one-output tool
    * is never.
    *

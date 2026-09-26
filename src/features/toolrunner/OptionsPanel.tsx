@@ -147,10 +147,7 @@ export function OptionsPanel({ fields, values, onChange, disabled = false }: Opt
                   ) : (
                     <TextInput
                       {...control}
-                      // A signing key is a password, so it gets a password
-                      // field: not security theatre, but it keeps a secret off
-                      // a shared screen and out of a screenshot.
-                      type={field.secret === true ? 'password' : 'text'}
+                      type="text"
                       spellCheck={false}
                       placeholder={field.placeholder ?? ''}
                       disabled={disabled}

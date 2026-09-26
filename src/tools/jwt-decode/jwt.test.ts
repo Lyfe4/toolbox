@@ -1279,6 +1279,24 @@ describe('a numeric claim past 2^53', () => {
   });
 
   /*
+   * NAMES FIVE AND COUNTS THE REST. This note listed the first five paths and
+   * stopped, so a token with seven rounded claims read as a complete list of
+   * five - the one copy of the "and N more" bargain that had lost its count,
+   * found when every copy became `someOf` in round twenty-six.
+   */
+  it('names five of seven and says how many more there are', async () => {
+    const claims = Object.fromEntries(
+      ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((key) => [key, '12345678901234567890']),
+    );
+    const report = await reportOf(
+      bigToken(JSON.stringify(claims).replace(/"12345678901234567890"/g, '12345678901234567890')),
+    );
+    expect(report).toContain('7 claims were rounded');
+    expect(report).toContain('payload.e, and 2 more.');
+    expect(report).not.toContain('payload.f');
+  });
+
+  /*
    * THE NEGATIVE CONTROLS.
    *
    * An ordinary token must say nothing, and - the one that matters - neither

@@ -98,6 +98,44 @@ export function sourceOf(bytes: Uint8Array): ByteSource {
 }
 
 /**
+ * A source that counts every byte a reader asks it for.
+ *
+ * The WORK a reader does over a file, measured in the file's own unit rather
+ * than in milliseconds. A reader that believed a count the file chose, or
+ * resynchronised through the same bytes forever, asks for far more than the
+ * file holds - on any machine, however busy. These tests used to hold that
+ * with a stopwatch, which measured the machine; this is the observable seam
+ * round five's matrix said did not exist.
+ */
+export function countingSource(bytes: Uint8Array): {
+  readonly source: ByteSource;
+  readonly read: () => number;
+} {
+  const inner = residentSource(bytes as Bytes);
+  let read = 0;
+  const span = (at: number, length: number): number =>
+    Math.max(0, Math.min(bytes.byteLength, at + length) - Math.max(0, at));
+  return {
+    source: {
+      size: inner.size,
+      u8: (at) => {
+        read += 1;
+        return inner.u8(at);
+      },
+      view: (at, length) => {
+        read += span(at, length);
+        return inner.view(at, length);
+      },
+      slice: (at, length) => {
+        read += span(at, length);
+        return inner.slice(at, length);
+      },
+    },
+    read: () => read,
+  };
+}
+
+/**
  * A result's bytes, for a test that wants to compare them.
  *
  * Every fixture here produces an output far below the sink's spill threshold,

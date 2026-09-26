@@ -143,8 +143,8 @@ export function ToolsIndexPage() {
       {/*
         THE PRIVACY CLAIM, ONCE, ON THE PAGE THAT LISTS EVERY TOOL.
 
-        It used to be a panel on each of the ten tool pages - the same four
-        lines of prose, ten times over - and it went from there when the tool
+        It used to be a panel on every tool page - the same four lines of
+        prose, once per tool - and it went from there when the tool
         page's content column needed to stop being the tallest thing on it.
         This is the page it belongs on: the claim is about the application
         rather than about any one tool, and said here it is said once.

@@ -394,6 +394,7 @@ const NAMED_BUT_NOT_DEFINED: Readonly<Record<string, string>> = {
   // The worked example in adding-a-tool.md: a tool that does not exist, on purpose.
   'src/tools/case-convert/index.ts': "adding-a-tool.md's worked example",
   'src/tools/case-convert/options.ts': "adding-a-tool.md's worked example",
+  'src/tools/case-convert/meta.ts': "adding-a-tool.md's worked example",
   'src/tools/case-convert/case-convert.test.ts': "adding-a-tool.md's worked example",
   'src/tools/case-convert/README.md': "adding-a-tool.md's worked example",
   'case.ts': "adding-a-tool.md's worked example",
@@ -609,31 +610,6 @@ export const COUNTS: readonly Count[] = [
       arrayLength(textOf('scripts/cross-browser-check.mjs'), 'SECTIONS', /\bcheck[A-Z]\w*/g),
     phrases: [/\bthe\s+(\d+)\s+section\s+names\b/gi, /\bof\s+(\d+)\s+sections\b/gi],
   },
-  {
-    what: 'tools: directories under src/tools with an index.ts',
-    truth: () => TOOL_DIRECTORIES.length,
-    /*
-     * Present tense only. "all nine tools" in a comment about what the port
-     * audit removed is a sentence about the day it was written, and correct;
-     * "this filters eight tools" is a sentence about today.
-     */
-    phrases: [
-      /\b(\w+)\s+tools\s+that\s+run\b/gi,
-      /\bfilters\s+(\w+)\s+tools\b/gi,
-      /\blists\s+(\w+)\s+tools\b/gi,
-      /\btoday's\s+(\w+)\s+tools\b/gi,
-      /\bthe\s+(\w+)\s+tools\s+in\s+the\s+registry\b/gi,
-      /\b\w+\s+of\s+the\s+(\w+)\s+tools\s+are\s+resident\b/gi,
-    ],
-  },
-  {
-    what: 'resident tools: those not declared with defineStreamingTool',
-    truth: () =>
-      TOOL_DIRECTORIES.filter(
-        (tool) => !textOf(`src/tools/${tool}/index.ts`).includes('defineStreamingTool('),
-      ).length,
-    phrases: [/\b(\w+)\s+of\s+the\s+\w+\s+tools\s+are\s+resident\b/gi],
-  },
 ];
 
 /**
@@ -670,6 +646,79 @@ function statementsOf(count: Count): readonly Stated[] {
           says: numberFrom(match[1] ?? ''),
         });
       }
+    }
+  }
+  return found;
+}
+
+/* ========================================================================== *
+ * Rule 5 - nothing states how many tools there are
+ * ========================================================================== */
+
+/**
+ * WHY A PROHIBITION AND NOT A COUNT. Rule 3 held the number of tools in the
+ * six phrasings `COUNTS` listed, and round twenty-four added a tool and found
+ * nineteen more sentences stating the number in phrasings it did not list -
+ * one of them already false before that round. A phrase list is a list of the
+ * ways somebody has already written a count, and the next sentence is written
+ * another way. And almost none of those sentences said anything the list of
+ * tools does not: "eleven tools share one component" is "every tool shares
+ * one component" with a number that goes stale.
+ *
+ * So from round twenty-six the number is not written, and this fails any
+ * sentence that writes it in one of the shapes the stale ones took:
+ *
+ *   `eleven tools`, `ten tool pages`   - a number of five or more before tools
+ *   `four of the eight tools`          - any number of five or more after "of the"
+ *   `every tool but two`               - a count of the exceptions is a count too
+ *
+ * Five, because a sentence about composing tools - "a chain of four tools",
+ * "two tools that happen to sit together" - is about a graph somebody built,
+ * not about the registry, and those stop at four in this repository; the
+ * registry's own number is past ten and only grows. A count below five of a
+ * named subset - "the three tools whose answer is a serialisation" - is held
+ * by the test that names the subset, not by this.
+ *
+ * WHAT IT CANNOT SEE is a count phrased another way - "the other ten", "all
+ * eleven" with no noun after it - and it says so rather than claiming the
+ * whole class: CONTRIBUTING's "Claims in documents" lists these shapes as the
+ * ones held.
+ */
+const MANY = String.raw`(?:five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|[5-9]|[1-9]\d+)`;
+const ANY = String.raw`(?:one|two|three|four|${MANY.slice(3, -1)})`;
+const TOOL_NOUN = String.raw`(?:tools|tool\s+pages|tool\s+ids)`;
+
+export const TOOL_COUNT_SHAPES: readonly RegExp[] = [
+  new RegExp(String.raw`\b${MANY}\s+(?:[\w-]+\s+){0,2}${TOOL_NOUN}\b`, 'gi'),
+  new RegExp(String.raw`\b${ANY}\s+of\s+(?:the\s+)?${MANY}\s+(?:[\w-]+\s+)?${TOOL_NOUN}\b`, 'gi'),
+  new RegExp(String.raw`\bevery\s+tool\s+but\s+${ANY}\b`, 'gi'),
+];
+
+/**
+ * Sentences in those shapes that do not count the registry, and why. Keyed by
+ * file and the phrase as it matched; an entry nobody needs fails as stale.
+ */
+const NOT_A_TOOL_COUNT: Readonly<Record<string, string>> = {
+  'src/features/execution/composition.integration.test.ts › five tools':
+    'a five-node chain the test builds, and names node by node - a graph, not the registry',
+};
+
+export function toolCountsIn(text: string): readonly string[] {
+  const found: string[] = [];
+  for (const shape of TOOL_COUNT_SHAPES) {
+    for (const match of text.matchAll(shape)) found.push(match[0].replace(/\s+/g, ' '));
+  }
+  return found;
+}
+
+function toolCountStatements(): readonly string[] {
+  const found: string[] = [];
+  for (const path of FILES) {
+    if (path in DATED || path === THIS_FILE) continue;
+    const text = unwrapped(textOf(path));
+    for (const phrase of toolCountsIn(text)) {
+      const key = `${path} › ${phrase.toLowerCase()}`;
+      if (!(key in NOT_A_TOOL_COUNT)) found.push(key);
     }
   }
   return found;
@@ -756,6 +805,16 @@ describe('documented claims', () => {
         );
       expect(wrong).toEqual([]);
     });
+  });
+
+  it('states the number of tools nowhere, in any shape a stale count has taken', () => {
+    expect(toolCountStatements()).toEqual([]);
+    const needed = new Set(
+      FILES.filter((path) => !(path in DATED) && path !== THIS_FILE).flatMap((path) =>
+        toolCountsIn(unwrapped(textOf(path))).map((phrase) => `${path} › ${phrase.toLowerCase()}`),
+      ),
+    );
+    expect(Object.keys(NOT_A_TOOL_COUNT).filter((key) => !needed.has(key))).toEqual([]);
   });
 
   it.each(CURRENT_DOCUMENTS)('%s writes no test count by hand', (document) => {
@@ -866,6 +925,33 @@ describe('the claim rules, against sentences written to be wrong', () => {
     const said = [...'the comment stripper runs over the one inline script'.matchAll(phrase)];
     expect(said.map((match) => numberFrom(match[1] ?? ''))).toEqual([1]);
     expect(COUNTS[0]?.truth()).toBe(2);
+  });
+
+  /*
+   * Rule 5 against the sentences round twenty-four found stale - one per shape
+   * - and against the composition sentences it must leave alone.
+   */
+  it('catches a tool count in every shape a stale one took, and not a chain of four', () => {
+    for (const stale of [
+      'eleven tools that run in this tab',
+      'so eleven tools share one component',
+      'Ten of the eleven tools have more than one output port',
+      'Four of the eight tools with a report port are outside it',
+      'a panel on each of the ten tool pages',
+      'Per-tool correctness for every tool but two',
+      'prefetching 11 tools to save one fetch',
+    ]) {
+      expect(toolCountsIn(stale).length, stale).toBeGreaterThan(0);
+    }
+    for (const fine of [
+      'a chain of four tools',
+      'two tools that happen to sit together',
+      'the three tools whose answer is a serialisation',
+      'six tool names in a notification is a paragraph',
+      'every tool shares one component',
+    ]) {
+      expect(toolCountsIn(fine), fine).toEqual([]);
+    }
   });
 
   it('catches a hand-written test count', () => {

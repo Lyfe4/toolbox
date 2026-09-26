@@ -16,6 +16,7 @@
 import { createHash } from 'node:crypto';
 
 import {
+  DEFAULT_ENGINE,
   ORIGIN,
   openBrowser,
   gotoCanvas,
@@ -444,7 +445,7 @@ const FEATURES = {
 };
 
 const args = process.argv.slice(2);
-const engine = args.find((a) => a.startsWith('--engine='))?.split('=')[1] ?? 'chromium';
+const engine = args.find((a) => a.startsWith('--engine='))?.split('=')[1] ?? DEFAULT_ENGINE;
 const requested = args.filter((a) => !a.startsWith('--'));
 const names = requested.length === 0 || requested[0] === 'all' ? Object.keys(FEATURES) : requested;
 

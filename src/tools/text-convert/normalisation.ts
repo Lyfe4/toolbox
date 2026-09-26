@@ -12,6 +12,7 @@ import {
 import { compareRendered, renderedCensusOfHtml } from '@/lib/markup/rendering';
 import { lost, noted, type ToolNote } from '@/lib/notes';
 import { plural } from '@/lib/plural';
+import { someOf } from '@/lib/someOf';
 
 import type { SourceFormat, TargetFormat } from './detect';
 
@@ -153,12 +154,12 @@ function afterHub(input: NormalisationInput): readonly string[] {
  * every by-name list in this file strikes.
  */
 function classList(classes: readonly LostClassName[]): string {
-  const shown = classes
-    .slice(0, 5)
-    .map(({ name, elements }) => `${name} on ${elements.map((tag) => `<${tag}>`).join(', ')}`)
-    .join('; ');
-  const rest = classes.length - Math.min(classes.length, 5);
-  return rest > 0 ? `${shown}; and ${rest.toString()} more` : shown;
+  return someOf(
+    classes.map(
+      ({ name, elements }) => `${name} on ${elements.map((tag) => `<${tag}>`).join(', ')}`,
+    ),
+    '; ',
+  );
 }
 
 export function normalisationNotes(input: NormalisationInput): readonly ToolNote[] {
@@ -347,11 +348,8 @@ function identifierNotes(input: NormalisationInput): readonly ToolNote[] {
 
   // Capped with a count, the same bargain the by-path reports make: a document
   // with two hundred anchors would otherwise produce a list nobody reads.
-  const listed = (names: readonly string[], describe: (name: string) => string): string => {
-    const shown = names.slice(0, 5).map(describe).join(', ');
-    const rest = names.length - Math.min(names.length, 5);
-    return rest > 0 ? `${shown}, and ${rest.toString()} more` : shown;
-  };
+  const listed = (names: readonly string[], describe: (name: string) => string): string =>
+    someOf(names.map(describe));
 
   const renamed = renamedIdentifiers(declared, after.identifiers, prefix);
   if (renamed.length > 0) {

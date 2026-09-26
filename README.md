@@ -125,19 +125,23 @@ HTML to the app, so the joins are asserted instead — see
 
 ## The tools
 
-| Tool                | Does                                                                        |
-| ------------------- | --------------------------------------------------------------------------- |
-| **Base64**          | Encode text or files, decode back to bytes.                                 |
-| **Structured data** | JSON, YAML, CSV and TSV, with auto-detection.                               |
-| **Hash**            | MD5 and the SHA family, over text or files.                                 |
-| **JWT**             | Decode a token, and verify it when you supply the key.                      |
-| **Diff**            | Compare two texts, with word-level highlighting.                            |
-| **Regex**           | Test a pattern, with groups and replacement.                                |
-| **Colour**          | Convert hex, `rgb()`, `hsl()` and `oklch()`, with contrast checks.          |
-| **Image**           | Convert and resize between PNG, JPEG and WebP, with a before-and-after.     |
-| **Text convert**    | Markdown, HTML and plain text, with a sandboxed preview and rich-text copy. |
-| **Video**           | Repackage a video into an MP4 without re-encoding, or extract its audio.    |
-| **Timestamp**       | Unix time, RFC 3339 and readable dates in any time zone, both ways.         |
+<!-- manifest:tools:begin -->
+
+| Tool                | Does                                                                         |
+| ------------------- | ---------------------------------------------------------------------------- |
+| **Base64**          | Encode text or files to base64, and decode base64 back to bytes.             |
+| **Structured data** | Convert between JSON, YAML, CSV and TSV, with auto-detection.                |
+| **Hash**            | MD5, SHA-1, SHA-256, SHA-384 and SHA-512 digests of text or files.           |
+| **JWT**             | Decode a JSON Web Token, and verify its signature when you supply the key.   |
+| **Diff**            | Compare two texts line by line, with word-level highlighting.                |
+| **Regex**           | Test a regular expression against text, with groups and replacement.         |
+| **Colour**          | Convert between hex, rgb(), hsl() and oklch(), with contrast checks.         |
+| **Image**           | Convert and resize images between PNG, JPEG and WebP.                        |
+| **Video**           | Repackage a video into an MP4 without re-encoding it, or extract its audio.  |
+| **Text convert**    | Convert between Markdown, HTML and plain text, with GitHub Flavoured syntax. |
+| **Timestamp**       | Convert between Unix time, RFC 3339 and readable dates in any time zone.     |
+
+<!-- manifest:tools:end -->
 
 Each has its own README next to the code, which is where the interesting parts
 are written down: why [JWT](src/tools/jwt-decode/README.md) refuses
@@ -276,8 +280,9 @@ Full detail in [docs/architecture.md](docs/architecture.md).
 **Typed tool registry, split in two.** An eager manifest holds every tool's id,
 ports, limits and search terms; implementations sit behind dynamic imports, one
 chunk each. The canvas, the search box and the compatibility checks reason
-about tools without loading a line of their code. A test loads every
-implementation for real and asserts the two halves agree, so they cannot drift.
+about tools without loading a line of their code. Each tool writes its
+metadata once, in a `meta.ts` the manifest imports and the implementation
+spreads, so the two halves are one object rather than two kept in step.
 
 **Ports are a compile-time type system.** A tool's `run` signature is _derived
 from_ its declared ports, so a tool declaring a `bytes` input cannot be
@@ -317,8 +322,8 @@ a pointer rather than a file.
 > leaky value: a streaming value that some tools handle and others quietly
 > buffer would be worse than an honest ceiling. So a tool declares how it reads
 > binary input, and a windowed tool's input **has no `bytes` member to reach
-> for** — it gets a `ByteSource` over bytes that may still be on disk. Ten of
-> the eleven tools are resident and not one line of any of them changed. See
+> for** — it gets a `ByteSource` over bytes that may still be on disk. Every
+> tool but the video tool is resident, and not one line of any of them changed. See
 > [where a value's bytes are](docs/architecture.md#where-a-values-bytes-are).
 
 **Incremental caching keyed on upstream cache keys, not values.** Each node's
@@ -955,7 +960,7 @@ screen and one gap below them. See
 
 ### What reading the ports as a set found
 
-Nine tools' worth of port declarations, each written when its tool was written
+Every tool's port declarations, each written when its tool was written
 and never read beside the others. Individually every one was defensible; the
 set had four problems, and none of them is the kind a test could have asked
 about because each is a judgement about the whole.
@@ -1536,7 +1541,9 @@ was right twelve times out of twelve. It samples every frame for an
 _intermediate_ width now, which a slow machine can only remove and never invent,
 with the same measurement without the preference as the control. Three
 `video-remux` properties ran a 500 ms stopwatch inside each of three hundred
-cases against a worst case of 23 ms; the budget is on the property now. And one
+cases against a worst case of 23 ms; the budget went onto the property, and
+since round twenty-six it is not a clock at all but the bytes each case reads.
+And one
 structured-data timing assertion was **deleted** rather than repaired, because
 measurement showed no wall-clock bound could separate correct from broken in a
 suite this parallel — what replaced it is deterministic, and the cost claim is
@@ -1839,7 +1846,7 @@ three-column page only looks composed when its columns are of comparable length,
 and moving content between them cannot produce that; having less to lay out can.
 So the Ports footnote is a closed `<details>` summarised as `1 INPUT · 4 OUTPUTS`
 (389px → 92px), and the Privacy panel is gone from tool pages: it was identical
-boilerplate on all ten, and the claim it makes is on the home page, in this file
+boilerplate on every one, and the claim it makes is on the home page, in this file
 and in SECURITY.md. The columns are 444 / 302 / 621 against 922 / 302 / 621, and
 the page is 985px against the 1531 it started at.
 
@@ -2001,7 +2008,7 @@ suite and ten against the harness, and four of them exposed a check rather than
 a defect — which is the reason for the exercise. "Every card in a row is the
 same height" was already true before the change. The metadata alignment check
 passed against three `auto` rows, because `align-content: stretch` distributes
-the spare height equally and today's eleven tools all have two-line metadata; it
+the spare height equally and every tool in the registry has two-line metadata; it
 takes a tall-summary fixture, in the style of the tall-options one, to ask the
 question the rule actually answers. "Neither type list wraps" compared a type
 list to the flex row holding it — which _grows with it_ — so it was true of
@@ -2155,16 +2162,17 @@ deployment defect.
 
 ## Adding a tool
 
-A tool is one directory and two edits. Full worked example in
+A tool is one directory and one line in the manifest. Full worked example in
 [docs/adding-a-tool.md](docs/adding-a-tool.md).
 
 ```ts
-// src/tools/case-convert/index.ts
-export const caseConvertTool = defineTool({
+// src/tools/case-convert/meta.ts - what the app knows without loading the tool
+export const caseConvertMeta = {
   id: 'case-convert',
   name: 'Case',
   summary: 'Convert text between upper, lower, title, snake and kebab case.',
   category: 'text',
+  keywords: ['camel', 'snake', 'kebab'],
   inputs: [
     {
       id: 'input',
@@ -2182,31 +2190,35 @@ export const caseConvertTool = defineTool({
       description: 'The text in the chosen case.',
     },
   ],
-  optionsSchema: caseOptionsSchema,
-  defaultOptions: caseDefaultOptions,
-  optionFields: caseOptionFields,
   execution: {
     strategy: 'main',
     requiresOffscreenCanvas: false,
     timeoutMs: 5_000,
     maxInputBytes: 2 * 1024 * 1024,
   },
-  // `inputs.input` is narrowed to the text variant by the port declaration
-  // above — the run signature is derived from the ports, not asserted.
+} as const satisfies ToolManifestEntry;
+
+// src/tools/case-convert/index.ts - the tool, which spreads its metadata
+export const caseConvertTool = defineTool({
+  ...caseConvertMeta,
+  optionsSchema: caseOptionsSchema,
+  defaultOptions: caseDefaultOptions,
+  optionFields: caseOptionFields,
+  // `inputs.input` is narrowed to the text variant by the port declaration in
+  // meta.ts - the run signature is derived from the ports, not asserted.
   run: ({ inputs, options }) =>
     ok({ output: { type: 'text', text: convert(inputs.input.text, options.target) } as const }),
 });
 ```
 
-Then an entry in the manifest — the same metadata again, without `run`,
-because the manifest is eager and the tool is not; `registry.test.ts` fails if
-the two disagree — and one line in the loader. (This said "one line in the
-manifest", and the example above it did not compile: it had no
-`requiresOffscreenCanvas`, which every tool must state, and its ports had no
-description, which `ports.test.ts` requires.) It now appears in the
-index, in canvas search and in the palette, and can be wired to anything with
-compatible ports — without any of those places being edited. No route, no UI,
-no worker message type, no caching, no cancellation handling.
+Then the metadata goes into `TOOL_MANIFEST`, where the tool should sit in
+the index - the one line. Until round twenty-six the manifest held a second copy
+of the metadata, kept in step by a test, and a loader held a third list of
+tools; now the metadata is written once and the loader is a glob over
+`src/tools`, so neither can be forgotten. It appears in the index, in canvas
+search and in the palette, and can be wired to anything with compatible ports -
+without any of those places being edited. No route, no UI, no worker message
+type, no caching, no cancellation handling.
 
 ## Design system
 

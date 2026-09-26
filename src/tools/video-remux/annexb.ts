@@ -158,7 +158,7 @@ function toRbsp(bytes: Uint8Array): Uint8Array {
  * refused TRACK, decided by the caller looking at what it got, rather than an
  * exception that takes the worker down with every unrelated request in flight.
  */
-class BitReader {
+export class BitReader {
   private at = 0;
 
   constructor(private readonly bytes: Uint8Array) {}

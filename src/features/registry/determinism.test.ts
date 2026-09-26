@@ -6,6 +6,7 @@ import { residentBinary } from '@/lib/binary';
 import { makeMp4, sampleBytes } from '@/tools/video-remux/fixtures';
 
 import { getManifestEntry, loadTool, TOOL_MANIFEST, type ToolId } from './index';
+import harness from '../../../scripts/cross-browser-check.mjs?raw';
 
 import type { ToolValue } from './types';
 
@@ -29,8 +30,11 @@ import type { ToolValue } from './types';
  * encoder - differs between browsers, which is a different question with its
  * own answer (the timestamp tool names the tz release; image output is not
  * claimed byte-identical across engines). `image-convert` needs a canvas that
- * jsdom does not have and is not run here: its pixels come from the engine's
- * encoder and its one other input to the output, the file's name, is an input.
+ * jsdom does not have and is not run here - it was checked by READING its code
+ * in round twenty-five, and reading is not a check. Since round twenty-six a
+ * tool this file cannot run names the `check:browsers` section that runs it
+ * twice instead, and that section has to exist, be in the run and drive the
+ * tool's page - so "not run here" cannot quietly mean "not run".
  */
 
 /** One input per tool that produces a real answer, rather than a refusal. */
@@ -104,8 +108,10 @@ const SAMPLES: Readonly<
   timestamp: { inputs: { input: { type: 'text', text: '2024-09-26T08:00:00+02:00' } } },
 };
 
-/** Tools this file cannot run, each with the reason in the note above. */
-const NOT_RUN: readonly ToolId[] = ['image-convert'];
+/** Tools this file cannot run, each with the harness section that runs them twice. */
+const RUN_IN_THE_HARNESS: Readonly<Partial<Record<ToolId, string>>> = {
+  'image-convert': 'checkImageDeterminism',
+};
 
 const engine = createExecutionEngine({
   createWorker: () => {
@@ -130,10 +136,24 @@ describe('a tool run twice, decades apart', () => {
    * a sample - which is the moment to ask whether anything it produces
    * depends on when it runs.
    */
-  it('has a sample for every tool it can run, and a reason for every one it cannot', () => {
+  it('has a sample for every tool it can run, and a harness run for every one it cannot', () => {
     const ids = TOOL_MANIFEST.map((entry) => entry.id);
-    expect([...Object.keys(SAMPLES), ...NOT_RUN].sort()).toEqual([...ids].sort());
+    expect([...Object.keys(SAMPLES), ...Object.keys(RUN_IN_THE_HARNESS)].sort()).toEqual(
+      [...ids].sort(),
+    );
   });
+
+  it.each(Object.entries(RUN_IN_THE_HARNESS))(
+    '%s is run twice by %s in check:browsers, which exists and is in the run',
+    (id, section = '') => {
+      const start = harness.indexOf(`async function ${section}(`);
+      expect(start, `no ${section} in scripts/cross-browser-check.mjs`).toBeGreaterThan(-1);
+      const sections = harness.slice(harness.indexOf('const SECTIONS = ['));
+      expect(sections.slice(0, sections.indexOf('];'))).toMatch(new RegExp(`\\b${section},`));
+      const body = harness.slice(start, harness.indexOf('\nasync function ', start + 1));
+      expect(body).toContain(`/tools/${id}`);
+    },
+  );
 
   const runnable = Object.entries(SAMPLES).map(([id, sample]) => ({ id: id as ToolId, sample }));
 

@@ -78,11 +78,17 @@ worker or anything visual.** jsdom has no layout engine, no Worker, no
 `OffscreenCanvas` and no pointer events, so the unit suite is structurally
 unable to see most of what that script checks.
 
+**It also runs the verification skill**, against the build it is serving and
+in both of its engines (`checkVerificationSkill`), so a skill script that no
+longer starts or no longer agrees with the app fails the run that would ship
+it. Until round twenty-six the skill ran only when somebody remembered, and its
+probes were broken for a round before anybody did.
+
 **While iterating, run only the sections you could have affected** — and never
 treat that as the run a commit needs:
 
 ```bash
-pnpm check:browsers --list                              # the 58 section names
+pnpm check:browsers --list                              # the 61 section names
 pnpm check:browsers --only=popovers,valuemodel          # a substring of each, `check` optional
 pnpm check:browsers --only=outputviews --engine=webkit  # one engine
 ```
@@ -305,6 +311,14 @@ not survive. Where the input space is small enough to sweep, sweep it — and
 where it is not, walk a FIXED stride through it, so the test either passes for
 everybody or fails for everybody.
 
+**A bound on work is counted, not timed.** `pnpm test` runs over a hundred
+files at once, so a stopwatch in a test measures the machine: it fails under
+load with the code right, and round twenty-six found three that could not fail
+against the guard they were named for at all. Count what the stopwatch stood
+for - the bytes a reader asks its source for (`countingSource`), the bits a
+parse consumes, the renders a pan causes - and leave the one real clock, the
+test runner's own timeout, to catch a thing that never returns.
+
 **jsdom has no layout engine.** Anything about geometry, overflow, computed
 colour or whether something actually scrolls belongs in
 `scripts/cross-browser-check.mjs`, not in a unit test that will silently pass.
@@ -329,11 +343,25 @@ checked mechanically is now checked in `pnpm test`, by
   an exemption nobody needs any more fails.
 - **A harness section named anywhere exists.** Any `check…` name in a document
   or a comment.
-- **A count the code can count is counted.** "The two inline scripts", "four
-  payloads against four budgets", "the six gates", "the 58 section names", "eleven
-  tools that run": each is a phrase pattern in `COUNTS` and the number the code
-  gives, wherever the phrase appears, docs and comments alike. A pattern that
-  stops matching anything fails, rather than retiring in silence.
+- **A count is checked in the phrasings `COUNTS` lists, and only in those.**
+  "The two inline scripts", "four payloads against four budgets", "the six
+  gates", "the 61 section names": each is a phrase pattern in `COUNTS` and the
+  number the code gives, wherever the phrase appears, docs and comments alike.
+  A pattern that stops matching anything fails, rather than retiring in
+  silence. **The same number phrased any other way is not checked at all** -
+  which is how round twenty-four added a tool and found nineteen stale
+  sentences about how many tools there were, one of them false before it began.
+- **The number of tools is not written.** It changes with every tool and almost
+  never says anything the list does not, so the gate fails a sentence that
+  states it in any of the three shapes the stale ones took - a number of five
+  or more before "tools", a number of five or more after "of the", and "every
+  tool but" a number - anywhere but the dated records. A sentence in one of
+  those shapes that is about something else goes in the gate's exemption
+  table with its reason. A count phrased another way ("the other ten") is still not caught.
+- **A table that restates the manifest is compared with it.** The README's
+  tools, the port set in architecture.md and the skill's ids sit between
+  `manifest:` markers, and `manifestTables.test.ts` fails when one no longer
+  says what the manifest says, printing the replacement.
 - **No hand-written test count.** `pnpm test` prints it.
 
 What it cannot do is most of the job: it cannot tell whether a sentence about

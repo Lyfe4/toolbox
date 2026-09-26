@@ -501,7 +501,7 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
                       input editors above already follow. With a single output
                       the panel heading says "Output" and this line said
                       "Digest" directly under it - two labels for one value, on
-                      five of the nine tools there were then. Only hash has a
+                      most of the tools there were then. Only hash has a
                       single output now; wherever there are several, the label
                       stays, because there it distinguishes something.
 

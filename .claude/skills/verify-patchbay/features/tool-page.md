@@ -15,7 +15,7 @@
 
 ## How to get to it (user POV)
 
-- Open `https://patchbay-tools.netlify.app/tools/base64` (or any of the eleven ids) directly.
+- Open `https://patchbay-tools.netlify.app/tools/base64` (or any tool's id) directly.
 - Click a card on `/tools`.
 - Deep-link from anywhere — the SPA fallback serves the app and the router resolves the id.
 
@@ -42,4 +42,4 @@ Scripted as `driveToolPage` in `drive.mjs` (base64 encode). Run: `node .claude/s
 - **Options can appear and disappear.** Several tools show options only in certain modes (see `conditionalOptions.test.tsx`). Set the mode first, then the option that depends on it.
 - **`image-convert` and `video-remux` are slow and engine-dependent.** They need OffscreenCanvas and real media handling; budget a long timeout and prefer Chromium. WebKit under Playwright cannot play media at all, so any playback assertion there is a harness limit, not an app fault.
 - **An unknown id returns HTTP 200, not 404** — the SPA fallback serves `index.html` and the router renders the in-app 404. Assert on the rendered NotFound view, never on the status code.
-- **Only `base64` and `hash` have oracle-backed drives.** The other eight are unit-tested but unproven here; see the "Known uncovered ground" section of [README.md](README.md).
+- **Only `base64` and `hash` have oracle-backed drives.** Every other tool is unit-tested but unproven here; see the "Known uncovered ground" section of [README.md](README.md).

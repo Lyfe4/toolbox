@@ -23,6 +23,7 @@
  * Against the live site by default; PATCHBAY_ORIGIN points it elsewhere.
  */
 import {
+  ORIGIN,
   openBrowser,
   gotoPage,
   evidenceDir,
@@ -36,7 +37,9 @@ import {
 const engineArg = process.argv.find((a) => a.startsWith('--engine='));
 const ENGINES = engineArg
   ? [engineArg.slice('--engine='.length)]
-  : ['chromium', 'firefox', 'webkit'];
+  : process.env.PATCHBAY_ENGINE !== undefined
+    ? [process.env.PATCHBAY_ENGINE]
+    : ['chromium', 'firefox', 'webkit'];
 
 const VIEWPORTS = [
   { width: 1440, height: 900, name: 'desktop' },
@@ -120,6 +123,7 @@ function onScreen(m) {
 }
 
 const dir = evidenceDir('popover');
+log(dir, `popover probe @ ${ORIGIN} - ${ENGINES.join(', ')}`);
 const check = makeChecker(dir);
 const readings = [];
 
@@ -158,7 +162,20 @@ for (const engine of ENGINES) {
         // the driver's scroll to the wheel below. That misreading happened.
         const scrollBefore = await page.evaluate(() => window.scrollY);
         const m = await measure(page);
+        /*
+         * The screenshot's own stylesheet is refused by the CSP in WebKit and
+         * recorded as a violation like any other (see `shot`). Exactly one,
+         * waited for by its arrival, is taken back out of this scene's list;
+         * a refusal the app causes is a second entry and stays.
+         */
+        const beforeShot = await page.evaluate(() => window.__violations.length);
         await shot(page, dir, `${engine}-${vp.name}-${placement.replace(/\W+/g, '-')}`);
+        const shotRefused =
+          engine === 'webkit' &&
+          (await page
+            .waitForFunction((n) => window.__violations.length > n, beforeShot, { timeout: 3_000 })
+            .then(() => true)
+            .catch(() => false));
 
         // Does the page behind the open list scroll? The refused stylesheet
         // is react-remove-scroll's body lock, if the samples say so.
@@ -168,6 +185,7 @@ for (const engine of ENGINES) {
         const scrollAfterWheel = await page.evaluate(() => window.scrollY);
 
         const violations = (await page.evaluate(() => window.__violations)).slice(beforeViolations);
+        if (shotRefused) violations.splice(beforeShot - beforeViolations, 1);
         const errors = consoleErrors.slice(beforeErrors);
 
         // Choose Hashing and confirm the filter did its job.

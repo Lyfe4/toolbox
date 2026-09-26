@@ -71,6 +71,22 @@ export function radixViewportStylesheet(source: string): string {
 const sha256 = (body: string): string =>
   `'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`;
 
+/**
+ * The hash of every inline script, as the BROWSER computes it.
+ *
+ * A browser hashes a script's text after the HTML parser has normalised its
+ * line endings - CR LF and a lone CR both become LF before any element exists
+ * - so a hash of the raw bytes of a CRLF document names text no browser ever
+ * sees. Round twenty-six built such a document by accident (a file rewritten
+ * with Windows line endings) and this plugin wrote the wrong hashes without a
+ * word: both inline scripts were refused, and the cold open was left over
+ * every page. `.gitattributes` keeps a checkout LF; this keeps the build right
+ * when something else does not.
+ */
+export function inlineScriptHashes(html: string): string[] {
+  return inlineScriptBodies(html).map((body) => sha256(body.replace(/\r\n?/g, '\n')));
+}
+
 /** Extracts the bodies of every inline <script> (i.e. those without a src). */
 function inlineScriptBodies(html: string): string[] {
   const bodies: string[] = [];
@@ -130,7 +146,7 @@ export function cspHash(): Plugin {
         }
       }
 
-      const scriptHashes = inlineScriptBodies(html).map(sha256);
+      const scriptHashes = inlineScriptHashes(html);
 
       /*
        * The stylesheet is hashed FROM SOURCE, not from the build output,

@@ -312,7 +312,7 @@ describe('the sixty characters a summary is allowed', () => {
 
 describe('which output a node summarises', () => {
   /*
-   * THE FIRST DECLARED OUTPUT, and only that one. Ten of the eleven tools have
+   * THE FIRST DECLARED OUTPUT, and only that one. Every tool but `hash` has
    * more than one, and the manifest's order is not arbitrary: the first port
    * is the tool's answer and the rest are its working. This asserts the
    * ordering rule through one tool; the rule for every tool, including one
@@ -696,7 +696,7 @@ describe('the loss a node prints on its own face', () => {
    * Every assertion above builds its own payload, so all of them would pass
    * against a tool that never produces a `report` port. This asks the manifest.
    */
-  it('is a channel eight tools actually have', () => {
+  it('is a channel the reporting tools actually have, named', () => {
     /*
      * Two of these had a `report` port before round three - the two binary
      * tools, which is where the shape was invented. Four gained one, and they
