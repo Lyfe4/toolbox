@@ -30,6 +30,7 @@ import {
   artefact,
   makeChecker,
   partitionConsoleErrors,
+  compareWithManifest,
 } from './harness.mjs';
 
 /* ========================================================================== *
@@ -210,10 +211,16 @@ async function driveToolsIndex(page, dir, check) {
   const links = await page
     .locator('a[href^="/tools/"]')
     .evaluateAll((els) => [...new Set(els.map((el) => el.getAttribute('href')))]);
+  /*
+   * The manifest's set, not a count. `=== 10` failed against the site the day
+   * it deployed an eleventh tool, and would have passed against a deploy that
+   * never did - the opposite of what a check on a deploy is for.
+   */
+  const registry = compareWithManifest(links);
   check(
-    'every tool in the registry has a card',
-    links.length === 10,
-    `${String(links.length)} cards: ${links.join(' ')}`,
+    'every tool in the registry has a card, and nothing else does',
+    registry.same,
+    registry.detail,
   );
 
   /* -- Search narrows the list ------------------------------------------- */

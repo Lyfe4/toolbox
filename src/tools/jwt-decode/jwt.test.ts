@@ -1,5 +1,5 @@
 import fc from 'fast-check';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   isJsonObject,
@@ -15,6 +15,7 @@ import rfc7515 from './spec/rfc7515.json';
 import rfc7520 from './spec/rfc7520.json';
 import wycheproof from './spec/wycheproof.json';
 import { decodeToken, describeClaims, VERIFIABLE_ALGORITHMS } from './token';
+import { validityAt } from './validity';
 import {
   isTrustworthy,
   verifySignature,
@@ -220,33 +221,114 @@ describe('registered claims', () => {
   const now = Date.UTC(2026, 0, 1);
   const nowSec = now / 1000;
 
-  it('marks an expired token as expired', () => {
-    const claims = describeClaims({ exp: nowSec - 60 }, now, 0);
-    expect(claims.expired).toBe(true);
-  });
-
-  it('honours the clock tolerance', () => {
-    const claims = describeClaims({ exp: nowSec - 60 }, now, 120);
-    expect(claims.expired).toBe(false);
-  });
-
-  it('marks a not-yet-valid token', () => {
-    const claims = describeClaims({ nbf: nowSec + 600 }, now, 0);
-    expect(claims.notYetValid).toBe(true);
-  });
-
   it('renders timestamps as ISO strings', () => {
-    const claims = describeClaims({ iat: nowSec }, now, 0);
+    const claims = describeClaims({ iat: nowSec }, 0);
     expect(claims.issuedAt).toBe('2026-01-01T00:00:00.000Z');
   });
 
   it('does not produce "Invalid Date" for a nonsense timestamp', () => {
-    const claims = describeClaims({ exp: 1e30 }, now, 0);
+    const claims = describeClaims({ exp: 1e30 }, 0);
     expect(claims.expiresAt).toBe('out of range');
+  });
+
+  /*
+   * No verdict on the port. expired, notYetValid and checkedAt were each
+   * true at the moment of the run and at no other, and the run is cached.
+   */
+  it('carries the facts a verdict needs and no verdict', () => {
+    const claims = describeClaims({ iat: nowSec, nbf: nowSec, exp: nowSec + 60 }, 30);
+    expect(Object.keys(claims).sort()).toEqual([
+      'expiresAt',
+      'issuedAt',
+      'notBefore',
+      'toleranceSeconds',
+    ]);
+    expect(claims.toleranceSeconds).toBe(30);
+  });
+});
+
+describe('whether a token is usable, at a given moment', () => {
+  const now = Date.UTC(2026, 0, 1);
+  const nowSec = now / 1000;
+  const at = (claims: { exp?: number; nbf?: number }, tolerance = 0, moment = now) =>
+    validityAt(
+      { exp: claims.exp ?? null, nbf: claims.nbf ?? null, toleranceSec: tolerance },
+      moment,
+    );
+
+  it('marks an expired token as expired', () => {
+    expect(at({ exp: nowSec - 60 })).toBe('expired');
+  });
+
+  it('honours the clock tolerance', () => {
+    expect(at({ exp: nowSec - 60 }, 120)).toBe('live');
+    expect(at({ nbf: nowSec + 60 }, 120)).toBe('live');
+  });
+
+  it('marks a not-yet-valid token', () => {
+    expect(at({ nbf: nowSec + 600 })).toBe('not-yet');
+  });
+
+  /*
+   * RFC 7519 4.1.4: the token MUST NOT be accepted ON OR AFTER `exp`... and
+   * this tool has always read it as strictly after, with the tolerance as the
+   * margin. Held at the second so a change to either side of the comparison
+   * is a failing test rather than a silent shift.
+   */
+  it('turns at the second after exp plus the tolerance, not before', () => {
+    expect(at({ exp: nowSec }, 0, now)).toBe('live');
+    expect(at({ exp: nowSec }, 0, now + 1)).toBe('expired');
+    expect(at({ exp: nowSec }, 10, now + 10_000)).toBe('live');
+    expect(at({ exp: nowSec }, 10, now + 10_001)).toBe('expired');
+  });
+
+  it('says expired over not-yet when a token is both', () => {
+    expect(at({ exp: nowSec - 60, nbf: nowSec + 60 })).toBe('expired');
+  });
+
+  it('says nothing about a token that states neither time', () => {
+    expect(at({})).toBeNull();
+    expect(at({ nbf: nowSec - 60 })).toBe('live');
   });
 });
 
 describe('the tool', () => {
+  /*
+   * THE CACHE'S ONE PRECONDITION, HELD FOR THE TOOL THAT BROKE IT.
+   *
+   * A canvas node is re-run only when its key changes, and the key is the
+   * tool, its options and its inputs - so a result is served again for as long
+   * as the graph stays the same. This tool used to stamp `Date.now()` into its
+   * output and decide `expired` from it, so the cached answer to "has this
+   * token expired?" was the answer at the moment it ran, served as if it were
+   * the answer now. Two runs of the same token at two different moments must
+   * be the same value; whether it has expired belongs to whoever reads it.
+   */
+  it('produces the same value whenever it runs, so nothing in it can go stale', async () => {
+    const token = tokenOf({ alg: 'HS256' }, { sub: 'ada', iat: 1_800_000_000, exp: 1_800_003_600 });
+    const at = async (moment: number): Promise<unknown> => {
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(moment);
+      try {
+        const result = await jwtTool.run({
+          inputs: { input: { type: 'text', text: token } },
+          options: { key: '', keyEncoding: 'utf8', clockToleranceSec: 0 },
+          context,
+        });
+        if (!result.ok) throw new Error(result.error.message);
+        return result.value;
+      } finally {
+        clock.mockRestore();
+      }
+    };
+
+    // Before the token is usable, while it is live, and a day after it expired.
+    const before = await at(Date.UTC(2020, 0, 1));
+    const during = await at(1_800_001_800_000);
+    const after = await at(1_800_090_000_000);
+    expect(during).toEqual(before);
+    expect(after).toEqual(before);
+  });
+
   it('puts the signature verdict first in its output', async () => {
     const result = await jwtTool.run({
       inputs: { input: { type: 'text', text: tokenOf({ alg: 'HS256' }, { sub: '1' }) } },

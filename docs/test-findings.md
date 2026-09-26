@@ -4937,3 +4937,253 @@ oracle and its generators were most of the round - and no generator touches it.
 - Unchanged: image metadata level, `TOUCH_ROUTES`, `checkPopovers`' theme-editor
   selects, `OptionField.secret`, `checkLossReports`' 500 ms control, `someOf`,
   the wall-clock sites.
+
+## Round twenty-five, done — a JWT verdict read later, and two loose ends
+
+2026-09-26, against `5c160f5`. Part one is the finding round twenty-four filed
+and left: jwt-decode's expiry verdict going stale on the canvas. Part two is two
+things round twenty-four reported and did not finish.
+
+|                                                              | Before                                                                                      | After                                                                                                           |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| A token decoded, read two hours after it expired             | **`Expires in 5 minutes`**, on a canvas node indefinitely and on the tool page until Run    | **`Expired 1 hour ago … by this device's clock`**, on both, with nothing run again                              |
+| Tools whose output depends on when they ran                  | **1 of 11** (jwt-decode), and a comment saying the type system made that impossible         | **0**, held for 10 of 11 by `determinism.test.ts`; image-convert reasoned, not run                              |
+| Tests that read a verdict at a different moment from the run | **0**                                                                                       | 7 unit - 6 on a canvas node, a cache hit, a hidden tab and the tool page, 1 on the view - and 16 harness checks |
+| The skill's probes against the live site (11 tools)          | `probe-search.mjs` **threw before opening a browser**; `drive.mjs tools-index` **failed**   | both pass; both fail against a tree holding a tool the deploy lacks                                             |
+| … against a stale 10-tool deploy                             | `drive.mjs` would have **passed**                                                           | fails, naming the missing tool                                                                                  |
+| The two corpus constraints                                   | in adding-a-tool.md; the select one checked in `pnpm test`, the label one only in a browser | both in the corpus's own `howToAddACase` and adding-a-tool.md, both failing in `pnpm test`                      |
+| Deliberate breaks, each shown red                            | -                                                                                           | **9 unit, 2 harness builds, 2 skill** - see the proving table below                                             |
+| `pnpm test`                                                  | -                                                                                           | **9,833 passed**, 148 files, with `dist/` moved aside                                                           |
+| `check:browsers`, full run, idle                             | 3,574 passed, 0 failed, 13 skipped                                                          | **3,590 passed, 0 failed, 13 skipped** (the same thirteen), 1,399 s of sections                                 |
+
+### Part one — what goes stale, and where
+
+**It was not the cache.** Three things combined, and only the third is the
+cache:
+
+1. **The verdict was computed inside the run.** `run` called `describeClaims`
+   with `Date.now()`, in the worker, and wrote `expired`, `notYetValid` and a
+   `checkedAt` into the `Decoded` port.
+2. **The view presented that moment as now.** `JwtView` took `checkedAt` as its
+   clock - on purpose, so the countdown could never contradict the flag beside
+   it - and drew `Expires in 5 minutes` with nothing saying when "now" had been.
+   So the countdown was frozen as well as the flag, and so was every relative
+   phrase in the claims table. A token that was not yet valid stayed
+   `Not valid yet` after it became valid: the error ran in both directions.
+3. **The cache made the moment arbitrarily old.** A node is re-run only when its
+   key changes, and the key has no time in it, so the result was re-served for as
+   long as the canvas stayed mounted and the node was left alone - an hour, a
+   night with the lid shut. Editing another node re-ran the pipeline and served
+   this one from the cache, unchanged. (Leaving the canvas and coming back does
+   refresh it, and I first wrote the opposite: the mount reloads the saved graph
+   and resets the pipeline store, cache included.)
+
+| Route                           | Stale?                                                                                                                                                                  |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A canvas node's inspector       | **Yes, for as long as the canvas stays mounted.** No re-run affordance exists; only an edit to that node's own key, or leaving the canvas and coming back, refreshed it |
+| The tool page                   | **Yes, until Run is pressed again.** No cache there - the view alone was enough                                                                                         |
+| A node downstream of `Decoded`  | **Yes**: `claims.expired: false` travelled down the wire as plain data and was cached again                                                                             |
+| A share link opened later       | **No** at arrival: a link carries no input, so the node is blocked until a token is typed and then runs fresh. Stale from then on, like any node                        |
+| A saved graph reloaded tomorrow | **No** at arrival: results are never persisted, and a reload re-runs. Stale from then on                                                                                |
+| The node's face                 | **No, and never was**: `Verified · HS256` / `NOT VERIFIED · HS256` states no expiry at all                                                                              |
+
+**Measured rather than argued.** `jwtValidity.test.tsx`, run against `5c160f5`:
+six failures, every one `expected 'live' to be 'expired'` or a countdown still
+reading `in 5 hours` two hours later - and the tool's own same-value test failed
+beside them. `checkJwtValidity` against a build of
+`5c160f5`'s source: 12 of 16 red in both engines, the strip reading `Expires in 4
+years` - the worker's real clock, frozen - before and after a two-hour jump.
+
+### The right behaviour, and why round twenty-four's argument holds for a verdict
+
+Round twenty-four's argument was that anything depending on the current time
+belongs in the view, because results are cached and share links reproduce. **It
+holds, but the share-link half is the weak half** - a share link carries no
+input, so it always re-runs. The reasons that decide it are three others:
+
+- **The cache's one precondition.** `nodeCacheKey`'s comment said it relied on
+  tools being deterministic "which the type system already enforces". It cannot,
+  and jwt-decode was the counterexample, typechecking.
+- **The question is about the reading moment.** "Is this token still good?" is
+  answered at the moment somebody looks, and the only code running at that moment
+  is the view. A verdict on a port is written once, at the run.
+- **A port feeds wires.** A verdict on `Decoded` is a verdict downstream too,
+  cached again, with nothing left to say whose clock decided it.
+
+**Is a verdict different from a relative time?** It is the case that tempts:
+the verdict looks like part of what a decoder produces, and the signature
+verdict IS - it is a fact about the bytes and the key, as true tomorrow as today.
+Expiry is not. So the split is by that test rather than by which words a
+decoder usually prints: what is true whenever it is read stays on the port, and
+what is true only now is computed as it is drawn.
+
+**What it costs.** A downstream tool can no longer be handed `expired` as data.
+That is deliberate: under this cache nothing on a wire can honestly carry a
+now-dependent answer. If one is ever wanted, it needs the moment as an explicit
+input - an "as of" field - which makes the tool deterministic again.
+
+**What it does.** The port carries `issuedAt`, `notBefore`, `expiresAt` and
+`toleranceSeconds`. `validityAt` - the rule, beside the tool, so the margin is
+decided one way - is called by the view with `useNow`, a shared clock that ticks
+each second only while something is subscribed, reads itself at once when a
+hidden tab is shown or a page is restored from the back-forward cache, and
+re-renders only the strip and the relative phrases, not the payload. The strip
+now ends `by this device's clock`, because a device whose clock is wrong is one of
+the reasons anybody opens a decoder.
+
+### Anything else of the same shape
+
+Looked for across the eleven tools and the shared machinery. A class-level check
+was built rather than a reading done: `determinism.test.ts` runs each tool twice,
+the clock moved sixty years and `Math.random` reseeded between the runs, and
+requires equal results. At `5c160f5` it fails for jwt-decode and nothing else.
+
+| Candidate                                                             | Same shape?                                                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The other nine runnable tools' outputs                                | **No**: equal across the clock move and the reseed                                                                                                                                                                                                                                                                                                       |
+| image-convert                                                         | Not run (jsdom has no canvas). Its output is the engine's encoder on the input's pixels, named from the input's file name; no clock or random read                                                                                                                                                                                                       |
+| The MP4 writer's `mvhd` times                                         | **No**: written as zero, not as the moment of the remux, so the same input gives the same bytes                                                                                                                                                                                                                                                          |
+| The timestamp tool                                                    | **No**: reads no clock (round twenty-four's leak, built on purpose, was caught then); the determinism check agrees                                                                                                                                                                                                                                       |
+| Relative phrases anywhere else                                        | **No**: `relativeTime` has one caller, JwtView                                                                                                                                                                                                                                                                                                           |
+| Engine-dependent answers - tz data, image encoders                    | A question of WHERE, not when. The timestamp tool names its tz release; recorded, not changed                                                                                                                                                                                                                                                            |
+| A node's timing figure on a cache hit                                 | **No**: it is the duration of the run that produced the result, which stays true of that result                                                                                                                                                                                                                                                          |
+| regex-tester's soft budget                                            | **Machine-dependent, cached, and says so**: a stopped scan's result says "stopped early, so there may be more". Left                                                                                                                                                                                                                                     |
+| **A `timeout` or `internal` error**                                   | **Yes, and left.** Cached like any failure, and either can be a fact about the moment - a busy machine, a `postMessage` that could not allocate. A deadline measures the tool's own work, so a timeout is overwhelmingly the input's; not caching it would re-spend the whole deadline on every edit anywhere in the graph. Written into architecture.md |
+| Toasts, `useDelayedPending`, the grid's draw-in, `NodeTiming`'s count | UI about the present moment, never cached as a result                                                                                                                                                                                                                                                                                                    |
+
+### Part two — the skill's count, and the two constraints
+
+**The count was not correct for eleven tools, in three places.** Round twenty-four
+changed one of the three numbers in `probe-search.mjs` and none in `drive.mjs`:
+the probe's guard still read `TOOLS.length !== 10` and threw
+`parsed 11 manifest entries, expected 10` before opening a browser, against any
+deploy; its restore check still wanted 10; and `drive.mjs tools-index` still
+asserted `=== 10` - run today against the live site, which has eleven: `FAIL every
+tool in the registry has a card - 11 cards`. **Against a stale ten-tool deploy it
+would have passed.** A count on a deploy fails the day the deploy is right and
+passes the day it is wrong.
+
+**What it checks now** is the claim the count stood for: the SET of card ids
+equals the working tree's manifest, with every missing or extra id named.
+`manifestTools()` in `harness.mjs` reads the manifest for both probes, and checks
+its own parse against the tool directories on disk - so a pattern that stops
+matching throws rather than making every comparison vacuous, which is what the
+`!== 10` guard was for. Nothing in the skill changes when a tool is added. Run
+against the live site: both pass. With a twelfth tool in the tree that no deploy
+has: `FAIL … missing [zz-unshipped]` in both. With a tool directory the pattern
+misses: the parse throws, naming both lists.
+
+**The two constraints were documented** - round twenty-four put both in
+adding-a-tool.md - **but not where a corpus row's author reads**: the corpus's
+own `howToAddACase` said "Nothing else has to change". And only one was checked
+before a browser run:
+
+| Constraint                               | Was checked                                              | Now                                                                                               | Deliberate?                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The answer is read as `<Tool> Converted` | only by `checkLossCorpus`, as every positive red at once | `lossCorpus.test.ts`: first output labelled `Converted`, text, no view of its own; named per tool | **An accident**, of the four tools that have rows sharing a label. And the label is the smaller half: the harness reads a text box's value, so image-convert - labelled `Converted`, bytes - would fail too. Kept as a stated limit rather than removed: removing it means teaching the harness to read a verdict view and an image, for losses none of which has a row. Four of the eight tools with a report port are outside it |
+| `drawn.choose` drives a select only      | `lossCorpus.test.ts` since round twenty-three            | the same, with a message that says what to do                                                     | **Deliberate enough.** Every option a loss has depended on is a select; a typed option would need the harness to know which kind of control it is, which the page does not say                                                                                                                                                                                                                                                     |
+
+### Proving test, per check
+
+Every break applied by a script, run, and restored by hash.
+
+| Break                                            | Caught by                                                                                              |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| **the jwt-decode source at `5c160f5`**           | all 6 of `jwtValidity.test.tsx`; `jwt-decode produces the same result`; the tool's own same-value test |
+| … built, in the harness                          | `checkJwtValidity`: 12 of 16 red in both engines - every read-later check; only the reads at T0 held   |
+| no catch-up when the tab is shown again          | `catches up the moment the tab is visible again` (1 of 6)                                              |
+| … built, in the harness                          | exactly the two `catches up … before any tick` checks, in both engines (4 of 16)                       |
+| no tick: the clock read once, on subscribe       | 5 of 6 - all but the visibility case, which needs no tick                                              |
+| the view believing a verdict the payload carries | `judges exp against the reader's clock, whatever verdict the payload carries`                          |
+| a tool drawing on `Math.random` (hash)           | `hash produces the same result`                                                                        |
+| a tool stamping the time (timestamp)             | `timestamp produces the same result`                                                                   |
+| expired at `exp` itself rather than after it     | `turns at the second after exp plus the tolerance, not before`                                         |
+| colour's first output relabelled                 | `color-convert: its answer is where the harness reads it`                                              |
+| a tool in the tree that the deploy lacks         | both skill probes, naming it                                                                           |
+| a tool directory the manifest pattern misses     | `manifestTools` throws                                                                                 |
+
+**Three failures of my own on the way.** Two were the view's truncation rule
+doing its job: controls asserting `in 2 hours` for 1h59m and `in 5 hours` for
+4h59m (the page's clock flows while a run happens), given half an hour of
+margin. **The third was a race in the cache test**, found by the zone check and
+then seen in the plain suite too: it passed alone and failed after another test,
+about one run in three. The helper waited for the JWT node's strip and edited the
+graph while the same run could still be loading base64 for the other node, so
+the edit aborted it and base64 ran once instead of twice. And the testing
+library's `waitFor` polls with `setInterval`, which the file fakes, so a
+condition on an array was only re-checked when the DOM happened to change. Both
+waits now subscribe to the pipeline store's own "run finished"; six runs clean,
+and all six still red against `5c160f5`. It passed the full `pnpm test` before
+the fix - which is the argument for treating one intermittent failure as a
+finding.
+
+**No assertion measures the machine.** The unit tests fake `Date` and
+`setInterval` and move them by instruction; the harness installs Playwright's
+clock before the document loads and jumps it. Nothing asserted depends on the
+host's clock, zone or locale: the absolute time, which is in the reader's zone,
+is never asserted, and the relative phrase is `Intl.RelativeTimeFormat('en')`.
+The five new and changed test files were also run with the zone set
+in-process and checked - Pacific/Kiritimati (+14) and America/St_Johns
+(-03:30), each confirmed from `Intl` and the offset before a test ran: 381 of
+381 in both.
+
+### What was rejected
+
+- **Time in the cache key, or a TTL.** Re-runs the node and everything downstream
+  on a schedule, and the answer is still stale between runs.
+- **A cache entry that expires at the token's next transition, with a timer to
+  re-run.** Correct for the node and still wrong one wire down, where the verdict
+  is data.
+- **Keeping `checkedAt` and printing "as of 09:14".** Honest, and it hands the
+  reader the arithmetic the tool exists to do.
+- **Expiry on the node's face.** A clock on every node for one tool; the face is a
+  measurement of the result, and the result no longer holds a verdict. Not done.
+- **Reading `Date.now()` in the render.** Impure, and a re-render would be the only
+  thing that moved it; a subscription is what re-renders.
+- **Removing the `Converted` constraint now.** See the table.
+
+### Looked for and NOT found
+
+- **A second tool whose output depends on the clock or on `Math.random`.** None in
+  the nine others the check can run.
+- **A result persisted anywhere across a reload.** None: the saved graph holds
+  inputs and options; share links hold structure only.
+- **A place the verdict was read other than the strip, the table and the raw
+  JSON.** None; `resultSummary.ts` never read it.
+- **A consumer of `claims.expired`, `notYetValid` or `checkedAt` elsewhere in the
+  repository.** None, besides JwtView and its tests.
+- **A `setInterval` anywhere in `src` before this round** - which is why faking it
+  in the tests disturbs nothing else.
+- **A skill page or doc still stating a tool count in a way the doc gate misses.**
+  One: features/README.md's "8 of the 10 tools", now "every tool but two".
+
+### Anything in the framing I think is wrong
+
+1. **"The cached result."** The cache is what made it unbounded, not what made it
+   wrong: the tool page has no cache and showed the same stale verdict for as long
+   as the result stayed on screen. The defect was a verdict computed at run time
+   and presented as current.
+2. **"Keeps saying a token is valid."** Worse and wider: the countdown was frozen
+   too, the claims table's relative phrases with it, and the error ran the other
+   way for `nbf` - a token went on saying `Not valid yet` after it became valid.
+3. **"Every test reads the verdict in the same moment it was computed."** True,
+   and there is a sharper version: this repository's tests hit the defect first.
+   Two JwtView tests failed when the real date walked past the one they pinned,
+   and the fix pinned the tool's clock to the view's - the same defect, found in the
+   tests and fixed only in the tests.
+4. **"Round twenty-four listed it as found by no gate"** - and listed it as done.
+   It was a third done.
+5. **"Reported as written down nowhere."** Round twenty-four wrote both into
+   adding-a-tool.md. What was missing was the place the next author reads, and a
+   check for one of them before a browser run.
+
+### Still open
+
+- **Cached `timeout` and `internal` errors**, above: the same shape, left on
+  purpose, reasons recorded.
+- **The node face says nothing about expiry.** A decision, not made.
+- **The `Converted` limit** excludes the losses of base64, jwt-decode,
+  image-convert and video-remux from the corpus.
+- Unchanged: Safari itself, the generation recommendations, image metadata level,
+  `TOUCH_ROUTES`, `checkPopovers`' theme-editor selects, `OptionField.secret`,
+  `checkLossReports`' 500 ms control, `someOf`, the wall-clock sites.

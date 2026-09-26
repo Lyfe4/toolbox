@@ -49,25 +49,26 @@ describe('absoluteTime', () => {
 
 describe('momentOf', () => {
   it('gives the ISO form, the readable form and the raw seconds together', () => {
-    const moment = momentOf(NOW / 1000, NOW + 60_000);
+    const moment = momentOf(NOW / 1000);
 
     expect(moment?.iso).toBe('2026-09-06T12:00:00.000Z');
-    expect(moment?.relative).toBe('1 minute ago');
+    expect(moment?.ms).toBe(NOW);
+    expect(moment?.absolute).toContain('2026');
     expect(moment?.epochSeconds).toBe(NOW / 1000);
   });
 
   /*
-   * A payload from a build that predates `checkedAt` has no moment to be
-   * relative to. Printing this machine's clock instead would produce a
-   * countdown that disagrees with the `expired` flag beside it, so the
-   * relative half is simply absent.
+   * A moment no longer carries a relative phrase: it used to be computed
+   * against the run's clock and stored, which froze "in 5 minutes" for as long
+   * as the run was cached. Nothing in a Moment depends on when it is read.
    */
-  it('omits the relative phrase when there is no clock to be relative to', () => {
-    const moment = momentOf(NOW / 1000, null);
-
-    expect(moment?.relative).toBeNull();
-    expect(moment?.absolute).toContain('2026');
-    expect(moment?.epochSeconds).toBe(NOW / 1000);
+  it('holds nothing that depends on when it is read', () => {
+    expect(Object.keys(momentOf(NOW / 1000) ?? {}).sort()).toEqual([
+      'absolute',
+      'epochSeconds',
+      'iso',
+      'ms',
+    ]);
   });
 
   /*
@@ -75,8 +76,8 @@ describe('momentOf', () => {
    * row, not "Invalid Date" printed where a date belongs.
    */
   it('refuses a timestamp no Date can represent', () => {
-    expect(momentOf(1e300, NOW)).toBeNull();
-    expect(momentOf(Number.NaN, NOW)).toBeNull();
-    expect(momentOf(Number.POSITIVE_INFINITY, NOW)).toBeNull();
+    expect(momentOf(1e300)).toBeNull();
+    expect(momentOf(Number.NaN)).toBeNull();
+    expect(momentOf(Number.POSITIVE_INFINITY)).toBeNull();
   });
 });

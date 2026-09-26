@@ -18,11 +18,9 @@
  *
  *   node .claude/skills/verify-patchbay/probe-search.mjs
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 import {
-  SKILL_DIR,
+  manifestTools,
+  compareWithManifest,
   openBrowser,
   gotoPage,
   evidenceDir,
@@ -35,30 +33,12 @@ import {
 
 /* -- The oracle ------------------------------------------------------------ */
 
-const MANIFEST = join(SKILL_DIR, '..', '..', '..', 'src', 'features', 'registry', 'manifest.ts');
-const source = readFileSync(MANIFEST, 'utf8');
-const body = source.slice(source.indexOf('export const TOOL_MANIFEST'));
-const entryRe =
-  /\n {4}id: '([^']+)',\n {4}name: '([^']+)',\n {4}summary: '([^']+)',\n {4}category: '([^']+)',\n {4}keywords: \[([^\]]*)\]/g;
-
-const TOOLS = [];
-for (let m = entryRe.exec(body); m !== null; m = entryRe.exec(body)) {
-  TOOLS.push({
-    id: m[1],
-    name: m[2],
-    summary: m[3],
-    category: m[4],
-    keywords: m[5]
-      .split(',')
-      .map((s) => s.trim().replace(/^'|'$/g, ''))
-      .filter(Boolean),
-  });
-}
-
-if (TOOLS.length !== 10) {
-  /* A silently-empty oracle would make every check below pass vacuously. */
-  throw new Error(`probe-search: parsed ${String(TOOLS.length)} manifest entries, expected 10`);
-}
+/*
+ * The manifest, parsed and checked against the tool directories on disk by
+ * `manifestTools` - which is what the old `TOOLS.length !== 10` guard was for,
+ * without the number that broke on the eleventh tool.
+ */
+const TOOLS = manifestTools();
 
 /** Which tools a query should return, and via which field. */
 function expected(query) {
@@ -99,7 +79,7 @@ const QUERIES = [
     why: 'category only - searchTools reads the category, which this oracle did not until round seventeen',
   },
   { q: 'jwt', why: 'keyword reaches a tool whose name and summary never say it (base64)' },
-  { q: 'convert', why: 'multi-match across four tools' },
+  { q: 'convert', why: 'multi-match across several tools' },
   { q: 'SHA', why: 'case-insensitivity - same set as lowercase sha' },
   { q: 'zzznope', why: 'no match at all' },
 ];
@@ -129,7 +109,12 @@ try {
       .sort();
 
   const baseline = await shown();
-  check('the unfiltered index shows all eleven tools', baseline.length === 11, baseline.join(' '));
+  const everything = compareWithManifest(baseline, TOOLS);
+  check(
+    'the unfiltered index shows every tool in the manifest',
+    everything.same,
+    everything.detail,
+  );
 
   for (const { q, why } of QUERIES) {
     await search.fill(q);
@@ -178,8 +163,9 @@ try {
   const restored = await shown();
   await shot(page, dir, 'restored');
   check(
-    'and clearing it brings all eleven back, so the empty state is recoverable',
-    restored.length === 10 && JSON.stringify(restored) === JSON.stringify(baseline),
+    'and clearing it brings every one back, so the empty state is recoverable',
+    compareWithManifest(restored, TOOLS).same &&
+      JSON.stringify(restored) === JSON.stringify(baseline),
     restored.join(' '),
   );
 

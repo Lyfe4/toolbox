@@ -575,7 +575,10 @@ to destroy the worker and build a new one — and that takes down every _other_
 request that happened to be in flight.
 
 Those requests are **replayed onto the fresh worker**, not failed. A tool is a
-pure function of its inputs and options, so running it again produces the answer
+pure function of its inputs and options - which the result cache relies on too,
+and which [`determinism.test.ts`](../src/features/registry/determinism.test.ts)
+holds by running every tool twice with the clock moved decades, since round
+twenty-five found a tool that was not - so running it again produces the answer
 it would have produced, and reporting a failure on a node the user did nothing
 to is the outcome worth avoiding. A base64 node beside a runaway regex used to
 sit there for its own full 15 seconds and then report a timeout it never had.
@@ -897,6 +900,52 @@ Both produce output that is confident, well formed and stale, which is the
 worst failure a cache can have: nobody reports it, because nothing looks wrong.
 Order within the key is normalised on the _receiving_ port, so the order edges
 happen to sit in the document still cannot change it.
+
+### Nothing on a port may depend on when it ran
+
+The key says nothing about time, so a node's result is served again for as long
+as the canvas stays mounted and its graph is left alone - a lid closed
+overnight, a tab in the background, edits to every other node. (Leaving the
+canvas and coming back does clear it: the mount reloads the saved graph and
+resets the pipeline store.) That is only correct for an output that is a function of
+the tool, its options and its inputs. **jwt-decode's was not, until round
+twenty-five.** It decided `expired` from `Date.now()` inside `run`, and the view
+drew that verdict and a countdown relative to the same instant - so a token that
+expired an hour after it was decoded kept reading `Expires in 5 minutes`, with
+nothing on screen saying when "now" had been. The tool page had the same defect
+for as long as nobody pressed Run again; a share link and a reloaded saved graph
+did not, only because both re-run on arrival, and both went stale from then on.
+
+**Why a verdict is not different.** "Has this token expired?" looks like part
+of what a decoder produces, and it is exactly the question a cached value cannot
+answer: it is about the moment somebody reads the answer, and the only code that
+exists at that moment is the view. A verdict on the port is also a verdict
+DOWNSTREAM - `claims.expired: false` wired into another tool is plain data there,
+cached again, with nothing left to say whose clock decided it. So the port
+carries the facts - `exp`, `nbf`, the tolerance the user chose - and the view
+asks `validityAt` with `useNow`, a clock that ticks, catches up the moment a
+hidden tab is shown, and is named on screen: "by this device's clock", because a
+device with the wrong time is one of the reasons anybody opens a decoder.
+
+What stays on the port is what is true forever: the signature verdict (a fact
+about the bytes and the key), the claims as ISO dates, and the node's face -
+`Verified · HS256` - which says nothing about expiry and never has. Putting the
+expiry on the face would need a clock on every node, and was not done.
+
+The rule is held rather than written:
+[`determinism.test.ts`](../src/features/registry/determinism.test.ts) runs every
+tool twice with the clock moved decades and `Math.random` reseeded, and fails a
+tool whose two answers differ; `jwtValidity.test.tsx` decodes at one moment and
+reads at another on a canvas node and on the tool page; and `checkJwtValidity`
+does the same in two real engines with Playwright's clock.
+
+**The same shape, found and left.** A `timeout` or an `internal` error is cached
+like any other failure, and both can be facts about the moment - a machine that
+was busy, a `postMessage` that could not allocate - rather than about the
+inputs. Left because a deadline measures the tool's own work (see the engine
+section), so a timeout is overwhelmingly a property of the input, and not
+caching it would re-spend the whole deadline on every edit anywhere in the
+graph. Recorded in round twenty-five's findings.
 
 Two things are **not** cached, and both are deliberate:
 

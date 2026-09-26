@@ -340,6 +340,29 @@ describe('what check:browsers holds each row to', () => {
   const runnable = cases.filter((entry) => entry.input !== null);
 
   /*
+   * WHAT `checkLossCorpus` CAN READ, held where a row's author runs the tests.
+   *
+   * The harness finds a tool's answer by the accessible name `<Tool name>
+   * Converted` and reads it as a text box's value - a convention the four
+   * tools with rows happened to share, and one that was written down nowhere
+   * until round twenty-four. A row for any other tool used to fail only in a
+   * browser run, as every positive going red at once with `output` null. Now it
+   * fails here, naming the port. image-convert's first output is labelled
+   * `Converted` too, and is bytes drawn as an image: the label alone is not the
+   * contract.
+   */
+  it.each([...new Set(runnable.map((entry) => entry.tool))])(
+    '%s: its answer is where the harness reads it, a text box labelled Converted',
+    (tool) => {
+      const first = TOOL_MANIFEST.find((entry) => entry.id === tool)?.outputs[0];
+      expect(first?.label, `${tool}'s first output`).toBe('Converted');
+      expect(first?.types, `${tool}'s first output`).toContain('text');
+      const view = first !== undefined && 'presentation' in first ? first.presentation : undefined;
+      expect(view, `${tool}'s first output is drawn by a view`).toBeUndefined();
+    },
+  );
+
+  /*
    * `choose` is the page's spelling of `options`, and the one place the two
    * could disagree without anything running: a row whose page ran YAML to YAML
    * while its unit case ran YAML to JSON would be two rows under one number.
@@ -352,7 +375,10 @@ describe('what check:browsers holds each row to', () => {
       const chosen: Record<string, unknown> = {};
       for (const [label, choice] of Object.entries(entry.drawn.choose)) {
         const field = tool.optionFields.find((candidate) => candidate.label === label);
-        expect(field?.control, `no select labelled ${label}`).toBe('select');
+        expect(
+          field?.control,
+          `${label} is not a select on ${entry.tool}: checkLossCorpus can only choose from a listbox, so a typed option belongs in the row's input`,
+        ).toBe('select');
         if (field?.control !== 'select') continue;
         const value = field.choices.find((option) => option.label === choice)?.value;
         expect(value, `${label} offers no ${choice}`).toBeDefined();

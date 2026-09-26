@@ -83,9 +83,21 @@ Registered claims are a table: the moment in words, in the reader's own time
 zone with the zone named, and the raw epoch integer in its own column — because
 the reason somebody is reading a token by hand is usually that a server
 disagreed with them about one of those numbers, and the number is what they
-will paste into the argument. The relative phrase comes from `claims.checkedAt`,
-the instant the tool computed `expired`, so a tab left open for an hour cannot
-render a countdown that contradicts the flag beside it.
+will paste into the argument.
+
+**Whether the token has expired is decided as you read it, by this device's
+clock, and the strip says so.** Until round twenty-five the tool decided it
+inside the run, from `Date.now()`, and the view drew that verdict and a
+countdown relative to the same instant. A run is cached on its inputs, so on the
+canvas a token that expired after it was decoded went on reading
+`Expires in 5 minutes` for as long as the graph was left alone - a confident,
+stale "valid", which is worse than no answer. Now the output carries only what
+is true whenever it is read - the claims, their ISO dates and the tolerance you
+chose, in `claims.toleranceSeconds` - and the view applies `validityAt` to them
+with a clock that ticks each second and catches up the moment a hidden tab is
+shown again. `determinism.test.ts` holds the tool to producing the same value
+whenever it runs; `jwtValidity.test.tsx` reads the verdict hours after the run,
+on a canvas node and on this page.
 
 The whole payload stays one press away behind the view's **Raw** toggle, with
 Copy and Download — and the verdict banner sits **outside** that toggle, so one

@@ -8,8 +8,10 @@
  * usually that a server disagreed with them about one of these numbers, and
  * the number is what they will paste into the argument.
  *
- * `nowMs` is a parameter rather than a call to `Date.now()`, the same choice
- * `describeClaims` makes in the tool, so both can be pinned in a test.
+ * `relativeTime` takes `nowMs` rather than reading `Date.now()`, so it stays a
+ * pure function a test can pin. The moment it is given is the READER'S - the
+ * view's `useNow` - and never the run's: the run is cached, and a phrase
+ * relative to the run's clock was how a token read `in 5 minutes` for hours.
  */
 
 /** Second, minute, hour, day, month, year - in seconds, largest last. */
@@ -85,34 +87,31 @@ export function absoluteTime(ms: number): string {
 }
 
 /**
- * A registered claim's time, in every form worth having.
+ * A registered claim's time, in the forms that do not depend on when it is read.
  *
  * Returns null for anything that is not a usable moment, so a token carrying
  * `"exp": "soon"` or `1e300` yields a missing row rather than "Invalid Date".
+ *
+ * There is no relative phrase here any more. It used to be computed against
+ * the run's `checkedAt` and stored with the rest, which made "in 5 minutes"
+ * exactly as stale as the cached run; it is now `relativeTime(ms, now)` at the
+ * point it is drawn.
  */
 export interface Moment {
   readonly iso: string;
   readonly absolute: string;
-  /**
-   * Null when there is no clock to be relative TO.
-   *
-   * A payload from a build that predates `checkedAt` has no moment the verdict
-   * was computed at, and the alternative - reading this machine's clock at
-   * render time - would print a countdown that disagrees with the `expired`
-   * flag beside it. Saying less is the honest degradation.
-   */
-  readonly relative: string | null;
+  readonly ms: number;
   readonly epochSeconds: number;
 }
 
-export function momentOf(epochSeconds: number, nowMs: number | null): Moment | null {
+export function momentOf(epochSeconds: number): Moment | null {
   const ms = epochSeconds * 1000;
   if (!isRepresentable(ms)) return null;
 
   return {
     iso: new Date(ms).toISOString(),
     absolute: absoluteTime(ms),
-    relative: nowMs === null ? null : relativeTime(ms, nowMs),
+    ms,
     epochSeconds,
   };
 }

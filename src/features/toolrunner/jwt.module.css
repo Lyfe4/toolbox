@@ -135,6 +135,11 @@
   color: var(--pb-signal-error);
 }
 
+/* Whose clock decided it: the verdict is only as right as this device's time. */
+.clock {
+  color: var(--pb-ink-secondary);
+}
+
 /* --- Registered claims -------------------------------------------------- */
 
 .table {

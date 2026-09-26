@@ -124,7 +124,9 @@ export const jwtDecodeTool = defineTool({
       },
       header: decoded.value.header,
       payload: decoded.value.payload,
-      claims: describeClaims(decoded.value.payload, Date.now(), options.clockToleranceSec),
+      // No clock. Whether the token has expired is decided where it is read;
+      // see describeClaims.
+      claims: describeClaims(decoded.value.payload, options.clockToleranceSec),
     };
 
     const rounded = decoded.value.roundedClaims;

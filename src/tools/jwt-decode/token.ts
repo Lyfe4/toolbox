@@ -188,38 +188,24 @@ function asIso(seconds: number | null): JsonValue {
 }
 
 /**
- * Time-based claims, rendered readably.
+ * Time-based claims, rendered readably - and NO VERDICT.
  *
- * `nowMs` is a parameter rather than a call to Date.now() so the tests can pin
- * a moment; the tool passes the real clock.
+ * This used to carry expired, notYetValid and the checkedAt they were
+ * decided at. All three were true at the moment of the run and at no other,
+ * and the run is cached: a canvas node re-served the same answer for as long
+ * as its inputs stayed the same, so a token that had expired kept reading as
+ * live. Whether a token is usable is a question about the moment somebody
+ * reads the answer, so it is asked there - `validityAt`, called by the view
+ * with its own clock - and everything here is as true tomorrow as today.
+ *
+ * The tolerance is carried because the verdict needs it and the view is handed
+ * the output, not the options.
  */
-export function describeClaims(
-  payload: JsonValue,
-  nowMs: number,
-  toleranceSec: number,
-): ClaimReport {
-  const exp = numberField(payload, 'exp');
-  const iat = numberField(payload, 'iat');
-  const nbf = numberField(payload, 'nbf');
-  const nowSec = nowMs / 1000;
-
+export function describeClaims(payload: JsonValue, toleranceSec: number): ClaimReport {
   return {
-    issuedAt: asIso(iat),
-    notBefore: asIso(nbf),
-    expiresAt: asIso(exp),
-    expired: exp === null ? false : nowSec > exp + toleranceSec,
-    notYetValid: nbf === null ? false : nowSec + toleranceSec < nbf,
-    /*
-     * WHEN THESE ANSWERS WERE TRUE.
-     *
-     * `expired` is a verdict about a moment, and the moment is this one. A
-     * consumer that says "expires in 5 minutes" has to say it relative to the
-     * clock that produced the verdict rather than to its own - otherwise a tab
-     * left open for an hour renders a countdown that disagrees with the
-     * `expired` flag sitting beside it. It also means anything rendering this
-     * needs no clock of its own, which is what keeps a view a pure function of
-     * its input.
-     */
-    checkedAt: nowMs,
+    issuedAt: asIso(numberField(payload, 'iat')),
+    notBefore: asIso(numberField(payload, 'nbf')),
+    expiresAt: asIso(numberField(payload, 'exp')),
+    toleranceSeconds: toleranceSec,
   };
 }

@@ -24,19 +24,20 @@ import { JwtView } from './JwtView';
 const NOW = Date.UTC(2026, 8, 6, 12, 0, 0);
 
 /*
- * THE VIEW'S CLOCK AND THE TOOL'S CLOCK HAVE TO BE THE SAME CLOCK.
+ * ONE CLOCK, AND IT IS THE VIEW'S.
  *
- * `JwtView` takes `now` as a prop, so the rendering was already pinned. The
- * `decode` helper below runs the REAL tool, which reads `Date.now()` to decide
- * whether a token has expired - so the two disagreed by however long it had
- * been since this file was written, and every `exp`/`nbf` case written
- * relative to NOW quietly went stale. Two of them started failing when the
- * real date walked past 2026-09-06: a token whose `nbf` was "NOW + 2 hours"
- * became usable, and one expiring "in 1 hour" became expired.
+ * This used to pin two: `JwtView`'s `now` prop, and `Date.now` for the REAL
+ * tool the `decode` helper runs, which decided `expired` inside the run. The
+ * two disagreed by however long it had been since the file was written, and
+ * two cases failed when the real date walked past 2026-09-06 - the same defect
+ * as the product's, found in the tests first and fixed only in the tests: a
+ * verdict computed at one moment and read at another.
  *
- * Pinning `Date.now` rather than the whole timer system: nothing here needs
- * fake timers, and swapping them in under an async suite is a much larger
- * change than the one fact this needs.
+ * Since round twenty-five the tool reads no clock and `renderToken` pins the
+ * view's. `Date.now` is still pinned, so a view that fell back to the device's
+ * clock by mistake would produce the same answer on every machine rather than
+ * a different one each day. Reading at a DIFFERENT moment from the run is
+ * `jwtValidity.test.tsx`.
  */
 beforeEach(() => {
   vi.spyOn(Date, 'now').mockReturnValue(NOW);
@@ -218,11 +219,16 @@ describe('JwtView: failing closed', () => {
   });
 
   /*
-   * The relative times come from the run's own `checkedAt`. A payload without
-   * one still renders - the absolute time and the epoch integer are both
-   * there - and simply says nothing it cannot know.
+   * A VERDICT ON THE PORT IS NOT BELIEVED.
+   *
+   * Runs before round twenty-five carried `expired`, decided at the moment of
+   * the run, and a cached run served it for as long as the graph was left
+   * alone. The view now judges `exp` against the reader's clock and reads no
+   * verdict from the payload at all - so a payload still carrying the old,
+   * stale `expired: false` is shown expired when it is. No `toleranceSeconds`
+   * reads as none, the stricter answer.
    */
-  it('renders a payload from a build that stamped no clock', () => {
+  it("judges exp against the reader's clock, whatever verdict the payload carries", () => {
     render(
       <JwtView
         value={{
@@ -233,22 +239,21 @@ describe('JwtView: failing closed', () => {
             status: 'NOT VERIFIED',
           },
           header: {},
-          payload: { sub: 'ada', exp: 1_788_699_600 },
-          claims: { expired: false },
+          payload: { sub: 'ada', exp: NOW / 1000 - 3600 },
+          claims: { expired: false, checkedAt: NOW - 2 * 3_600_000 },
         }}
         label="JWT Decoded"
         baseFilename="jwt-decode"
         onCopy={() => undefined}
         onDownload={() => undefined}
+        now={NOW}
       />,
     );
 
-    expect(document.querySelector('[data-validity]')).toHaveAttribute('data-validity', 'live');
-    expect(screen.getByText('1788699600')).toBeInTheDocument();
-    // Either direction. This matched only `ago)`, and the payload's `exp` is
-    // an hour AFTER the pinned clock, so a fallback to Date.now() renders
-    // `(in 1 hour)` and the assertion could not fail.
-    expect(screen.queryByText(/\((in .+|.+ ago)\)/)).not.toBeInTheDocument();
+    const strip = document.querySelector('[data-validity]');
+    expect(strip).toHaveAttribute('data-validity', 'expired');
+    expect(strip).toHaveTextContent('1 hour ago');
+    expect(strip).toHaveTextContent("by this device's clock");
   });
 
   it('says nothing to show rather than throwing on a shape it does not know', () => {

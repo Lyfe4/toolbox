@@ -192,8 +192,13 @@ export interface UpstreamRef {
  * the nodes feeding it - not from their output values. That is the whole
  * trick: comparing upstream keys is O(1) whatever the data is, so a 30 MB
  * decoded file never has to be hashed to know whether it changed. It relies on
- * tools being deterministic, which the type system already enforces by making
- * `run` a pure function returning a ToolResult.
+ * tools being deterministic - an output that is a function of the tool, its
+ * options and its inputs and of nothing else. This comment used to say the
+ * type system enforced that. It cannot: jwt-decode read `Date.now()` inside
+ * `run` and typechecked, and a cached node went on calling an expired token
+ * live for as long as its graph was left alone. The precondition is held by
+ * `determinism.test.ts`, which runs every tool twice with the clock moved;
+ * anything that depends on the moment belongs in a view (`useNow`).
  *
  * WHICH PORT, NOT JUST WHICH NODE. The key used to be the sorted SET of
  * upstream keys, which made two genuinely different graphs identical:

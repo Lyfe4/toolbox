@@ -7887,6 +7887,156 @@ async function checkClaimsAndHue(browser, label) {
 }
 
 /**
+ * ROUND TWENTY-FIVE: WHETHER A TOKEN IS STILL GOOD, READ LATER, in two engines.
+ *
+ * jwt-decode used to decide `expired` inside the run, in the worker, and a run
+ * is cached - so a canvas node went on saying a token was live after it had
+ * expired, for as long as the graph was left alone, and the tool page did until
+ * Run was pressed again. Every check before this read the verdict in the moment
+ * it was computed, where a verdict true only at that moment is invisible.
+ *
+ * So this decodes, then moves the page's clock with Playwright's, and reads
+ * again - on the tool page and in a canvas node's inspector, with the real
+ * worker, the real cache and the real CSP. The clock is installed before the
+ * document loads, so the app boots at T0 and "two hours later" is an
+ * instruction, not a wait; nothing here depends on the host's clock. The worker
+ * is NOT on the driven clock, and that is the point: the verdict must not come
+ * from anything that ran there. Against the old build the worker's real date
+ * made the token live and the view kept saying so after the jump.
+ *
+ * The controls are tokens that have not expired, read as late: still `live`,
+ * and counting down from the reader's clock rather than the run's.
+ */
+async function checkJwtValidity(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  const T0 = Date.UTC(2031, 2, 14, 9, 0, 0);
+  const HOUR = 3_600_000;
+  const b64 = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const expiringAt = (ms) =>
+    `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({ sub: 'ada', iat: T0 / 1000, exp: ms / 1000 })}.c2lnbmF0dXJl`;
+
+  /** The strip's verdict and words, by its attribute, and whether it is drawn. */
+  const strip = () =>
+    page.evaluate(() => {
+      const element = document.querySelector('[data-validity]');
+      if (element === null) return null;
+      const rect = element.getBoundingClientRect();
+      return {
+        verdict: element.getAttribute('data-validity'),
+        text: (element.textContent ?? '').replace(/\s+/g, ' ').trim(),
+        drawn: rect.width > 0 && rect.height > 0,
+      };
+    });
+
+  /** Polls, in real time, for a strip that satisfies `wanted`; returns the last reading. */
+  const settle = async (wanted) => {
+    let reading = null;
+    for (let look = 0; look < 50; look += 1) {
+      reading = await strip();
+      if (reading !== null && wanted(reading)) return reading;
+      await page.waitForTimeout(100);
+    }
+    return reading;
+  };
+
+  const onPage = async (jwt) => {
+    await page.goto(`${ORIGIN}/tools/jwt-decode`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'JWT' }).waitFor({ timeout: 15_000 });
+    await page.getByLabel('JWT input').fill(jwt);
+    if ((await page.getByLabel('JWT input').inputValue()) !== jwt) return 'HARNESS: fill lost';
+    await page.getByRole('button', { name: 'Run' }).click();
+    await page.locator('[data-validity]').first().waitFor({ timeout: 30_000 });
+    return null;
+  };
+
+  const onCanvas = async (jwt) => {
+    const face = await onNode(page, 'jwt-decode', {}, jwt, (text) => text.includes('HS256'));
+    if (face.status !== 'ok') return face.text;
+    await page.locator('[data-validity]').first().waitFor({ timeout: 15_000 });
+    return null;
+  };
+
+  const lived = (reading) => reading.drawn && reading.verdict === 'live';
+  const died = (reading) => reading.drawn && reading.verdict === 'expired';
+
+  try {
+    await page.clock.install({ time: T0 });
+
+    for (const [surface, decode] of [
+      ['on the tool page', onPage],
+      ['on a canvas node', onCanvas],
+    ]) {
+      /* -- A token that expires an hour after it is decoded ---------------- */
+      await page.clock.setSystemTime(T0);
+      const failed = await decode(expiringAt(T0 + HOUR));
+      const before = failed === null ? await settle(lived) : null;
+      check(
+        label,
+        `a decoded token reads live ${surface} while it is`,
+        before !== null && lived(before),
+        failed ?? JSON.stringify(before),
+      );
+
+      await page.clock.fastForward(2 * HOUR);
+      const after = failed === null ? await settle(died) : null;
+      check(
+        label,
+        `and reads expired ${surface} two hours later, with nothing run again`,
+        after !== null && died(after) && after.text.includes("by this device's clock"),
+        failed ?? JSON.stringify(after),
+      );
+
+      /*
+       * A hidden tab's timers are late, which is all it does to this view. With
+       * the clock paused no interval fires; the clock jumps and the tab says it
+       * is visible, and that alone must bring the answer up to date.
+       */
+      await page.clock.setSystemTime(T0);
+      const again = await decode(expiringAt(T0 + HOUR));
+      const fresh = again === null ? await settle(lived) : null;
+      await page.clock.pauseAt(T0 + 60_000);
+      await page.clock.setSystemTime(T0 + 3 * HOUR);
+      await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+      const shown = again === null ? await settle(died) : null;
+      await page.clock.resume();
+      check(
+        label,
+        `and catches up ${surface} the moment the tab is visible, before any tick`,
+        fresh !== null && lived(fresh) && shown !== null && died(shown),
+        again ?? `${JSON.stringify(fresh)} then ${JSON.stringify(shown)}`,
+      );
+
+      /*
+       * Control: a token with hours left, read as late. Half an hour of margin
+       * either side, because the page's clock flows while the run happens and
+       * the view truncates - 4h59m is "in 4 hours", by its own rule.
+       */
+      await page.clock.setSystemTime(T0);
+      const missed = await decode(expiringAt(T0 + 5.5 * HOUR));
+      const early = missed === null ? await settle(lived) : null;
+      await page.clock.fastForward(2 * HOUR);
+      const late =
+        missed === null ? await settle((reading) => reading.text.includes('in 3 hours')) : null;
+      check(
+        label,
+        `control: a token with hours left still reads live ${surface}, counting down from the reader's clock`,
+        early !== null &&
+          lived(early) &&
+          early.text.includes('in 5 hours') &&
+          late !== null &&
+          lived(late) &&
+          late.text.includes('in 3 hours'),
+        missed ?? `${JSON.stringify(early)} then ${JSON.stringify(late)}`,
+      );
+    }
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
  * WHAT A NODE DRAWS WHEN ITS ANSWER IS A SERIALISED DOCUMENT.
  *
  * A node summarises its first output, and for three tools that output is a
@@ -17013,6 +17163,7 @@ const SECTIONS = [
   checkColourContrast,
   checkPastedCensus,
   checkClaimsAndHue,
+  checkJwtValidity,
   checkSerialisedFaces,
   checkLossAlongWires,
   checkDiff,

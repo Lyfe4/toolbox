@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 
 import { ErrorIcon } from '@/components/Icon';
 import { TextArea } from '@/components/TextArea';
 import { isJsonObject, type JsonValue } from '@/features/registry/types';
+import { useNow } from '@/lib/useNow';
+import { validityAt } from '@/tools/jwt-decode/validity';
 
 import styles from './jwt.module.css';
 import { RawPayload } from './RawPayload';
-import { momentOf, type Moment } from './time';
+import { momentOf, relativeTime, type Moment } from './time';
 import { ViewToggle } from './ViewToggle';
 
 /**
@@ -49,6 +51,16 @@ import { ViewToggle } from './ViewToggle';
  * signature over a token that expired last Tuesday is still a token no server
  * will accept, and folding the two verdicts together loses one of them.
  *
+ * AND EXPIRY IS DECIDED HERE, BY THE READER'S CLOCK, AS IT IS DRAWN. The
+ * signature verdict is a fact about the token and is as true tomorrow as
+ * today; "has it expired?" is a fact about now. The tool used to answer it
+ * inside the run, and a run is cached - so a canvas node went on saying a token
+ * was live for as long as its graph was left alone. The tool now carries `exp`,
+ * `nbf` and the tolerance, and `validityAt` is asked with `useNow`, which
+ * ticks, and catches up the moment a hidden tab is shown again. The strip says
+ * whose clock it used, because a device whose clock is wrong is one of the
+ * reasons anybody opens a JWT decoder.
+ *
  * The payload is read defensively rather than cast: it crossed the worker
  * boundary as plain JSON, so a future change to the tool's output shows up
  * here as a missing section instead of a crash inside a render.
@@ -80,8 +92,8 @@ interface Claims {
   readonly issuedAt: Moment | null;
   readonly notBefore: Moment | null;
   readonly expiresAt: Moment | null;
-  readonly expired: boolean;
-  readonly notYetValid: boolean;
+  /** The clock tolerance the tool was run with, in seconds. */
+  readonly toleranceSec: number;
 }
 
 interface Decoded {
@@ -148,26 +160,16 @@ function claimSeconds(payload: JsonValue | null, key: string): number | null {
   return typeof value === 'number' ? value : null;
 }
 
-function parseDecoded(value: JsonValue, override: number | null): Decoded | null {
+function parseDecoded(value: JsonValue): Decoded | null {
   if (!isJsonObject(value)) return null;
 
   const payload = value.payload ?? null;
   const claims = value.claims !== undefined && isJsonObject(value.claims) ? value.claims : null;
-
-  /*
-   * THE CLOCK COMES FROM THE RUN, not from this render.
-   *
-   * The tool stamps `checkedAt` at the moment it decided `expired`, so every
-   * relative phrase here is relative to the same instant that verdict was.
-   * Reading `Date.now()` during a render would be both impure - a re-render
-   * would silently change the text - and wrong: a tab left open for an hour
-   * would count down past an `expired` flag that still says false.
-   */
-  const nowMs = override ?? (typeof claims?.checkedAt === 'number' ? claims.checkedAt : null);
+  const tolerance = claims?.toleranceSeconds;
 
   const moment = (key: string): Moment | null => {
     const seconds = claimSeconds(payload, key);
-    return seconds === null ? null : momentOf(seconds, nowMs);
+    return seconds === null ? null : momentOf(seconds);
   };
 
   return {
@@ -179,13 +181,11 @@ function parseDecoded(value: JsonValue, override: number | null): Decoded | null
       notBefore: moment('nbf'),
       expiresAt: moment('exp'),
       /*
-       * Read from the tool's report rather than recomputed from `exp` here.
-       * The tool applied the clock tolerance the user set, and a view that did
-       * its own arithmetic would disagree with the tool at the margin - which
-       * is the only place anybody looks.
+       * The tolerance the user set, from the run, so the margin is decided by
+       * the tool's own rule with the number the tool was given. Missing - a
+       * shape this view does not know - reads as none, the stricter answer.
        */
-      expired: claims?.expired === true,
-      notYetValid: claims?.notYetValid === true,
+      toleranceSec: typeof tolerance === 'number' && Number.isFinite(tolerance) ? tolerance : 0,
     },
   };
 }
@@ -290,9 +290,25 @@ function Verdict({ signature }: { readonly signature: Signature }) {
   );
 }
 
-/** "3 days ago · 6 Sep 2026, 12:00 GMT", or just the absolute half. */
-function when(moment: Moment): string {
-  return moment.relative === null ? moment.absolute : `${moment.relative} · ${moment.absolute}`;
+/**
+ * A pinned moment, for a test that wants one; null means the device's clock.
+ * Context rather than a prop threaded through, because the only components
+ * that read it are the two small ones that tick.
+ */
+const PinnedNow = createContext<number | null>(null);
+
+function useReaderNow(): number {
+  return useNow(useContext(PinnedNow));
+}
+
+/** "3 days ago · 6 Sep 2026, 12:00 GMT". */
+function when(moment: Moment, now: number): string {
+  return `${relativeTime(moment.ms, now)} · ${moment.absolute}`;
+}
+
+/** Whose clock the strip's answer came from. */
+function DeviceClock() {
+  return <span className={styles.clock}>by this device&apos;s clock</span>;
 }
 
 /**
@@ -305,26 +321,41 @@ function when(moment: Moment): string {
  * it simply never said.
  */
 function Validity({ claims }: { readonly claims: Claims }) {
+  const now = useReaderNow();
+  /*
+   * Only a representable moment is judged, as before: a token carrying
+   * `"exp": 1e300` gets no strip rather than a verdict about a date nobody can
+   * print.
+   */
+  const verdict = validityAt(
+    {
+      exp: claims.expiresAt?.epochSeconds ?? null,
+      nbf: claims.notBefore?.epochSeconds ?? null,
+      toleranceSec: claims.toleranceSec,
+    },
+    now,
+  );
+
   /*
    * `data-validity` for the same reason the verdict carries `data-trust`: the
    * strip deliberately repeats what the claims table also says, so a test
    * asserting "the token is reported as expired" has to be able to name the
    * VERDICT rather than matching text that legitimately appears twice.
    */
-  if (claims.expired && claims.expiresAt) {
+  if (verdict === 'expired' && claims.expiresAt) {
     return (
       <p className={`${styles.validity ?? ''} ${styles.validityBad ?? ''}`} data-validity="expired">
         <ErrorIcon size={14} />
-        <strong>Expired</strong> {when(claims.expiresAt)}
+        <strong>Expired</strong> {when(claims.expiresAt, now)} <DeviceClock />
       </p>
     );
   }
 
-  if (claims.notYetValid && claims.notBefore) {
+  if (verdict === 'not-yet' && claims.notBefore) {
     return (
       <p className={`${styles.validity ?? ''} ${styles.validityBad ?? ''}`} data-validity="not-yet">
         <ErrorIcon size={14} />
-        <strong>Not valid yet</strong> — usable {when(claims.notBefore)}
+        <strong>Not valid yet</strong> — usable {when(claims.notBefore, now)} <DeviceClock />
       </p>
     );
   }
@@ -332,12 +363,18 @@ function Validity({ claims }: { readonly claims: Claims }) {
   if (claims.expiresAt) {
     return (
       <p className={styles.validity} data-validity="live">
-        <strong>Expires</strong> {when(claims.expiresAt)}
+        <strong>Expires</strong> {when(claims.expiresAt, now)} <DeviceClock />
       </p>
     );
   }
 
   return null;
+}
+
+/** " (in 3 hours)", against the reader's clock, re-rendered as it moves. */
+function Relative({ ms }: { readonly ms: number }) {
+  const now = useReaderNow();
+  return <span className={styles.relative}> ({relativeTime(ms, now)})</span>;
 }
 
 /** One time claim: the moment in words, the epoch integer beside it. */
@@ -362,9 +399,7 @@ function TimeRow({
           precise one being lost.
         */}
         <time dateTime={moment.iso}>{moment.absolute}</time>
-        {moment.relative === null ? null : (
-          <span className={styles.relative}> ({moment.relative})</span>
-        )}
+        <Relative ms={moment.ms} />
       </td>
       <td className={styles.raw}>{moment.epochSeconds}</td>
     </tr>
@@ -409,15 +444,15 @@ export interface JwtViewProps {
   readonly onCopy: (text: string) => void;
   readonly onDownload: (blob: Blob, filename: string) => void;
   /**
-   * Overrides the run's own `checkedAt`. Tests only: the tool stamps the
-   * moment it checked the token, and that is the clock this view uses.
+   * Pins the reader's clock to one moment. Tests only: otherwise the view
+   * reads this device's clock, as it draws, and keeps reading it.
    */
   readonly now?: number;
 }
 
 export function JwtView({ value, label, baseFilename, onCopy, onDownload, now }: JwtViewProps) {
   const [view, setView] = useState<'decoded' | 'raw'>('decoded');
-  const decoded = parseDecoded(value, now ?? null);
+  const decoded = parseDecoded(value);
   if (!decoded) return <p className={styles.aside}>Nothing to show.</p>;
 
   const { signature, claims } = decoded;
@@ -450,18 +485,19 @@ export function JwtView({ value, label, baseFilename, onCopy, onDownload, now }:
       : 'These claims are unverified. Anyone can rewrite a JWT payload, so without a checked signature they prove nothing about who issued them.';
 
   return (
-    <section className={styles.wrapper} aria-label={label}>
-      <ViewToggle
-        label={label}
-        value={view}
-        onChange={setView}
-        options={[
-          { id: 'decoded', label: 'Decoded', status: 'Showing the decoded token' },
-          { id: 'raw', label: 'Raw', status: 'Showing the raw JSON' },
-        ]}
-      />
+    <PinnedNow.Provider value={now ?? null}>
+      <section className={styles.wrapper} aria-label={label}>
+        <ViewToggle
+          label={label}
+          value={view}
+          onChange={setView}
+          options={[
+            { id: 'decoded', label: 'Decoded', status: 'Showing the decoded token' },
+            { id: 'raw', label: 'Raw', status: 'Showing the raw JSON' },
+          ]}
+        />
 
-      {/*
+        {/*
         THE VERDICT IS OUTSIDE THE TOGGLE, on purpose.
 
         Raw is the machine-readable half of the same output rather than a
@@ -470,73 +506,74 @@ export function JwtView({ value, label, baseFilename, onCopy, onDownload, now }:
         unlabelled wall of claims. Keeping it there costs four lines and closes
         the one hole this whole tool exists to close.
       */}
-      <Verdict signature={signature} />
-      <Validity claims={claims} />
+        <Verdict signature={signature} />
+        <Validity claims={claims} />
 
-      {view === 'raw' ? (
-        <RawPayload
-          label={label}
-          value={value}
-          baseFilename={baseFilename}
-          onCopy={onCopy}
-          onDownload={onDownload}
-        />
-      ) : (
-        <>
-          {times.length === 0 && strings.length === 0 ? null : (
-            <table className={styles.table}>
-              <caption className={styles.hidden}>Registered claims</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Claim</th>
-                  <th scope="col">Value</th>
-                  {/* Named, because "raw" in this table means epoch seconds. */}
-                  <th scope="col">Raw</th>
-                </tr>
-              </thead>
-              <tbody>
-                {times.map(([rowLabel, moment, claim]) => (
-                  <TimeRow key={claim} label={rowLabel} moment={moment} claim={claim} />
-                ))}
-                {strings.map(([key, rowLabel, text]) => (
-                  <tr key={key}>
-                    <th scope="row" className={styles.rowHead}>
-                      {rowLabel} <span className={styles.claimKey}>{key}</span>
-                    </th>
-                    <td className={styles.value} colSpan={2}>
-                      {text}
-                    </td>
+        {view === 'raw' ? (
+          <RawPayload
+            label={label}
+            value={value}
+            baseFilename={baseFilename}
+            onCopy={onCopy}
+            onDownload={onDownload}
+          />
+        ) : (
+          <>
+            {times.length === 0 && strings.length === 0 ? null : (
+              <table className={styles.table}>
+                <caption className={styles.hidden}>Registered claims</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Claim</th>
+                    <th scope="col">Value</th>
+                    {/* Named, because "raw" in this table means epoch seconds. */}
+                    <th scope="col">Raw</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+                </thead>
+                <tbody>
+                  {times.map(([rowLabel, moment, claim]) => (
+                    <TimeRow key={claim} label={rowLabel} moment={moment} claim={claim} />
+                  ))}
+                  {strings.map(([key, rowLabel, text]) => (
+                    <tr key={key}>
+                      <th scope="row" className={styles.rowHead}>
+                        {rowLabel} <span className={styles.claimKey}>{key}</span>
+                      </th>
+                      <td className={styles.value} colSpan={2}>
+                        {text}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
 
-          {othersLine === null ? null : (
-            <p className={styles.aside} data-other-claims="">
-              {othersLine}
-            </p>
-          )}
+            {othersLine === null ? null : (
+              <p className={styles.aside} data-other-claims="">
+                {othersLine}
+              </p>
+            )}
 
-          {decoded.header === null ? null : (
-            <JsonBlock
-              heading="Header"
-              note={null}
-              value={decoded.header}
-              label={`${label} header`}
-            />
-          )}
+            {decoded.header === null ? null : (
+              <JsonBlock
+                heading="Header"
+                note={null}
+                value={decoded.header}
+                label={`${label} header`}
+              />
+            )}
 
-          {decoded.payload === null ? null : (
-            <JsonBlock
-              heading={`Payload (${SHORT[signature.trust]})`}
-              note={caveat}
-              value={decoded.payload}
-              label={`${label} payload`}
-            />
-          )}
-        </>
-      )}
-    </section>
+            {decoded.payload === null ? null : (
+              <JsonBlock
+                heading={`Payload (${SHORT[signature.trust]})`}
+                note={caveat}
+                value={decoded.payload}
+                label={`${label} payload`}
+              />
+            )}
+          </>
+        )}
+      </section>
+    </PinnedNow.Provider>
   );
 }

@@ -305,8 +305,8 @@ case does not capitalise "of".
 - **The lists the gates do not read.** The README's table of tools and its
   table of what each conversion is held to; the port-set table in
   [architecture.md](architecture.md#the-whole-set-as-it-stands); and the
-  verification skill's list of tool ids and the tool count its search probe
-  asserts against the live site.
+  verification skill's list of tool ids in its `SKILL.md`. Its probes compare
+  the live `/tools` page with the manifest itself, so they need no edit.
 - **A name in backticks must exist.** In a document or a code comment, the doc
   gate refuses a backticked identifier the code does not define - somebody
   else's (a Go function, a specification's abstract operation) included. Write
@@ -325,10 +325,21 @@ case does not capitalise "of".
   and prints the replacement for the block in
   [conversion-matrix.md](conversion-matrix.md#the-corpus-the-ratio-and-why-it-is-not-a-number-any-more)
   when it fails - paste it. `checkLossCorpus` drives every row in two engines
-  with no edit to the harness, and two of its assumptions are easy to miss:
-  it reads the first output by the label `<Tool name> Converted`, and `choose`
-  can only drive a select. A row that needs a text option must carry it in the
-  input instead.
+  with no edit to the harness, within two limits that `lossCorpus.test.ts`
+  checks and the corpus file's own `howToAddACase` repeats:
+  - **The answer must be a text box labelled `Converted`.** The harness reads
+    it as `<Tool name> Converted`, as a text box's value. A tool whose first
+    output is not text, has a view of its own, or is labelled anything else
+    cannot have a row until the harness learns to read it - relabelling a port
+    to fit is not the fix. This is an accident of the four tools that had rows,
+    kept as a stated limit. Four of the eight tools with a report port are
+    outside it today - base64 (`Result`), jwt-decode (the verdict view),
+    image-convert and video-remux (bytes) - so none of their losses can be a
+    row.
+  - **`choose` only drives a select.** An option typed into a text field has to
+    be carried in the row's input. Deliberate enough: every option a loss has
+    depended on so far is a select, and a typed one would need the harness to
+    know which control it is, which the page does not say.
 - **Warn is a promise.** A `warn` note is something that went in and did not
   come out, and it is printed on the node's face; everything else is `info`.
 

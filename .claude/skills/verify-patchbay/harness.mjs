@@ -1,7 +1,7 @@
 /**
  * Shared Playwright harness for verifying the DEPLOYED Patchbay site.
  *
- * Imported by `doctor.mjs` and `drive.mjs`, and importable from any one-off
+ * Imported by `doctor.mjs`, `drive.mjs` and `probe-search.mjs`, and importable from any one-off
  * script you write next to them. Playwright resolves out of the repo root
  * `node_modules` (Node walks up from this file), so there is nothing to
  * install as long as `pnpm install` has been run.
@@ -14,7 +14,14 @@
  * theme) lives in localStorage inside a Playwright context that is thrown away
  * when the run ends.
  */
-import { mkdirSync, appendFileSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  appendFileSync,
+  readdirSync,
+  readFileSync,
+  existsSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,6 +41,72 @@ export const ORIGIN = (process.env.PATCHBAY_ORIGIN ?? 'https://patchbay-tools.ne
 );
 
 const ENGINES = { chromium, firefox, webkit };
+
+/**
+ * THE TOOLS THE WORKING TREE SAYS EXIST, from `src/features/registry/manifest.ts`.
+ *
+ * What a drive compares the live page with - never a number written here.
+ * Both probes used to assert `=== 10`, and an eleventh tool broke each of them
+ * in the worst direction: failing against the site that had deployed it and
+ * PASSING against a stale deploy that had not. Comparing the SET of ids with
+ * the manifest is the claim those counts were standing in for, needs no edit
+ * when a tool is added, and fails on a deploy that is missing one by naming it.
+ *
+ * The manifest is TypeScript and this is plain Node, so it is read by a
+ * pattern, and a pattern that silently matched nothing would make every
+ * comparison against it vacuous. So the parse is checked against a second,
+ * independent account - each directory under `src/tools/` with an `index.ts` -
+ * and throws unless the two agree exactly. That replaces a guard that said
+ * `TOOLS.length !== 10`, which fired on every new tool and caught nothing else.
+ */
+export function manifestTools() {
+  const root = join(SKILL_DIR, '..', '..', '..');
+  const source = readFileSync(join(root, 'src', 'features', 'registry', 'manifest.ts'), 'utf8');
+  const body = source.slice(source.indexOf('export const TOOL_MANIFEST'));
+  const entryRe =
+    /\n {4}id: '([^']+)',\n {4}name: '([^']+)',\n {4}summary: '([^']+)',\n {4}category: '([^']+)',\n {4}keywords: \[([^\]]*)\]/g;
+
+  const tools = [];
+  for (let m = entryRe.exec(body); m !== null; m = entryRe.exec(body)) {
+    tools.push({
+      id: m[1],
+      name: m[2],
+      summary: m[3],
+      category: m[4],
+      keywords: m[5]
+        .split(',')
+        .map((s) => s.trim().replace(/^'|'$/g, ''))
+        .filter(Boolean),
+    });
+  }
+
+  const onDisk = readdirSync(join(root, 'src', 'tools'), { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isDirectory() && existsSync(join(root, 'src', 'tools', entry.name, 'index.ts')),
+    )
+    .map((entry) => entry.name)
+    .sort();
+  const parsed = tools.map((tool) => tool.id).sort();
+  if (JSON.stringify(parsed) !== JSON.stringify(onDisk)) {
+    throw new Error(
+      `manifestTools: the manifest parsed as [${parsed.join(', ')}] but src/tools holds [${onDisk.join(', ')}] - fix the pattern before trusting any comparison against it`,
+    );
+  }
+  return tools;
+}
+
+/** Ids the page lacks and ids it has that the manifest does not, for a check's detail. */
+export function compareWithManifest(hrefs, tools = manifestTools()) {
+  const shown = new Set(hrefs.map((href) => href.replace(/^\/tools\//, '')));
+  const wanted = new Set(tools.map((tool) => tool.id));
+  const missing = [...wanted].filter((id) => !shown.has(id));
+  const extra = [...shown].filter((id) => !wanted.has(id));
+  return {
+    same: missing.length === 0 && extra.length === 0,
+    detail: `${String(shown.size)} cards; missing [${missing.join(' ')}], not in the manifest [${extra.join(' ')}]`,
+  };
+}
 
 /**
  * Console errors that are a known, pre-existing property of the deployed site
