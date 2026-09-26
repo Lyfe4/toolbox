@@ -127,6 +127,7 @@ tool.
 | `image-convert`   | `input` Image · bytes                                      | `output` Converted · bytes — `report` Report · json                                                               |
 | `text-convert`    | `input` Document · text, bytes                             | `output` Converted · text — `rendered` Rendered HTML · text — `detected` Detected · text — `report` Report · json |
 | `video-remux`     | `input` Video · bytes                                      | `output` Repackaged · bytes — `report` Report · json                                                              |
+| `timestamp`       | `input` Timestamp · text, json                             | `output` Converted · text — `all` Notations · json — `report` Report · json                                       |
 
 Four `report` ports were added in round three and a fifth in round nine, and
 they are one idea rather than five: a tool that loses something needs somewhere
@@ -230,9 +231,11 @@ not be handed a file at any port, whatever its types said. Both routes take one
 now, through one implementation — see
 [a file as an input](#a-file-as-an-input).
 
-The two ports that still refuse bytes take a short LITERAL rather than a
-document: a compact token and a colour. Their size limits say the same thing —
-256 kB and 4 kB.
+The three ports that still refuse bytes take a short LITERAL rather than a
+document: a compact token, a colour and a timestamp. The first two have size
+limits that say the same thing — 256 kB and 4 kB; the timestamp's 256 kB is for
+the wired JSON value its Field option reads one member of, which is also why it
+accepts `json` and still not `bytes`.
 
 **Widening a port means refusing clearly, not guessing.** The risk of accepting
 bytes is that non-text bytes get decoded to replacement characters and
@@ -429,7 +432,7 @@ signature from its ports.
 
 | Class      | `run` receives | Tools                      |
 | ---------- | -------------- | -------------------------- |
-| `resident` | `bytes`        | the other nine             |
+| `resident` | `bytes`        | the other ten              |
 | `windowed` | `source`       | `video-remux`, and only it |
 
 A windowed tool's input **has no `bytes` member at all.** That absence is the
@@ -2497,7 +2500,7 @@ had it stopped existing.
 A node is 224px wide with two clamped lines. Its summary box already switched
 between the tool's description, the reason it is blocked and the error that
 broke it; once a node has run, its **result** is its situation, so that is the
-fourth case. Only the first declared output is summarised — nine of the ten
+fourth case. Only the first declared output is summarised — ten of the eleven
 tools have more than one, and the manifest's order is not arbitrary: the first
 port is the tool's answer and the rest are its working. Since the [port
 audit](#the-port-set) that first port is called `output` on every tool, and
@@ -2594,7 +2597,7 @@ against a deliberately content-sized box it reads 174/161/161.
 The rule above has one exception — text, summarised as its first non-empty
 line, "because plain text is already the answer". That is true of prose and
 false of every format with a syntax, and `text` is the data type of a string
-rather than a promise that a person wrote it. Three of the ten tools put a
+rather than a promise that a person wrote it. Three of the eleven tools put a
 **serialised document** on that port, and each of them drew the same string for
 every document of its kind:
 
@@ -3406,8 +3409,8 @@ would sail past a "both ran" assertion.
 ## The tool runner page
 
 `/tools/:id` is the plain view of one tool. It is generated entirely from the
-manifest entry plus the tool's own `optionFields`, so ten tools share one
-component and adding an eleventh adds no UI.
+manifest entry plus the tool's own `optionFields`, so eleven tools share one
+component and adding a twelfth adds no UI.
 
 ### Four regions, in reading order
 
@@ -3918,8 +3921,8 @@ module graph - the same mechanism, thirty times larger.
 `engine.prefetch(toolId)` now sits in the effect that already loads the options.
 Two things about it are asserted rather than assumed:
 
-- **It warms nothing where nothing will run.** `/tools` lists ten tools and runs
-  none, and warming all ten from an index would be the hover-prefetch the
+- **It warms nothing where nothing will run.** `/tools` lists eleven tools and
+  runs none, and warming all eleven from an index would be the hover-prefetch the
   engine's own comment rules out. `checkWorkerWarmth` replaces `window.Worker`
   before any application code runs and counts: **0 on the index, 1 on a tool
   page**, before Run is ever pressed.
@@ -4073,7 +4076,7 @@ declared its single output as "Output", under a panel heading that says
 "Output" — two labels for one value, and when this was written the same
 duplication sat on five of the nine tools. The input editors already followed
 this rule. Since then every tool but `hash` has come to declare more than
-one output, a `report` on most of them, so the rule now drops one label on one of ten: hash's
+one output, a `report` on most of them, so the rule now drops one label on one of eleven: hash's
 "Digest". A tool with two or more outputs keeps their labels, because there
 the name is the only thing telling the swatch from the converted string. Nothing is lost by
 dropping the rest: the Ports footnote names every port on the page, and the
@@ -4217,7 +4220,7 @@ output port.
 The example used to be `base64 → regex`, and the [port
 audit](#the-port-set) took it away: every port that reads a document accepts
 `bytes` now, so the only ports left that can refuse a value at runtime are the
-two that take a short literal — a compact token and a colour — and the two that
+three that take a short literal — a compact token, a colour and a timestamp — and the two that
 take only a media file, image and video, which refuse the `text` half of a
 union like base64's. That is the shape to expect. The static check is loose where a tool can genuinely read
 several kinds of value and tight where it cannot, so a runtime refusal is

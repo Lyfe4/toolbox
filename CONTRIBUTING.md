@@ -82,7 +82,7 @@ unable to see most of what that script checks.
 treat that as the run a commit needs:
 
 ```bash
-pnpm check:browsers --list                              # the 56 section names
+pnpm check:browsers --list                              # the 57 section names
 pnpm check:browsers --only=popovers,valuemodel          # a substring of each, `check` optional
 pnpm check:browsers --only=outputviews --engine=webkit  # one engine
 ```
@@ -330,7 +330,7 @@ checked mechanically is now checked in `pnpm test`, by
 - **A harness section named anywhere exists.** Any `check…` name in a document
   or a comment.
 - **A count the code can count is counted.** "The two inline scripts", "four
-  payloads against four budgets", "the six gates", "the 56 section names", "ten
+  payloads against four budgets", "the six gates", "the 57 section names", "eleven
   tools that run": each is a phrase pattern in `COUNTS` and the number the code
   gives, wherever the phrase appears, docs and comments alike. A pattern that
   stops matching anything fails, rather than retiring in silence.

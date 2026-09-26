@@ -142,7 +142,7 @@ interface BytesFacts {
  *
  *   - A tool that reads binary input RESIDENTLY is handed `bytes`, a
  *     `Uint8Array`, which is byte for byte the shape every tool has always
- *     been handed. Nine of the ten tools are in this class and not one line of
+ *     been handed. Ten of the eleven tools are in this class and not one line of
  *     any of them changed.
  *   - A tool that reads binary input in WINDOWS is handed `source`, and there
  *     IS NO `bytes` MEMBER on it. That absence is the whole mechanism: the
@@ -197,7 +197,7 @@ export type AnyValue = ToolValue | ResidentValue | WindowedValue;
  * a port accepting either type should hand its tool.
  *
  * It defaults to the RESIDENT family because tools are what read it, and the
- * resident family is what nine of the ten are handed.
+ * resident family is what ten of the eleven are handed.
  */
 export type ValueOfType<T extends DataType, F extends AnyValue = ResidentValue> = Extract<
   F,

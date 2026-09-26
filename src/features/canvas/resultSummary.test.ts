@@ -312,7 +312,7 @@ describe('the sixty characters a summary is allowed', () => {
 
 describe('which output a node summarises', () => {
   /*
-   * THE FIRST DECLARED OUTPUT, and only that one. Nine of the ten tools have
+   * THE FIRST DECLARED OUTPUT, and only that one. Ten of the eleven tools have
    * more than one, and the manifest's order is not arbitrary: the first port
    * is the tool's answer and the rest are its working. This asserts the
    * ordering rule through one tool; the rule for every tool, including one
@@ -696,7 +696,7 @@ describe('the loss a node prints on its own face', () => {
    * Every assertion above builds its own payload, so all of them would pass
    * against a tool that never produces a `report` port. This asks the manifest.
    */
-  it('is a channel seven tools actually have', () => {
+  it('is a channel eight tools actually have', () => {
     /*
      * Two of these had a `report` port before round three - the two binary
      * tools, which is where the shape was invented. Four gained one, and they
@@ -707,6 +707,10 @@ describe('the loss a node prints on its own face', () => {
      * four findings in `docs/test-findings.md` are one absence, and why the
      * matrix cell recording its clipping as `lossy, told` could not be made
      * true by rewording it.
+     *
+     * `timestamp` is the eighth, and had one from its first commit: a unit
+     * read off a number's size, a clock change and a leap second are all
+     * losses, and a tool that can lose something ships with the channel.
      */
     // Read through the DECLARED type rather than off the const literal: the
     // literal's inferred type has no `presentation` on the ports that do not
@@ -724,6 +728,7 @@ describe('the loss a node prints on its own face', () => {
       'image-convert',
       'video-remux',
       'text-convert',
+      'timestamp',
     ]);
   });
 });

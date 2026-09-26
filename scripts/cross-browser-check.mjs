@@ -6597,6 +6597,257 @@ async function checkLossReports(browser, label) {
 }
 
 /* ========================================================================== *
+ * The timestamp tool's zone data, which is the engine's
+ * ========================================================================== */
+
+/**
+ * The oracle's zone instants that no tz release from 2022a to 2026d moved,
+ * and one instant per release that did - both from
+ * `scripts/generate-tz-sentinels.py`, read from the files the tool and its
+ * tests read, so there is no second copy here to drift.
+ */
+const TZ_STABLE = JSON.parse(
+  await readFile(join(ROOT, 'src/tools/timestamp/spec/tz-stable.json'), 'utf8'),
+);
+const TZ_SENTINELS = JSON.parse(
+  await readFile(join(ROOT, 'src/tools/timestamp/spec/tz-sentinels.json'), 'utf8'),
+);
+
+/**
+ * THE ONE PART OF THE TIMESTAMP TOOL THAT IS NOT ITS OWN CODE.
+ *
+ * Every offset for a named zone comes from the engine's `Intl`, which carries
+ * its own copy of IANA's tz database at its own release, and jsdom's is
+ * Node's - a third copy, and not the one anybody's browser has. The unit
+ * suite therefore runs the tool's arithmetic against Python's `zoneinfo`
+ * instead of against any engine (`timestamp.oracle.test.ts`); this is the
+ * other half, which only a real engine can be asked:
+ *
+ *   1. AT EVERY INSTANT NO RELEASE HAS MOVED, the engine must agree with the
+ *      oracle exactly. A disagreement there cannot be a matter of which
+ *      release the engine carries, so it is a defect - in the engine's data,
+ *      or in how its answer is read.
+ *   2. AT EACH RELEASE'S SENTINEL the engine must be on one side of that
+ *      release's change or the other, and the releases it has must be a
+ *      prefix: an engine with 2026b's change and not 2025c's would be carrying
+ *      no release at all, and the tool's claim about which release it is would
+ *      mean nothing.
+ *   3. THE TOOL MUST CLAIM THE RELEASE MEASURED HERE. The page is driven with
+ *      a wall time in a named zone, and its report has to name the release
+ *      this section worked out on its own, by asking the engine directly.
+ *   4. AND THE TOOL PAGE ITSELF writes the oracle's offset for a zone at a
+ *      quarter-hour, a half-hour, a southern-hemisphere summer and a
+ *      local-mean-time second - through the Time zone field and the Convert
+ *      to select a person uses.
+ *
+ * The engine is asked here with the same `formatToParts` reading `zones.ts`
+ * makes, written again rather than imported, because the built tool's module
+ * is not reachable from a page and the point is what the ENGINE answers.
+ */
+async function checkTimestampZones(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${ORIGIN}/tools/timestamp`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { level: 1, name: 'Timestamp' }).waitFor({ timeout: 15_000 });
+
+    const measured = await page.evaluate(
+      ({ stable, sentinels }) => {
+        const days = (year, month, day) => {
+          const y = month <= 2 ? year - 1 : year;
+          const era = Math.floor(y / 400);
+          const yoe = y - era * 400;
+          const doy = Math.floor((153 * (month > 2 ? month - 3 : month + 9) + 2) / 5) + day - 1;
+          return (
+            era * 146_097 + yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy - 719_468
+          );
+        };
+        const formatters = new Map();
+        const offsetAt = (zone, seconds) => {
+          let formatter = formatters.get(zone);
+          if (formatter === undefined) {
+            try {
+              formatter = new Intl.DateTimeFormat('en-US', {
+                timeZone: zone,
+                hourCycle: 'h23',
+                era: 'short',
+                year: 'numeric',
+                month: 'numeric',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: 'numeric',
+                second: 'numeric',
+              });
+            } catch {
+              formatter = null;
+            }
+            formatters.set(zone, formatter);
+          }
+          if (formatter === null) return null;
+          const parts = Object.fromEntries(
+            formatter
+              .formatToParts(new Date(seconds * 1000))
+              .map((part) => [part.type, part.value]),
+          );
+          const year = parts.era === 'BC' ? 1 - Number(parts.year) : Number(parts.year);
+          const local =
+            days(year, Number(parts.month), Number(parts.day)) * 86_400 +
+            Number(parts.hour) * 3600 +
+            Number(parts.minute) * 60 +
+            Number(parts.second);
+          return local - seconds;
+        };
+        return {
+          stable: stable.map(([zone, seconds, offset]) => ({
+            zone,
+            seconds,
+            offset,
+            engine: offsetAt(zone, seconds),
+          })),
+          sentinels: sentinels.map((sentinel) => ({
+            ...sentinel,
+            engine: offsetAt(sentinel.zone, sentinel.at),
+          })),
+        };
+      },
+      { stable: TZ_STABLE.instants, sentinels: TZ_SENTINELS.sentinels },
+    );
+
+    /* -- 1: the instants no release moved ----------------------------------- */
+    const disagreeing = measured.stable.filter((row) => row.engine !== row.offset);
+    check(
+      label,
+      'the engine agrees with IANA at every zone instant no tz release has moved',
+      measured.stable.length > 300 && disagreeing.length === 0,
+      disagreeing.length === 0
+        ? `${String(measured.stable.length)} instants in ${String(new Set(measured.stable.map((row) => row.zone)).size)} zones`
+        : disagreeing
+            .slice(0, 6)
+            .map(
+              (row) =>
+                `${row.zone} at ${String(row.seconds)}: ${String(row.engine)} not ${String(row.offset)}`,
+            )
+            .join('; '),
+    );
+
+    /* -- 2: the sentinels ------------------------------------------------------ */
+    const sides = measured.sentinels.map((sentinel) => ({
+      release: sentinel.release,
+      has: sentinel.engine === sentinel.after,
+      neither: sentinel.engine !== sentinel.after && sentinel.engine !== sentinel.before,
+    }));
+    const neither = sides.filter((side) => side.neither);
+    check(
+      label,
+      'at every release sentinel the engine is on one side of that release or the other',
+      neither.length === 0,
+      neither.map((side) => side.release).join(', '),
+    );
+    const firstLack = sides.findIndex((side) => !side.has);
+    const prefix = firstLack === -1 ? sides.length : firstLack;
+    const consistent = sides.every((side, index) => side.has === index < prefix);
+    const release = prefix === 0 ? null : sides[prefix - 1].release;
+    check(
+      label,
+      'the releases the engine has are a prefix, so its data is one release rather than a mixture',
+      consistent && release !== null,
+      `answers like tzdata ${String(release)}; has ${sides
+        .filter((side) => side.has)
+        .map((side) => side.release)
+        .join(' ')}; lacks ${
+        sides
+          .filter((side) => !side.has)
+          .map((side) => side.release)
+          .join(' ') || 'none'
+      }`,
+    );
+
+    /* -- 3 and 4: the tool page ------------------------------------------------ */
+    const runOnPage = async (text, zone, target) => {
+      await page.goto(`${ORIGIN}/tools/timestamp`, { waitUntil: 'networkidle' });
+      await page.getByRole('heading', { level: 1, name: 'Timestamp' }).waitFor({ timeout: 15_000 });
+      const field = page.getByLabel('Timestamp input');
+      await field.fill(text);
+      if (zone !== null) await page.getByLabel('Time zone', { exact: true }).fill(zone);
+      if (target !== null) {
+        await page.getByRole('combobox', { name: 'Convert to' }).click();
+        await page.getByRole('option', { name: target, exact: true }).click();
+      }
+      if ((await field.inputValue()) !== text)
+        return { failed: 'HARNESS: the input box lost its text' };
+      await page.getByRole('button', { name: 'Run', exact: true }).click();
+      try {
+        await page
+          .getByRole('region', { name: /notifications/i })
+          .getByText('Timestamp finished', { exact: true })
+          .first()
+          .waitFor({ timeout: 30_000 });
+      } catch {
+        return {
+          failed: `HARNESS: no finished run - ${(await drawnError(page)).text.slice(0, 160)}`,
+        };
+      }
+      return {
+        failed: null,
+        output: await page.getByLabel('Timestamp Converted').inputValue(),
+        notes: await drawnReportNotes(page),
+      };
+    };
+
+    // A wall time with no offset in a zone with rules, so the answer rests on them.
+    const claimed = await runOnPage('2024-06-01T12:00[America/Asuncion]', null, null);
+    const rulesNote =
+      claimed.failed === null
+        ? claimed.notes.find((note) => note.title === "The zone rules are this browser's own")
+        : undefined;
+    check(
+      label,
+      'the tool page names the same tz release this engine was measured to answer like',
+      rulesNote !== undefined &&
+        rulesNote.drawn &&
+        release !== null &&
+        rulesNote.body.includes(`tzdata ${release}`),
+      claimed.failed ??
+        `${rulesNote?.body.slice(0, 200) ?? 'no such note'} (measured: ${String(release)})`,
+    );
+
+    // Modern offsets at a quarter-hour and a half-hour, and a local mean time
+    // that is not a whole minute - the one RFC 3339 cannot write.
+    const pickFor = (zone, wanted) =>
+      measured.stable.find((row) => row.zone === zone && wanted(row));
+    const modern = (row) => row.seconds > 1_000_000_000;
+    const samples = [
+      pickFor('Asia/Kathmandu', modern),
+      pickFor('Australia/Lord_Howe', modern),
+      pickFor('America/St_Johns', modern),
+      pickFor('Pacific/Chatham', modern),
+      pickFor('Africa/Monrovia', (row) => row.offset % 60 !== 0),
+    ].filter((row) => row !== undefined);
+    const written = [];
+    for (const row of samples) {
+      const reading = await runOnPage(String(row.seconds), row.zone, 'RFC 3339 in the time zone');
+      const sign = row.offset < 0 ? '-' : '+';
+      const magnitude = Math.abs(row.offset);
+      const pad = (value) => String(value).padStart(2, '0');
+      const offset = `${sign}${pad(Math.floor(magnitude / 3600))}:${pad(Math.floor((magnitude % 3600) / 60))}${magnitude % 60 === 0 ? '' : `:${pad(magnitude % 60)}`}`;
+      written.push({ zone: row.zone, want: offset, got: reading.failed ?? reading.output });
+    }
+    const wrong = written.filter((entry) => !String(entry.got).endsWith(entry.want));
+    check(
+      label,
+      'the tool page writes the oracle offset through its own Time zone field, to the second',
+      samples.length === 5 && wrong.length === 0,
+      (wrong.length === 0 ? written : wrong)
+        .map((entry) => `${entry.zone} ${entry.got} (want ${entry.want})`)
+        .join('; '),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/* ========================================================================== *
  * The loss corpus, drawn
  * ========================================================================== */
 
@@ -11898,7 +12149,7 @@ async function checkRunProgress(browser, label) {
  * calls `prefetch` when a node is added; this page never called it at all.
  *
  * THE COST IS A WORKER, so it must be paid only where a tool is actually going
- * to run. `/tools` lists ten of them and runs none, and warming all ten from an
+ * to run. `/tools` lists eleven of them and runs none, and warming all eleven from an
  * index would be the hover-prefetch this engine's comment already rules out.
  * The count is taken by replacing the constructor before any application code
  * runs, because "did a worker start" is not otherwise observable from a page.
@@ -12339,8 +12590,8 @@ async function checkToolIndex(browser, label) {
        * bottom edge is doing nothing that today's content can see.
        *
        * Today's content cannot see it because the metadata is now two lines on
-       * every card. That is a fact about the ten tools in the registry, not
-       * about the layout, and the eleventh tool is exactly the case the rule
+       * every card. That is a fact about the eleven tools in the registry, not
+       * about the layout, and the twelfth tool is exactly the case the rule
        * exists for.
        *
        * So one card's summary is made taller than its neighbours' - through
@@ -16755,6 +17006,7 @@ const SECTIONS = [
   checkDeepLinks,
   checkStructuredData,
   checkFileExtension,
+  checkTimestampZones,
   checkLossReports,
   checkLossCorpus,
   checkValueModel,

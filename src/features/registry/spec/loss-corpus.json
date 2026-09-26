@@ -530,6 +530,129 @@
         },
         "says": ["Not carried over: 2 flow collections", "$.a"]
       }
+    },
+    {
+      "row": 21,
+      "id": "timestamp-unit-by-size",
+      "loss": "A Unix time's unit read off its size, outside 1980 to 2100",
+      "cell": "Timestamp · A unit read off a number's size",
+      "tool": "timestamp",
+      "options": {},
+      "input": "86400",
+      "clean": "1727308800",
+      "expect": {
+        "titleContains": "by its size",
+        "mentions": ["86400", "1970-01-02T00:00:00Z"]
+      },
+      "drawn": {
+        "choose": {},
+        "says": ["between 1980 and 2100", "as milliseconds it is 1970-01-01T00:01:26.4Z"],
+        "quiet": true,
+        "controls": [
+          {
+            "input": "1727308800123",
+            "quiet": true
+          }
+        ]
+      }
+    },
+    {
+      "row": 22,
+      "id": "timestamp-precision-dropped",
+      "loss": "Milliseconds written as whole Unix seconds",
+      "cell": "Timestamp · A Unix target coarser than the instant",
+      "tool": "timestamp",
+      "options": {
+        "target": "s"
+      },
+      "input": "1727308800123",
+      "clean": "1727308800000",
+      "expect": {
+        "titleContains": "Precision was dropped",
+        "mentions": ["1727308800.123", "1727308800"]
+      },
+      "drawn": {
+        "choose": {
+          "Convert to": "Unix seconds"
+        },
+        "says": ["floored to 1727308800"],
+        "quiet": true
+      }
+    },
+    {
+      "row": 23,
+      "id": "timestamp-dst-gap",
+      "loss": "A wall time the clocks skipped, moved forward by the gap",
+      "cell": "Timestamp · A wall time the clocks skipped",
+      "tool": "timestamp",
+      "options": {},
+      "input": "2024-03-31T02:30[Europe/Berlin]",
+      "clean": "2024-03-31T03:30[Europe/Berlin]",
+      "expect": {
+        "titleContains": "did not happen",
+        "mentions": ["Europe/Berlin", "2024-03-31"]
+      },
+      "drawn": {
+        "choose": {},
+        "says": ["from +01:00 to +02:00", "2024-03-31T00:30:00Z", "2024-03-31T01:30:00Z"],
+        "unsaid": ["happened twice"]
+      }
+    },
+    {
+      "row": 24,
+      "id": "timestamp-dst-overlap",
+      "loss": "A wall time the clocks showed twice, read as the first",
+      "cell": "Timestamp · A wall time the clocks showed twice",
+      "tool": "timestamp",
+      "options": {},
+      "input": "2024-10-27T02:30[Europe/Berlin]",
+      "clean": "2024-10-27T03:30[Europe/Berlin]",
+      "expect": {
+        "titleContains": "happened twice",
+        "mentions": ["Europe/Berlin", "2024-10-27T00:30:00Z", "2024-10-27T01:30:00Z"]
+      },
+      "drawn": {
+        "choose": {},
+        "says": ["The first was taken"],
+        "unsaid": ["did not happen"]
+      }
+    },
+    {
+      "row": 25,
+      "id": "timestamp-leap-second",
+      "loss": "A leap second read as the second after it",
+      "cell": "Timestamp · A leap second",
+      "tool": "timestamp",
+      "options": {},
+      "input": "2016-12-31T23:59:60Z",
+      "clean": "2016-12-31T23:59:59Z",
+      "expect": {
+        "titleContains": "23:59:60",
+        "mentions": ["2016-12-31T23:59:60Z", "2017-01-01T00:00:00Z"]
+      },
+      "drawn": {
+        "choose": {},
+        "says": ["a second short"],
+        "quiet": true
+      }
+    },
+    {
+      "row": 26,
+      "id": "timestamp-past-nanosecond",
+      "loss": "Digits past the nanosecond dropped",
+      "cell": "Timestamp · Digits past the nanosecond",
+      "tool": "timestamp",
+      "options": {},
+      "input": "1727308800.1234567891",
+      "clean": "1727308800.123456789",
+      "expect": {
+        "titleContains": "past the nanosecond",
+        "mentions": ["1727308800.1234567891"]
+      },
+      "drawn": {
+        "choose": {},
+        "quiet": true
+      }
     }
   ]
 }

@@ -397,14 +397,16 @@ describe('wires that are deliberately still illegal', () => {
   });
 
   /*
-   * The two ports that take a short LITERAL rather than a document: a compact
-   * token and a colour. Neither has a sensible reading of arbitrary bytes, and
-   * both have a size limit that says the same thing - jwt-decode caps its
-   * input at 256 kB and color-convert at 4 kB.
+   * The three ports that take a short LITERAL rather than a document: a
+   * compact token, a colour and a timestamp. None has a sensible reading of
+   * arbitrary bytes. jwt-decode caps its input at 256 kB and color-convert at
+   * 4 kB; timestamp's 256 kB is for the wired JSON value its Field reads one
+   * member of, which is why it takes `json` and still not `bytes`.
    */
-  it('refuses bytes at the token and colour inputs', () => {
+  it('refuses bytes at the token, colour and timestamp inputs', () => {
     expect(getManifestEntry('jwt-decode').inputs[0]?.types).toEqual(['text']);
     expect(getManifestEntry('color-convert').inputs[0]?.types).toEqual(['text', 'color']);
+    expect(getManifestEntry('timestamp').inputs[0]?.types).toEqual(['text', 'json']);
   });
 });
 

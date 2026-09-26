@@ -1,7 +1,7 @@
 # Patchbay
 
 A developer toolbox — encoders, hashes, formatters, diff, regex, colour, image
-and video conversion — that runs entirely in your browser. Wire the tools together on a
+and video conversion, timestamps — that runs entirely in your browser. Wire the tools together on a
 node canvas and a throwaway one-liner becomes a pipeline you can see, share and
 re-run, without anything you paste ever leaving the page.
 
@@ -137,6 +137,7 @@ HTML to the app, so the joins are asserted instead — see
 | **Image**           | Convert and resize between PNG, JPEG and WebP, with a before-and-after.     |
 | **Text convert**    | Markdown, HTML and plain text, with a sandboxed preview and rich-text copy. |
 | **Video**           | Repackage a video into an MP4 without re-encoding, or extract its audio.    |
+| **Timestamp**       | Unix time, RFC 3339 and readable dates in any time zone, both ways.         |
 
 Each has its own README next to the code, which is where the interesting parts
 are written down: why [JWT](src/tools/jwt-decode/README.md) refuses
@@ -148,9 +149,11 @@ finds nothing, why
 a photograph and says so, why [Video](src/tools/video-remux/README.md) refuses
 to put a WebM's codecs in an MP4 and ships no ffmpeg at all, why
 [Text convert](src/tools/text-convert/README.md) round-trips are
-checked for _meaning_ rather than byte equality, and why
+checked for _meaning_ rather than byte equality, why
 [Structured data](src/tools/structured-data/README.md) refuses to guess that a
-CSV cell holding `01234` is a number.
+CSV cell holding `01234` is a number, and why
+[Timestamp](src/tools/timestamp/README.md) says which release of the time zone
+database your browser's answer came from.
 
 **How a result is drawn** is a decision per output port rather than per tool,
 and the reasoning lives in
@@ -314,8 +317,8 @@ a pointer rather than a file.
 > leaky value: a streaming value that some tools handle and others quietly
 > buffer would be worse than an honest ceiling. So a tool declares how it reads
 > binary input, and a windowed tool's input **has no `bytes` member to reach
-> for** — it gets a `ByteSource` over bytes that may still be on disk. Nine of
-> the ten tools are resident and not one line of any of them changed. See
+> for** — it gets a `ByteSource` over bytes that may still be on disk. Ten of
+> the eleven tools are resident and not one line of any of them changed. See
 > [where a value's bytes are](docs/architecture.md#where-a-values-bytes-are).
 
 **Incremental caching keyed on upstream cache keys, not values.** Each node's
@@ -546,6 +549,7 @@ top of it is **an external reference, committed as a fixture**:
 | The video tool's output        | a real decoder, frame by frame against the source                               |
 | The regex match list           | `String.prototype.matchAll`                                                     |
 | OKLCH round-tripping           | 166,112 sRGB colours on a fixed stride, calibrated by a full sweep              |
+| Timestamps and time zones      | CPython's `datetime` and `zoneinfo` at tzdata 2026d; RFC 3339's own examples    |
 
 Most of those rest on a fixture a script in [`scripts/`](scripts) generates and
 checks in — CSV from CPython, the patch from git, YAML from the suite's own
@@ -1997,7 +2001,7 @@ suite and ten against the harness, and four of them exposed a check rather than
 a defect — which is the reason for the exercise. "Every card in a row is the
 same height" was already true before the change. The metadata alignment check
 passed against three `auto` rows, because `align-content: stretch` distributes
-the spare height equally and today's ten tools all have two-line metadata; it
+the spare height equally and today's eleven tools all have two-line metadata; it
 takes a tall-summary fixture, in the style of the tall-options one, to ask the
 question the rule actually answers. "Neither type list wraps" compared a type
 list to the flex row holding it — which _grows with it_ — so it was true of

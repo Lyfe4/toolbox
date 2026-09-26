@@ -38,6 +38,17 @@ has had it since 16.4. That means the **worker path for image conversion has
 never run in any WebKit this repository can drive** — it is only ever exercised
 in Firefox.
 
+**What is no longer unproven is that the two paths agree**, and that is easy to
+read the sentence above as denying. `checkOffscreenFallback`, since round two,
+deletes `OffscreenCanvas` before the bundle loads in the engine that has it -
+Gecko - runs one PNG down both paths, confirms from the performance timeline
+that the downgrade really happened, and compares every decoded sample. It is
+narrow: one 8×8 opaque gradient, at the default WebP 0.85, unscaled, in one
+engine. So this step is not about agreement. It is the only place the worker
+path runs inside JavaScriptCore at all - Safari's own `OffscreenCanvas`, its
+`convertToBlob` encoder in a worker, and the detection that sends Safari there
+rather than to the fallback. <!-- asserted: cross-browser-check.mjs › the main-thread fallback decodes to the same pixels as the worker path -->
+
 1. **Image conversion goes through the worker.** Open `/tools/image-convert`,
    choose a photograph, set the format to **JPEG** and quality to **0.6**, and
    press Run.

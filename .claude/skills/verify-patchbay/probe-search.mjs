@@ -129,7 +129,7 @@ try {
       .sort();
 
   const baseline = await shown();
-  check('the unfiltered index shows all ten tools', baseline.length === 10, baseline.join(' '));
+  check('the unfiltered index shows all eleven tools', baseline.length === 11, baseline.join(' '));
 
   for (const { q, why } of QUERIES) {
     await search.fill(q);
@@ -178,7 +178,7 @@ try {
   const restored = await shown();
   await shot(page, dir, 'restored');
   check(
-    'and clearing it brings all ten back, so the empty state is recoverable',
+    'and clearing it brings all eleven back, so the empty state is recoverable',
     restored.length === 10 && JSON.stringify(restored) === JSON.stringify(baseline),
     restored.join(' '),
   );

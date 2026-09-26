@@ -495,6 +495,67 @@ export const TOOL_MANIFEST = [
       maxInputBytes: 4 * 1024 * 1024,
     },
   },
+  {
+    id: 'timestamp',
+    name: 'Timestamp',
+    summary: 'Convert between Unix time, RFC 3339 and readable dates in any time zone.',
+    category: 'encoding',
+    keywords: [
+      'unix',
+      'epoch',
+      'time',
+      'date',
+      'iso 8601',
+      'rfc 3339',
+      'time zone',
+      'timezone',
+      'utc',
+      'milliseconds',
+      'nanoseconds',
+      'exp',
+      'iat',
+      'dst',
+    ],
+    inputs: [
+      {
+        id: 'input',
+        label: 'Timestamp',
+        types: ['text', 'json'],
+        required: true,
+        description:
+          '1727308800, 2024-09-26T08:00:00+02:00 or Thu, 26 Sep 2024 06:00:00 GMT - or wired JSON, with Field naming the member.',
+      },
+    ],
+    outputs: [
+      {
+        id: 'output',
+        label: 'Converted',
+        types: ['text'],
+        description: 'The instant in the chosen notation.',
+      },
+      {
+        id: 'all',
+        label: 'Notations',
+        types: ['json'],
+        description:
+          'The same instant as Unix time in every unit, RFC 3339 and a readable date at once, each exact.',
+      },
+      {
+        id: 'report',
+        label: 'Report',
+        types: ['json'],
+        description:
+          'What was read, what was assumed, and anything the conversion could not carry.',
+        presentation: 'report',
+      },
+    ],
+    execution: {
+      strategy: 'main',
+      requiresOffscreenCanvas: false,
+      timeoutMs: 5_000,
+      maxInputBytes: 256 * 1024,
+    },
+  },
 ] as const satisfies readonly ToolManifestEntry[];
 
 /** The union of every tool id: 'base64' | 'diff' | 'hash' | ... */

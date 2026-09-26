@@ -35,7 +35,7 @@ This directory is the maintained source for verifying the user-facing behaviour 
 | ------------- | -------------------------------- | ---------------------------------------------------------------- | --------- |
 | `canvas`      | [canvas.md](canvas.md)           | Cold open, palette, nodes, inspector, reactive execution         | yes       |
 | `pipelines`   | [pipelines.md](pipelines.md)     | Wiring tools together, share links, data flowing down a chain    | yes       |
-| `tools-index` | [tools-index.md](tools-index.md) | `/tools` — browsing, searching and filtering the ten tools       | yes       |
+| `tools-index` | [tools-index.md](tools-index.md) | `/tools` — browsing, searching and filtering the eleven tools    | yes       |
 | `tool-page`   | [tool-page.md](tool-page.md)     | `/tools/<id>` — running one tool standalone with an explicit Run | yes       |
 | `appearance`  | [appearance.md](appearance.md)   | `/styleguide`, theme presets, the theme editor, persistence      | partly    |
 

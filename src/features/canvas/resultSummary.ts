@@ -379,11 +379,11 @@ export function lossSummary(entry: ToolManifestEntry, outputs: ToolOutputs | nul
 /**
  * The one line a node prints once it has run.
  *
- * THE FIRST DECLARED OUTPUT, and only that one. Seven of the ten tools have
+ * THE FIRST DECLARED OUTPUT, and only that one. Ten of the eleven tools have
  * more than one output port, and a node that tried to summarise all of them
  * would be summarising none of them at 224px. The manifest's order is not
  * arbitrary - the first port is the tool's answer and the rest are its working
- * (`Parsed data`, `Changes`, `Matches`, `Details`, `Every notation`) - so
+ * (`Parsed data`, `Changes`, `Matches`, `Report`, `Notations`) - so
  * "the first output" and "the result" are the same thing by construction.
  *
  * The other ports are not hidden, they are one press away in the inspector,

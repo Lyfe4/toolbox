@@ -241,6 +241,28 @@ const LOSSY_RUNS: readonly {
     },
     options: { source: 'html', target: 'markdown' },
   },
+  {
+    /*
+     * `timestamp`'s, added the day it landed. Each loses something in a
+     * different half: the unit guess and the leap second are in the READ half
+     * and reach every notation; the dropped precision is in the WRITE half,
+     * and `all` - which carries every unit exactly - must escape it.
+     */
+    toolId: 'timestamp',
+    what: 'a number whose size-read unit puts it in 1970',
+    inputs: { input: { type: 'text', text: '86400' } },
+  },
+  {
+    toolId: 'timestamp',
+    what: 'milliseconds written as whole seconds',
+    inputs: { input: { type: 'text', text: '1727308800123' } },
+    options: { target: 's' },
+  },
+  {
+    toolId: 'timestamp',
+    what: 'a leap second, which Unix time has no number for',
+    inputs: { input: { type: 'text', text: '2016-12-31T23:59:60Z' } },
+  },
 ];
 
 describe('every warn note names the ports its loss is actually in', () => {

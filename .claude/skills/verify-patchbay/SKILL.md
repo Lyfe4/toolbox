@@ -5,7 +5,7 @@ description: Drive the deployed Patchbay site (https://patchbay-tools.netlify.ap
 
 # Verify Patchbay
 
-Patchbay is a fully offline, client-side developer toolbox: ten tools that run on an infinite node canvas, plus a plain `/tools` list for running one at a time. This skill drives **the deployed site** by default, and a local production build when `PATCHBAY_ORIGIN` points at one - see [Proving a fix before it ships](#proving-a-fix-before-it-ships). Never a dev server: it has no CSP.
+Patchbay is a fully offline, client-side developer toolbox: eleven tools that run on an infinite node canvas, plus a plain `/tools` list for running one at a time. This skill drives **the deployed site** by default, and a local production build when `PATCHBAY_ORIGIN` points at one - see [Proving a fix before it ships](#proving-a-fix-before-it-ships). Never a dev server: it has no CSP.
 
 **Target:** `https://patchbay-tools.netlify.app` — override with `PATCHBAY_ORIGIN` for a branch or deploy preview.
 
@@ -98,7 +98,7 @@ Use these. Do not use coordinates or tab order.
 | Tool index                 | heading `Every tool`, `data-testid="tool-count"`, cards are `a[href^="/tools/"]`                                                                                |
 | Cold open                  | `#cold-open`, dismissed via `#cold-open-start`                                                                                                                  |
 
-The ten tool ids: `base64`, `structured-data`, `hash`, `jwt-decode`, `diff`, `regex-tester`, `color-convert`, `image-convert`, `video-remux`, `text-convert`.
+The eleven tool ids: `base64`, `structured-data`, `hash`, `jwt-decode`, `diff`, `regex-tester`, `color-convert`, `image-convert`, `video-remux`, `text-convert`, `timestamp`.
 
 ### The two things that trip up every first attempt
 

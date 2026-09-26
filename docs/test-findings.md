@@ -4668,3 +4668,272 @@ refusal losing its instruction (the `.txt` and pasted controls red).
 - Unchanged from before: `checkLossReports`' 500 ms control, `someOf`, the
   wall-clock sites, image metadata level, `TOUCH_ROUTES`, `checkPopovers`'
   theme editor selects, `OptionField.secret`.
+
+## Round twenty-four, done — a timestamp tool, and what it cost to add
+
+2026-09-26, against `4828ade`. Two parts: a doc-against-code question about the
+image tool's worker path, and an eleventh tool, built to the standard of the
+other ten while keeping a ledger of every file it cost.
+
+|                                                               | Result                                                                                                 |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Tools                                                         | 10 → **11** (`timestamp`)                                                                              |
+| Loss-corpus ratio                                             | 20 of 20 → **26 of 26**, the six new rows told the day they landed                                     |
+| Files touched                                                 | **42**: 17 new, 25 edited                                                                              |
+| … intrinsic / mechanical / found by a gate / found by nothing | 19 / 9 / 11 / 19 items - see [the ledger](#the-ledger)                                                 |
+| `adding-a-tool.md`'s own closing command, first run           | **8 failures**, in files it never names                                                                |
+| Engines' tz data                                              | Gecko like tzdata **2026b**, WebKit like **2025a**: an hour apart on America/Vancouver in January 2027 |
+| Deliberate breaks, each shown red                             | 13 against the unit suite, 4 against the harness, 3 machine leaks                                      |
+| Breaks nothing caught on the first pass                       | **2** - both now caught                                                                                |
+| Suite under another zone, clock and locale                    | identical results, once the zone was really changed - which `TZ=` in Git Bash does not do              |
+| `check:browsers`, full run, idle                              | **3,574 passed, 0 failed, 13 skipped** (the same thirteen as round twenty-three)                       |
+
+### Part one — the worker path, settled from the harness
+
+**Both statements were true.** manual-checks.md said the image tool's worker path
+"has never run in any WebKit this repository can drive — it is only ever
+exercised in Firefox", and the recollection was that round two built a check
+comparing the two branches. Round two did: `checkOffscreenFallback`, added in
+`2853062`, deletes `OffscreenCanvas` with an init script in the engine that has
+it, runs one PNG down each branch, confirms from the performance timeline that
+the downgrade happened, and compares every decoded sample and the reported
+dimensions and format. It runs in Gecko only, by design - WebKit here has no
+`OffscreenCanvas` to remove - so the worker path still has never run in a
+JavaScriptCore. The doc was right and incomplete in the one way that invites a
+wrong reading, so a paragraph now says what the comparison covers.
+
+**What it compares is narrow:** one 8×8 opaque gradient, at the tool's default
+WebP 0.85, unscaled, in one engine. **Whether it can fail:** yes. With the
+fallback's `toBlob` passed a quality of 0.1 instead of the chosen one, Gecko
+reports `the main-thread fallback decodes to the same pixels as the worker path
+
+- first difference at sample 0`, and WebKit - which runs the fallback for every
+image check - fails five of its own, `a lower JPEG quality produces a smaller
+  file`among them (2295 B at both 0.3 and 0.95). The divergence surface is small
+by construction: everything that decides pixels is one shared`paint`, so the
+  branches differ only in the canvas they construct and the encode call.
+
+**What the Safari step still uniquely covers:** the worker path inside
+JavaScriptCore at all - Safari's `OffscreenCanvas`, its `convertToBlob` encoder
+running in a worker, JPEG at 0.6 on a real photograph - and the feature
+detection that sends Safari to the worker rather than the fallback, whose
+failure is exactly the frozen tab the step describes.
+
+### Part two — the tool
+
+The decisions and their arguments are in the tool's
+[README](../src/tools/timestamp/README.md) and its cells in the
+[conversion matrix](conversion-matrix.md#timestamp); the short version:
+
+- **The instant is a BigInt of nanoseconds.** A nanosecond count for any date
+  after 1970-04 is past 2^53, so a `Date` rounds it before converting it.
+- **Evidence:** CPython's `datetime`, `zoneinfo` at tzdata 2026d, PEP 495's
+  `fold` at 2,460 wall times across every clock change in 22 zones from 1970 to
+  2030, `datetime.fromisoformat` over 38 strings and `email.utils` over 15,
+  RFC 3339 section 5.8's five examples by their prose, and IANA's
+  `leap-seconds.list` by its own SHA-1. Every difference from Python is a named
+  table entry that must still differ.
+- **The engine's zone data is used, not bundled, and the tool says whose it is**
+  - measured below.
+- **The losses, told:** a unit read off a number's size outside 1980-2100, a
+  Unix target coarser than the instant, a skipped wall time, a doubled one, a
+  leap second, digits past the nanosecond. Rows 21 to 26.
+- **The ones the brief did not list,** found by building it: the input's own
+  offset not surviving into the answer; RFC 3339's `-00:00`, "local offset
+  unknown", which no output can carry; an offset that is not a whole minute
+  (local mean time), which RFC 3339 cannot write and rounding would falsify; a
+  date-only input at midnight on a day whose midnight was skipped; an RFC 5322
+  two-digit year, where RFC 5322 and Python disagree about the century; a year
+  outside RFC 3339's four digits; a Unix second that stands for two seconds of
+  UTC; a wired JSON double past 2^53; a zone name that each engine spells
+  differently (`Asia/Calcutta` becomes `Asia/Kolkata` in Gecko only); and a
+  day and month that cannot be told apart, which is refused.
+- **Relative time is not built,** and would belong in a view if it were. A
+  result is cached on its inputs and reproduced by a share link; a relative time
+  is a statement about now. jwt-decode made the other choice - it stamps
+  `Date.now()` into its result as `checkedAt` - and on the canvas that cached
+  result keeps saying a token is valid after it expires. That is filed as its
+  own task rather than fixed here.
+- **Free text is out of scope:** no reference to check a reading against, and a
+  dependence on the moment it is read.
+
+#### Whether the engines disagree about a zone's history: they do
+
+Measured by asking each engine's `Intl` at fifteen sentinels, one per tzdata
+release from 2022b to 2026d that changed an offset, each checked against all
+twenty releases installed side by side:
+
+| Engine                        | Answers like | Lacks                             |
+| ----------------------------- | ------------ | --------------------------------- |
+| Playwright Firefox 155        | 2026b        | 2026c, 2026d                      |
+| Playwright WebKit 26.6        | 2025a        | 2025b, 2025c, 2026b, 2026c, 2026d |
+| Node 24.19 (the unit suite's) | 2026b        | 2026c, 2026d                      |
+
+So what the tool claims is the browser's answer **and which release it matches**,
+in an `info` note on any answer that depended on a zone's rules.
+`checkTimestampZones` holds each engine to the oracle exactly at the 391 of 396
+oracle instants no release moved, holds the sentinels to being a prefix - one
+release rather than a mixture - and holds the tool page to naming the release it
+measured. Both engines agree on the 391. **Pre-1970 history differs from the
+RFC's own example by design:** all three engines, and tzdata since 2022b, give
+Europe/Amsterdam in 1937 as +00:00, not the +00:20 of RFC 3339 section 5.8,
+because that detail moved to `backzone`.
+
+#### JWT decode's `exp`, `iat` and `nbf`: a change to this tool only
+
+jwt-decode's one output is `json`, deliberately, so the claims never travel
+without the verdict. A text-only input here would make the wire illegal to
+draw. So this tool's input takes `json`, and **Field** - an RFC 6901 JSON
+Pointer, `/payload/exp` - reads one member; a wired object with no Field is
+refused with the pointers in it that read as timestamps. No change to
+jwt-decode and none to the port system. The note on such a run says the verdict
+did not come along: this tool says when a claim says, not whether the claim is
+true. A unit test runs the real jwt-decode and feeds its output through.
+
+### Machine independence, run rather than argued
+
+The whole suite, three ways, with identical results: in the machine's own zone
+(Australia/Sydney); in Pacific/Kiritimati (+14) with the clock faked to
+2031-11-02T05:30Z, New York's fall-back hour, and every locale-taking API
+defaulted to `ar-EG-u-nu-arab`; and in America/St_Johns (-03:30). The config and
+setup file live outside the repository.
+
+**The first attempt proved nothing, and would have looked like proof.**
+`TZ=Pacific/Kiritimati pnpm test` in Git Bash on Windows does not reach Node:
+measured, `TZ=Pacific/Kiritimati node -e ...` reports Australia/Sydney. The setup
+now sets the zone in-process and throws unless the runtime reports it. **The
+second attempt's locale was incomplete:** it wrapped `Intl.DateTimeFormat` and
+not `Number.prototype.toLocaleString`, and a deliberate locale leak passed
+through it. Both were found by the breaks below, not by reading.
+
+| Deliberate leak                                  | Normal machine           | Hostile machine             |
+| ------------------------------------------------ | ------------------------ | --------------------------- |
+| UTC resolved as the machine's zone               | 1 red (TZ=UTC, as CI is) | 2 red (Kiritimati)          |
+| A timestamp after `Date.now()` doubted           | green                    | 8 red (clock faked to 2020) |
+| The readable day written with `toLocaleString()` | green                    | 1 red (Arabic digits)       |
+
+The second and third are the shape the brief warned about: green on the machine
+that wrote them, red somewhere else.
+
+### Proving test, per check
+
+Every break applied by a script, run, and restored by hash.
+
+| Break                                               | Caught by                                                                   |
+| --------------------------------------------------- | --------------------------------------------------------------------------- |
+| a gap resolved to the earlier instant by default    | 960 wall-time cases against PEP 495                                         |
+| the gap search bracketing an hour rather than a day | 927 wall-time cases                                                         |
+| an overlap reported as unique                       | 1,012 wall-time cases                                                       |
+| **the century rule dropped from leap years**        | **nothing**, until `1900-02-29` and `2100-02-29` went to `fromisoformat`    |
+| Unix time truncated rather than floored             | `floors below the epoch, so -0.5 s is in second -1`                         |
+| RFC 5322's pivot moved from 50 to 70                | `reads 60 as 1960, as the RFC says, where Python says 2060`                 |
+| **the seconds threshold moved to 12 digits**        | **nothing**, until each threshold was tested from both sides                |
+| the 2016 leap second missing from the table         | the file's own entries, and its RFC 5322 and RFC 3339 cases                 |
+| an offset rounded to the minute                     | the unit test, and `checkTimestampZones` on Africa/Monrovia in both engines |
+| no note for a skipped wall time                     | corpus row 23 and the matrix block                                          |
+| the unit doubt never firing                         | row 21 and its unit tests                                                   |
+| a weekday the date contradicts, accepted            | the RFC 5322 difference table                                               |
+| the vintage naming the next release                 | the unit test, and the tool-page check in both engines                      |
+| one stable offset in the fixture moved by an hour   | `the engine agrees with IANA at every zone instant no tz release has moved` |
+| the image fallback's quality ignored (part one)     | `checkOffscreenFallback` in Gecko; five image checks in WebKit              |
+
+**The oracle test's first run found its own fixture rounded.** 32 of its 33
+first failures were the fixture's microsecond counts - `253402300799999999`,
+past 2^53, read by `JSON.parse` as `253402300800000000` - which is this tool's
+headline loss, in the evidence for it. They are strings now.
+
+### The ledger
+
+Followed literally, adding-a-tool.md's steps 1 to 6 produced the tool, and its
+closing command - `typecheck`, `test`, `build`, `bundle:check`, four of the six
+gates and not the harness - failed eight tests on its first run: five doc-gate
+rules and two named lists it never mentions, plus one bug of the tool's own.
+**Honest caveat:** the brief had me read CONTRIBUTING, the matrix and
+test-findings first, so the corpus rows, the matrix section and the harness were
+never going to be missed; what "literally" measured is what the page itself
+says.
+
+| Class                            | Items | What                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------------------- | ----: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Intrinsic                        |    19 | eight modules, two test files, the README, four fixtures, two generators, `checkTimestampZones`, the matrix section                                                                                                                                                                                                                                                      |
+| Required, mechanical             |     9 | the manifest entry (60 lines, a copy of the definition), the loader, six corpus rows, the corpus block (pasted from the failure), the README's two tables, architecture's port-set table, the skill's tool list, CONTRIBUTING's section count, this record                                                                                                               |
+| **Found only by a gate failing** |    11 | eight count sentences - one of them the cold open's lede in `index.html`, another also the "resident" count - the report-port list in `resultSummary.test.ts`, `LOSSY_RUNS` in `notePorts.test.ts`, and two backticked names that are somebody else's (Go's UnixNano, Temporal's GetPossibleEpochNanoseconds)                                                            |
+| **Found by nothing**             |    19 | counts the gate's patterns miss (architecture ×5, `types.ts` ×2, `engine.ts`, the harness, `resultSummary.ts` - which said "Seven of the ten" and was already false - its test, three skill pages); the skill's search probe asserting `=== 10` against the live site; "the two ports that take a short literal" in `ports.test.ts`, architecture ×2 and base64's README |
+
+And two constraints written nowhere: `checkLossCorpus` reads a tool's answer by
+the label `<Tool> Converted`, so a lossy tool's first output must be called
+that; and `drawn.choose` can only drive a select, so a row that needs a text
+option has to carry it in its input.
+
+adding-a-tool.md now says all of it, sorted by kind of tool, and closes with the
+six gates and the harness.
+
+### Should any of it be generated before eighteen more tools? Recommendations
+
+Nothing was built, so the measurement above is of the chain as it stands.
+
+| Candidate                                                                                             | Generated                                                                                          | Still hand-written                           | Weakens a check?                                                                                                                                                                                                                                                                  |
+| ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **The manifest entry**                                                                                | id, name, summary, category, ports, execution, secret keys - by a build step, as the route tree is | keywords                                     | **No.** `registry.test.ts` holds the copy to the original, which is internal consistency, not a claim about the world; generating it removes the copy rather than a check. The one new need is a check that the generated file is current, as `src/routeTree.gen.ts` has.         |
+| **The loader**                                                                                        | nothing: `import.meta.glob` over `src/tools/*/index.ts` splits chunks the same way                 | nothing                                      | No. The compile error for a missing loader goes, because the loader cannot be missing.                                                                                                                                                                                            |
+| **The tool counts in prose**                                                                          | not generated - **removed**                                                                        | sentences that no longer state a number      | Removing is better than generating. Round seventeen's argument holds - a checked number is as true as a generated one - but eight gated and ten ungated sentences per tool is the largest single cost here, and most of them carry nothing the number adds. Keep the few that do. |
+| **The tables projected from the manifest** (README's tools, architecture's port set, the skill's ids) | a block between markers, compared as the corpus block is                                           | the prose around them                        | No: the table documents the code rather than making a claim about anything outside it. The comparison is the corpus block's pattern, already proven here.                                                                                                                         |
+| **Named lists in tests** (report tools, `LOSSY_RUNS`, document ports, `measuredBy`)                   | **no**                                                                                             | all of them                                  | **Yes.** Each exists to make a new tool's author decide something - which of its losses is the example, whether its port reads a document. Generated from the manifest, each asserts the manifest equals itself.                                                                  |
+| **Corpus rows**                                                                                       | `drawn.choose` from `options` and the option labels                                                | the loss, the clean control, the expectation | No for `choose` - the unit test already derives and compares it. Yes for the rest: the row is a judgement.                                                                                                                                                                        |
+| **The matrix row**                                                                                    | **no**                                                                                             | all of it                                    | **Yes, and this is the case the brief named.** A verdict generated from what the code does is a check that cannot fail. The corpus-derived block is the only part that is generated, and it is derived from what the tools SAID, against expectations written by hand.            |
+| **A scaffold** (options, index, test, README skeletons)                                               | the files' shape                                                                                   | everything in them                           | No check weakened; it saves typing, not decisions, and the typing is the cheap part.                                                                                                                                                                                              |
+
+### What it costs, by kind of tool
+
+One number would be wrong for most tools. From the ledger, per kind:
+
+| Kind                                                                 | Intrinsic                                                                            | Mechanical and gate-found                                                | New harness                      |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ | -------------------------------- |
+| An exact encoder, no report port (a URL encoder)                     | options, index, a module, a test against the RFC's vectors, README, a matrix section | manifest, loader, the ~18 count sentences, 3 tables                      | none                             |
+| A conversion that loses things (this one)                            | the above, plus an oracle generator and fixture                                      | the above, plus two named lists, a corpus row per loss, the corpus block | only if it depends on the engine |
+| A tool whose answer is the engine's (image, video, this one's zones) | the above, plus a section in the harness                                             | the above, plus the harness's section count                              | a section per question           |
+
+For the first kind, about half of all edits are the counts and tables; generating
+the manifest and loader and removing the counts would take it from roughly
+twenty edits to roughly eight. For this kind, the intrinsic work dominates - the
+oracle and its generators were most of the round - and no generator touches it.
+
+### Looked for and NOT found
+
+- **A disagreement between an engine and IANA that its release does not
+  explain.** 391 of 391 stable instants agree, in both engines.
+- **An engine whose zone data is a mixture of releases.** Both are a prefix.
+- **A zone with two offset changes within a day of each other**, which would
+  defeat the gap search: none in the oracle's 22 zones from 1900 to 2040.
+- **A test in the suite that depends on the zone, the clock or the locale.**
+  Three environments, identical results, and each of the three leaks built on
+  purpose was caught.
+- **A place the new tool changed what any other tool produces:** no other tool's
+  output was touched; the corpus's first twenty rows and controls are unchanged.
+- **A second tool that takes `json` and would need a Field option too:** only
+  this one reads one member of a structure.
+
+### Anything in the framing I think is wrong
+
+1. **"The doc may be stale, or my memory may be wrong."** Neither: both were
+   true, and the doc was incomplete in a way that made them look contradictory.
+2. **"Leap seconds, which Unix time does not count" as a loss of this tool.** It
+   is a loss only for input that names one. Unix time → date has nothing to lose
+   - the conventional answer is the right one - and is noted, not warned.
+3. **"Dates outside what the engine can represent" as a told loss.** It is a
+   refusal, which is told but converts nothing, so it cannot be a corpus row.
+4. **"Should the relative output exist?"** The more useful finding is that the
+   repository already answered it once, in jwt-decode, the other way - and the
+   answer has a defect on the canvas.
+5. **"Follow it literally first"** could not be done blind; see the caveat above.
+
+### Still open
+
+- **jwt-decode's cached `expired`** goes stale on the canvas. Filed separately.
+- **Safari itself** remains the only place the image worker path runs in
+  JavaScriptCore, and now also the only place this tool's zone answers could be
+  compared with Safari's own tz data.
+- **The generation recommendations** above, deliberately not built this round.
+- Unchanged: image metadata level, `TOUCH_ROUTES`, `checkPopovers`' theme-editor
+  selects, `OptionField.secret`, `checkLossReports`' 500 ms control, `someOf`,
+  the wall-clock sites.

@@ -21,6 +21,7 @@ const LOADERS: Record<ToolId, () => Promise<{ readonly default: ErasedTool }>> =
   'image-convert': () => import('@/tools/image-convert'),
   'text-convert': () => import('@/tools/text-convert'),
   'video-remux': () => import('@/tools/video-remux'),
+  timestamp: () => import('@/tools/timestamp'),
 };
 
 /** Resolved tools, so switching back to a tool does not re-await the import. */

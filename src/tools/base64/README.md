@@ -52,7 +52,8 @@ That union is also why base64 is the tool that can still deliver a value a
 downstream port refuses. Since the
 [port audit](../../../docs/architecture.md#the-port-set) every port that reads
 a document accepts `bytes`, so the only ports left that can refuse a decoded
-value at runtime are the two that take a short literal: a JWT and a colour.
+value at runtime are the three that take a short literal: a JWT, a colour and a
+timestamp.
 `base64 → jwt` is legal to draw and, in decode mode, delivers bytes to a
 text-only port — which `validateInputs` refuses on the node that received it,
 naming the type it got. The same happens the other way round in encode mode:

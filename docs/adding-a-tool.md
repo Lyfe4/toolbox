@@ -1,11 +1,17 @@
 # Adding a tool
 
 A complete worked example: a tool that converts text between cases. Small
-enough to read in one go, and it touches every part you would need for a real
-one — options, a schema, a port, the manifest, the loader, tests and a README.
+enough to read in one go, and it touches every part of the tool itself —
+options, a schema, a port, the manifest, the loader, tests and a README.
 
-Five files, two edits. The compiler catches four of the five ways to get it
-wrong.
+**The tool is five files and two edits; getting it merged is more.** This page
+used to stop at the tool and say so in its first line, and the timestamp round
+measured what that left out by following it literally: the closing command
+below found eight failures on its first run, in files this page never named,
+and a grep afterwards found ten more sentences the gates cannot see. Sections 1
+to 6 are the tool. [The rest of the chain](#7-the-rest-of-the-chain) is
+everything else, sorted by which kind of tool needs it, and
+[Then](#then) is the command that actually has to pass.
 
 ## 1. The options
 
@@ -284,18 +290,82 @@ Every tool has one, next to the code. Not a description of what the buttons do
 rules you used, what happens to a string that is already snake_case, why title
 case does not capitalise "of".
 
+## 7. The rest of the chain
+
+**Every tool** needs these, and none of them is found by the compiler:
+
+- **The counts.** `vite/docClaims.test.ts` holds every sentence that states how
+  many tools there are, in any of the phrasings its `COUNTS` table lists, to the
+  number of directories under `src/tools`, in every document and every comment.
+  Adding a tool fails it in eight places, one of them the cold open's own
+  sentence in `index.html`, which is the first thing a visitor reads. Its
+  patterns catch the present-tense phrasings; a count phrased any other way is
+  caught by nothing - the timestamp round found ten - so after fixing the eight,
+  search for the old number spelled out.
+- **The lists the gates do not read.** The README's table of tools and its
+  table of what each conversion is held to; the port-set table in
+  [architecture.md](architecture.md#the-whole-set-as-it-stands); and the
+  verification skill's list of tool ids and the tool count its search probe
+  asserts against the live site.
+- **A name in backticks must exist.** In a document or a code comment, the doc
+  gate refuses a backticked identifier the code does not define - somebody
+  else's (a Go function, a specification's abstract operation) included. Write
+  it plain, or add it to the gate's exemption table with a reason.
+- **A category** is an entry in `TOOL_CATEGORIES`, which is shared: every
+  entry must hold a tool, so a new one is a decision rather than a line.
+
+**A tool that can lose something** - it declares a `report` port:
+
+- `resultSummary.test.ts` names every tool with a report port, and
+  `notePorts.test.ts` needs a run in `LOSSY_RUNS` that really loses something
+  for each. Both fail until the new tool is added, which is the point.
+- **Each loss is a row of the loss corpus**,
+  [`spec/loss-corpus.json`](../src/features/registry/spec/loss-corpus.json), with a
+  document of the same shape that loses nothing. `lossCorpus.test.ts` runs it,
+  and prints the replacement for the block in
+  [conversion-matrix.md](conversion-matrix.md#the-corpus-the-ratio-and-why-it-is-not-a-number-any-more)
+  when it fails - paste it. `checkLossCorpus` drives every row in two engines
+  with no edit to the harness, and two of its assumptions are easy to miss:
+  it reads the first output by the label `<Tool name> Converted`, and `choose`
+  can only drive a select. A row that needs a text option must carry it in the
+  input instead.
+- **Warn is a promise.** A `warn` note is something that went in and did not
+  come out, and it is printed on the node's face; everything else is `info`.
+
+**A tool that converts** needs a section in the
+[conversion matrix](conversion-matrix.md), with the evidence for each verdict,
+and the evidence is an external reference: a specification's own vectors, or
+another implementation run by a script in `scripts/` and committed as a
+fixture. A generator that has to convert something itself checks its own output
+before writing. A number past 2^53 in a fixture is a string, or JavaScript
+reads it rounded - the timestamp oracle had that on its first run.
+
+**A tool whose answer depends on the engine** - layout, a worker, an encoder,
+`Intl` data - needs a section in `scripts/cross-browser-check.mjs`, added to
+`SECTIONS`, and CONTRIBUTING's count of the section names goes up by one.
+
+**A tool whose port reads a document** is added to the named list in
+`ports.test.ts` that holds those ports to accepting `bytes`; one whose first
+output is a serialised document declares `measuredBy`, and that list is named
+too.
+
 ## Then
 
+The six gates, and then the harness - not the four this page used to list:
+
 ```bash
-pnpm typecheck && pnpm test && pnpm build && pnpm bundle:check
+pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build && pnpm bundle:check
+pnpm check:browsers
 ```
 
 `registry.test.ts` will tell you if the manifest and the implementation
 disagree. `bundle:check` will tell you if your tool leaked into the initial
-payload instead of becoming its own chunk.
+payload instead of becoming its own chunk. `check:browsers` needs the network
+and an idle machine; see [CONTRIBUTING](../CONTRIBUTING.md#three-more-that-are-not-in-ci).
+Record the round in [test-findings.md](test-findings.md).
 
-The tool now appears in the index, in canvas search, in the palette, and can be
-wired to anything whose ports are compatible — without any of those places
+The tool then appears in the index, in canvas search, in the palette, and can
+be wired to anything whose ports are compatible — without any of those places
 having been edited.
 
 ## What you did not have to do
@@ -314,3 +384,5 @@ having been edited.
 - Think about caching. The cache key is derived from the tool id, the options,
   the typed input, the identity of any file chosen for a port, and the upstream
   keys.
+- Write a harness check for a loss. A corpus row is driven in two engines, on
+  the tool page and on a canvas node, by the next run.
