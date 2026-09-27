@@ -5928,3 +5928,13 @@ now tried three times, and one that never arrives fails the check by name with
 its reason (shown with every fetch pointed at a closed port: `0 of 64 fetched
 ... not fetched: ... bad port`, and the run went on). So where Linux WebKit's
 focus goes after Shift+Tab is still unread; the next run carries it.
+
+**The third run** (`36300646566`, on `9ee0664`): Firefox and the live-site job
+green; WebKit 1,909 passed and the one failure, now saying where focus went:
+`Shift+Tab reached button "Share", Tab then button "Shortcuts"`. Shift+Tab
+moved focus nowhere in Linux WebKit, and a forward Tab worked - so it is the
+driver's Shift+Tab in that build, not the app, whose tab order is the same in
+every engine and which Gecko on the same runner passes. The check now arrives
+on Share by a forward Tab from the control before it, which is what it is
+about: a keyboard arrival. Recorded as the second machine's first finding - a
+check that was one engine's keyboard, not the app's behaviour.

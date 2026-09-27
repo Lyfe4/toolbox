@@ -17862,9 +17862,29 @@ async function checkPointerFocus(browser, label) {
         const name = active.getAttribute('aria-label') ?? (active.textContent ?? '').trim();
         return `${active.tagName.toLowerCase()} "${name.slice(0, 30)}"`;
       });
-    await share.focus();
-    await page.keyboard.press('Shift+Tab');
-    const back = await focusedNow();
+    /*
+     * INTO SHARE BY TAB FROM THE CONTROL BEFORE IT, not by Shift+Tab then
+     * Tab. Read from CI, Linux WebKit: Shift+Tab from Share left focus on
+     * Share and Tab then went on to Shortcuts - the driver's Shift+Tab does
+     * nothing in that build while a forward Tab does, and Gecko on the same
+     * runner and both engines here go back to Redo. What is under test is a
+     * keyboard arrival on Share, which a forward Tab gives in every engine.
+     */
+    const back = await share.evaluate((element) => {
+      const focusable = [
+        ...document.querySelectorAll('button, [href], input, select, textarea, [tabindex]'),
+      ].filter(
+        (candidate) =>
+          candidate.getAttribute('tabindex') !== '-1' &&
+          !candidate.hasAttribute('disabled') &&
+          candidate.getClientRects().length > 0,
+      );
+      const before = focusable[focusable.indexOf(element) - 1];
+      before?.focus();
+      return before
+        ? `${before.tagName.toLowerCase()} "${(before.getAttribute('aria-label') ?? before.textContent ?? '').trim().slice(0, 30)}"`
+        : 'nothing before Share';
+    });
     await page.keyboard.press('Tab');
     const forward = await focusedNow();
     const shareKeyed = await state(share);
@@ -17873,7 +17893,7 @@ async function checkPointerFocus(browser, label) {
       label,
       'the Share note shows on hover and on keyboard focus, and is gone once a clicking pointer leaves',
       onHover && afterClick && shareKeyed.focused && onKeyboard,
-      `hover ${String(onHover)}; hidden after a click ${String(afterClick)}; keyboard ${String(onKeyboard)} (focused ${String(shareKeyed.focused)}; Shift+Tab reached ${back}, Tab then ${forward})`,
+      `hover ${String(onHover)}; hidden after a click ${String(afterClick)}; keyboard ${String(onKeyboard)} (focused ${String(shareKeyed.focused)}; Tab from ${back} reached ${forward})`,
     );
   } finally {
     await context.close().catch(() => {});
