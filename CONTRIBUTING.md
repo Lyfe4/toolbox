@@ -107,7 +107,7 @@ probes were broken for a round before anybody did.
 treat that as the run a commit needs:
 
 ```bash
-pnpm check:browsers --list                              # the 62 section names
+pnpm check:browsers --list                              # the 63 section names
 pnpm check:browsers --only=popovers,valuemodel          # a substring of each, `check` optional
 pnpm check:browsers --only=outputviews --engine=webkit  # one engine
 ```
@@ -375,7 +375,7 @@ checked mechanically is now checked in `pnpm test`, by
   or a comment.
 - **A count is checked in the phrasings `COUNTS` lists, and only in those.**
   "The two inline scripts", "four payloads against four budgets", "the six
-  gates", "the 62 section names": each is a phrase pattern in `COUNTS` and the
+  gates", "the 63 section names": each is a phrase pattern in `COUNTS` and the
   number the code gives, wherever the phrase appears, docs and comments alike.
   A pattern that stops matching anything fails, rather than retiring in
   silence. **The same number phrased any other way is not checked at all** -

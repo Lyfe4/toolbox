@@ -4534,6 +4534,269 @@ async function motionPass(page, label, reduced) {
   );
 }
 
+/* ========================================================================== *
+ * NOTHING ELSE MOVES WHILE A NODE IS DRAGGED
+ * ========================================================================== */
+
+/**
+ * The page half of `checkDragMotion`: every animation that starts inside a
+ * node, and the order the nodes sit in the document.
+ *
+ * `animationstart` rather than a sampler: an animation that starts fires it
+ * once, whatever the frame rate, so a slow machine cannot hide one between two
+ * reads. Recorded against the node it happened in - ANY animation on any
+ * element inside a node, whatever its name - because the claim is that nothing
+ * on a node moves, not that one particular keyframe stays quiet.
+ */
+const DRAG_MOTION_PAGE = () => {
+  const plane = document.querySelector('[data-testid="canvas-plane"]');
+  const record = { phase: 'setup', started: [], ended: [] };
+  const nodeOf = (target) =>
+    target instanceof Element ? (target.closest('[data-node-id]')?.dataset.nodeId ?? null) : null;
+  document.addEventListener(
+    'animationstart',
+    (event) => {
+      const node = nodeOf(event.target);
+      if (node !== null)
+        record.started.push({ phase: record.phase, node, name: event.animationName });
+    },
+    true,
+  );
+  document.addEventListener(
+    'animationend',
+    (event) => {
+      const node = nodeOf(event.target);
+      if (node !== null)
+        record.ended.push({ phase: record.phase, node, name: event.animationName });
+    },
+    true,
+  );
+  window.__dragMotion = {
+    record,
+    /** The nodes in document order, which is the Tab order and the one a drag changes. */
+    order: () =>
+      [...plane.querySelectorAll(':scope > [data-node-id]')]
+        .map((element) => element.dataset.nodeId)
+        .join(','),
+    /** Animations running anywhere inside a node right now. */
+    running: () =>
+      document.getAnimations().filter((animation) => nodeOf(animation.effect?.target) !== null)
+        .length,
+  };
+};
+
+/**
+ * DRAGGING ONE NODE ANIMATES NO NODE, AND A NODE REALLY ADDED STILL SETTLES.
+ *
+ * Reported from a preset: dragging its structured data node made the hash node
+ * beside it replay the settle it played when it was dropped on, over and over.
+ * The canvas renders nodes in SPATIAL order - that is the Tab order, with no
+ * roving tabindex - so a drag that carries a node past another reorders the
+ * document, React moves one of the two elements, and an element that leaves
+ * the document and comes back starts every CSS animation on it again. The
+ * arrival classes stayed on the latest arrival's elements for good, so every
+ * such move replayed the settle and the port flick, on whichever node React
+ * happened to move: the dragged one on one crossing, the other on the next.
+ *
+ * The drag is made to cross, both ways, by pointer and then by the arrow keys,
+ * and the crossing is asserted rather than assumed - a drag that never passed
+ * the other node would prove nothing. The recorder's partner is the same
+ * recorder seeing the preset's own arrival, and a node added at the end: both
+ * must animate, so the silence in between is the recorder hearing nothing
+ * rather than hearing nothing because it was deaf. Every wait is for a state
+ * or a number of frames.
+ */
+async function checkDragMotion(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  try {
+    const page = await context.newPage();
+    await gotoCanvas(page);
+    await page.evaluate(DRAG_MOTION_PAGE);
+    const phase = (name) =>
+      page.evaluate((value) => {
+        window.__dragMotion.record.phase = value;
+      }, name);
+    const record = () => page.evaluate(() => window.__dragMotion.record);
+    const order = () => page.evaluate(() => window.__dragMotion.order());
+    const frames = (count) =>
+      page.evaluate(
+        (n) =>
+          new Promise((resolve) => {
+            const step = (left) =>
+              left === 0 ? resolve() : requestAnimationFrame(() => step(left - 1));
+            step(n);
+          }),
+        count,
+      );
+    const nodeIds = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll('[data-node-id]')].map((element) => ({
+          id: element.dataset.nodeId,
+          title: element.querySelector('[class*="nodeTitle"]')?.textContent ?? '',
+          at: `${element.style.left},${element.style.top}`,
+        })),
+      );
+    const startedIn = (entries, name) => entries.filter((entry) => entry.phase === name);
+    const describe = (entries) =>
+      entries.length === 0
+        ? 'none'
+        : entries
+            .map((entry) => `${entry.node}:${entry.name.replace(/^_|_[a-z0-9]+_\d+$/g, '')}`)
+            .join(' ');
+
+    /* -- The preset arrives, and the recorder sees it arrive --------------- */
+    await phase('arrival');
+    await page.getByRole('button', { name: 'Add tool' }).click();
+    await page.getByRole('combobox', { name: 'Search tools' }).fill('fingerprint');
+    await page.getByTestId('dialog-option-preset:fingerprint-csv').click();
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-node-id]').length === 2,
+      null,
+      {
+        timeout: 10_000,
+      },
+    );
+    const placed = await nodeIds();
+    const data = placed.find((node) => node.title.includes('Structured'));
+    const hash = placed.find((node) => node.title.includes('Hash'));
+    /*
+     * Settled when both nodes' own settle has ENDED and nothing on any node
+     * runs. A ceiling rather than a throw: a settle that never plays is what a
+     * fix by muting would look like, and it has to fail as the check below.
+     */
+    await page
+      .waitForFunction(
+        (ids) => {
+          const { record: r, running } = window.__dragMotion;
+          return (
+            ids.every((id) =>
+              r.ended.some((entry) => entry.node === id && entry.name.includes('node-settle')),
+            ) && running() === 0
+          );
+        },
+        placed.map((node) => node.id),
+        { timeout: 10_000 },
+      )
+      .catch(() => {});
+    const arrived = startedIn((await record()).started, 'arrival');
+    check(
+      label,
+      'the recorder sees a preset arrive: both of its nodes settle',
+      data !== undefined &&
+        hash !== undefined &&
+        [data.id, hash.id].every((id) =>
+          arrived.some((entry) => entry.node === id && entry.name.includes('node-settle')),
+        ),
+      `${placed.map((node) => `${node.id} ${node.title}`).join(', ')}; started ${describe(arrived)}`,
+    );
+    if (data === undefined || hash === undefined) return;
+
+    /* -- One node dragged past the other, both ways ------------------------ */
+    const root = await page.locator('[data-testid="canvas-root"]').boundingBox();
+    // Only the structured data node selected, so only it moves.
+    await page.mouse.click(root.x + root.width - 140, root.y + root.height - 60);
+    const grip = await page.locator(`[data-node-id="${data.id}"]`).boundingBox();
+    const gx = grip.x + grip.width / 2;
+    const gy = grip.y + 8;
+    await page.mouse.click(gx, gy);
+    await frames(2);
+
+    const orders = [await order()];
+    await phase('drag');
+    await page.mouse.move(gx, gy);
+    await page.mouse.down();
+    // Below the hash node's row, above it, below it, and home: four crossings.
+    for (const dy of [40, 80, 120, 60, 0, -60, -120, -60, 0, 60, 120, 60, 0]) {
+      await page.mouse.move(gx, gy + dy, { steps: 3 });
+      orders.push(await order());
+    }
+    await page.mouse.up();
+    await frames(3);
+    const hashAfterDrag = (await nodeIds()).find((node) => node.id === hash.id);
+    const flips = orders.filter((value, index) => index > 0 && value !== orders[index - 1]).length;
+    check(
+      label,
+      'the drag carries the node past the other in the tab order, both ways, and moves only it',
+      flips >= 4 && new Set(orders).size === 2 && hashAfterDrag?.at === hash.at,
+      `${String(flips)} changes of order: ${orders.filter((value, index) => index === 0 || value !== orders[index - 1]).join(' > ')}; ${hash.id} at ${hash.at} before, ${String(hashAfterDrag?.at)} after`,
+    );
+    const dragged = startedIn((await record()).started, 'drag');
+    check(
+      label,
+      'dragging one node past another starts no animation on the other node',
+      dragged.filter((entry) => entry.node === hash.id).length === 0,
+      describe(dragged.filter((entry) => entry.node === hash.id)),
+    );
+    check(
+      label,
+      'nor on the node being dragged',
+      dragged.filter((entry) => entry.node === data.id).length === 0,
+      describe(dragged.filter((entry) => entry.node === data.id)),
+    );
+
+    /* -- The same crossing from the keyboard ------------------------------- */
+    await page.locator(`[data-node-id="${data.id}"]`).focus();
+    const keyOrders = [await order()];
+    await phase('keys');
+    for (const [key, times] of [
+      ['ArrowDown', 12],
+      ['ArrowUp', 24],
+      ['ArrowDown', 12],
+    ]) {
+      for (let press = 0; press < times; press += 1) {
+        await page.keyboard.press(key);
+        keyOrders.push(await order());
+      }
+    }
+    await frames(3);
+    const keyFlips = keyOrders.filter(
+      (value, index) => index > 0 && value !== keyOrders[index - 1],
+    ).length;
+    const keyed = startedIn((await record()).started, 'keys');
+    check(
+      label,
+      'arrow keys carry the node past the other too, and no node animates',
+      keyFlips >= 2 && keyed.length === 0,
+      `${String(keyFlips)} changes of order; started ${describe(keyed)}`,
+    );
+
+    /* -- A node really added still settles --------------------------------- */
+    await phase('added');
+    await page.getByRole('button', { name: 'Add tool' }).click();
+    await page.getByRole('combobox', { name: 'Search tools' }).fill('base64');
+    await page.getByTestId('dialog-option-base64').click();
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-node-id]').length === 3,
+      null,
+      {
+        timeout: 10_000,
+      },
+    );
+    const added = (await nodeIds()).find((node) => node.id !== data.id && node.id !== hash.id);
+    await page
+      .waitForFunction(
+        (id) =>
+          window.__dragMotion.record.started.some(
+            (entry) => entry.phase === 'added' && entry.node === id,
+          ),
+        added.id,
+        { timeout: 10_000 },
+      )
+      .catch(() => {});
+    await frames(3);
+    const settled = startedIn((await record()).started, 'added');
+    check(
+      label,
+      'a node really added still settles, and only that node',
+      settled.some((entry) => entry.node === added.id && entry.name.includes('node-settle')) &&
+        settled.every((entry) => entry.node === added.id),
+      describe(settled),
+    );
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 /**
  * Scroll containment, which is a LAYOUT fact and so cannot be asserted in
  * jsdom.
@@ -18277,6 +18540,7 @@ const SECTIONS = [
   checkInspector,
   checkInspectorMotion,
   checkCanvasMotion,
+  checkDragMotion,
   checkInspectorTouch,
   checkDialogScroll,
   checkRouteFeedback,

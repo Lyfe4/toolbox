@@ -1,3 +1,5 @@
+import { useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
+
 import { Tooltip } from '@/components/Tooltip';
 import type { DataType } from '@/features/registry';
 import { cx } from '@/lib/cx';
@@ -7,7 +9,6 @@ import styles from './canvas.module.css';
 import { describeTypes, PortGlyph } from './PortGlyph';
 
 import type { PortSide } from './geometry';
-import type { CSSProperties, PointerEvent } from 'react';
 
 export interface PortButtonProps {
   readonly label: string;
@@ -71,6 +72,28 @@ export function PortButton({
   onPointerDown,
 }: PortButtonProps) {
   const { ref: labelRef, truncated } = useIsTruncated(label);
+  /*
+   * The contact whose flick has already played on this glyph. The class comes
+   * off when it ends, for the reason the node's settle does: a node the
+   * canvas reorders is MOVED in the document, and a moved element starts its
+   * CSS animations again - so a class left on flicked the port on every drag
+   * that carried its node past another. See `settled` in CanvasNodeView.
+   */
+  const [spent, setSpent] = useState<number | null>(null);
+  const flicking = contact !== null && contact !== spent;
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  // Native, and before the first frame, for the reasons the node gives.
+  useLayoutEffect(() => {
+    const button = buttonRef.current;
+    if (!flicking || button === null) return undefined;
+    const onEnd = (event: AnimationEvent): void => {
+      if (event.target instanceof SVGElement) setSpent(contact);
+    };
+    button.addEventListener('animationend', onEnd);
+    return () => {
+      button.removeEventListener('animationend', onEnd);
+    };
+  }, [flicking, contact]);
 
   const button = (
     <button
@@ -89,6 +112,7 @@ export function PortButton({
           : `Output ${label}, carries ${describeTypes(types)}`
       }
       onPointerDown={onPointerDown}
+      ref={buttonRef}
     >
       {/*
         A real element rather than a border or an outline, so the state rings
@@ -101,7 +125,7 @@ export function PortButton({
         key={contact ?? 'rest'}
         types={types}
         connected={connected}
-        className={cx(styles.portConnector, contact !== null && styles.portContact)}
+        className={cx(styles.portConnector, flicking && styles.portContact)}
       />
       <span ref={labelRef} className={styles.portLabel}>
         {label}

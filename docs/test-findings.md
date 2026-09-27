@@ -5950,3 +5950,186 @@ now what the checks after it need - the answer arrived inside the window and
 was not on the page before Run - and fails with the click removed (`frame -1
 of 90`). The commit after this one was run in full first, and its commit was
 chained on that run's exit code.
+
+## Round twenty-eight, done — the settle that replayed on every drag
+
+2026-09-27, against `1afdafc`. One bug, reported by hand: add the "Fingerprint a
+CSV" preset, drag its structured data node around, and the hash node beside it
+pulses as if it had just been dropped on the canvas, over and over.
+
+|                                                        | Before                                                                                  | After                                                                                           |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| A drag that carries one node past another in the order | **the settle and the port flick replay** on one of the two elements, at every crossing  | nothing on any node animates                                                                    |
+| The same crossing by arrow key                         | **the same replay**                                                                     | nothing                                                                                         |
+| Which elements could replay                            | anything the latest arrival touched: its nodes' settle, and its wire's two ports' flick | none, once the element's own animation has ended                                                |
+| A node really added                                    | settles                                                                                 | settles - the check's positive control                                                          |
+| Since                                                  | `0b88061` (2026-09-25), the motion commit; on the live site today, both engines         | -                                                                                               |
+| A check that watches a drag for motion on other nodes  | none                                                                                    | `checkDragMotion`, both engines, red against the old build and against two breaks               |
+| Deliberate breaks, each shown red                      | -                                                                                       | **7** - see the proving table                                                                   |
+| `pnpm test`                                            | 9,884 passed, 152 files                                                                 | **9,885 passed, 152 files**, with `dist/` moved aside                                           |
+| `check:browsers`, full run, idle                       | 3,672 passed, 0 failed, 13 skipped (round twenty-seven)                                 | **3,684 passed, 0 failed, 13 skipped** (the same thirteen), 1,582 s of sections - the first run |
+
+### Reproduced first, in both engines
+
+A probe recorded every `animationstart` inside a node and every node element
+re-inserted into the plane, while one node was dragged or nudged, on the
+production build of `1afdafc`. The preset places structured data (`n1`) and
+hash (`n2`) side by side in one row. Only `n1` selected:
+
+| Driven                                          | Gecko and WebKit, identical                                                |
+| ----------------------------------------------- | -------------------------------------------------------------------------- |
+| `n1` sideways within its row                    | nothing moved in the document, nothing animated                            |
+| `n1` down past `n2`'s row and back              | each node re-inserted once; each replayed `node-settle` and `port-contact` |
+| `n1` in a loop around `n2`                      | the same                                                                   |
+| `n2` dragged instead                            | the same                                                                   |
+| `n1` down 12 arrow presses, up 12               | the same                                                                   |
+| Pan, zoom (wheel, `+`, `-`), select, Select all | nothing                                                                    |
+| Inspector open and closed                       | only the rail's own slide                                                  |
+| Typing into `n1`, an option on `n2`             | only the rail's slide and the travelling dash of the run it causes         |
+
+**The cause is the Tab order.** `spatialOrder` renders nodes top to bottom in
+64px rows, then left to right, so the browser's own Tab sequence is the spatial
+one. A drag that takes a node past another's place in that order reorders the
+children of the plane, React moves one of the two elements with `insertBefore`,
+and an element that leaves the document and comes back starts every CSS
+animation on it from the beginning. `nodeArriving` and `portContact` stayed on
+the latest arrival's elements until the next arrival - "not held after the end"
+was true of the transform, not of the class - so every crossing replayed both,
+on whichever element React chose to move: the dragged node on one crossing and
+the node it passed on the next.
+
+**It is older than round twenty-six, and not related to it.** Each commit
+built and probed the same way (`drag SD a loop around hash`, `arrow keys`):
+
+| Build                                             | Replay                                                         |
+| ------------------------------------------------- | -------------------------------------------------------------- |
+| `0b88061~1`, before the motion                    | no - the same two re-insertions, and nothing on them to replay |
+| `0b88061`, the motion commit                      | **yes**                                                        |
+| `4cb5034~1`, before round twenty-six's render fix | **yes**                                                        |
+| `1afdafc`                                         | **yes**                                                        |
+| the live site                                     | **yes**, Gecko and WebKit                                      |
+
+Round twenty-six changed which nodes RE-RENDER during a drag. A re-render
+leaves a class on an element alone and restarts nothing; a re-insertion
+restarts everything. The two are independent, and the replay is the second.
+
+### The fix
+
+Each element drops its arrival class on its own `animationend`: `settled` on
+the node, `spent` on a port, through a native listener attached in a layout
+effect. Native because React's `onAnimationEnd` listens for a vendor-prefixed
+name wherever the engine has no `AnimationEvent`, which is jsdom; a layout
+effect because a 33ms flick must not be able to end before a passive effect
+has attached the listener on a loaded machine. The wire layer already worked
+this way for a finished draw, which is why a wire never replayed. The node
+ignores an `animationend` bubbling up from a port inside it. A node arrives once
+in its life, so one flag; a port can be touched by many wires, so it remembers
+which contact it has spent.
+
+**Rejected:**
+
+- **Rendering nodes in a stable order.** It removes the re-insertion, and with
+  it the documented Tab order; getting that back means a roving tabindex, which
+  is exactly what spatial rendering exists to avoid. The motion was the part in
+  the wrong.
+- **Web Animations instead of classes.** A script animation survives removal
+  and re-insertion, but it rewrites all five pieces of motion and every check
+  that reads them, to fix a class left on too long.
+- **Muting the settle, or skipping it while anything is being dragged.** Ruled
+  out by the brief, and by the check's positive control, which a muted settle
+  fails (break D5).
+
+**What is left:** a move inside the animation's own 120ms (the settle) or 33ms
+(the flick) restarts that animation, because the class is still on while it
+runs. An arrow key struck straight after adding a node could do it, where the
+step crosses another node's place. Not measured, and recorded in
+architecture.md.
+
+### The check
+
+`checkDragMotion`, after `checkCanvasMotion` in `SECTIONS`, in both engines.
+Every animation that starts on any element inside any node is recorded by
+`animationstart` - an event per animation, which a slow machine cannot drop
+between two reads - and attributed to its node, whatever its name, so the
+negative checks match on the subject rather than on a keyframe.
+
+1. **Partner: the recorder hears an arrival.** Adding the preset must log
+   `node-settle` on both nodes; the wait for it to end is on the recorded
+   `animationend`, with a ceiling that does not throw, so a muted settle fails
+   here by name.
+2. **Partner: the drag really crosses, and moves only the dragged node.** The
+   node order is read after every step: at least four changes and exactly two
+   orders, and the hash node's position identical before and after.
+3. **The negatives:** no animation starts on the other node during the drag,
+   none on the dragged node, and none on either while arrow keys carry it
+   across (at least two changes of order).
+4. **Partner: a node really added still settles**, and only that one - read by
+   the same recorder at the end, so the silence in the middle is not a deaf
+   recorder.
+
+Every wait is for a state or a number of frames; nothing is timed.
+
+### Proving test, per check
+
+Every break applied by a script, run, and restored, with the restore checked by
+hash.
+
+| #   | Break                                                        | Caught by                                                                                                                     |
+| --- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| D1  | **the build of `1afdafc`** - the bug                         | `checkDragMotion`: the other node, the dragged node and the arrow keys, both engines (`n2:node-settle n2:port-contact` twice) |
+| D2  | the port's class left on (the node half of the fix alone)    | the same three, both engines, naming `port-contact` only                                                                      |
+| D3  | the node's class left on                                     | `motion.test.tsx` › spends a settle and a flick once each has played                                                          |
+| D4  | the port's class left on                                     | the same test                                                                                                                 |
+| D5  | the settle muted - no class at all                           | `checkDragMotion`'s partners: the preset's arrival and the added node, both engines                                           |
+| D6  | the node spending its settle on any `animationend` inside it | `motion.test.tsx`, at the port's flick bubbling through the node                                                              |
+| D7  | D5 before the waits stopped throwing                         | the section threw a `TimeoutError` - a failure, but not by name; the waits now report through the checks                      |
+
+D1 was run twice: before the check's waits were changed for D7 and after, the
+second time against the old build copied back into `dist`.
+
+### Looked for and NOT found
+
+- **A replay from panning, zooming, selecting, opening the inspector, typing, or
+  changing an option**: none, in either engine. None of them changes a node's
+  position, so none reorders the document.
+- **A wire replaying its draw**: none. Wires render in edge order, which a drag
+  does not change, and the wire layer already dropped a finished draw's class.
+- **The grid draw-in or the timing count replaying**: neither is a CSS
+  animation on a node - the grid is painted from JavaScript once per page load,
+  the count is React state - and a re-insertion does not remount a component.
+  Reasoned, and no `animationstart` was recorded for either.
+- **Focus or the drag lost when the element under them is moved**: neither. The
+  arrow-key phase moves the focused node across and back, which needs focus to
+  stay on it, and the pointer drag completes all four crossings, which needs it
+  to keep following the pointer after the dragged element has been moved.
+- **A replay on a node the latest arrival did not create**: none. With two nodes
+  added separately, only the second replays; after a wire is connected, only
+  its two ports' flick does.
+
+### Anything in the framing I think is wrong
+
+1. **"Pulses the whole time."** It replays once per crossing, not continuously.
+   A drag at about the hash node's height crosses a 64px row boundary with
+   every small vertical wobble, and that reads as continuous.
+2. **"The hash node."** Both nodes replay, on alternate crossings; the one being
+   dragged is under the pointer and easy to miss. So does the port flick beside
+   each, which at 33ms is hard to see at all.
+3. **"Round twenty-six changed how nodes re-render during a drag."** It did, and
+   it is not this. The replay starts at the motion commit, `0b88061`, and was
+   there the commit before round twenty-six. A re-render restarts nothing; a
+   DOM move restarts everything.
+4. **"Only presets?"** Any two nodes, connected or not. What replays is what the
+   latest arrival touched: the nodes the last add created and the ports of the
+   last wire.
+5. **"Only dragging?"** Arrow keys too - any change of position that reorders.
+
+### Still open
+
+- **A move inside an arrival's own animation** restarts it, above.
+- **The build-freshness guard compares file times**, so an older build copied
+  into `dist` with fresh times passes it - D1's second run did. It exists to
+  catch an edit made after a build or during a run, and it still does; a
+  deliberately swapped build is not what it is for. Recorded, not changed.
+- Unchanged from round twenty-seven: the 901s WebKit stall's cause, the silent
+  Gecko worker, Safari itself, `regex.test.ts`'s `timeFor` lower bound, the node
+  face and expiry, the generation recommendations.

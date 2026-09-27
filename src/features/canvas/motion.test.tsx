@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ToastProvider } from '@/components/Toast';
@@ -466,6 +466,82 @@ describe('on the canvas', () => {
     expect(wire).not.toBeNull();
     expect(wire?.classList.contains(styles.wireArriving ?? '')).toBe(false);
     expect(wire?.hasAttribute('pathLength')).toBe(false);
+  });
+
+  /*
+   * A node dragged past another is MOVED in the document - nodes render in
+   * spatial order - and a moved element starts its CSS animations again. So a
+   * class left on after its animation replayed the settle and the flick on
+   * every such drag, on the dragged node or the one it passed. jsdom runs no
+   * animation and restarts nothing; what it can hold is that the class is gone
+   * once its own animation has ended, and stays gone across the reorder.
+   * `checkDragMotion` watches the real replay in both engines.
+   */
+  it('spends a settle and a flick once each has played, so a reorder has nothing to replay', () => {
+    renderCanvas();
+    let id = '';
+    act(() => {
+      id = useCanvasStore.getState().addNode('base64', { x: 96, y: 96 + 400 });
+      useCanvasStore
+        .getState()
+        .connect({ nodeId: id, portId: 'output' }, { nodeId: 'b', portId: 'input' });
+    });
+    act(() => {
+      id = useCanvasStore.getState().addNode('base64', { x: 896, y: 96 });
+    });
+    const contactGlyph = (): Element | null =>
+      screen.getByTestId('node-b').querySelector('[data-port-side="input"] svg');
+    const glyph = contactGlyph();
+    expect(arriving(id)).toBe(true);
+
+    // A port's flick ending bubbles through its node; that is not the settle.
+    fireEvent.animationEnd(
+      screen.getByTestId(`node-${id}`).querySelector('[data-port-side] svg') ?? document,
+    );
+    expect(arriving(id)).toBe(true);
+    fireEvent.animationEnd(screen.getByTestId(`node-${id}`));
+    expect(arriving(id)).toBe(false);
+
+    // Carried past the other two in the tab order: still nothing to replay.
+    const order = (): string =>
+      [...document.querySelectorAll('[data-node-id]')]
+        .map((element) => element.getAttribute('data-node-id'))
+        .join(',');
+    const before = order();
+    act(() => {
+      useCanvasStore.getState().nudgeNodes([id], { x: -880, y: 0 });
+    });
+    expect(order()).not.toBe(before);
+    expect(arriving(id)).toBe(false);
+
+    // The flick, the same way, on the latest wire's port.
+    act(() => {
+      useCanvasStore
+        .getState()
+        .connect({ nodeId: 'a', portId: 'output' }, { nodeId: id, portId: 'input' });
+    });
+    const flick = (): boolean =>
+      screen
+        .getByTestId(`node-${id}`)
+        .querySelector('[data-port-side="input"] svg')
+        ?.classList.contains(styles.portContact ?? '') ?? false;
+    expect(flick()).toBe(true);
+    fireEvent.animationEnd(
+      screen.getByTestId(`node-${id}`).querySelector('[data-port-side="input"] svg') ?? document,
+    );
+    expect(flick()).toBe(false);
+    act(() => {
+      useCanvasStore.getState().nudgeNodes([id], { x: 880, y: 0 });
+    });
+    expect(flick()).toBe(false);
+    expect(glyph).toBe(contactGlyph());
+
+    // And a node really added afterwards still settles.
+    let later = '';
+    act(() => {
+      later = useCanvasStore.getState().addNode('hash', { x: 96, y: 800 });
+    });
+    expect(arriving(later)).toBe(true);
   });
 
   it('marks nothing at all under reduced motion', () => {

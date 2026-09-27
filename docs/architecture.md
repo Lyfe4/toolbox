@@ -1966,6 +1966,26 @@ running frames and narrowed it again when the figure landed - 28px on a hash
 node in both engines. `checkCanvasMotion` compares the title across each run
 that starts from a shown figure.<!-- asserted: cross-browser-check.mjs › a run that re-starts on a keystroke leaves the title where it was -->
 
+**An arrival plays once, and then its class comes off.** Until round
+twenty-eight the settle and the flick classes stayed on the latest arrival's
+elements until the next arrival replaced it, which was harmless for exactly as
+long as those elements never left the document. They do leave it: nodes render
+in spatial order, because that order is the Tab order, so a drag or an arrow key
+that carries one node past another reorders the document, React moves one of
+the two elements, and an element that is removed and re-inserted starts every
+CSS animation on it again. Every such crossing replayed the settle and the port
+flick on whichever node React happened to move - the dragged node on one
+crossing and the node it passed on the next - from the day the motion shipped,
+on the live site as well. Each element now drops its class on its own
+`animationend`, as the wire layer already did for a finished draw (`settled` on
+the node, `spent` on a port), so a later move has nothing to replay and a node
+that really is added still settles. What remains is a move inside an
+animation's own 120ms or 33ms, which restarts that one animation - an arrow key
+struck straight after adding a node could do it, if the step crosses another
+node's place in the order. Left, and not measured. `checkDragMotion` drags a node past another both
+ways, by pointer and by arrow key, and records every animation that starts on
+any element of any node.<!-- asserted: cross-browser-check.mjs › dragging one node past another starts no animation on the other node -->
+
 **Reduced motion removes all five rather than shortening them**, and not
 through the shared override. `global.css` collapses animations to 1ms, on
 purpose, so the inspector's `animationend` still fires - and a 1ms animation

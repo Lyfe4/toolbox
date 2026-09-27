@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react';
+import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/Button';
 import { PortIcon, SignalIcon, SlidersIcon } from '@/components/Icon';
@@ -267,6 +267,41 @@ export const CanvasNodeView = memo(function CanvasNodeView({
   const bodyHeight = portRowCount(entry) * PORT_ROW_HEIGHT + portStackGap(entry) + BODY_PADDING * 2;
 
   /*
+   * THE SETTLE IS SPENT ONCE IT HAS PLAYED, and the class comes off with it.
+   *
+   * The canvas renders nodes in spatial order, so a drag that carries one node
+   * past another reorders the document and React MOVES one of the two
+   * elements - and an element that leaves the document and comes back starts
+   * every CSS animation on it again. With the class left on for as long as
+   * this was the latest arrival, every such move replayed the settle, on the
+   * node being dragged or on the one it passed. Its own `animationend` is the
+   * moment it has been seen, so that is when it goes; the wire layer drops a
+   * finished draw the same way. A node arrives once in its life, so one flag.
+   * `checkDragMotion` holds it in both engines.
+   */
+  const [settled, setSettled] = useState(false);
+  const settling = arriving && !settled;
+  const rootRef = useRef<HTMLDivElement>(null);
+  /*
+   * A native listener, as the wire layer and the inspector use: React's
+   * `onAnimationEnd` picks a vendor-prefixed event name where the engine has
+   * no `AnimationEvent`. A layout effect, so it is listening before the frame
+   * the animation starts on however late passive effects run.
+   */
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!settling || root === null) return undefined;
+    const onEnd = (event: AnimationEvent): void => {
+      // The node's own settle, not a port's flick bubbling up from inside it.
+      if (event.target === root) setSettled(true);
+    };
+    root.addEventListener('animationend', onEnd);
+    return () => {
+      root.removeEventListener('animationend', onEnd);
+    };
+  }, [settling]);
+
+  /*
    * WHICH NODES SHOW GUIDANCE
    *
    * The rule is about WHY a node is blocked, not about how many wires happen
@@ -462,9 +497,10 @@ export const CanvasNodeView = memo(function CanvasNodeView({
         // A drop target nothing marks is a guess, and on overlapping nodes it
         // is a guess the user gets wrong.
         dropTarget && styles.nodeDropTarget,
-        arriving && styles.nodeArriving,
+        settling && styles.nodeArriving,
       )}
       style={{ left: node.position.x, top: node.position.y, height }}
+      ref={rootRef}
       data-node-id={node.id}
       data-status={run.status}
       /*
