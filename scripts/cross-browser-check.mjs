@@ -17832,16 +17832,30 @@ async function checkPointerFocus(browser, label) {
     await share.click();
     await away();
     const afterClick = await noteShown(false);
+    /*
+     * WHERE FOCUS WENT, not only whether it arrived. Linux WebKit - first run
+     * in CI, round twenty-seven - did not land back on Share after Shift+Tab
+     * then Tab, and the detail could not say where it did land instead.
+     */
+    const focusedNow = () =>
+      page.evaluate(() => {
+        const active = document.activeElement;
+        if (!active) return 'nothing';
+        const name = active.getAttribute('aria-label') ?? (active.textContent ?? '').trim();
+        return `${active.tagName.toLowerCase()} "${name.slice(0, 30)}"`;
+      });
     await share.focus();
     await page.keyboard.press('Shift+Tab');
+    const back = await focusedNow();
     await page.keyboard.press('Tab');
+    const forward = await focusedNow();
     const shareKeyed = await state(share);
     const onKeyboard = await noteShown(true);
     check(
       label,
       'the Share note shows on hover and on keyboard focus, and is gone once a clicking pointer leaves',
       onHover && afterClick && shareKeyed.focused && onKeyboard,
-      `hover ${String(onHover)}; hidden after a click ${String(afterClick)}; keyboard ${String(onKeyboard)} (focused ${String(shareKeyed.focused)})`,
+      `hover ${String(onHover)}; hidden after a click ${String(afterClick)}; keyboard ${String(onKeyboard)} (focused ${String(shareKeyed.focused)}; Shift+Tab reached ${back}, Tab then ${forward})`,
     );
   } finally {
     await context.close().catch(() => {});

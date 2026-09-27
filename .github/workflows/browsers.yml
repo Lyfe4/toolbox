@@ -93,8 +93,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install Chromium
-        run: pnpm exec playwright install --with-deps chromium
+      # Chromium is the skill's default engine; probe-popover also opens the
+      # list in Firefox and WebKit, which the first run of this job lacked.
+      - name: Install the engines the skill opens
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
 
       - name: Build
         run: pnpm build

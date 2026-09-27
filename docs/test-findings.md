@@ -5901,3 +5901,20 @@ Error: BREAK`). The fourth full run, on the final tree, was clean.
   Netlify's build being byte-identical to a Linux runner's, which the first run tests.
 - Unchanged: `regex.test.ts`'s `timeFor` lower bound, the node face and expiry,
   the generation recommendations.
+
+### CI, on the second machine: what the first run found
+
+Run `36295708161`, on `e116631`. The six gates in `ci.yml` were green.
+
+| Job                             | Result                                                                                                                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `check:browsers (firefox)`      | **green**: every section, 136 s the slowest - a shared Linux runner was about as fast as this machine, not the two to three times slower estimated above, so a run costs nearer forty runner-minutes than a hundred |
+| `check:browsers (webkit)`       | **1 failure** of 1,910: the Share note on keyboard focus - after Shift+Tab then Tab, focus was not back on Share                                                                                                    |
+| the skill against the live site | `wait-for-deploy` matched on its **first** attempt - Netlify's build of the commit is byte-identical to a Linux runner's; `doctor`, `drive all` and `probe-search` passed; `probe-popover` failed to launch Firefox |
+
+**Two findings, one of them mine.** The live-site job installed Chromium only,
+and `probe-popover` opens the list in all three engines; it installs all three
+now. The WebKit failure is the first thing the second machine has found that
+this one cannot see: on Windows both engines go Shift+Tab to Redo and Tab back
+to Share. The check could say only that focus did not arrive, not where it went,
+so it says where now, and the next run is the reading.
