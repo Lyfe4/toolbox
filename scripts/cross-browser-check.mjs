@@ -12939,6 +12939,7 @@ async function checkRunProgress(browser, label) {
         (button) => (button.textContent ?? '').trim() === 'Run',
       );
       if (!run) return null;
+      const doneBefore = /Done in/.test(document.body.textContent ?? '');
       run.click();
 
       const frames = [];
@@ -12952,19 +12953,28 @@ async function checkRunProgress(browser, label) {
           done: /Done in/.test(document.body.textContent ?? ''),
         });
       }
-      return frames;
+      return { doneBefore, frames };
     });
 
-    const settled = quick?.findIndex((frame) => frame.done) ?? -1;
+    /*
+     * THIS RUN'S ANSWER, INSIDE THE WINDOW - not after its first frame. This
+     * used to demand `settled > 0`, and round twenty-seven's seventh full run
+     * failed it with the answer drawn by frame 0: a run quick enough to land
+     * inside the first frame, which is a fact about the machine. What the
+     * checks below need is that the answer arrived during the sample and was
+     * not already on the page, which is what is asserted.
+     */
+    const doneBefore = quick?.doneBefore ?? true;
+    const settled = quick?.frames.findIndex((frame) => frame.done) ?? -1;
     check(
       label,
       'a short run really does settle inside the sampled window',
-      settled > 0,
-      `first "Done in" at frame ${String(settled)} of ${String(quick?.length ?? 0)}`,
+      !doneBefore && settled >= 0,
+      `${doneBefore ? 'an answer was on the page before Run; ' : ''}first "Done in" at frame ${String(settled)} of ${String(quick?.frames.length ?? 0)}`,
     );
-    if (quick === null || settled <= 0) return;
+    if (quick === null || doneBefore || settled < 0) return;
 
-    const afterwards = quick.slice(settled).filter((frame) => frame.width !== null);
+    const afterwards = quick.frames.slice(settled).filter((frame) => frame.width !== null);
     check(
       label,
       'the bar is still on screen once the result is',

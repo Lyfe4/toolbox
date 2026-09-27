@@ -5938,3 +5938,15 @@ every engine and which Gecko on the same runner passes. The check now arrives
 on Share by a forward Tab from the control before it, which is what it is
 about: a keyboard arrival. Recorded as the second machine's first finding - a
 check that was one engine's keyboard, not the app's behaviour.
+
+**And a slip of my own, recorded because the rule it broke is this file's.**
+`e89fa22` (the Share note change) was committed and pushed by a command that
+did not wait on the full run's verdict - and that run, the seventh, had failed
+one check: `a short run really does settle inside the sampled window - first
+"Done in" at frame 0 of 90`. It asked for the answer to arrive AFTER the first
+sampled frame, which a quick enough run on a quick enough machine does not do:
+a measurement of the machine, in a check this round had not touched. It asks
+now what the checks after it need - the answer arrived inside the window and
+was not on the page before Run - and fails with the click removed (`frame -1
+of 90`). The commit after this one was run in full first, and its commit was
+chained on that run's exit code.
