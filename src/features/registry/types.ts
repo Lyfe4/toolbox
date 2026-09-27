@@ -360,6 +360,21 @@ export interface ToolError {
   readonly position?: SourcePosition;
   /** Extra context shown under the message when present. */
   readonly detail?: string;
+  /**
+   * THE RUN, NOT NECESSARILY THE INPUT. Set by the engine on the failures it
+   * makes itself - a deadline that ran out, a worker that died under the
+   * request, a tool that threw - which can be facts about the moment: a busy
+   * machine, a neighbour that wedged the worker, an allocation that failed.
+   * Never set by a tool on its own refusal, which is a fact about the input.
+   *
+   * It changes nothing about caching: a circumstantial failure is cached like
+   * every other, because re-running a slow tool on every edit anywhere in the
+   * graph would be worse (architecture.md, "Nothing on a port may depend on
+   * when it ran"). What it changes is what the person is told - that this one
+   * may not be about their input - and that they are offered a way to run it
+   * again (`ErrorReport`, the node's face, `usePipelineStore().retry`).
+   */
+  readonly circumstantial?: true;
 }
 
 /**
@@ -388,7 +403,11 @@ export function fail<T = never>(
   message: string,
   // `| undefined` here, but not on ToolError: callers routinely compute a
   // maybe-detail, and exactOptionalPropertyTypes would otherwise reject it.
-  extra?: { readonly position?: SourcePosition | undefined; readonly detail?: string | undefined },
+  extra?: {
+    readonly position?: SourcePosition | undefined;
+    readonly detail?: string | undefined;
+    readonly circumstantial?: true | undefined;
+  },
 ): ToolResult<T> {
   return {
     ok: false,
@@ -397,6 +416,7 @@ export function fail<T = never>(
       message,
       ...(extra?.position ? { position: extra.position } : {}),
       ...(extra?.detail !== undefined ? { detail: extra.detail } : {}),
+      ...(extra?.circumstantial === true ? { circumstantial: true } : {}),
     },
   };
 }

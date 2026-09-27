@@ -805,6 +805,15 @@ textarea.result {
   overflow-wrap: anywhere;
 }
 
+/* The reason a failure may not be the input's, and the way to try again. */
+.errorAgain {
+  display: grid;
+  justify-items: start;
+  gap: var(--pb-space-xs);
+  padding-block-start: var(--pb-space-xs);
+  border-block-start: var(--pb-border-width) solid var(--pb-border-hairline);
+}
+
 /* --- Busy --------------------------------------------------------------- */
 
 .busy {

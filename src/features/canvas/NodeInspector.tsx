@@ -5,6 +5,7 @@ import { CloseIcon } from '@/components/Icon';
 import { TextArea } from '@/components/TextArea';
 import { useToast } from '@/components/Toast';
 import type { NodeRunState } from '@/features/execution/graph';
+import { usePipelineStore } from '@/features/execution/pipelineStore';
 import { getManifestEntry, loadTool } from '@/features/registry';
 import type { ErasedTool, InputPort } from '@/features/registry/types';
 import {
@@ -710,7 +711,20 @@ function OutputSection({
   const entry = getManifestEntry(target.node.toolId);
   const { run } = target;
 
-  if (run.status === 'error' && run.error) return <ErrorReport error={run.error} />;
+  if (run.status === 'error' && run.error) {
+    const nodeId = target.node.id;
+    return (
+      <ErrorReport
+        error={run.error}
+        again={{
+          onRunAgain: () => {
+            usePipelineStore.getState().retry(nodeId);
+          },
+          kept: 'The node keeps this answer until something about it changes, so it will not be tried again by itself.',
+        }}
+      />
+    );
+  }
 
   if (run.status === 'upstream-failed') {
     return (

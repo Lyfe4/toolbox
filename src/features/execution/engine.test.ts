@@ -247,6 +247,9 @@ describe('timeout', () => {
     if (!result.ok) {
       expect(result.error.code).toBe('timeout');
       expect(result.error.detail).toContain('5s');
+      // A deadline is a fact about the moment as well as the input, and the
+      // view says so (circumstantial.test.tsx).
+      expect(result.error.circumstantial).toBe(true);
     }
     expect(workers[0]?.terminated()).toBe(true);
   });
@@ -277,9 +280,11 @@ describe('timeout', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.message).toBe('That pattern is too slow and was stopped.');
-      // Still a timeout, still says how long it waited.
+      // Still a timeout, still says how long it waited - and, like the one
+      // that never started, may be the machine as much as the pattern.
       expect(result.error.code).toBe('timeout');
       expect(result.error.detail).toContain('5s');
+      expect(result.error.circumstantial).toBe(true);
     }
   });
 
@@ -1191,6 +1196,30 @@ describe('a timeout with other requests in flight', () => {
     // Not the tool's own diagnosis, which is about work that did not happen.
     expect(result.error.message).not.toContain('backtracking');
     expect(result.error.detail).toContain('without starting');
+  });
+
+  /*
+   * AND IT SAYS WHY, without blaming a tool that is not there. Round
+   * twenty-seven's full run timed out a lone hash node, on a canvas with
+   * nothing else on it, as "Another tool was still holding the worker".
+   */
+  it('blames no other tool when nothing else was on the worker', async () => {
+    const lone = setup();
+    const neverBooted = lone.engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
+    lone.clock.fireAll();
+    const silent = await neverBooted;
+    expect(silent.ok ? null : silent.error.detail).toContain(
+      'The worker never finished starting up, and nothing else was running on it.',
+    );
+
+    const ready = setup();
+    const answered = ready.engine.execute({ toolId: TOOL_ID, inputs: textInput, options: {} });
+    ready.workers[0]?.reply({ kind: 'ready' });
+    ready.clock.fireAll();
+    const stopped = await answered;
+    expect(stopped.ok ? null : stopped.error.detail).toContain(
+      'Nothing else was running on the worker, and it stopped answering.',
+    );
   });
 
   /** ...and the running half still says what it always said. */

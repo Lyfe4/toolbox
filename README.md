@@ -1496,7 +1496,8 @@ tooltip placed beside its trigger is only ever moved vertically to stay on
 screen, so at 320px a 240px tooltip beside a mid-row button was drawn 40px past
 the left edge, in both engines. It wraps to the room it has now. `checkPopovers`
 holds all of it in two engines — nothing refused, nothing off screen, the lock
-arriving and leaving, a list that does not fit showing a scroll button — and
+arriving and leaving, a list that does not fit showing a scroll hint, and its
+rows moving by exactly what it is scrolled and nothing else — and
 every assertion in it was seen failing against a deliberate break first.
 
 ### Whether the assertions could fail at all
@@ -1598,7 +1599,7 @@ published JOSE example is a JWS and not a JWT.** A.4 signs the ASCII string
 `Payload`, the cookbook signs a line of Tolkien, Wycheproof signs `foo`; this
 tool requires a JSON payload, as a JWT has, so four of the twelve are all that
 can be driven through its whole pipeline by anything anybody has published — and
-the other eight are instead put to each engine directly, under the parameters the
+the other eight algorithms are instead put to each engine directly, under the parameters the
 fixture records, which is what would catch a browser with no RSA-PSS or no
 P-521.
 

@@ -89,6 +89,9 @@ export type NodeVerdict = NodeRunStatus | 'lossy' | 'after-loss';
  * distinction survives greyscale, colour blindness and forced-colors mode -
  * and this text is what a screen reader actually reads.
  */
+/** What a failure that may be the machine's says first, on the face and aloud. */
+export const MAYBE_NOT_THE_INPUT = 'Maybe not the input';
+
 const STATUS_TEXT: Record<NodeVerdict, string> = {
   idle: 'not run yet',
   blocked: 'blocked',
@@ -375,9 +378,16 @@ export const CanvasNodeView = memo(function CanvasNodeView({
           ? 'after-loss'
           : 'ok';
 
+  /*
+   * A FAILURE THAT MAY BE THE MACHINE'S SAYS SO ON THE FACE, which is where a
+   * canvas is scanned and where a cached answer is re-served from: the same
+   * words would otherwise read as a verdict on the document for as long as the
+   * node is left alone. The inspector says why and offers Run again.
+   */
+  const circumstantial = run.status === 'error' && run.error?.circumstantial === true;
   const summaryText =
     run.status === 'error' && run.error
-      ? run.error.message
+      ? `${circumstantial ? `${MAYBE_NOT_THE_INPUT} · ` : ''}${run.error.message}`
       : (blockedHint ??
         (lossText === null ? null : `Lossy · ${lossText}`) ??
         resultSummary ??
@@ -434,6 +444,7 @@ export const CanvasNodeView = memo(function CanvasNodeView({
           inherited.origins > 1 ? `, and ${(inherited.origins - 1).toString()} more upstream` : ''
         }`,
     resultSummary,
+    circumstantial ? MAYBE_NOT_THE_INPUT : null,
     run.status === 'error' ? run.error?.message : null,
     selected ? 'selected' : null,
   ]

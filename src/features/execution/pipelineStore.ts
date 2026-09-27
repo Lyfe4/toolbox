@@ -45,6 +45,17 @@ export interface PipelineStore extends AnnouncementSlice {
   readonly schedule: (graph: GraphData) => void;
   readonly cancel: () => void;
   readonly reset: () => void;
+  /**
+   * Runs one node again although nothing about it changed - the answer to a
+   * failure that may have been the machine's (`ToolError.circumstantial`).
+   *
+   * THE CACHE RULE IS UNTOUCHED. Every result is still cached and every other
+   * node is still served from it; this forgets exactly one entry, because the
+   * person looking at it asked, and re-runs the graph the store last saw. The
+   * node's descendants follow it: they were `upstream-failed`, which is decided
+   * afresh on every run and never cached.
+   */
+  readonly retry: (nodeId: string) => void;
 }
 
 export const usePipelineStore = create<PipelineStore>()((set, get) => {
@@ -60,6 +71,8 @@ export const usePipelineStore = create<PipelineStore>()((set, get) => {
   let startTimer: number | null = null;
   let controller: AbortController | null = null;
   let runToken = 0;
+  /** The graph of the last run or the one waiting to start, for `retry`. */
+  let latest: GraphData | null = null;
 
   const announce = (text: string): void => {
     set((state) => appendAnnouncement(state, text, PIPELINE_CHANNEL));
@@ -85,6 +98,7 @@ export const usePipelineStore = create<PipelineStore>()((set, get) => {
     execute: (options) => getSharedEngine().execute(options),
 
     run: async (graph) => {
+      latest = graph;
       controller?.abort();
       controller = new AbortController();
       const signal = controller.signal;
@@ -175,6 +189,7 @@ export const usePipelineStore = create<PipelineStore>()((set, get) => {
     },
 
     schedule: (graph) => {
+      latest = graph;
       // Debounced: typing into a node should not launch a run per keystroke.
       if (debounceTimer !== null) window.clearTimeout(debounceTimer);
       debounceTimer = window.setTimeout(() => {
@@ -195,7 +210,17 @@ export const usePipelineStore = create<PipelineStore>()((set, get) => {
       controller?.abort();
       controller = null;
       cache.clear();
+      latest = null;
       set({ states: {}, running: false, summary: null });
+    },
+
+    retry: (nodeId) => {
+      const graph = latest;
+      if (graph === null) return;
+      cache.delete(nodeId);
+      if (debounceTimer !== null) window.clearTimeout(debounceTimer);
+      debounceTimer = null;
+      void get().run(graph);
     },
   };
 });

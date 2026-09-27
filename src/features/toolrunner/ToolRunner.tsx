@@ -487,7 +487,15 @@ export function ToolRunner({ entry }: ToolRunnerProps) {
         </div>
 
         <Panel className={styles.output} title="Output">
-          {state.status === 'error' ? <ErrorReport error={state.error} /> : null}
+          {state.status === 'error' ? (
+            <ErrorReport
+              error={state.error}
+              again={{
+                onRunAgain: onRun,
+                kept: 'Nothing here runs again by itself.',
+              }}
+            />
+          ) : null}
 
           {state.status === 'success' ? (
             <div className={styles.stack}>

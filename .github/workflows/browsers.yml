@@ -1,0 +1,127 @@
+name: Browsers
+
+# check:browsers on a second machine, and the verification skill against the
+# live site once a push has deployed. The six gates are ci.yml and stay the
+# gate a commit needs; this is where the harness that finds most of this
+# project's real bugs stops running only on the machine that wrote the code -
+# six of those bugs passed there only because that machine was quiet.
+on:
+  push:
+    branches: [main]
+  # Nightly as well: the live site, the engines' tz data and a runner's load
+  # all change without a push, and each has broken a check here before.
+  schedule:
+    - cron: '23 16 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: browsers-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  harness:
+    name: check:browsers (${{ matrix.engine }})
+    runs-on: ubuntu-latest
+    # A section is failed at its own ceiling long before this; this is for a
+    # runner that stops answering altogether.
+    timeout-minutes: 150
+    strategy:
+      # One engine failing says nothing about the other; run both to the end.
+      fail-fast: false
+      matrix:
+        engine: [firefox, webkit]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The engine and the system libraries it links against. Not cached: the
+      # download is a minute, and a cache keyed on the Playwright version would
+      # still leave the apt half to do.
+      - name: Install ${{ matrix.engine }}
+        run: pnpm exec playwright install --with-deps ${{ matrix.engine }}
+
+      - name: Build
+        run: pnpm build
+
+      # One engine per job, so the two run side by side; each is a PARTIAL run
+      # by the harness's own definition, and each fails on any failure.
+      - name: check:browsers
+        shell: bash
+        run: pnpm check:browsers --engine=${{ matrix.engine }} 2>&1 | tee check-browsers.log
+        env:
+          # A shared runner is several times slower than the machine the
+          # default was set on; still far under the 901s stall it exists for
+          # on a runner, where the slowest section takes a few minutes.
+          PATCHBAY_SECTION_CEILING_S: '900'
+
+      - name: Keep the log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: check-browsers-${{ matrix.engine }}
+          path: check-browsers.log
+          retention-days: 14
+
+  live-site:
+    name: The verification skill against the live site
+    # A schedule or a manual run tests whatever is live; a push waits for its
+    # own deploy first.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build
+        run: pnpm build
+
+      # Netlify builds main itself and posts nothing back to GitHub, so the
+      # deploy of this commit is found by its service worker matching this
+      # build's byte for byte. See scripts/wait-for-deploy.mjs.
+      - name: Wait for this commit to be live
+        if: github.event_name == 'push'
+        run: node scripts/wait-for-deploy.mjs 20
+
+      # The same four scripts checkVerificationSkill runs against a local
+      # build, here in their default mode: the live site, in Chromium.
+      - name: doctor
+        run: node .claude/skills/verify-patchbay/doctor.mjs
+      - name: drive all
+        run: node .claude/skills/verify-patchbay/drive.mjs all
+      - name: probe-search
+        run: node .claude/skills/verify-patchbay/probe-search.mjs
+      - name: probe-popover
+        run: node .claude/skills/verify-patchbay/probe-popover.mjs
+
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: live-site-evidence
+          path: .claude/skills/verify-patchbay/evidence/
+          retention-days: 14
+          if-no-files-found: ignore

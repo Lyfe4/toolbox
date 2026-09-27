@@ -39,14 +39,14 @@ failure is a failure — there is no "warning" tier.
 pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build && pnpm bundle:check
 ```
 
-| Gate                | What it protects                                                                                                                                |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm typecheck`    | `tsc -b` across both projects, strict, with no suppressed errors.                                                                               |
-| `pnpm lint`         | ESLint with `--max-warnings 0`, type-aware rules on. Bans `any` and `!`, and `eval`, `new Function`, `innerHTML` and `dangerouslySetInnerHTML`. |
-| `pnpm format:check` | Prettier. Formatting is not a review topic.                                                                                                     |
-| `pnpm test`         | Vitest, including axe on every component and route, and the documentation checks in `vite/` - see [Claims in documents](#claims-in-documents).  |
-| `pnpm build`        | The production build, including the CSP hash and service worker plugins.                                                                        |
-| `pnpm bundle:check` | Four payloads against four budgets: the initial JS, the worker entry, the largest lazy chunk, and everything the service worker precaches.      |
+| Gate                | What it protects                                                                                                                                                     |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm typecheck`    | `tsc -b` across both projects, strict, with no suppressed errors.                                                                                                    |
+| `pnpm lint`         | ESLint with `--max-warnings 0`, type-aware rules on. Bans `any` and `!`, and `eval`, `new Function`, `innerHTML` and `dangerouslySetInnerHTML`.                      |
+| `pnpm format:check` | Prettier. Formatting is not a review topic.                                                                                                                          |
+| `pnpm test`         | Vitest, including axe on every component and route, the documentation checks in `vite/` - see [Claims in documents](#claims-in-documents) - and `textBytes.test.ts`. |
+| `pnpm build`        | The production build, including the CSP hash and service worker plugins.                                                                                             |
+| `pnpm bundle:check` | Four payloads against four budgets: the initial JS, the worker entry, the largest lazy chunk, and everything the service worker precaches.                           |
 
 A pre-commit hook runs ESLint and Prettier on staged files. It is a
 convenience, not the gate — run the six before opening a pull request.
@@ -60,7 +60,7 @@ disk and found a `dist/` that CI, which tests before it builds, never has. A tes
 must not read gitignored state, and a local run that should match CI is one with
 `dist/` moved aside. Look at the run after pushing: `gh run list --limit 3`.
 
-### Three more that are not in CI
+### Three more that are not in the gate
 
 ```bash
 pnpm build && pnpm check:browsers   # Firefox + WebKit, about 500 MB on disk
@@ -72,11 +72,30 @@ node scripts/mutate.mjs             # mutation testing over the conversion code
 CSP, and compares it with the live site: every URL the two share must hold the
 same bytes, because those URLs are served `immutable` and a browser that has one
 never asks again. So it needs the network, and says so rather than passing
-without it. It is out of the CI gate because of the binary download, not because it is
-optional — **run it before any change to the canvas, the headers, the service
-worker or anything visual.** jsdom has no layout engine, no Worker, no
-`OffscreenCanvas` and no pointer events, so the unit suite is structurally
-unable to see most of what that script checks.
+without it. It is not one of the six gates because it takes the better part of
+an hour, not because it is optional — **run it before any change to the canvas,
+the headers, the service worker or anything visual.** jsdom has no layout
+engine, no Worker, no `OffscreenCanvas` and no pointer events, so the unit
+suite is structurally unable to see most of what that script checks.
+
+**And CI runs it too, on a second machine.** [`browsers.yml`](.github/workflows/browsers.yml)
+runs it on every push to `main` and nightly, one engine per job on Linux, and
+then runs the verification skill against the live site once that push has
+deployed - found by the live `sw.js` matching the build byte for byte
+([`wait-for-deploy.mjs`](scripts/wait-for-deploy.mjs)), because Netlify tells
+GitHub nothing. It is after the fact rather than before it, so the local run
+stays the one a commit needs; what the second machine adds is load this one
+does not have, which is where six of this project's bugs hid.
+
+**A section that does not finish fails.** Most waits in the harness are counted
+in frames, which a slow machine delays but cannot invent, and `page.evaluate`
+has no timeout of its own - so an engine that stops drawing frames used to
+delay a section without end, and round twenty-six's `checkCanvasGrid` took 901s
+and passed. Each section now runs against a ceiling (600s, or
+`PATCHBAY_SECTION_CEILING_S`), and one that reaches it is a named failure that
+says which check it last reported and how fast its pages were drawing frames.
+It is the harness's version of a test runner's timeout, not a measurement of
+the app.
 
 **It also runs the verification skill**, against the build it is serving and
 in both of its engines (`checkVerificationSkill`), so a skill script that no
@@ -88,7 +107,7 @@ probes were broken for a round before anybody did.
 treat that as the run a commit needs:
 
 ```bash
-pnpm check:browsers --list                              # the 61 section names
+pnpm check:browsers --list                              # the 62 section names
 pnpm check:browsers --only=popovers,valuemodel          # a substring of each, `check` optional
 pnpm check:browsers --only=outputviews --engine=webkit  # one engine
 ```
@@ -319,6 +338,17 @@ for - the bytes a reader asks its source for (`countingSource`), the bits a
 parse consumes, the renders a pan causes - and leave the one real clock, the
 test runner's own timeout, to catch a thing that never returns.
 
+**A file is UTF-8 with LF endings and no other control character**, and
+`vite/textBytes.test.ts` reads every one in the working tree to hold it -
+not the index, because the build, the tests and the harness read what is on
+disk. Round twenty-six met the class three times, each caught only by where it
+landed: a CRLF `index.html` whose CSP hashes refused its own scripts, a
+backspace byte where a regex meant `\b`, a literal newline where a script
+meant `\n`. All three were a tool rewriting text on its way to disk - Python's
+write_text on Windows, an escape in an ordinary Python string, PowerShell's
+`>` (which writes UTF-16). `.gitattributes` cannot see any of that; it decides
+what a commit holds. A fixture that needs a carriage return spells it `'\r'`.
+
 **jsdom has no layout engine.** Anything about geometry, overflow, computed
 colour or whether something actually scrolls belongs in
 `scripts/cross-browser-check.mjs`, not in a unit test that will silently pass.
@@ -345,7 +375,7 @@ checked mechanically is now checked in `pnpm test`, by
   or a comment.
 - **A count is checked in the phrasings `COUNTS` lists, and only in those.**
   "The two inline scripts", "four payloads against four budgets", "the six
-  gates", "the 61 section names": each is a phrase pattern in `COUNTS` and the
+  gates", "the 62 section names": each is a phrase pattern in `COUNTS` and the
   number the code gives, wherever the phrase appears, docs and comments alike.
   A pattern that stops matching anything fails, rather than retiring in
   silence. **The same number phrased any other way is not checked at all** -
@@ -357,7 +387,11 @@ checked mechanically is now checked in `pnpm test`, by
   or more before "tools", a number of five or more after "of the", and "every
   tool but" a number - anywhere but the dated records. A sentence in one of
   those shapes that is about something else goes in the gate's exemption
-  table with its reason. A count phrased another way ("the other ten") is still not caught.
+  table with its reason. A count with no noun after it ("the other ten", "all
+  eleven") is caught only in a sentence that says "tool", and only within three
+  of the registry's size, which is where every stale one has been; without the
+  noun the rule cannot tell what is counted, and matched seventy sentences about
+  other things when it tried. Anywhere else it is still not caught.
 - **A table that restates the manifest is compared with it.** The README's
   tools, the port set in architecture.md and the skill's ids sit between
   `manifest:` markers, and `manifestTables.test.ts` fails when one no longer

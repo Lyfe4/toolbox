@@ -341,11 +341,12 @@ reads. What it cannot read is a count phrased another way; do not write one.
   - **The answer must be a text box labelled `Converted`.** The harness reads
     it as `<Tool name> Converted`, as a text box's value. A tool whose first
     output is not text, has a view of its own, or is labelled anything else
-    cannot have a row until the harness learns to read it - relabelling a port
-    to fit is not the fix. This is an accident of the tools that had rows,
-    kept as a stated limit. Base64 (`Result`), jwt-decode (the verdict view),
-    image-convert and video-remux (bytes) are outside it today, so none of
-    their losses can be a row.
+    cannot have a row - relabelling a port to fit is not the fix. Its losses
+    go in `BEYOND_THE_CORPUS` in `scripts/cross-browser-check.mjs` instead,
+    which `checkLossesBeyondTheCorpus` holds to the same things a row is held
+    to, on the page and on a node; base64, jwt-decode, image-convert and
+    video-remux are there. `notePorts.test.ts` fails until every tool with a
+    report port is in one or the other.
   - **`choose` only drives a select.** An option typed into a text field has to
     be carried in the row's input. Deliberate enough: every option a loss has
     depended on so far is a select, and a typed one would need the harness to
@@ -387,7 +388,7 @@ if a `meta.ts` imports code. `bundle:check` will tell you if your tool leaked
 into the initial payload instead of becoming its own chunk. `check:browsers`
 needs the network and an idle machine, and since round twenty-six it runs the
 verification skill against the build too (`checkVerificationSkill`); see
-[CONTRIBUTING](../CONTRIBUTING.md#three-more-that-are-not-in-ci).
+[CONTRIBUTING](../CONTRIBUTING.md#three-more-that-are-not-in-the-gate).
 Record the round in [test-findings.md](test-findings.md).
 
 The tool then appears in the index, in canvas search, in the palette, and can

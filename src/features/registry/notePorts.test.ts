@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import { lossNotesOf, type LossNote } from '@/features/canvas/resultSummary';
 import { type ToolInputs, type ToolOutputs, type ToolRunContext } from '@/features/registry/types';
+import { residentBinary } from '@/lib/binary';
 
 import { loadTool } from './loader';
 import { getManifestEntry, TOOL_MANIFEST, type ToolId, type ToolManifestEntry } from './manifest';
+import corpus from './spec/loss-corpus.json';
+import harness from '../../../scripts/cross-browser-check.mjs?raw';
+import harnessClips from '../../tools/video-remux/spec/located.json';
 
 /**
  * THE POSITIVE PARTNER FOR `ToolNote.reaches`.
@@ -24,13 +28,16 @@ import { getManifestEntry, TOOL_MANIFEST, type ToolId, type ToolManifestEntry } 
  * like "this conversion happened not to lose anything". So the claim is
  * asserted against the manifest rather than left to the call sites.
  *
- * TWO HALVES, because two tools cannot run here at all. `image-convert` needs
- * an `OffscreenCanvas` and `video-remux` needs a real container, and jsdom has
- * neither - so those two are held to the assumption their mapping is built on
- * instead: exactly one non-report output port, called `output`. That is the
- * thing that would stop being true if somebody gave either a second data port,
- * which is the case the hard-coded `['output']` in their index.ts would get
- * wrong.
+ * TWO HALVES, because one tool cannot run here at all. `image-convert` needs
+ * a canvas, and jsdom has none - so it is held to the assumption its mapping
+ * is built on instead: exactly one non-report output port, called `output`.
+ * That is the thing that would stop being true if somebody gave it a second
+ * data port, which is the case the hard-coded `['output']` in its index.ts
+ * would get wrong. (`video-remux` was held the same way, on the grounds that
+ * it "needs a real container" jsdom lacks; it does not - `makeMp4` builds one,
+ * and `determinism.test.ts` has run the tool here since round twenty-five. So
+ * since round twenty-seven its loss is in the list below and its `reaches` is
+ * checked for real.)
  */
 
 /** Unpadded base64url, for the hand-built token below. */
@@ -263,6 +270,19 @@ const LOSSY_RUNS: readonly {
     what: 'a leap second, which Unix time has no number for',
     inputs: { input: { type: 'text', text: '2016-12-31T23:59:60Z' } },
   },
+  {
+    // The clip check:browsers repackages, held to `makeMp4` by its own test.
+    toolId: 'video-remux',
+    what: 'a recording location, which a repackage leaves behind',
+    inputs: {
+      input: {
+        type: 'bytes',
+        data: residentBinary(Uint8Array.from(atob(harnessClips.located), (c) => c.charCodeAt(0))),
+        mediaType: null,
+        filename: 'walk.mp4',
+      },
+    },
+  },
 ];
 
 describe('every warn note names the ports its loss is actually in', () => {
@@ -291,7 +311,7 @@ describe('every warn note names the ports its loss is actually in', () => {
    * to `['output']` in their index.ts, which is correct exactly while that is
    * the only port a loss could be in.
    */
-  it.each(['image-convert', 'video-remux'] as const)(
+  it.each(['image-convert'] as const)(
     '%s has the one data port its hard-coded `reaches` assumes',
     (toolId) => {
       expect(dataPortIds(toolId)).toEqual(['output']);
@@ -318,11 +338,38 @@ describe('every warn note names the ports its loss is actually in', () => {
 
     const covered = new Set([
       ...LOSSY_RUNS.map((entry) => entry.toolId),
-      // Held to their port shape above instead; jsdom can run neither.
+      // Held to its port shape above instead; jsdom cannot run it.
       'image-convert',
-      'video-remux',
     ]);
 
     expect(reporting.filter((id) => !covered.has(id))).toEqual([]);
+  });
+
+  /*
+   * AND EVERY ONE OF THEM HAS ITS LOSS DRAWN IN A REAL ENGINE. What this file
+   * holds is the payload; "told" also means a person is shown it - on the
+   * tool page, and on a node's face - which only check:browsers can see. A
+   * tool gets there by corpus rows (`checkLossCorpus`) or, where a row cannot
+   * be written for it, by an entry in `BEYOND_THE_CORPUS`
+   * (`checkLossesBeyondTheCorpus`). Until round twenty-seven base64,
+   * jwt-decode, image-convert and video-remux had neither, and nothing said so.
+   */
+  it('has the losses of every tool that can report one drawn in a real engine', () => {
+    const entries: readonly ToolManifestEntry[] = TOOL_MANIFEST;
+    const reporting = entries
+      .filter((entry) => entry.outputs.some((port) => port.presentation === 'report'))
+      .map((entry) => entry.id);
+
+    const start = harness.indexOf('const BEYOND_THE_CORPUS = [');
+    expect(start, 'no BEYOND_THE_CORPUS in scripts/cross-browser-check.mjs').toBeGreaterThan(-1);
+    const list = harness.slice(start, harness.indexOf('\n];', start));
+    const beyond = [...list.matchAll(/^ {4}tool: '([\w-]+)',$/gm)].map((match) => match[1]);
+    expect(beyond.length, 'the list was read').toBeGreaterThan(0);
+
+    const sections = harness.slice(harness.indexOf('const SECTIONS = ['));
+    expect(sections.slice(0, sections.indexOf('];'))).toContain('checkLossesBeyondTheCorpus,');
+
+    const drawn = new Set([...corpus.cases.map((entry) => entry.tool), ...beyond]);
+    expect(reporting.filter((id) => !drawn.has(id))).toEqual([]);
   });
 });

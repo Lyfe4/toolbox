@@ -16,6 +16,7 @@ import {
 import { readIsoBmff } from './isobmff';
 import { readMatroska } from './matroska';
 import { refuseOversizedOutput, remux } from './remux';
+import harnessClips from './spec/located.json';
 
 import type { SourceFile } from './containers';
 
@@ -108,6 +109,39 @@ const audioTrack: FixtureTrack = {
 /* ========================================================================== *
  * MP4 in, MP4 out
  * ========================================================================== */
+
+/*
+ * THE TWO CLIPS check:browsers FEEDS THE TOOL PAGE AND A NODE, so that the
+ * location warning is seen drawn in a real engine and not only returned here
+ * (`checkLossesBeyondTheCorpus`). The harness is plain JavaScript and cannot
+ * build one with `makeMp4`, so they are committed - and held to be exactly
+ * what `makeMp4` builds, with the location and without it, so the file cannot
+ * drift from the clip these tests are about.
+ */
+describe('the clips the browser harness repackages', () => {
+  const base64Of = (bytes: Uint8Array): string => {
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary);
+  };
+  const located = makeMp4({ tracks: [videoTrack, audioTrack], location: '+51.5074-0.1278/' });
+  const plain = makeMp4({ tracks: [videoTrack, audioTrack] });
+
+  it('are what makeMp4 builds, byte for byte', () => {
+    expect(harnessClips.located, 'spec/located.json "located" is stale').toBe(base64Of(located));
+    expect(harnessClips.plain, 'spec/located.json "plain" is stale').toBe(base64Of(plain));
+  });
+
+  it('are one clip that loses a location, and the same clip losing nothing', () => {
+    const lossy = remux(sourceOf(located), 'container');
+    const clean = remux(sourceOf(plain), 'container');
+    if (!lossy.ok || !clean.ok) throw new Error('a harness clip did not repackage');
+    expect(
+      lossy.value.notes.filter((note) => note.level === 'warn').map((note) => note.title),
+    ).toEqual(['GPS location removed']);
+    expect(clean.value.notes.filter((note) => note.level === 'warn')).toEqual([]);
+  });
+});
 
 describe('repackaging an ISO base media file', () => {
   const source = makeMp4({ tracks: [videoTrack, audioTrack], location: '+51.5074-0.1278/' });

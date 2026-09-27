@@ -92,9 +92,10 @@ async function measure(page) {
       // Does the list fit, and if not, is there anything telling you so?
       listOverflows: viewportEl ? viewportEl.scrollHeight > viewportEl.clientHeight + 1 : null,
       listHeights: viewportEl ? [viewportEl.scrollHeight, viewportEl.clientHeight] : null,
-      scrollButtons: document.querySelectorAll(
-        '[data-radix-select-scroll-up-button], [data-radix-select-scroll-down-button]',
-      ).length,
+      // The hints Select draws over each end with more beyond it. This used to
+      // count attributes Radix never renders, so it printed 0 beside
+      // `overflows=true` on every run it has left in evidence/.
+      scrollButtons: document.querySelectorAll('[data-select-scroll][data-shown]').length,
       scrollbarDrawn: viewportEl ? viewportEl.offsetWidth - viewportEl.clientWidth : null,
       styleElements: [...document.querySelectorAll('style')].map((s) => ({
         where: s.parentElement?.tagName ?? '?',

@@ -1,10 +1,12 @@
 import * as RadixSelect from '@radix-ui/react-select';
-import { useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from '@/components/Icon';
 import { cx } from '@/lib/cx';
 
 import styles from './Select.module.css';
+
+import type { PointerEvent, ReactNode, RefObject } from 'react';
 
 export interface SelectOption {
   readonly value: string;
@@ -117,20 +119,7 @@ export function Select({
             closedByPointer.current = false;
           }}
         >
-          {/*
-            THE SCROLL BUTTONS ARE THE LIST'S ONLY SCROLLBAR. Radix's viewport
-            hides the native one with a stylesheet of its own - allowed by its
-            hash in public/_headers - and draws these in its place, each only
-            while there is more of the list in its direction. Without them a
-            list that does not fit, which is every list on a phone held
-            sideways, ends at its last visible row with nothing to say that it
-            continues. `data-select-scroll` is the handle check:browsers
-            measures them by.
-          */}
-          <RadixSelect.ScrollUpButton className={styles.scroll} data-select-scroll="up">
-            <ChevronUpIcon size={12} />
-          </RadixSelect.ScrollUpButton>
-          <RadixSelect.Viewport className={styles.viewport}>
+          <ScrollingViewport>
             {options.map((option) => (
               <RadixSelect.Item
                 key={option.value}
@@ -148,12 +137,144 @@ export function Select({
                 <RadixSelect.ItemText>{option.label}</RadixSelect.ItemText>
               </RadixSelect.Item>
             ))}
-          </RadixSelect.Viewport>
-          <RadixSelect.ScrollDownButton className={styles.scroll} data-select-scroll="down">
-            <ChevronDownIcon size={12} />
-          </RadixSelect.ScrollDownButton>
+          </ScrollingViewport>
         </RadixSelect.Content>
       </RadixSelect.Portal>
     </RadixSelect.Root>
+  );
+}
+
+interface Edges {
+  readonly up: boolean;
+  readonly down: boolean;
+}
+
+/**
+ * The list's viewport, with a hint drawn over each end that has more beyond it.
+ *
+ * THE HINTS ARE THE LIST'S ONLY SCROLLBAR. Radix's viewport hides the native
+ * one with a stylesheet of its own - allowed by its hash in public/_headers -
+ * so without them a list that does not fit, which is every list on a phone
+ * held sideways, ends at its last visible row with nothing to say that it
+ * continues.
+ *
+ * THEY ARE OURS, NOT RADIX'S SCROLL BUTTONS, because those moved the rows under
+ * the reader twice. Radix mounts its up button the moment the list leaves the
+ * top, in the list's flex column, which pushes every row down by its height;
+ * and a scroll button scrolls the FOCUSED row into view as it mounts - on open
+ * that is the chosen row, so the first scroll a finger or a wheel made was
+ * undone, and scrolling back up from the end jumped the list to the top.
+ * Measured in both engines: 30px down came back as 2, and 20px up from the
+ * end of the Category list as 2. So these never mount or unmount: both are
+ * always in the viewport, sticky at its ends and overlapping the rows by
+ * their own height, and whether one shows is a data attribute, which moves
+ * nothing. `checkPopovers` holds that a row moves by exactly what the list is
+ * scrolled and by nothing else.
+ */
+function ScrollingViewport({ children }: { readonly children: ReactNode }) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState<Edges>({ up: false, down: false });
+
+  const measure = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const up = viewport.scrollTop > 0;
+    const down = Math.ceil(viewport.scrollTop) < viewport.scrollHeight - viewport.clientHeight;
+    setEdges((was) => (was.up === up && was.down === down ? was : { up, down }));
+  }, []);
+
+  // The viewport's size is only known once the popper has placed the list and
+  // capped its height, which is after mount - hence an observer, not one read.
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return undefined;
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(viewport);
+    return () => {
+      observer.disconnect();
+    };
+  }, [measure]);
+
+  return (
+    <RadixSelect.Viewport ref={viewportRef} className={styles.viewport} onScroll={measure}>
+      <ScrollHint direction="up" shown={edges.up} viewportRef={viewportRef} />
+      {children}
+      <ScrollHint direction="down" shown={edges.down} viewportRef={viewportRef} />
+    </RadixSelect.Viewport>
+  );
+}
+
+/**
+ * An indicator first and a control second, as Radix's was: a mouse resting on
+ * one scrolls the list a row at a time, and a finger scrolls the list itself -
+ * the hint is inside the scroller, so a drag that starts on it still scrolls.
+ * Nothing happens on a click. `data-select-scroll` is the handle
+ * check:browsers measures it by.
+ */
+function ScrollHint({
+  direction,
+  shown,
+  viewportRef,
+}: {
+  readonly direction: 'up' | 'down';
+  readonly shown: boolean;
+  readonly viewportRef: RefObject<HTMLDivElement | null>;
+}) {
+  const timer = useRef<number | null>(null);
+
+  const stop = useCallback(() => {
+    if (timer.current !== null) {
+      window.clearInterval(timer.current);
+      timer.current = null;
+    }
+  }, []);
+
+  // A hint that stops showing has reached its end; so has an unmounted one.
+  useEffect(() => {
+    if (!shown) stop();
+  }, [shown, stop]);
+  useEffect(() => stop, [stop]);
+
+  /*
+   * ONLY A POINTER THAT MOVED. A hint appears under a mouse that is resting on
+   * the list as soon as the wheel takes it off the top, and WebKit answers the
+   * change with a pointermove of its own, at the same place - which, if it
+   * started this, scrolled the list straight back up: the wheel's first notch,
+   * undone, the fault this component exists to remove. So a scroll starts on
+   * the second move over the hint at a different place from the first.
+   * `movementX` would say it in one event, and WebKit reports it as 0 for
+   * every move.
+   */
+  const lastMove = useRef<{ readonly x: number; readonly y: number } | null>(null);
+  const move = (event: PointerEvent) => {
+    const was = lastMove.current;
+    lastMove.current = { x: event.clientX, y: event.clientY };
+    if (!shown || event.pointerType !== 'mouse' || timer.current !== null) return;
+    if (was === null || (was.x === event.clientX && was.y === event.clientY)) return;
+    timer.current = window.setInterval(() => {
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      const row = viewport.querySelector<HTMLElement>('[role="option"]');
+      const step = row?.offsetHeight ?? 24;
+      viewport.scrollTop += direction === 'up' ? -step : step;
+    }, 50);
+  };
+  const leave = () => {
+    lastMove.current = null;
+    stop();
+  };
+
+  return (
+    <div
+      aria-hidden
+      className={styles.scroll}
+      data-select-scroll={direction}
+      data-shown={shown ? '' : undefined}
+      onPointerMove={move}
+      onPointerLeave={leave}
+    >
+      {direction === 'up' ? <ChevronUpIcon size={12} /> : <ChevronDownIcon size={12} />}
+    </div>
   );
 }

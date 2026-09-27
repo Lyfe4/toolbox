@@ -5532,3 +5532,372 @@ column for it.
 - A count of tools phrased with no noun ("the other ten") is not caught.
 - Unchanged: Safari itself, cached `timeout` and `internal` errors, the node
   face and expiry, the `Converted` limit on corpus rows.
+
+## Round twenty-seven, done — the loose ends before the next tool
+
+2026-09-27, against `4cb5034`. Six parts, taken in the order the evidence
+needed: the Category list first, because what it turned out to be changed what
+the fixed waits and the stall looked like.
+
+|                                                           | Before                                                                                  | After                                                                                                                                                           |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A list's first scroll off the top, 30px                   | **undone: 2px**, the rows 52px from where the scroll put them, both engines             | 30px, the rows exactly 30px up                                                                                                                                  |
+| The Category list at its end, scrolled 20px back up       | **jumped to the top: 190 → 2**                                                          | 170                                                                                                                                                             |
+| The landscape pick, clicked where the option was measured | **All categories, 5 of 5, both engines** - reproduced on demand                         | a plain Playwright click, and four checks that fail against the old component                                                                                   |
+| Round twenty-six's settle wait                            | **never waited**: a Promise predicate, which `waitForFunction` counts as truthy at once | removed                                                                                                                                                         |
+| Stray bytes (CR, other controls, BOM, non-UTF-8)          | caught where they happened to land                                                      | refused in every file of the working tree by `pnpm test` (`textBytes.test.ts`)                                                                                  |
+| A bare tool count ("the other ten")                       | not caught                                                                              | caught in a sentence that says "tool" within three of the registry's size; four sentences given their noun                                                      |
+| The five borderline fixed waits                           | recorded                                                                                | each with a partner that fails when its wait proves nothing; a sixth found (the Undo, read with `count()`)                                                      |
+| A section that never finishes                             | **no bound anywhere**: 901s passed                                                      | a 600s ceiling that fails the section by name and reads the pages' frame rates                                                                                  |
+| `check:browsers` off this machine                         | never                                                                                   | `browsers.yml`: every push to `main` and nightly, per engine on Linux, and the skill against the live site after the deploy                                     |
+| Reporting tools whose losses are drawn in a real engine   | 4 of 8                                                                                  | **8 of 8**, `checkLossesBeyondTheCorpus` and a test that keeps it so                                                                                            |
+| A cached timeout                                          | read like a permanent verdict on the input                                              | "Maybe not the input" on the face, why in the inspector and on the page, and Run again - caching unchanged                                                      |
+| Deliberate breaks, each shown red                         | -                                                                                       | **19**, 16 of them app or tree breaks                                                                                                                           |
+| `pnpm test`                                               | 9,872 passed, 150 files                                                                 | **9,884 passed, 152 files**, with `dist/` moved aside                                                                                                           |
+| `check:browsers`, full run, idle                          | 3,624 passed, 0 failed, 13 skipped                                                      | **3,672 passed, 0 failed, 13 skipped** (the same thirteen), 1,947 s of sections - the fourth run; the second failed one check and the third crashed, both below |
+
+### 1. The Category list: a real bug, and not the one feared
+
+**The framing was right that it was the app, and wrong about how a person
+meets it.** Reproduced deterministically before anything changed, at 568×320,
+in both engines:
+
+| Driven                                                          | Gecko                      | WebKit                     |
+| --------------------------------------------------------------- | -------------------------- | -------------------------- |
+| `scrollTop = 30` on a list at its top, read 6 frames later      | **2**, row 145 → 167       | **2**, row 320 → 342       |
+| Scroll to the end, then 20px back up                            | **190 → 2**                | **189 → 2**                |
+| Mouse resting on the top row, three 60px wheel notches          | 0 → **2** → 62 → 122       | 0 → **2** → **0** → 60     |
+| Mouse resting mid-list, the same                                | 0 → 46 → 106 → 166         | 0 → 46 → 90 → 134          |
+| The option scrolled into view and clicked where it was measured | **All categories**, 5 of 5 | **All categories**, 5 of 5 |
+
+The mechanism, read out of Radix's source and confirmed by the numbers: the up
+button mounts in the list's flex column the moment the list leaves its top,
+which pushes every row down by its height - the part round twenty-six inferred
+
+- **and each scroll button, as it mounts, scrolls the focused row into view.**
+  On open the focused row is the chosen one. With "All categories" chosen, the
+  default, that undoes the first scroll off the top and turns any scroll back up
+  from the end into a jump to the top. Round twenty-six's recorded failure -
+  `focus on div[role=listbox]` - is what Radix does when the pointer is over a
+  scroll button, which is where a click lands when it is aimed at a row that has
+  since moved.
+
+**Can a finger land on the wrong row?** Not from this. The rows move only in
+answer to a scroll, and a scroll is the person's own gesture - a drag, a wheel -
+so they are moving under a finger that is moving them; a tap's target is fixed
+where it lands, and aiming takes longer than the one or two frames the snap
+takes after opening. What a person does meet is a list that fights them: a drag
+off the top that jumps back, a list that will not stay where it was scrolled
+from the end, a wheel notch swallowed. The harness met it as a wrong row
+because it measures, scrolls and clicks without looking again - which is the
+one thing a person never does.
+
+**Round twenty-six's fix did not do what it said.** It scrolled the option into
+view and then waited for the up button and for the row to hold still for two
+frames. Its predicate returned a Promise, and Playwright's `waitForFunction`
+treats the Promise as a truthy result on the first poll - measured in both
+engines, a predicate resolving `false` after 500ms returns `false` at once. The
+pick passed because the harness's own scroll had already mounted the button and
+done the snap, so Playwright's scroll found nothing left to move. Nothing else
+in the harness or the skill waits on a Promise predicate (1 of 25 and 0 of 3).
+
+**The fix is in the app.** `Select` no longer renders Radix's scroll buttons. It
+draws two hints of its own, both always inside the viewport, sticky at its ends,
+each overlapping the rows by its own height, and shown or hidden by an attribute,
+so nothing about them ever moves a row. A mouse moved onto one scrolls the list a
+row at a time, as Radix's did - and only one that moved: the first version
+started on any pointermove, and WebKit answers a hint appearing under a resting
+mouse with a pointermove of its own at the same place, which scrolled the wheel's
+first notch straight back. `movementX` would have said it in one event; WebKit
+reports it as 0 for every move, so the hint compares coordinates between moves.
+`scroll-padding-block` keeps a row the keyboard brings into view clear of the
+hint over that end.
+
+`checkPopovers` holds it with four new checks, every wait in frames: 30px off
+the top moves a row 30px and nothing moves it back; 20px back from the end stays
+20px from the end; a wheel notch with the mouse on the top row stays scrolled;
+and a mouse moved onto the down hint scrolls the list and stops when it leaves.
+Against the component as it was, the first three fail in both engines on the
+numbers above (and the hint check, which reads the new attribute). The pick is
+a plain Playwright click again.
+
+### 2. Line endings, and the class they belong to
+
+**Only one of the three was a line ending.** Round twenty-six's own scripts show
+the mechanism of all three: Python's `write_text` on Windows turns `\n` into
+`\r\n` (the CRLF `index.html`), and a regex written into an ordinary Python
+string turns `\b` into byte 0x08 and `\n` into a newline. This round did it
+again by accident - a probe written through a Python string came out with a
+literal newline inside a JavaScript string, and `node` refused to parse it. And
+PowerShell 5.1's `>`, measured this round, writes **UTF-16LE with a BOM**. The
+class is a tool rewriting text on its way to disk.
+
+**`.gitattributes` was already there** (`* text=auto eol=lf`) and could not have
+helped: it decides what a commit and a checkout hold, and all three did their
+damage in the working tree before anything was committed - the build, the tests
+and the harness read what is on disk. So the gate reads what is on disk.
+`vite/textBytes.test.ts`, in `pnpm test`, refuses in every file of the working
+tree a carriage return, any other C0 control character but tab and line feed,
+DEL, a byte order mark, and bytes that are not UTF-8 - which is how UTF-16
+arrives. Binary types are listed by extension and the list fails closed: an
+extension it does not name is text, and an entry the tree no longer has fails.
+There is no exemption table; every fixture that needs a CR already spells it as
+an escape. It shares its tree walk with the doc gate (`vite/repoFiles.ts`), so
+the two cannot disagree about what a clone holds.
+
+Shown red by the real mechanisms, in the tree: a `.ts` written by `write_text`
+(`a carriage return (0x0D) at 1:20`), an `.mjs` whose regex went through a
+Python string (`a backspace (0x08) at 1:22`), and a `.md` written by
+PowerShell's `>` (`bytes that are not UTF-8; NUL at 1:4`). A `NUL means binary`
+rule, the obvious alternative, would have waved the last one through.
+
+**What it cannot see:** a newline typed into a template literal where `\n` was
+meant. In a quoted string or a regex literal it is a syntax error, which
+`pnpm lint` and `format:check` already refuse in every TypeScript and
+JavaScript file here - including `.mjs`, which ESLint parses.
+
+### 3. The small leftovers
+
+**The five borderline waits** each rested on a duration standing in for "the
+app had its chance". Each now has a partner that fails when the wait proves
+nothing - see architecture.md's table under "A fixed wait is not a control":
+a frame budget the same pan must move the plane inside with the dialog closed;
+a sentinel on the keyboard inset that only the resize handler can overwrite,
+read after the event it runs in; the layout height asserted; the index left for
+a tool page and the one worker required to be built there, after the index has
+no timer outstanding; and hover read when the element's transitions finish,
+with Copy HTML's hover shown to differ from its rest. **A sixth, found running
+them:** the touch check counted the Undo 400ms after a delete with `count()`,
+which does not wait - in a loaded WebKit run it found none and the two checks
+after it failed. It waits for the button now. (The comment beside it said the
+toast lives six seconds; an action toast lives twenty.)
+
+**The bare count.** Tried first as a shape alone - "the other", "all", "any of
+the" and a number of five or more with no noun after it - it matched seventy
+sentences in the tree and not one counted tools: all twelve algorithms, all six
+gates, the other 16 YAML cases. Without the noun the pattern cannot say what is
+counted. So it counts as a tool count only in a sentence that says "tool" and
+within three of the registry's size, which is where every stale one has been,
+because a count of tools goes stale by one each time a tool is added. That left
+four sentences, all JWT's "other eight" algorithms beside "this tool"; each got
+its noun rather than an exemption. Shown red with "the other ten" planted in
+CONTRIBUTING.
+
+**The 901-second stall.** Not chased blindly, and one thing was found that
+matters more than its cause: **nothing bounded a section.** `page.evaluate` has
+no timeout, most waits here count frames, and `runChecks` awaited each section
+unconditionally - so an engine that stops drawing frames delays a section for
+ever, and one that slows to a frame a second turns `checkCanvasGrid` (two frames
+per zoom step, hundreds of steps) into fifteen minutes and a pass. Each section
+now runs against a ceiling (600s; `PATCHBAY_SECTION_CEILING_S`) and reaching it
+is a named failure that gives the last check reported and every open page's
+frames per second at that moment, stops that engine's remaining sections, and
+ends the process. Shown with `requestAnimationFrame` frozen in the grid's page
+and a 45s ceiling: `still running at 45s; the last check it reported was "the
+grid layer carries no opacity of its own", 1.7s in; frames now: ... no frame in
+3s`. The one explanation cheap enough to test - a second page open in the same
+browser throttling WebKit's frames - is not it: 63 frames a second either way.
+
+### 4. `check:browsers` in CI
+
+**Feasible, set up, and free.** The repository is public, so GitHub's standard
+Linux runners cost nothing; for a private repository the same schedule would
+use an estimated hundred runner-minutes a run - two engine jobs of about forty-five minutes on a shared runner, against this machine's sixteen, and the live job - so about twenty runs of the free plan's 2,000 minutes a month.
+`.github/workflows/browsers.yml` runs on every push to `main`, nightly, and by
+hand: one job per engine (`playwright install --with-deps`, build,
+`check:browsers --engine=…`, the log kept as an artifact), and a third job that
+waits for Netlify to serve the pushed commit and then runs the skill's four
+scripts against the live site in Chromium.
+
+**Every push, and nightly, not in the gate.** Not in `ci.yml`: at the better
+part of an hour it is the wrong shape for a check a commit waits on, and the
+local run stays the one a commit needs. After every push because a push to
+`main` is the commit, and a second machine is only useful on the code that
+shipped. Nightly as well because the live site, the engines' tz data and a
+runner's load change with no push, and each has failed a check here before.
+
+**The live-site mode.** Netlify builds `main` itself and posts nothing back to
+GitHub - no deployment, no commit status (checked through the API) - so no
+event marks a deploy. Wiring one would need a GitHub token stored in Netlify,
+which is yours to create and I did not. Instead `scripts/wait-for-deploy.mjs`
+polls the live `sw.js` until it is byte-identical to the job's own build - the
+build is deterministic, which `checkLiveAssets` already holds - and fails by
+name if it never is, because a deploy that differs from its build is the finding.
+
+**The first run of this workflow is the commit that adds it**, and what it found is recorded at the end of this round.
+
+### 5. The four tools outside the corpus
+
+**The objection no longer holds, and did not really hold before.** The corpus
+check reads the answer for two things: to know the run produced one, and for
+`outputLacks`. The first needs the answer's port DRAWN, not read - an image that
+decoded, the bytes summary, the JWT verdict's element; the second is already
+held on the output bytes where it matters (EXIF and GPS in `checkImageConvert`,
+the location in the video tool's unit tests). The notes are the same list in
+every tool. Nothing had to learn to read a JWT view or an image.
+
+**Not as corpus rows, though.** A corpus row is also a document
+`lossCorpus.test.ts` runs in jsdom to derive the ratio, and jsdom cannot run the
+image tool. So `checkLossesBeyondTheCorpus` drives a list of its own -
+`BEYOND_THE_CORPUS` - to what a row is held to: a warning drawn with a box on
+`/tools`, `Lossy ·` on a node's face and in its name, and a clean document of
+the same kind drawing no warning and leaving the node `ok`. Five cases: base64's
+non-canonical final character, a JWT claim past 2^53, an animated GIF's frames,
+a photograph's GPS location, a video's recording location. The video clips are
+committed (`spec/located.json`) and held to `makeMp4` byte for byte by the
+video tool's test. All twenty checks pass in both engines, and
+`notePorts.test.ts` now fails a reporting tool that is in neither the corpus nor
+this list.
+
+**Found on the way:** `notePorts.test.ts` said video-remux "needs a real
+container, and jsdom has neither", and held it to its port shape instead of
+checking its `reaches`. `determinism.test.ts` has run it in jsdom since round
+twenty-five. Its location loss is in `LOSSY_RUNS` now, checked for real; only
+image-convert is held to its shape.
+
+### 6. Cached timeouts
+
+**Caching unchanged, and held so.** What changed is what the cached answer says.
+
+- **Which failures.** The engine's own: both kinds of timeout, a worker that died
+  under a request, and a tool that threw (in the worker, on the main thread, and
+  the graph's last-resort catch). Each carries `circumstantial` on its
+  `ToolError`. A tool's own refusal never does, including its own `internal`
+  ones ("WebCrypto is unavailable") - a retry cannot change those, and "maybe not
+  the input" would be false of an input the tool looked at and refused.
+- **Where it is said.** On the node's face, first - `Maybe not the input · The
+tool took too long and was stopped.` - because the face is where a canvas is
+  scanned and where a cached answer is re-served from; and in its accessible
+  name. In the inspector and on the tool page, why, worded by kind: a time limit
+  measures the work on this device at that moment; an interrupted run says how
+  the run went. And the sentence that is true of the place: a node keeps the
+  answer until something about it changes; a tool page runs nothing by itself.
+- **How to try again.** **Run again**, beside the reason. On the canvas it is
+  `retry` on the pipeline store, which forgets exactly that node's cache entry
+  and runs the graph once more; its descendants follow, because
+  `upstream-failed` is decided afresh on every run and never cached. On the tool
+  page it is Run.
+
+**Rejected:** not caching circumstantial failures (the cost round twenty-five
+refused); a TTL on them (a timer re-running a slow tool unasked, and the answer
+still wrong between runs); an automatic single retry (spends a whole deadline on
+every such failure, and on a busy machine fails the same way); a retry on every
+error (a refusal is a fact, and a button beside it says it might not be).
+
+`circumstantial.test.tsx` holds both halves: the same graph run twice executes
+nothing the second time, timeout included; Run again executes that node and no
+other; the face, the name and the inspector say it for a timeout and say
+nothing of the kind for a refusal. And the engine's tests hold the flag on
+both timeout branches - the first version held one, which a break found.
+
+### Proving test, per check
+
+Every break applied by a script, run, and restored, with the restore checked by
+hash.
+
+| #   | Break                                                                       | Caught by                                                                                                                                 |
+| --- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| C1  | `Select` as it was, Radix's scroll buttons back                             | `checkPopovers`: the 30px, back-from-the-end and wheel checks and the hint check, both engines - 30px came back as 2                      |
+| C2  | a `.ts` written by Python's write_text on Windows                           | `textBytes.test.ts`: `a carriage return (0x0D) at 1:20`                                                                                   |
+| C3  | an `.mjs` whose regex went through an ordinary Python string                | the same: `a backspace (0x08) at 1:22`                                                                                                    |
+| C4  | a `.md` written by PowerShell's `>`                                         | the same: `bytes that are not UTF-8; NUL at 1:4` - it was UTF-16LE                                                                        |
+| C5  | the scanner allowing a carriage return                                      | `textBytes.test.ts` › finds each kind of stray byte it is for                                                                             |
+| C6  | "the other ten" planted in CONTRIBUTING                                     | `docClaims.test.ts` › states the number of tools nowhere                                                                                  |
+| C7  | `requestAnimationFrame` frozen in the grid's page, a 45s ceiling            | the section ceiling: failed at 45s, the last check named, "no frame in 3s", the rest of the engine not run, the process ended             |
+| C8  | base64 left out of `BEYOND_THE_CORPUS`; the section left out of `SECTIONS`  | `notePorts.test.ts` › has the losses of every tool that can report one drawn, each way                                                    |
+| C9  | image-convert's frames note at `info`                                       | `checkLossesBeyondTheCorpus`: drawn as a warning, and on a node's face - both engines                                                     |
+| C10 | base64 calling a canonical `Q` non-canonical                                | the same: its clean document on the page and on a node - both engines                                                                     |
+| C11 | Run again that does not forget the cache entry                              | `circumstantial.test.tsx`, two tests                                                                                                      |
+| C12 | the face ignoring `circumstantial`                                          | the same, the face and name test                                                                                                          |
+| C13 | every error saying it may not be the input                                  | the same, the refusal test                                                                                                                |
+| C14 | circumstantial failures not cached - the cache rule changed                 | the same, "is still cached"                                                                                                               |
+| C15 | the engine's ran-over timeout not marked                                    | **nothing**, at first: the test extended covered only the never-started branch. `engine.test.ts`'s tool-message test holds it now         |
+| C16 | the canvas's gesture listeners kept while a dialog is open                  | `checkTouch` › touch cannot pan or pinch under a dialog: "moved in 1 frames" - both engines                                               |
+| C17 | the keyboard inset's resize listeners removed                               | `checkSoftKeyboard`: the window and fine-pointer checks say "the handler never ran", beside the coarse half's own failures - both engines |
+| C18 | the index warming a worker after 1s - later than the 600ms read it replaced | `checkWorkerWarmth`: settled, then "built on /tools" - both engines                                                                       |
+| C19 | the ghost button's hover rule removed, so no hover shows anywhere           | `checkPointerFocus`: "the hover never showed" - where the old comparison of two unhovered buttons passed - both engines                   |
+| C20 | a section that throws                                                       | the runner: `checkWorkerWarmth finishes without throwing`, the summary printed, the run not ended                                         |
+
+**Two first versions passed against their own break** - C15, and the worker
+check before it waited for the index to have nothing pending, against which a
+warm-up deferred by a timer cleared on leaving would have been invisible. The
+second was found by writing C18, not by running anything.
+
+### Found by the pre-commit run
+
+**The second full run failed one check, and this round's own change is what
+made the failure readable.** In Gecko, `checkVerificationSkill`'s `drive.mjs
+all` timed out in its canvas feature: a canvas with ONE hash node, which after
+30s read `Maybe not the input · This run never started, and the worker was
+replaced`, detail `Another tool was still holding the worker`, with Run again
+beside it. The first half is right. The second was false: nothing else was on
+the worker - it had answered nothing for thirty seconds. The engine knows which
+of three things it was, so it says so now: another request had started; the
+worker had booted and stopped answering; or it never finished starting up.
+`engine.test.ts` holds the lone-request cases, and put back the old sentence
+fails them. **Why the worker was silent is not known.** The section took 152s
+against 90s in the passing run; three runs of it alone in Gecko, 80-90s each,
+were clean. Recorded here so the next occurrence, which will now say which of
+the three it was, is compared with it.
+
+**The third full run crashed**, in Gecko, 79 checks in: `checkColdOpen`'s
+`page.goto('/')` to the harness's own server did not commit in 30s, and the
+uncaught throw ended the process with every later check unread. The same shape
+as the silent worker - a request to 127.0.0.1:4319 unanswered for 30s, in
+Gecko, deep in a full run - and the same verdict: not reproduced, not
+explained. The machine was not idle for either: a desktop Firefox and an
+editor's language server were running, which are not this repository's to
+stop. What was fixable was the crash: a throwing section is now a named failure
+of that section and the run goes on, shown with a deliberate throw
+(`checkWorkerWarmth finishes without throwing - threw after its check "(none)":
+Error: BREAK`). The fourth full run, on the final tree, was clean.
+
+### Looked for and NOT found
+
+- **A way for a tap to choose a row it was not aimed at.** The rows move only in
+  answer to a scroll the person is making, and a tap's target is fixed where it
+  lands; the one unprompted movement, on open, is over in one or two frames.
+- **A second `waitForFunction` whose predicate returns a Promise**, in the harness
+  or the skill: none.
+- **A file in the tree with a carriage return, a control character, a BOM or a
+  non-UTF-8 byte**, before the gate existed: none, of 554 text files.
+- **A bare count of tools anywhere in the current documents or code**: none; the
+  four matches were algorithms.
+- **The cause of the 901s stall.** Not found; a throttled second page is ruled
+  out. The ceiling makes the next one a reading.
+- **Any event from Netlify on GitHub** - a deployment, a commit status: none.
+- **A reporting tool whose loss is still drawn nowhere in a real engine**: none,
+  and a test keeps it so.
+- **A failure a person could retry from the canvas before this round**: none.
+  The tool page's Run was the only way, and it said nothing about why to.
+
+### Anything in the framing I think is wrong
+
+1. **"Windows line endings caused three separate problems."** One was a line
+   ending. The other two were escapes a Python string interpreted - the same
+   class, a tool rewriting text on its way to disk, and `.gitattributes`, which
+   was already there, could not see any of it.
+2. **"A real person's finger can land on the wrong row too."** It is an app bug
+   a real person hits, but not that way: they meet a list that undoes their
+   scroll. Only a driver that measures, scrolls and clicks without looking again
+   picks the wrong row.
+3. **"The scroll-up button pushes every row down."** It does, by 24px; the larger
+   movement was Radix scrolling the chosen row back into view, 28px more, and a
+   jump to the top from the end.
+4. **"The fix changed the harness to avoid the shift."** Its wait never waited;
+   it passed because its own setup scroll had already done the shift.
+5. **"The earlier objection was teaching the check to read a JWT view and an
+   image."** The check never needed to read either; it needed to know an answer
+   was drawn.
+
+### Still open
+
+- **The cause of the 901s WebKit stall**, now bounded rather than explained.
+- **Why a Gecko worker answered nothing for 30s** in one full run, above.
+- **Safari itself**, unchanged: the only place the image worker path runs in
+  JavaScriptCore, and now also the only place Select's hints meet a real
+  momentum scroll.
+- **The live-site job's first match** of a deploy against its build depends on
+  Netlify's build being byte-identical to a Linux runner's, which the first run tests.
+- Unchanged: `regex.test.ts`'s `timeFor` lower bound, the node face and expiry,
+  the generation recommendations.

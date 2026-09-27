@@ -79,21 +79,44 @@
 
 .viewport {
   padding: var(--pb-space-2xs);
+  /* Keyboard and typeahead bring a row into view "nearest"; this keeps it
+     clear of the hint drawn over that end. */
+  scroll-padding-block: var(--pb-control-height-sm);
 }
 
 /*
- * An indicator first and a control second: Radix scrolls the list while a
- * pointer rests on one, and a finger scrolls the list itself. Nothing happens
- * on a click, so the cursor does not promise one.
+ * A hint is drawn OVER the end of the list rather than beside it, so showing
+ * or hiding one moves no row: both are always here, sticky at their end, and
+ * each gives back its own height with a negative margin so the rows start and
+ * end exactly where they would without it. See ScrollingViewport.
  */
 .scroll {
+  position: sticky;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   block-size: var(--pb-control-height-sm);
+  margin-inline: calc(-1 * var(--pb-space-2xs));
 
+  background-color: var(--pb-surface-overlay);
   color: var(--pb-ink-muted);
   cursor: default;
+  visibility: hidden;
+}
+
+.scroll[data-shown] {
+  visibility: visible;
+}
+
+.scroll[data-select-scroll='up'] {
+  inset-block-start: calc(-1 * var(--pb-space-2xs));
+  margin-block-end: calc(-1 * var(--pb-control-height-sm));
+}
+
+.scroll[data-select-scroll='down'] {
+  inset-block-end: calc(-1 * var(--pb-space-2xs));
+  margin-block-start: calc(-1 * var(--pb-control-height-sm));
 }
 
 .item {
@@ -160,6 +183,11 @@
   .trigger,
   .content {
     border-color: ButtonText;
+  }
+
+  .scroll {
+    background-color: Canvas;
+    color: CanvasText;
   }
 
   .item[data-highlighted] {

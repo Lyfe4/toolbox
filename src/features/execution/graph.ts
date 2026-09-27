@@ -563,6 +563,7 @@ export async function runPipeline(
           code: 'internal',
           message: 'This node could not be run.',
           detail: error instanceof Error ? error.message : String(error),
+          circumstantial: true,
         },
       };
     }

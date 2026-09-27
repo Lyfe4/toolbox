@@ -58,6 +58,7 @@ async function execute(request: Extract<WorkerRequest, { kind: 'execute' }>): Pr
     // and take every other in-flight request down with it.
     result = fail('internal', 'The tool failed unexpectedly.', {
       detail: error instanceof Error ? error.message : String(error),
+      circumstantial: true,
     });
   } finally {
     inFlight.delete(request.requestId);

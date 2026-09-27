@@ -958,13 +958,22 @@ with the clock and the draw replaced in the page and in the tool's worker);
 reads at another on a canvas node and on the tool page; and `checkJwtValidity`
 does the same in two real engines with Playwright's clock.
 
-**The same shape, found and left.** A `timeout` or an `internal` error is cached
-like any other failure, and both can be facts about the moment - a machine that
-was busy, a `postMessage` that could not allocate - rather than about the
-inputs. Left because a deadline measures the tool's own work (see the engine
-section), so a timeout is overwhelmingly a property of the input, and not
-caching it would re-spend the whole deadline on every edit anywhere in the
-graph. Recorded in round twenty-five's findings.
+**The same shape, cached on purpose and told as what it is.** A `timeout` or
+an `internal` error is cached like any other failure, and both can be facts
+about the moment - a machine that was busy, a `postMessage` that could not
+allocate - rather than about the inputs. They stay cached: a deadline measures
+the tool's own work (see the engine section), so a timeout is overwhelmingly a
+property of the input, and not caching it would re-spend the whole deadline on
+every edit anywhere in the graph. What round twenty-seven changed is what the
+cached answer SAYS. The engine marks the failures it makes itself -
+both kinds of timeout, a worker that died under a request, a tool that threw -
+`circumstantial`; a tool's own refusal is never marked. A marked failure's face
+begins `Maybe not the input ·`, the inspector and the tool page say why beside
+the error, and **Run again** forgets exactly that node's cache entry and runs the
+graph once more (`retry` on the pipeline store). Its descendants follow it,
+because `upstream-failed` is decided afresh on every run and never cached.
+Nothing else is re-run, and a plain re-run is still a cache hit -
+`circumstantial.test.tsx` holds both halves.
 
 Two things are **not** cached, and both are deliberate:
 
@@ -5197,6 +5206,44 @@ selection bar under the sheet. Each now waits for its own result - the run's
 named, the sheet's `data-state="open"` - and asserts it. `setInspector` waits
 for the panel at rest instead of 200ms, which settles every caller at once.
 
+Round twenty-seven took the five it recorded as borderline:
+
+| Check                                          | Stood on                                  | Now                                                                                                                                                         |
+| ---------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| touch cannot pan or pinch under a dialog       | 200ms, calibrated by an earlier check     | a budget of ten frames, and the same pan with the dialog closed must move the plane inside it - a budget too short to see a move fails                      |
+| a fine pointer's canvas and sheet stay put     | 300ms, and `0px`, which the mount writes  | a sentinel on the inset that only the resize handler can overwrite, read after the event it runs inside; the plane read after ten frames, its subject shown |
+| shrinking the window leaves the inset at zero  | 400ms, with the layout height logged      | the same sentinel, waited for, and the layout height asserted                                                                                               |
+| the index starts no worker                     | 600ms, calibrated by the next check       | no wait: the index is left for a tool page by its own link, and the one worker must be built there                                                          |
+| the rich copy is drawn like Copy HTML on hover | 250ms, with no proof either hover applied | read when the element's own transitions finish, with both hovered and Copy HTML's hover shown to differ from its rest                                       |
+
+**And one read on the way past, of the same family:** the touch check counted
+the notification's Undo 400ms after a delete with `count()`, which does not
+wait, and in a loaded WebKit run found none - so the tap was never made and the
+two checks after it failed for want of the wire. It waits for the button now.
+
+### A section that does not finish fails
+
+`page.evaluate` has no timeout, and most waits here are counted in frames, which
+is right for a check and unbounded for a run: an engine that stops drawing
+frames delays every such wait for ever. Nothing bounded a section, so round
+twenty-six's `checkCanvasGrid` took 901s in WebKit, all green. Each section now
+runs against a ceiling - 600s here, `PATCHBAY_SECTION_CEILING_S` elsewhere - and
+reaching it fails the section by name with the last check it reported and each
+open page's frames per second at that moment, then stops that engine's
+remaining sections and ends the process, because an abandoned section can still
+hold a browser open. Shown with `requestAnimationFrame` frozen in the grid's
+page: failed at 45s of a 45s ceiling, "no frame in 3s". Why the 901s run slowed
+is still not known; a second page open in the same browser does not throttle
+WebKit's frames (63 a second either way), which was the one explanation cheap
+enough to test.
+
+**And a section that throws fails as itself.** An uncaught Playwright timeout
+anywhere used to end the process with every check after it unread; the third
+full run of round twenty-seven died that way, 79 checks in, on a navigation to
+the harness's own server that did not commit in 30s. A throw is now a named
+failure of its section - which check it last reported, and the error's first
+line - and the run goes on to the next section.
+
 ### The worker boundary, with text no encoder would produce
 
 `wireFidelity.integration.test.ts` answers what a wire does to a value exactly —
@@ -5656,11 +5703,36 @@ runs — the same reason React's `style` prop needs no exception.
 `adoptedStyleSheets` does not exist (Safari before 16.4), which is exactly what
 the original achieved under this policy.
 
-**And the scroll buttons, which the hash made necessary.** Once Radix's rule
+**And the scroll hints, which the hash made necessary.** Once Radix's rule
 applies, the list's native scrollbar is hidden, and the component had never
 rendered the scroll buttons Radix draws in its place. A list that does not fit
 — the Category filter on a phone held sideways is 312px of options in 123px —
 would then have ended at its last visible row with nothing to say it goes on.
+
+**Radix's own buttons moved the rows, so they are gone.** Round twenty-six
+added them, and they did two things to the list under the reader. The up button
+mounts in the list's flex column the moment the list leaves its top, pushing
+every row down by its height; and each button, as it mounts, scrolls the
+FOCUSED row into view - which on open is the chosen one. So a finger's or a
+wheel's first scroll off the top was undone (30px down came back as 2, rows 52px
+from where the scroll put them), scrolling back up from the end jumped the list
+to its top (190 → 2), and in WebKit a wheel notch with the mouse resting on the
+top row was swallowed twice. Measured in both engines, deterministically. A
+person meets that as a list that fights them; a finger cannot pick the wrong row
+from it, because the rows move only in answer to a scroll that finger is making,
+and a tap's target is fixed where it lands. The harness met it as a click on a
+row it had measured before its own scroll moved it - see [the landscape Category
+pick](#the-landscape-category-pick-reproduced).
+
+`Select` now draws its own hints: both always in the viewport, sticky at its
+ends, overlapping the rows by their own height, shown or hidden by an attribute
+that moves nothing. A mouse that moves onto one scrolls the list a row at a
+time, as Radix's did, and only one that MOVED: a hint appearing under a resting
+pointer used to be answered by WebKit with a pointermove of its own, which
+scrolled the wheel's first notch straight back. `scroll-padding-block` keeps a
+row brought into view by the keyboard clear of the hint over that end.
+`checkPopovers` holds that a row moves by exactly what the list is scrolled.
+<!-- asserted: cross-browser-check.mjs › 30px of scroll off the top moves a row 30px, and nothing moves it back -->
 
 #### What looking at every Radix component found
 
@@ -5688,15 +5760,28 @@ because the list is also clamped to the height Radix reports as available, and "
 survived a leaked stylesheet, because the leaked rules are scoped to an
 attribute that had already gone. It counts adopted stylesheets now.
 
-**One occurrence nobody has explained, recorded as that.** Round twenty's second
-full run ended inside this check, in Gecko, at the phone-on-its-side scene: the
-Category list was still open ten seconds after "Hashing" was picked, and the
-wait for it to close threw, which ended the run with nothing saying what state
-the page was in. It passed in the full run before, and in eleven isolated passes
-after. The wait is a named check now - `the list closes after the pick` - which
-says whether the pick's click landed, where focus was, and whether a second
-Escape closes the list, so the next occurrence is a reading rather than a crash.
-<!-- unverified: the cause of one Gecko run where the Category list stayed open after a pick has not been found -->
+#### The landscape Category pick, reproduced
+
+Round twenty's second full run ended inside this check, in Gecko, at the
+phone-on-its-side scene: the Category list still open ten seconds after
+"Hashing" was picked. Round twenty-six saw it again, named: `still open 10s
+after the pick (the click landed); focus on div[role=listbox]`. Focus on the
+listbox is what Radix does when the pointer is over a scroll button, and round
+twenty-six inferred the mechanism - the up button pushing the rows down under
+Playwright's click - without reproducing it.
+
+**Reproduced on demand in round twenty-seven, and it was more than the push.**
+Scroll the option into view, take its centre, wait four frames, click there:
+five of five in both engines picked **All categories**, because the up button
+had mounted AND scrolled the focused row - the chosen one, at the top - back
+into view. Round twenty-six's fix scrolled first and then waited for the rows
+to settle, and that wait never waited: its predicate returned a Promise, and
+Playwright's `waitForFunction` counts a Promise as truthy on the first poll
+(measured: a predicate resolving `false` after 500ms returns `false` at once).
+The pick passed because the harness's own scroll had already triggered the
+snap. The rows no longer move (above), the pick is a plain Playwright click
+again, and the checks that failed against the old component are the ones that
+hold the new one.
 
 ## Build and deployment
 
@@ -5745,7 +5830,11 @@ text no browser ever sees: both inline scripts were refused, so the cold open
 was left standing over every page and the theme bootstrap never ran, from a
 build that reported success. `.gitattributes` keeps a checkout LF; the plugin
 now normalises before hashing, as the preview stylesheet's hash already did,
-and `csp-hash.test.ts` holds a CRLF and a CR document to the LF hash.
+and `csp-hash.test.ts` holds a CRLF and a CR document to the LF hash. And the
+class is closed where it happens: `textBytes.test.ts` refuses a carriage return,
+any other control character, a byte order mark or a non-UTF-8 byte in any file
+of the working tree, which is what the build reads before anything is
+committed.
 
 ### Source maps are built, and nothing points at them
 

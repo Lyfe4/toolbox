@@ -277,6 +277,9 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
     pending.delete(requestId);
     const casualties = [...pending.entries()];
     pending.clear();
+    // Read before the worker is replaced, which forgets both.
+    const booted = workerReady;
+    const held = casualties.some(([, other]) => other.starts > 0);
 
     // A wedged synchronous tool cannot be interrupted from inside, so the only
     // reliable remedy is to destroy the worker and build a new one.
@@ -302,7 +305,20 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
     entry.settle(
       entry.starts === 0
         ? fail('timeout', 'This run never started, and the worker was replaced.', {
-            detail: `Waited ${(entry.timeoutMs / 1000).toString()}s without starting. Another tool was still holding the worker.`,
+            /*
+             * WHY IT NEVER STARTED, which the engine knows three ways. This
+             * used to blame "another tool" every time, and round twenty-seven
+             * met it on a canvas with ONE node: nothing else was on the
+             * worker, which had not answered at all for thirty seconds.
+             */
+            detail: `Waited ${(entry.timeoutMs / 1000).toString()}s without starting. ${
+              held
+                ? 'Another tool was still holding the worker.'
+                : booted
+                  ? 'Nothing else was running on the worker, and it stopped answering.'
+                  : 'The worker never finished starting up, and nothing else was running on it.'
+            }`,
+            circumstantial: true,
           })
         : fail(
             'timeout',
@@ -310,7 +326,7 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
             // "This pattern is too slow" is actionable; "the tool took too long"
             // invites the user to blame the app and try again.
             entry.timeoutMessage ?? 'The tool took too long and was stopped.',
-            { detail: `Exceeded ${(entry.timeoutMs / 1000).toString()}s.` },
+            { detail: `Exceeded ${(entry.timeoutMs / 1000).toString()}s.`, circumstantial: true },
           ),
     );
 
@@ -376,7 +392,10 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
       const budget = entry.starts === 0 ? MAX_REPLAYS : 1;
       if (!replay || entry.replays >= budget) {
         entry.settle(
-          fail('internal', 'This run was interrupted before it could finish.', { detail: cause }),
+          fail('internal', 'This run was interrupted before it could finish.', {
+            detail: cause,
+            circumstantial: true,
+          }),
         );
         continue;
       }
@@ -393,6 +412,7 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
         entry.settle(
           fail('internal', 'This run was interrupted before it could finish.', {
             detail: error instanceof Error ? error.message : cause,
+            circumstantial: true,
           }),
         );
       }
@@ -422,6 +442,7 @@ export function createExecutionEngine(dependencies: EngineDependencies): Executi
     } catch (error) {
       return fail('internal', 'The tool failed unexpectedly.', {
         detail: error instanceof Error ? error.message : String(error),
+        circumstantial: true,
       });
     }
   }

@@ -19,7 +19,40 @@ import { textPreview, textPreviewHint } from './textPreview';
  * Errors
  * -------------------------------------------------------------------------- */
 
-export function ErrorReport({ error }: { readonly error: ToolError }) {
+/**
+ * WHY A FAILURE MAY NOT BE ABOUT THE INPUT, for the ones that may not be.
+ *
+ * A timeout on a busy machine and a timeout on a pattern that backtracks for
+ * ever are the same `timeout`, and on a canvas both are cached - so the one
+ * that was about the moment used to read, and to stay, exactly like a
+ * permanent fact about the document. Only the engine's own failures say this
+ * (`ToolError.circumstantial`); a tool's refusal of its input never does.
+ */
+export function circumstanceOf(error: ToolError): string | null {
+  if (error.circumstantial !== true) return null;
+  return error.code === 'timeout'
+    ? 'This may not be about the input. A time limit measures how long the work took on this device at that moment, and a busy machine can run out of time on something that finishes when it is not.'
+    : 'This may not be about the input. It says how the run went - the worker it was on was stopped, or failed - rather than what the tool made of the document.';
+}
+
+/**
+ * THE WAY TO TRY AGAIN, WHERE THE REASON IS READ. `kept` is the sentence that
+ * is true of the place: a node keeps this answer until something about it
+ * changes, and a tool page until Run is pressed.
+ */
+export interface RunAgain {
+  readonly onRunAgain: () => void;
+  readonly kept: string;
+}
+
+export function ErrorReport({
+  error,
+  again,
+}: {
+  readonly error: ToolError;
+  readonly again?: RunAgain | undefined;
+}) {
+  const circumstance = circumstanceOf(error);
   return (
     <div className={styles.error}>
       <p className={styles.errorHead}>
@@ -38,6 +71,20 @@ export function ErrorReport({ error }: { readonly error: ToolError }) {
       </p>
 
       {error.detail !== undefined ? <p className={styles.errorDetail}>{error.detail}</p> : null}
+
+      {circumstance !== null ? (
+        <div className={styles.errorAgain}>
+          <p className={styles.errorDetail}>
+            {circumstance}
+            {again ? ` ${again.kept}` : ''}
+          </p>
+          {again ? (
+            <Button size="sm" onClick={again.onRunAgain}>
+              Run again
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

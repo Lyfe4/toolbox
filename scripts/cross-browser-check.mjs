@@ -638,7 +638,11 @@ async function gotoCanvas(page, path = '/') {
   await dismissColdOpen(page);
 }
 
+/** The last check any section reported, so a section that stalls can say where. */
+let lastCheck = { name: '(none yet)', at: 0 };
+
 function check(browser, name, passed, detail = '') {
+  lastCheck = { name, at: performance.now() };
   const mark = passed ? 'ok  ' : 'FAIL';
   console.log(`  ${mark} ${name}${detail ? ` - ${detail}` : ''}`);
   if (!passed) failures.push(`${browser}: ${name}${detail ? ` - ${detail}` : ''}`);
@@ -7172,6 +7176,301 @@ async function checkLossCorpus(browser, label) {
 }
 
 /**
+ * THE LOSSES THE CORPUS CANNOT CARRY, DRAWN IN TWO ENGINES.
+ *
+ * `checkLossCorpus` drives every corpus row, and a corpus row is a document
+ * `lossCorpus.test.ts` runs in jsdom and reads back from a text box labelled
+ * `Converted`. Four of the tools that report losses cannot have one: base64
+ * answers in bytes, jwt-decode in a view of its own, and image-convert and
+ * video-remux take a file - and jsdom cannot run the image tool at all, so a
+ * row for it would break the one derivation the corpus ratio rests on. Round
+ * twenty-five left their losses with unit tests of the PAYLOAD and nothing in
+ * a real engine, on the grounds that reaching them meant teaching the harness
+ * to read a JWT view and an image.
+ *
+ * It does not. The corpus reads the answer for two things: to know the run
+ * produced one, and for `outputLacks`. The first needs the answer's port to be
+ * drawn, not read; the second is already held on the output bytes where it
+ * matters (`checkImageConvert` for EXIF and GPS, the video tool's unit tests
+ * for the location). The notes are the same list in every tool. So each loss
+ * below is held to what a corpus row is held to - a warning drawn with a box on
+ * `/tools`, `Lossy ·` on a node's face and in its accessible name - beside a
+ * clean document of the same kind that draws no warning and leaves the node
+ * `ok`.
+ *
+ * `notePorts.test.ts` holds that every tool with a report port is in the
+ * corpus or in this list, so a tool added with a loss has it drawn somewhere.
+ */
+const BEYOND_THE_CORPUS = [
+  {
+    tool: 'base64',
+    what: 'a non-canonical final character',
+    options: { mode: 'decode' },
+    choose: { Mode: 'Decode' },
+    lossy: () => ({ text: 'QR==' }),
+    clean: () => ({ text: 'QQ==' }),
+    title: 'not canonical',
+    mentions: ['"R"', '"Q"'],
+    // One byte, `A`, drawn as the bytes summary a decode ends in.
+    answer: { selector: '[class*="binarySummary"]', holds: '1 B' },
+  },
+  {
+    tool: 'jwt-decode',
+    what: 'a claim past 2^53, which the decoder rounds',
+    options: {},
+    choose: {},
+    // Built by hand, as notePorts.test.ts does: a JSON.stringify of the number
+    // would write the rounded digits. Decoding does not verify, so the
+    // signature is nonsense on purpose.
+    lossy: () => ({ text: unsignedToken('{"sub":12345678901234567890}') }),
+    clean: () => ({ text: unsignedToken('{"sub":42}') }),
+    title: 'was rounded',
+    mentions: ['payload.sub', '12345678901234567'],
+    answer: { selector: '[data-trust]', holds: '' },
+  },
+  {
+    tool: 'image-convert',
+    what: 'an animated GIF, of which a still keeps the first frame',
+    options: { format: 'image/png' },
+    choose: { 'Convert to': 'PNG (lossless)' },
+    lossy: () => ({ file: { name: 'loop.gif', mimeType: 'image/gif', buffer: makeAnimatedGif() } }),
+    clean: () => ({
+      file: { name: 'stripes.png', mimeType: 'image/png', buffer: makeStripesPng() },
+    }),
+    title: 'first frame',
+    mentions: ['2 frames'],
+    answer: { selector: 'img', holds: '' },
+  },
+  {
+    tool: 'image-convert',
+    what: "a photograph's GPS location",
+    options: { format: 'image/png' },
+    choose: { 'Convert to': 'PNG (lossless)' },
+    lossy: (photo) => ({
+      file: { name: 'holiday.jpg', mimeType: 'image/jpeg', buffer: withExif(photo, 1) },
+    }),
+    clean: (photo) => ({ file: { name: 'plain.jpg', mimeType: 'image/jpeg', buffer: photo } }),
+    title: 'GPS location was removed',
+    mentions: [],
+    answer: { selector: 'img', holds: '' },
+  },
+  {
+    tool: 'video-remux',
+    what: 'a recording location',
+    options: {},
+    choose: {},
+    lossy: () => ({
+      file: {
+        name: 'walk.mp4',
+        mimeType: 'video/mp4',
+        buffer: Buffer.from(HARNESS_CLIPS.located, 'base64'),
+      },
+    }),
+    clean: () => ({
+      file: {
+        name: 'walk.mp4',
+        mimeType: 'video/mp4',
+        buffer: Buffer.from(HARNESS_CLIPS.plain, 'base64'),
+      },
+    }),
+    title: 'GPS location removed',
+    mentions: [],
+    answer: { selector: '[class*="binarySummary"]', holds: 'MP4' },
+  },
+];
+
+/** The video tool's two clips, held to `makeMp4` by video-remux.test.ts. */
+const HARNESS_CLIPS = JSON.parse(
+  await readFile(join(ROOT, 'src/tools/video-remux/spec/located.json'), 'utf8'),
+);
+
+/** A JWT with this payload and a signature nobody made. */
+function unsignedToken(payload) {
+  const part = (text) => Buffer.from(text).toString('base64url');
+  return `${part('{"alg":"HS256","typ":"JWT"}')}.${part(payload)}.c2ln`;
+}
+
+async function checkLossesBeyondTheCorpus(browser, label) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const page = await context.newPage();
+
+  /**
+   * One document on `/tools/<tool>`, from a fresh page: typed or chosen as a
+   * file first, options second (round eleven's order), run, and settled on this
+   * run's own "finished" notification. What comes back is whether the answer's
+   * port was drawn at all - the positive partner every control needs - and the
+   * notes.
+   */
+  const onPage = async (entry, input) => {
+    await page.goto(`${ORIGIN}/tools/${entry.tool}`, { waitUntil: 'networkidle' });
+    const heading = page.getByRole('heading', { level: 1 });
+    await heading.waitFor({ timeout: 15_000 });
+    const name = ((await heading.textContent()) ?? '').trim();
+    if (input.text !== undefined) {
+      const field = page.getByLabel(`${name} input`);
+      await field.fill(input.text);
+      if ((await field.inputValue()) !== input.text)
+        return { failed: 'HARNESS: the input box does not hold what was typed' };
+    } else {
+      await page.locator('input[type="file"]').first().setInputFiles(input.file);
+    }
+    for (const [control, choice] of Object.entries(entry.choose)) {
+      await page.getByRole('combobox', { name: control }).click();
+      await page.getByRole('option', { name: choice, exact: true }).click();
+    }
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
+    const finished = page
+      .getByRole('region', { name: /notifications/i })
+      .getByText(`${name} finished`, { exact: true });
+    if (
+      !(await finished
+        .first()
+        .waitFor({ timeout: 30_000 })
+        .then(
+          () => true,
+          () => false,
+        ))
+    ) {
+      const error = await drawnError(page);
+      return {
+        failed: `HARNESS: no finished run in 30s${error.drawn ? ` - the page drew an error: ${error.text.slice(0, 160)}` : ''}`,
+      };
+    }
+    // DRAWN, NOT READ: a box with a size holding what only this run's answer
+    // holds - an image that decoded, the bytes summary, the JWT verdict.
+    const answered = await page.evaluate(
+      ({ selector, holds }) =>
+        [...document.querySelectorAll(selector)].some((element) => {
+          const box = element.getBoundingClientRect();
+          return (
+            box.width > 0 &&
+            box.height > 0 &&
+            (element.textContent ?? '').includes(holds) &&
+            (!(element instanceof HTMLImageElement) || element.naturalWidth > 0)
+          );
+        }),
+      entry.answer,
+    );
+    return { failed: null, answered, notes: await drawnReportNotes(page) };
+  };
+
+  /** One node of the tool, fed the document through the inspector, once it has FINISHED. */
+  const onNodeWith = async (entry, input) => {
+    if (input.text !== undefined) {
+      return onNode(page, entry.tool, entry.options, input.text, () => true);
+    }
+    await page.goto(
+      `${ORIGIN}/?p=${shareParam({ v: 3, n: [['n1', entry.tool, 0, 0, entry.options]], e: [] })}`,
+      { waitUntil: 'networkidle' },
+    );
+    await page.locator('[data-testid="node-n1"]').waitFor({ timeout: 15_000 });
+    await page.locator('[data-testid="node-n1"]').focus();
+    await page.keyboard.press('Enter');
+    await page
+      .locator('[data-testid="node-inspector"] input[type="file"]')
+      .setInputFiles(input.file);
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      const face = await nodeFace(page);
+      if (face !== null && FINISHED.has(face.status)) return face;
+      if (Date.now() > deadline) {
+        const why = `HARNESS: no finished run in 30s - status ${face?.status ?? 'none'}`;
+        return { text: why, drawn: false, spoken: why, status: face?.status ?? '', verdict: '' };
+      }
+      await page.waitForTimeout(100);
+    }
+  };
+
+  try {
+    // The photograph's pixels come from this engine's own JPEG encoder, and
+    // its EXIF from `withExif`: the shape of a picture off a phone.
+    await page.goto(`${ORIGIN}/tools/image-convert`, { waitUntil: 'networkidle' });
+    const photo = Buffer.from(
+      await page.evaluate(async () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 4;
+        canvas.height = 2;
+        const context2d = canvas.getContext('2d');
+        context2d.fillStyle = 'rgb(230, 30, 30)';
+        context2d.fillRect(0, 0, 4, 2);
+        const blob = await new Promise((resolve) => {
+          canvas.toBlob(resolve, 'image/jpeg', 1);
+        });
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        let binary = '';
+        for (const byte of bytes) binary += String.fromCharCode(byte);
+        return btoa(binary);
+      }),
+      'base64',
+    );
+
+    for (const entry of BEYOND_THE_CORPUS) {
+      const at = `${entry.tool}, ${entry.what}`;
+
+      const lossy = await onPage(entry, entry.lossy(photo));
+      const told =
+        lossy.failed === null
+          ? lossy.notes.find(
+              (note) =>
+                note.drawn &&
+                note.word === 'Warning' &&
+                mentions(note.title, entry.title) &&
+                entry.mentions.every((part) => mentions(`${note.title} ${note.body}`, part)),
+            )
+          : undefined;
+      check(
+        label,
+        `${at}: drawn on the tool page as a warning that names it, with nothing clicked`,
+        lossy.failed === null && lossy.answered && told !== undefined,
+        lossy.failed ??
+          `${lossy.answered ? '' : `no answer drawn (${entry.answer.selector}); `}${drawnSummary(lossy)}`,
+      );
+
+      const node = await onNodeWith(entry, entry.lossy(photo));
+      check(
+        label,
+        `${at}: printed on a canvas node's face and in its accessible name`,
+        node.drawn &&
+          node.verdict === 'lossy' &&
+          node.text.startsWith('Lossy ·') &&
+          mentions(node.text, entry.title) &&
+          node.spoken.includes('lossy:'),
+        JSON.stringify(node),
+      );
+
+      const clean = await onPage(entry, entry.clean(photo));
+      const noise =
+        clean.failed === null
+          ? clean.notes.filter(
+              (note) => note.word === 'Warning' || mentions(note.title, entry.title),
+            )
+          : [];
+      check(
+        label,
+        `${at}: the same kind of document losing nothing draws no warning on the tool page`,
+        clean.failed === null && clean.answered && noise.length === 0,
+        clean.failed ??
+          `${clean.answered ? '' : `no answer drawn (${entry.answer.selector}); `}${drawnSummary(clean)}`,
+      );
+
+      const quiet = await onNodeWith(entry, entry.clean(photo));
+      check(
+        label,
+        `${at}: and leaves a node's face clean`,
+        quiet.drawn &&
+          quiet.status === 'ok' &&
+          quiet.verdict === 'ok' &&
+          !quiet.text.includes('Lossy') &&
+          !quiet.spoken.includes('lossy:'),
+        JSON.stringify(quiet),
+      );
+    }
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
  * THE REFUSALS THIS TOOL DRAWS, AND WHERE THEY POINT.
  *
  * A refusal is not a loss-corpus row - a document that is refused has not been
@@ -9000,12 +9299,41 @@ async function checkTouch(engine, label) {
     await page.getByRole('button', { name: 'Add tool' }).click();
     await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
 
-    const duringDialog = await plane();
-    await touch([
+    /*
+     * COUNTED IN FRAMES, AND THE COUNT PROVEN IN THE SAME RUN. "Nothing moved
+     * after 200ms" is also what a machine too busy to have drawn the move yet
+     * reports. So the plane is read after a budget of frames, and then the
+     * same pan is made with the dialog closed and has to move the plane within
+     * that same budget - a budget too short to see a move is a failure here,
+     * not a pass.
+     */
+    const PAN = [
       ['pointerdown', 1, 195, 400],
       ['pointermove', 1, 260, 300],
       ['pointerup', 1, 260, 300],
-    ]);
+    ];
+    const FRAME_BUDGET = 10;
+    /** Frames until the plane differs from `from`, or null within the budget. */
+    const framesUntilMoved = (from) =>
+      page.evaluate(
+        ({ was, budget }) =>
+          new Promise((resolve) => {
+            let frame = 0;
+            const step = () => {
+              frame += 1;
+              const now =
+                document.querySelector('[data-testid="canvas-plane"]')?.style.transform ?? '';
+              if (now !== was) resolve(frame);
+              else if (frame >= budget) resolve(null);
+              else requestAnimationFrame(step);
+            };
+            requestAnimationFrame(step);
+          }),
+        { was: from, budget: FRAME_BUDGET },
+      );
+
+    const duringDialog = await plane();
+    await touch(PAN);
     await touch([
       ['pointerdown', 1, 150, 400],
       ['pointerdown', 2, 250, 400],
@@ -9014,13 +9342,26 @@ async function checkTouch(engine, label) {
       ['pointerup', 1, 50, 400],
       ['pointerup', 2, 350, 400],
     ]);
-    await page.waitForTimeout(200);
+    const movedUnderDialog = await framesUntilMoved(duringDialog);
+
+    await page.keyboard.press('Escape');
+    await page.locator('[role="dialog"]').first().waitFor({ state: 'detached', timeout: 10_000 });
+    // The canvas binds its gesture listeners again in an effect after the
+    // dialog goes; two frames for that. Too few, and this check FAILS.
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
+    const closedFrom = await plane();
+    await touch(PAN);
+    const movedWithout = await framesUntilMoved(closedFrom);
     check(
       label,
       'touch cannot pan or pinch the canvas while a dialog is open',
-      (await plane()) === duringDialog,
-      `${duringDialog} -> ${await plane()}`,
+      duringDialog !== '' && movedUnderDialog === null && movedWithout !== null,
+      `under the dialog: ${movedUnderDialog === null ? `still ${duringDialog} after ${String(FRAME_BUDGET)} frames` : `moved in ${String(movedUnderDialog)} frames`}; the same pan with it closed: ${movedWithout === null ? `nothing in ${String(FRAME_BUDGET)} frames, so the budget proves nothing` : `moved in ${String(movedWithout)} frames`}`,
     );
+    await page.getByRole('button', { name: 'Add tool' }).click();
+    await page.locator('[role="dialog"]').first().waitFor({ timeout: 10_000 });
 
     /* -- Tapping a row in a chooser -------------------------------------- */
 
@@ -9055,10 +9396,10 @@ async function checkTouch(engine, label) {
        * and a throw - and a throw here is not a failing check, it is the
        * script dying and taking every check after it with it.
        *
-       * The case that does it is a toast: the Undo offered after a wire is
-       * deleted lives six seconds, `count()` and `boundingBox()` are two round
-       * trips, and a slow run puts the dismissal between them. Observed once
-       * in WebKit, where it aborted the run two hundred checks early and
+       * The case that did it is a toast: the Undo offered after a wire is
+       * deleted lived six seconds then (twenty now, `ACTION_LIFETIME`), and a
+       * slow run put the dismissal between two round trips. Observed once in
+       * WebKit, where it aborted the run two hundred checks early and
        * reported a Playwright timeout rather than anything about the app.
        * Returning false instead makes it the named failure it always was.
        */
@@ -9673,7 +10014,20 @@ async function checkTouch(engine, label) {
     const undo = page
       .getByRole('region', { name: /notifications/i })
       .getByRole('button', { name: 'Undo' });
-    const tappedUndo = (await undo.count()) > 0 && (await tapCentre(undo));
+    /*
+     * WAITED FOR, not counted on the way past. `count()` does not wait, and
+     * this read came 400ms after the delete: in a loaded WebKit run the
+     * notification was not drawn yet, so the tap was never made, the wire never
+     * came back, and the two checks after this one failed for want of it.
+     */
+    const offered = await undo
+      .first()
+      .waitFor({ state: 'visible', timeout: 10_000 })
+      .then(
+        () => true,
+        () => false,
+      );
+    const tappedUndo = offered && (await tapCentre(undo));
     await page.waitForTimeout(500);
 
     const wiresAfterUndo = await countWires(page);
@@ -9681,7 +10035,7 @@ async function checkTouch(engine, label) {
       label,
       'the notification offers an Undo a finger can reach, and it works',
       tappedUndo && wiresAfterUndo === 1,
-      `tapped=${String(tappedUndo)}, ${String(wiresAfterUndo)} wire(s) back`,
+      `${offered ? '' : 'no Undo drawn within 10s; '}tapped=${String(tappedUndo)}, ${String(wiresAfterUndo)} wire(s) back`,
     );
 
     /* -- And a node, which is the gap that was reported ------------------- */
@@ -10559,6 +10913,159 @@ async function checkMobileLayout(engine, label) {
  * half: the refusal recorder is on for the whole page's life, so anything any
  * of them inserts is counted.
  */
+/**
+ * A list's rows move by exactly what it is scrolled, and nothing else moves
+ * them. Radix's scroll buttons did, twice: the up button mounted in the list's
+ * column the moment it left the top, pushing every row down by its height,
+ * and each button scrolled the FOCUSED row into view as it mounted - on open
+ * the chosen row, so a finger's or a wheel's first scroll was undone (30px
+ * came back as 2) and scrolling back up from the end jumped to the top. A
+ * person met that as a list that fights its first scroll; the harness met it
+ * as a click landing on a different row from the one it had measured.
+ *
+ * Every wait here is counted in frames, not time, and each check carries the
+ * positive partner that says its case happened: the hint that used to be a
+ * mounting button is shown by the end of it.
+ */
+async function assertRowsHoldStill(page, label, at) {
+  const settle = (n) =>
+    page.evaluate(
+      (count) =>
+        new Promise((resolve) => {
+          let left = count;
+          const step = () => (--left <= 0 ? resolve() : requestAnimationFrame(step));
+          requestAnimationFrame(step);
+        }),
+      n,
+    );
+  const read = () =>
+    page.evaluate(() => {
+      const viewport = document.querySelector('[data-radix-select-viewport]');
+      const row = [...document.querySelectorAll('[role="option"]')][3];
+      const shown = (edge) =>
+        document.querySelector(`[data-select-scroll="${edge}"]`)?.hasAttribute('data-shown') ??
+        null;
+      return viewport && row
+        ? {
+            scrollTop: viewport.scrollTop,
+            max: viewport.scrollHeight - viewport.clientHeight,
+            rowTop: row.getBoundingClientRect().top,
+            up: shown('up'),
+            down: shown('down'),
+          }
+        : null;
+    });
+  const scrollTo = (top) =>
+    page.evaluate((value) => {
+      const viewport = document.querySelector('[data-radix-select-viewport]');
+      if (viewport) viewport.scrollTop = value;
+    }, top);
+
+  // A finger's first scroll off the top, as the scroll event it fires.
+  await scrollTo(0);
+  await settle(4);
+  const before = await read();
+  await scrollTo(30);
+  await settle(6);
+  const after = await read();
+  check(
+    label,
+    `${at}: 30px of scroll off the top moves a row 30px, and nothing moves it back`,
+    before !== null &&
+      after !== null &&
+      before.up === false &&
+      after.up === true &&
+      after.scrollTop === 30 &&
+      Math.abs(after.rowTop - (before.rowTop - 30)) < 0.5,
+    JSON.stringify({ before, after }),
+  );
+
+  // Back up from the end, which is where the down hint comes back.
+  await scrollTo(1e6);
+  await settle(4);
+  const end = await read();
+  await scrollTo((end?.max ?? 0) - 20);
+  await settle(6);
+  const back = await read();
+  check(
+    label,
+    `${at}: 20px back up from the end stays 20px from the end`,
+    end !== null &&
+      back !== null &&
+      end.down === false &&
+      back.down === true &&
+      Math.abs(back.scrollTop - (end.max - 20)) <= 1,
+    JSON.stringify({ end, back }),
+  );
+
+  // A wheel notch with the mouse resting on the top row: the hint that
+  // appears under a pointer that did not move must not scroll it back.
+  await scrollTo(0);
+  await settle(4);
+  const top = await page.evaluate(() => {
+    const r = document.querySelector('[data-radix-select-viewport]')?.getBoundingClientRect();
+    return r ? { x: r.left + r.width / 2, y: r.top + 6 } : null;
+  });
+  let wheeled = null;
+  if (top) {
+    await page.mouse.move(top.x, top.y);
+    await settle(3);
+    await page.mouse.wheel(0, 60);
+    // Until it stops moving, counted in frames: a smooth scroll takes several.
+    let last = -1;
+    for (let frame = 0; frame < 120; frame += 3) {
+      await settle(3);
+      wheeled = await read();
+      if (wheeled !== null && wheeled.scrollTop === last) break;
+      last = wheeled?.scrollTop ?? -1;
+    }
+  }
+  check(
+    label,
+    `${at}: a wheel notch with the mouse on the top row scrolls the list, and it stays scrolled`,
+    wheeled !== null && wheeled.up === true && wheeled.scrollTop >= 30,
+    JSON.stringify(wheeled),
+  );
+
+  // The hint IS a control, for a mouse that moves onto it and only while it
+  // stays - the partner of the check above, which a hint that did nothing
+  // at all would pass.
+  await scrollTo(0);
+  await settle(4);
+  const down = await page.evaluate(() => {
+    const r = document.querySelector('[data-select-scroll="down"]')?.getBoundingClientRect();
+    return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+  });
+  let hovered = 'no down hint';
+  if (down) {
+    await page.mouse.move(down.x - 40, down.y - 40);
+    await page.mouse.move(down.x, down.y, { steps: 4 });
+    const moved = await page
+      .waitForFunction(
+        () => (document.querySelector('[data-radix-select-viewport]')?.scrollTop ?? 0) > 0,
+        undefined,
+        { timeout: 10_000 },
+      )
+      .then(
+        () => true,
+        () => false,
+      );
+    await page.mouse.move(down.x, down.y - 80, { steps: 2 });
+    const left = (await read())?.scrollTop;
+    await settle(12);
+    const later = (await read())?.scrollTop;
+    hovered = moved && left === later ? true : `moved ${String(moved)}; ${left} then ${later}`;
+  }
+  check(
+    label,
+    `${at}: a mouse moved onto the down hint scrolls the list, and leaving it stops`,
+    hovered === true,
+    String(hovered),
+  );
+  await scrollTo(0);
+  await settle(4);
+}
+
 async function checkPopovers(engine, label) {
   const browser = await launchTouchBrowser(engine);
 
@@ -10748,7 +11255,11 @@ async function checkPopovers(engine, label) {
             ? {
                 overflows: viewport.scrollHeight > viewport.clientHeight + 1,
                 heights: `${String(viewport.scrollHeight)}/${String(viewport.clientHeight)}`,
-                buttonDrawn: down !== null && down.getBoundingClientRect().height > 0,
+                buttonDrawn:
+                  down !== null &&
+                  down.hasAttribute('data-shown') &&
+                  getComputedStyle(down).visibility === 'visible' &&
+                  down.getBoundingClientRect().height > 0,
               }
             : null;
         });
@@ -10763,11 +11274,13 @@ async function checkPopovers(engine, label) {
           );
           check(
             label,
-            `${at}: and a scroll button says there is more`,
+            `${at}: and a scroll hint says there is more`,
             overflow?.buttonDrawn === true,
             JSON.stringify(overflow),
           );
         }
+
+        if (overflow?.overflows === true) await assertRowsHoldStill(page, label, at);
 
         /*
          * A bounded click, recorded rather than thrown: an option drawn off
@@ -10775,54 +11288,19 @@ async function checkPopovers(engine, label) {
          * is for, and it has to arrive as a named FAIL rather than as a
          * timeout that ends the whole run.
          *
-         * SCROLLED FIRST, AND SETTLED, where the list scrolls. Round
-         * twenty-six's full run lost this pick in Gecko with the list still
-         * open, as round twenty's did, and neither recurred alone. The list
-         * on a phone on its side shows 98px of 312, so Playwright scrolls the
-         * option into view itself - and the scroll-up button Radix mounts in
-         * answer is in the list's flex column, above the viewport, so it
-         * pushes every row down after Playwright has checked what is under
-         * its pointer. Under a long run's load the click lands on the button:
-         * nothing chosen, focus on the listbox, a second Escape closes it -
-         * exactly the recorded detail. A finger sees the button arrive before
-         * it taps. So the scroll is done here, and the click waits for the
-         * button that scroll must produce and for the row to hold still,
-         * wholly inside the viewport, for two frames.
+         * A PLAIN CLICK, on purpose. Rounds twenty and twenty-six lost this
+         * pick in Gecko with the list still open. Playwright scrolls the
+         * option into view and clicks where it measured it, and the list used
+         * to move its rows in answer to that scroll - Radix's scroll-up button
+         * mounting in the list's column, and scrolling the focused row back
+         * into view as it mounted - so the click met whatever was there by
+         * then. Round twenty-six scrolled first and waited for the rows to
+         * settle, and that wait could never wait: its predicate returned a
+         * Promise, which `waitForFunction` counts as truthy on the first poll.
+         * The rows no longer move (see Select.tsx) and assertRowsHoldStill
+         * holds that, so Playwright's own click is the right driver again: it
+         * is what a harness that knows nothing about the list would do.
          */
-        if (overflow?.overflows === true) {
-          await page.getByRole('option', { name: 'Hashing', exact: true }).evaluate((el) => {
-            el.setAttribute('data-harness-pick', '');
-            el.scrollIntoView({ block: 'center' });
-          });
-          await page
-            .waitForFunction(
-              () =>
-                new Promise((resolve) => {
-                  const box = () => {
-                    const option = document.querySelector('[data-harness-pick]');
-                    const viewport = document.querySelector('[data-radix-select-viewport]');
-                    const up = document.querySelector('[data-select-scroll="up"]');
-                    if (!option || !viewport || !up || up.getBoundingClientRect().height === 0)
-                      return null;
-                    const o = option.getBoundingClientRect();
-                    const v = viewport.getBoundingClientRect();
-                    return o.top >= v.top && o.bottom <= v.bottom
-                      ? `${String(o.top)},${String(o.bottom)}`
-                      : null;
-                  };
-                  const first = box();
-                  requestAnimationFrame(() =>
-                    requestAnimationFrame(() => {
-                      resolve(first !== null && box() === first);
-                    }),
-                  );
-                }),
-              null,
-              { timeout: 10_000 },
-            )
-            // Unsettled, the click below still runs and records what it hit.
-            .catch(() => {});
-        }
         const chose = await page
           .getByRole('option', { name: 'Hashing', exact: true })
           .click({ timeout: 10_000 })
@@ -11136,6 +11614,24 @@ async function checkPopovers(engine, label) {
  * obvious wrong answer, and the one this file's arithmetic exists to avoid -
  * passes a window-resize check and fails this one.
  */
+/**
+ * A value `useKeyboardInset` never writes, put on the workspace before an event
+ * whose answer should be 0px - which is also what the property reads from the
+ * moment the canvas mounts. Only the handler running again can replace it.
+ */
+const INSET_SENTINEL = '-1px';
+function markInsetUnread() {
+  document
+    .querySelector('[data-testid="canvas-workspace"]')
+    ?.style.setProperty('--keyboard-inset', '-1px');
+}
+function insetWasRewritten() {
+  const value = document
+    .querySelector('[data-testid="canvas-workspace"]')
+    ?.style.getPropertyValue('--keyboard-inset');
+  return value !== undefined && value !== '' && value !== '-1px';
+}
+
 async function openFakeKeyboard(page, coveredPx) {
   await page.evaluate((covered) => {
     const view = window.visualViewport;
@@ -11282,15 +11778,24 @@ async function checkSoftKeyboard(engine, label) {
 
     const KEYBOARD_PX = 336;
 
-    // What the window resize this replaced was really producing.
+    // What the window resize this replaced was really producing. The inset
+    // was 0px before the resize too, so a handler that never ran would pass
+    // this; a sentinel only the handler can overwrite says it did, and the
+    // layout height says the resize happened at all.
+    await page.evaluate(markInsetUnread);
     await page.setViewportSize({ width: 390, height: 780 - KEYBOARD_PX });
-    await page.waitForTimeout(400);
+    const heard = await page
+      .waitForFunction(insetWasRewritten, undefined, { timeout: 10_000 })
+      .then(
+        () => true,
+        () => false,
+      );
     const resized = await readInset();
     check(
       label,
       'shrinking the WINDOW leaves the keyboard inset at zero, which is why it proved nothing',
-      resized.inset === '0px',
-      `inset ${resized.inset}, layout ${String(resized.layout)}px, visual ${String(resized.visual)}px`,
+      heard && resized.inset === '0px' && resized.layout === 780 - KEYBOARD_PX,
+      `${heard ? 'the handler ran' : 'the handler never ran'}; inset ${resized.inset}, layout ${String(resized.layout)}px, visual ${String(resized.visual)}px`,
     );
 
     await page.setViewportSize({ width: 390, height: 780 });
@@ -11446,15 +11951,31 @@ async function checkSoftKeyboard(engine, label) {
     await inspectFirstNode(finePage);
 
     const settled = await plane();
-    await finePage.evaluate(() => {
-      document.querySelector('[data-inspector-input]')?.focus();
+    const focused = await finePage.evaluate(() => {
+      const field = document.querySelector('[data-inspector-input]');
+      field?.focus();
+      return field !== null && document.activeElement === field;
     });
     /*
      * The same shrink a coarse pointer gets, so the two differ only in the
      * pointer. A window resize would have proved nothing here for the reason
-     * given above: it produces a zero inset whatever the pointer.
+     * given above: it produces a zero inset whatever the pointer. And a
+     * sentinel first, because 0px is also what the inset reads on mount: the
+     * handler runs inside the resize event, so a read right after it says
+     * what the handler decided for THIS event, with no wait at all.
      */
+    await finePage.evaluate(markInsetUnread);
     await openFakeKeyboard(finePage, 336);
+    // Anything the canvas would do in answer - a pan to reveal the field -
+    // lands in a frame, so the plane is read after a budget of them.
+    await finePage.evaluate(
+      () =>
+        new Promise((resolve) => {
+          let left = 10;
+          const step = () => (--left <= 0 ? resolve() : requestAnimationFrame(step));
+          requestAnimationFrame(step);
+        }),
+    );
 
     /*
      * THE HALF MOST LIKELY TO REGRESS INTO AN ANNOYANCE. With a mouse there is
@@ -11472,14 +11993,14 @@ async function checkSoftKeyboard(engine, label) {
     check(
       label,
       'a fine pointer never has the canvas move under a focused field',
-      (await plane()) === settled,
-      `${settled} -> ${await plane()}`,
+      settled !== '' && focused && (await plane()) === settled,
+      `${focused ? 'field focused' : 'no field took focus'}; ${settled || '(no plane)'} -> ${await plane()}`,
     );
     check(
       label,
       'a fine pointer never has the inspector lift off the bottom of the screen',
       inset === '0px',
-      `--keyboard-inset ${inset || '(unset)'}`,
+      `--keyboard-inset ${inset || '(unset)'}${inset === INSET_SENTINEL ? ' - the handler never heard the resize' : ''}`,
     );
   } finally {
     await fineContext.close().catch(() => {});
@@ -12516,24 +13037,73 @@ async function checkWorkerWarmth(browser, label) {
   try {
     await page.addInitScript(() => {
       window.__workers = 0;
+      window.__workersBuiltOn = [];
       const Real = window.Worker;
       window.Worker = class extends Real {
         constructor(...args) {
           window.__workers += 1;
+          window.__workersBuiltOn.push(location.pathname);
           super(...args);
         }
       };
+      // Every timer and idle callback the page has pending: deferred work
+      // is the only way a page can start something with no event to answer.
+      window.__pending = new Set();
+      const track = (set, clear, name) => {
+        const real = window[set];
+        const cancel = window[clear];
+        window[set] = (callback, ...rest) => {
+          const id = real(
+            (...args) => {
+              if (name !== 'interval') window.__pending.delete(`${name}:${String(id)}`);
+              if (typeof callback === 'function') callback(...args);
+            },
+            ...rest,
+          );
+          window.__pending.add(`${name}:${String(id)}`);
+          return id;
+        };
+        window[clear] = (id) => {
+          window.__pending.delete(`${name}:${String(id)}`);
+          cancel(id);
+        };
+      };
+      track('setTimeout', 'clearTimeout', 'timeout');
+      track('setInterval', 'clearInterval', 'interval');
+      if ('requestIdleCallback' in window)
+        track('requestIdleCallback', 'cancelIdleCallback', 'idle');
     });
 
+    /*
+     * NO FIXED WAIT. "No worker 600ms after the index drew" is also what a
+     * warm-up deferred to 700ms reports. So the count is taken when the index
+     * has NOTHING PENDING - no timer, interval or idle callback - which is the
+     * state in which nothing more can happen without an event; measured, the
+     * index reaches it by the time its heading is drawn. Then it is left for a
+     * tool page by its own link, in the same document, and the one worker the
+     * app builds - it keeps a single shared one - must be built there.
+     */
     await page.goto(`${ORIGIN}/tools`, { waitUntil: 'networkidle' });
     await page.getByRole('heading', { level: 1, name: 'Every tool' }).waitFor({ timeout: 15_000 });
-    await page.waitForTimeout(600);
+    const quiet = await page
+      .waitForFunction(() => window.__pending.size === 0, undefined, { timeout: 15_000 })
+      .then(
+        () => true,
+        () => false,
+      );
+    const pendingAt = await page.evaluate(() => [...window.__pending].join(', '));
     const onIndex = await page.evaluate(() => window.__workers);
+    await page.locator('a[href="/tools/base64"]').first().click();
+    await page.getByRole('heading', { level: 1, name: 'Base64' }).waitFor({ timeout: 15_000 });
+    await page
+      .waitForFunction(() => window.__workers > 0, undefined, { timeout: 15_000 })
+      .catch(() => {});
+    const builtOn = await page.evaluate(() => window.__workersBuiltOn);
     check(
       label,
       'listing the tools starts no worker, because none of them is going to run',
-      onIndex === 0,
-      `${String(onIndex)} worker(s)`,
+      quiet && onIndex === 0 && builtOn.length === 1 && builtOn[0] === '/tools/base64',
+      `${quiet ? 'the index settled with nothing pending' : `the index never settled: ${pendingAt}`}; ${String(onIndex)} on it; built on ${builtOn.length === 0 ? 'nothing, so the count was never shown to work' : builtOn.join(', ')}`,
     );
 
     await page.goto(`${ORIGIN}/tools/base64`, { waitUntil: 'networkidle' });
@@ -17048,13 +17618,21 @@ async function checkPointerFocus(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
 
+  /*
+   * Read once the element's own transitions are over, rather than 250ms after
+   * whatever changed it: a border-color transition read part way is a colour
+   * neither state has.
+   */
   const state = (locator) =>
-    locator.evaluate((element) => {
+    locator.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished));
       const style = getComputedStyle(element);
       return {
         border: style.borderTopColor,
+        surface: style.backgroundColor,
         ink: style.color,
         outline: style.outlineStyle,
+        hovered: element.matches(':hover'),
         focused: element === document.activeElement,
         visible: element.matches(':focus-visible'),
       };
@@ -17084,7 +17662,6 @@ async function checkPointerFocus(browser, label) {
     const richRest = await state(rich);
     const htmlRest = await state(html);
     await rich.hover();
-    await page.waitForTimeout(250);
     const richHover = await state(rich);
 
     const notifications = page.getByRole('region', { name: /notifications/i }).locator('li');
@@ -17122,17 +17699,27 @@ async function checkPointerFocus(browser, label) {
      * as the one beside it" rather than a colour this file would have to know.
      */
     await html.hover();
-    await page.waitForTimeout(250);
     const htmlHover = await state(html);
     const htmlAfter = clickedStates[0];
+    /*
+     * Two buttons at rest are drawn alike, so "the same under the pointer"
+     * passes when neither hover applied. The partner: both really are
+     * hovered, and hovering really changed Copy HTML from its resting look.
+     */
+    const hoverShows =
+      richHover.hovered &&
+      htmlHover.hovered &&
+      (htmlHover.border !== htmlRest.border || htmlHover.surface !== htmlRest.surface);
     check(
       label,
       'the rich-text copy is drawn like Copy HTML beside it, at rest, under the pointer and after a click',
-      richRest.border === htmlRest.border &&
+      hoverShows &&
+        richRest.border === htmlRest.border &&
         richRest.ink === htmlRest.ink &&
         richHover.border === htmlHover.border &&
+        richHover.surface === htmlHover.surface &&
         richAfter?.border === htmlAfter?.border,
-      `rest ${richRest.border}/${htmlRest.border}, ink ${richRest.ink}/${htmlRest.ink}, hover ${richHover.border}/${htmlHover.border}, after a click ${String(richAfter?.border)}/${String(htmlAfter?.border)}`,
+      `rest ${richRest.border}/${htmlRest.border}, ink ${richRest.ink}/${htmlRest.ink}, hover ${richHover.border}/${htmlHover.border} on ${richHover.surface}/${htmlHover.surface}${hoverShows ? '' : ` - the hover never showed (Copy HTML at rest ${htmlRest.border} on ${htmlRest.surface})`}, after a click ${String(richAfter?.border)}/${String(htmlAfter?.border)}`,
     );
     await away();
     const ringed = clickedStates.filter((entry) => entry.outline !== 'none' || entry.visible);
@@ -17640,6 +18227,7 @@ const SECTIONS = [
   checkTimestampZones,
   checkLossReports,
   checkLossCorpus,
+  checkLossesBeyondTheCorpus,
   checkValueModel,
   checkColourContrast,
   checkPastedCensus,
@@ -17697,22 +18285,131 @@ const ON_ENGINE = new Set([
 /** Seconds each section took, per engine, printed at the end of the run. */
 const timings = [];
 
+/**
+ * THE ONE REAL CLOCK: A SECTION THAT DOES NOT FINISH FAILS.
+ *
+ * Nothing bounded a section before round twenty-seven. `page.evaluate` has no
+ * timeout of its own, and a good part of this file waits in frames - `settle`,
+ * `__setZoom`'s two frames per step, every "until it stops moving" loop - which
+ * is right for a check, because a slow machine delays a frame and cannot
+ * invent one, and wrong for a run, because an engine that stops producing
+ * frames delays every one of those waits without end. Round twenty-six's
+ * `checkCanvasGrid` took 901s in WebKit against 55s and 62s either side of
+ * it, every check green: fifteen minutes, and a pass.
+ *
+ * So each section runs against a ceiling, and one that reaches it is a named
+ * failure that says which check it last reported and how fast the open pages
+ * are drawing frames at that moment - the reading the 901s run could not
+ * give. It is not a measurement of the app, and nothing here asserts a
+ * duration of anything the app does: it is this file's version of a test
+ * runner's timeout, the clock CONTRIBUTING leaves in place "to catch a thing
+ * that never returns". The default is four times the slowest section of an
+ * idle full run here (about 150s); `PATCHBAY_SECTION_CEILING_S` changes it,
+ * for a slower machine or for showing that it fires.
+ */
+const SECTION_CEILING_S = Number(process.env.PATCHBAY_SECTION_CEILING_S ?? 600);
+let stalled = false;
+
+/** Frames each open page of `browser` draws in one second, or why it could not say. */
+async function frameRates(browser) {
+  const pages = browser.contexts().flatMap((context) => context.pages());
+  const rates = await Promise.all(
+    pages.map((page, index) =>
+      Promise.race([
+        page
+          .evaluate(
+            () =>
+              new Promise((resolve) => {
+                let frames = 0;
+                const started = performance.now();
+                const step = () => {
+                  frames += 1;
+                  if (performance.now() - started < 1000) requestAnimationFrame(step);
+                  else resolve(frames);
+                };
+                requestAnimationFrame(step);
+              }),
+          )
+          .then(
+            (frames) => `page ${String(index + 1)} (${page.url()}): ${String(frames)} frames/s`,
+          ),
+        new Promise((resolve) => {
+          setTimeout(
+            () => resolve(`page ${String(index + 1)} (${page.url()}): no frame in 3s`),
+            3000,
+          );
+        }),
+      ]).catch((error) => `page ${String(index + 1)}: ${String(error).split('\n')[0]}`),
+    ),
+  );
+  return rates.length === 0 ? 'no page open in the shared browser' : rates.join('; ');
+}
+
 async function runChecks(engine, label, sections) {
   console.log(`\n${label}`);
-  const browser = await engine.launch();
+  let browser = await engine.launch();
 
   try {
-    for (const section of sections) {
+    for (const [index, section] of sections.entries()) {
       const started = performance.now();
-      await section(ON_ENGINE.has(section) ? engine : browser, label);
+      let timer;
+      const ceiling = new Promise((resolve) => {
+        timer = setTimeout(() => resolve('stalled'), SECTION_CEILING_S * 1000);
+      });
+      /*
+       * A THROW IS A FAILURE OF ITS SECTION, NOT THE END OF THE RUN. Until
+       * round twenty-seven an uncaught Playwright timeout anywhere ended the
+       * process, with every check after it unread - the third full run of
+       * that round died that way, 79 checks in, on a navigation that did not
+       * commit in 30s. Settled rather than rejected, so it cannot escape the
+       * race either, which is also what makes a throw after the ceiling fired
+       * - the abandoned section's browser closing under it - harmless.
+       */
+      const running = section(ON_ENGINE.has(section) ? engine : browser, label).then(
+        () => 'done',
+        (error) => ({ threw: String(error).split('\n')[0] }),
+      );
+      const outcome = await Promise.race([running, ceiling]);
+      clearTimeout(timer);
       const seconds = (performance.now() - started) / 1000;
       timings.push({ engine: label, section: section.name, seconds });
       // A measurement for whoever is choosing what to run, and never asserted:
       // how long a section takes is a fact about this machine.
       console.log(`  time ${section.name} ${seconds.toFixed(1)}s`);
+      if (typeof outcome === 'object') {
+        check(
+          label,
+          `${section.name} finishes without throwing`,
+          false,
+          `threw after its check "${lastCheck.at >= started ? lastCheck.name : '(none)'}": ${outcome.threw}`,
+        );
+        continue;
+      }
+      if (outcome === 'stalled') {
+        const where =
+          lastCheck.at >= started
+            ? `"${lastCheck.name}", ${((lastCheck.at - started) / 1000).toFixed(1)}s in`
+            : 'nothing - it reported no check at all';
+        const rates = ON_ENGINE.has(section)
+          ? 'it launched its own browser, which this cannot reach'
+          : await frameRates(browser);
+        check(
+          label,
+          `${section.name} finishes inside the ${String(SECTION_CEILING_S)}s section ceiling`,
+          false,
+          `still running at ${String(SECTION_CEILING_S)}s; the last check it reported was ${where}; frames now: ${rates}. The sections after it in this engine were not run: ${
+            sections
+              .slice(index + 1)
+              .map((next) => next.name)
+              .join(', ') || 'none'
+          }`,
+        );
+        stalled = true;
+        return;
+      }
     }
   } finally {
-    await browser.close();
+    await browser.close().catch(() => {});
   }
 }
 
@@ -21391,6 +22088,9 @@ if (failures.length > 0) {
     `cross-browser: ${failures.length} failure(s)\n  ${failures.join('\n  ')}${scope === null ? '' : `\ncross-browser: ${scope}`}`,
   );
   process.exitCode = 1;
+  // A section abandoned at its ceiling may still hold a browser of its own
+  // open, and that would keep this process alive for as long as it waits.
+  if (stalled) process.exit();
 } else if (scope !== null) {
   console.log(
     `cross-browser: ${scope} Nothing failed${skipped.length > 0 ? `, ${skipped.length} skipped` : ''}.`,

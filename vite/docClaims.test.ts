@@ -3,6 +3,8 @@ import { basename, dirname, extname, resolve, sep } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { everyFile } from './repoFiles';
+
 /**
  * WHAT THE DOCUMENTS NAME EXISTS, AND WHAT THEY COUNT IS THE COUNT.
  *
@@ -65,17 +67,6 @@ const DATED: Readonly<Record<string, string>> = {
     'a snapshot of a decision, by its own header - "left as the snapshot it was"',
 };
 
-const SKIP_DIRECTORIES = new Set([
-  'node_modules',
-  '.git',
-  'dist',
-  '.netlify',
-  '.tanstack',
-  'coverage',
-  '.mutation',
-  'evidence',
-]);
-
 const TEXT_EXTENSIONS = new Set([
   '.md',
   '.ts',
@@ -98,28 +89,8 @@ const TEXT_NAMES = new Set(['_headers', '_redirects']);
 /** Generated or vendored: not prose anybody wrote, and not code anybody reads. */
 const NOT_OURS = new Set(['pnpm-lock.yaml', 'src/routeTree.gen.ts']);
 
-/**
- * Every file in the repository, whatever its type: what a document may name.
- * The skipped directories are what .gitignore keeps out of a clone, so this
- * list is the same on a machine that has built and on CI, which has not.
- */
-function everyFile(): readonly string[] {
-  const found: string[] = [];
-  const walk = (directory: string, relative: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (SKIP_DIRECTORIES.has(entry.name)) continue;
-      const path = relative === '' ? entry.name : `${relative}/${entry.name}`;
-      // `.claude/` is per machine except its skills - the same line .gitignore draws.
-      if (relative === '.claude' && entry.name !== 'skills') continue;
-      if (entry.isDirectory()) walk(resolve(directory, entry.name), path);
-      else found.push(path);
-    }
-  };
-  walk(ROOT, '');
-  return found.sort();
-}
-
-const EVERY_FILE = everyFile();
+/** Every file in the repository, whatever its type: what a document may name. */
+const EVERY_FILE = everyFile(ROOT);
 const EVERY_FILE_SET = new Set(EVERY_FILE);
 /** The text among them that somebody wrote: what this file reads for claims. */
 const FILES = EVERY_FILE.filter(
@@ -526,6 +497,14 @@ const NUMBER_WORDS = [
   'ten',
   'eleven',
   'twelve',
+  'thirteen',
+  'fourteen',
+  'fifteen',
+  'sixteen',
+  'seventeen',
+  'eighteen',
+  'nineteen',
+  'twenty',
 ];
 
 /** `"six"`, `"Six"` or `"6"` as a number; `null` for anything else. */
@@ -679,10 +658,21 @@ function statementsOf(count: Count): readonly Stated[] {
  * named subset - "the three tools whose answer is a serialisation" - is held
  * by the test that names the subset, not by this.
  *
- * WHAT IT CANNOT SEE is a count phrased another way - "the other ten", "all
- * eleven" with no noun after it - and it says so rather than claiming the
- * whole class: CONTRIBUTING's "Claims in documents" lists these shapes as the
- * ones held.
+ * AND A COUNT WITH NO NOUN AFTER IT - "the other ten", "all eleven", "any of
+ * the eleven." - which round twenty-six found by hand and could not hold. No
+ * noun means the pattern cannot say what is counted, and the first version of
+ * this shape, tried against the tree, matched seventy sentences and not one of
+ * them counted tools: all twelve algorithms, all six gates, the other 16 YAML
+ * cases. So the bare shape needs two more things before it counts as a count
+ * of tools: the sentence it is in says "tool", and the number is within three
+ * of the registry's own size - which is where every stale one has been, because
+ * a count of tools goes stale by one each time a tool is added. See
+ * `bareToolCountsIn`.
+ *
+ * WHAT IT STILL CANNOT SEE: a bare count further from the registry's size than
+ * that, a count in a sentence that never says "tool", and a count of tools
+ * phrased in digits after some other noun ("a registry of 11"). CONTRIBUTING's
+ * "Claims in documents" lists the shapes held as the ones held.
  */
 const MANY = String.raw`(?:five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|[5-9]|[1-9]\d+)`;
 const ANY = String.raw`(?:one|two|three|four|${MANY.slice(3, -1)})`;
@@ -703,12 +693,50 @@ const NOT_A_TOOL_COUNT: Readonly<Record<string, string>> = {
     'a five-node chain the test builds, and names node by node - a graph, not the registry',
 };
 
-export function toolCountsIn(text: string): readonly string[] {
+/** "The other ten", "all eleven", "any of the eleven": the words before a bare count. */
+const BARE_LEAD = String.raw`(?:the\s+other|all(?:\s+of)?(?:\s+the)?|the\s+remaining|the\s+rest\s+of\s+the|(?:any|each|none|one|every\s+one)\s+of\s+the)`;
+/**
+ * What comes after a number that has no noun: punctuation, the end, "of them",
+ * or a word that is not a noun. A noun after it ("the other eight algorithms")
+ * says what is counted, which is the fix this shape asks for.
+ */
+const BARE_AFTER = String.raw`(?=\s*(?:[.,;:!?)]|\u2014|-\s|$)|\s+(?:of\s+(?:them|those|these|which)|are|were|is|was|have|had|has|do|does|did|can|could|will|would|must|should|share|shares|run|runs|use|uses|take|takes|pass|passes|passed|fail|fails|failed|in|on|at|and|or|but|that|which|who|with|without|here|there|now|still|already|so|too|as|by|to|from|each|also|together|alike)\b)`;
+const BARE_COUNT = new RegExp(String.raw`\b${BARE_LEAD}\s+(${MANY})${BARE_AFTER}`, 'gim');
+
+/** The sentence around `index`: from the last full stop or blank line to the next. */
+function sentenceAt(text: string, index: number): string {
+  const before = text.slice(0, index);
+  const starts = [...before.matchAll(/[.!?]\s|\n[ \t]*\n/g)];
+  const start = starts.length === 0 ? 0 : (starts[starts.length - 1]?.index ?? 0);
+  const after = text.slice(index).search(/[.!?](?:\s|$)|\n[ \t]*\n/);
+  return text.slice(start, after === -1 ? undefined : index + after);
+}
+
+/**
+ * A count of tools with no noun after it: a bare number within three of the
+ * registry's size, in a sentence that says "tool". `registrySize` is a
+ * parameter so the rule's own tests can hold it still while the registry grows.
+ */
+export function bareToolCountsIn(text: string, registrySize: number): readonly string[] {
+  const found: string[] = [];
+  for (const match of text.matchAll(BARE_COUNT)) {
+    const said = numberFrom(match[1] ?? '');
+    if (said === null || said > registrySize || said < registrySize - 3) continue;
+    if (!/\btool/i.test(sentenceAt(text, match.index))) continue;
+    found.push(match[0].replace(/\s+/g, ' '));
+  }
+  return found;
+}
+
+/** The registry's size, counted from the tools' own directories. */
+const REGISTRY_SIZE = FILES.filter((path) => /^src\/tools\/[^/]+\/meta\.ts$/.test(path)).length;
+
+export function toolCountsIn(text: string, registrySize = REGISTRY_SIZE): readonly string[] {
   const found: string[] = [];
   for (const shape of TOOL_COUNT_SHAPES) {
     for (const match of text.matchAll(shape)) found.push(match[0].replace(/\s+/g, ' '));
   }
-  return found;
+  return [...found, ...bareToolCountsIn(text, registrySize)];
 }
 
 function toolCountStatements(): readonly string[] {
@@ -940,8 +968,13 @@ describe('the claim rules, against sentences written to be wrong', () => {
       'a panel on each of the ten tool pages',
       'Per-tool correctness for every tool but two',
       'prefetching 11 tools to save one fetch',
+      // No noun after the number, and a sentence about tools.
+      'Hash is the one tool left resident, and so are the other ten.',
+      'The palette lists all eleven, one tool to a row',
+      'a tool page for any of the eleven.',
+      'Every tool is resident; all ten of them read their input whole',
     ]) {
-      expect(toolCountsIn(stale).length, stale).toBeGreaterThan(0);
+      expect(toolCountsIn(stale, 11).length, stale).toBeGreaterThan(0);
     }
     for (const fine of [
       'a chain of four tools',
@@ -949,9 +982,19 @@ describe('the claim rules, against sentences written to be wrong', () => {
       'the three tools whose answer is a serialisation',
       'six tool names in a notification is a paragraph',
       'every tool shares one component',
+      // A noun after it says what is counted.
+      'this tool offers twelve, and the other eight algorithms are put to each engine',
+      // Far from the registry's size: twelve algorithms, twenty runs.
+      'this tool found published vectors for all twelve',
+      'entered was true in all twenty runs of the tool',
+      // A bare count in a sentence that is not about tools.
+      'the other ten are exact',
     ]) {
-      expect(toolCountsIn(fine), fine).toEqual([]);
+      expect(toolCountsIn(fine, 11), fine).toEqual([]);
     }
+    // The window follows the registry: stale by one tool is still caught.
+    expect(bareToolCountsIn('one tool, and the other ten.', 12)).toEqual(['the other ten']);
+    expect(REGISTRY_SIZE).toBeGreaterThan(4);
   });
 
   it('catches a hand-written test count', () => {
