@@ -5538,14 +5538,32 @@ async function checkLiveAssets(label) {
   );
   if (liveAssets.length === 0) return;
 
+  /*
+   * A RESET CONNECTION IS NOT A FACT ABOUT THE BUILD. Browsers.yml's second
+   * run died here, before a browser opened: one of these fetches met
+   * ECONNRESET from the CDN, and the throw ended the process. A thrown fetch is
+   * tried three times; an answer - any HTTP status - is taken as it is. One
+   * that never arrives is left out of `bodies`, so the check below fails by
+   * name, with the reason, rather than the run ending unread.
+   */
   const bodies = new Map();
-  for (let i = 0; i < liveAssets.length; i += 8) {
-    await Promise.all(
-      liveAssets.slice(i, i + 8).map(async (url) => {
+  const unfetched = [];
+  const fetchLive = async (url) => {
+    let last = '';
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
         const response = await fetch(`${live}${url}`);
         if (response.ok) bodies.set(url, Buffer.from(await response.arrayBuffer()));
-      }),
-    );
+        else unfetched.push(`${url}: HTTP ${String(response.status)}`);
+        return;
+      } catch (error) {
+        last = error instanceof Error ? String(error.cause ?? error.message) : String(error);
+      }
+    }
+    unfetched.push(`${url}: ${last}`);
+  };
+  for (let i = 0; i < liveAssets.length; i += 8) {
+    await Promise.all(liveAssets.slice(i, i + 8).map(fetchLive));
   }
   const pointing = [...bodies].filter(([, body]) =>
     /[#@] sourceMappingURL=/.test(body.toString('utf8')),
@@ -5561,7 +5579,7 @@ async function checkLiveAssets(label) {
             .map(([url]) => url)
             .join(', ')})`
         : ''
-    }`,
+    }${unfetched.length > 0 ? `; not fetched: ${unfetched.slice(0, 3).join(' | ')}` : ''}`,
   );
 
   const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');

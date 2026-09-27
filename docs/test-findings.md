@@ -5918,3 +5918,13 @@ now. The WebKit failure is the first thing the second machine has found that
 this one cannot see: on Windows both engines go Shift+Tab to Redo and Tab back
 to Share. The check could say only that focus did not arrive, not where it went,
 so it says where now, and the next run is the reading.
+
+**The second run** (`36298385679`, on `d80ad33`): Firefox green again, and the
+live-site job green in all four scripts. WebKit never opened a browser:
+`checkLiveAssets` fetches the live site's scripts eight at a time, one met
+`ECONNRESET` from the CDN, and the uncaught throw ended the process - the same
+shape as the crash the third local run had, one step earlier. A thrown fetch is
+now tried three times, and one that never arrives fails the check by name with
+its reason (shown with every fetch pointed at a closed port: `0 of 64 fetched
+... not fetched: ... bad port`, and the run went on). So where Linux WebKit's
+focus goes after Shift+Tab is still unread; the next run carries it.
