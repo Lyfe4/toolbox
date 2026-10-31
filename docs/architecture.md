@@ -1404,8 +1404,8 @@ against the backdrop by `grid.contrast.test.ts`: a grid rule can fail by being
 too loud as easily as by being too quiet, which is the one contrast assertion in
 this repo that is not "at least". `GridLayer` reads them back out of the cascade
 rather than hard-coding them, so the stylesheets stay the only place a grid
-colour is written — `semantic.css` for the default theme, `themes.css` for the
-other three.
+colour is written — `semantic.css` for graphite, the `:root` baseline,
+`themes.css` for the other three.
 
 A pointerdown on the toolbar or the status readout no longer clears the
 selection. Both render inside the canvas root, so a press on either arrived as

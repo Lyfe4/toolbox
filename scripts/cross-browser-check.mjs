@@ -17130,8 +17130,66 @@ async function checkColdOpen(browser, label) {
           preset.every((frame) => frame.theme === 'graphite' && frame.accent === ''),
         `${String(preset.length)} frame(s); first: ${JSON.stringify(preset[0] ?? null)}`,
       );
+
+      /* A stored System choice still follows the OS - light here, so vellum. */
+      await earlyPage.evaluate(() => {
+        window.localStorage.setItem(
+          'patchbay:theme:v1',
+          JSON.stringify({ version: 1, selection: { kind: 'system' } }),
+        );
+      });
+      await earlyPage.goto(`${ORIGIN}/`, { waitUntil: 'commit' });
+      const system = await framesOf(earlyPage);
+      check(
+        label,
+        'a stored System choice paints the OS preset from the first frame',
+        system.length > 0 && system.every((frame) => frame.theme === 'vellum'),
+        `${String(system.length)} frame(s); first: ${JSON.stringify(system[0] ?? null)}`,
+      );
     } finally {
       await early.close().catch(() => {});
+    }
+
+    /*
+     * -- A first visit is blueprint, whatever the OS says ----------------
+     *
+     * Empty storage in both colour schemes. The light one is the case that
+     * would catch a bootstrap still falling back to the OS: it used to paint
+     * vellum there. Read again once the app has booted, so the store
+     * re-applying the theme cannot quietly flip it after the first frames.
+     */
+    for (const colorScheme of ['light', 'dark']) {
+      const first = await browser.newContext({
+        viewport: { width: 1280, height: 800 },
+        colorScheme,
+      });
+      await first.addInitScript(RECORD_FRAMES);
+      const firstPage = await first.newPage();
+      try {
+        await firstPage.goto(`${ORIGIN}/`, { waitUntil: 'commit' });
+        const frames = await framesOf(firstPage);
+        await firstPage.waitForLoadState('networkidle');
+        const settled = await firstPage.evaluate(() => ({
+          theme: document.documentElement.getAttribute('data-theme'),
+          stored: window.localStorage.getItem('patchbay:theme:v1'),
+        }));
+        check(
+          label,
+          `a first visit with a ${colorScheme} OS is blueprint from the first frame to the booted app`,
+          frames.length > 0 &&
+            frames.every((frame) => frame.theme === 'blueprint') &&
+            settled.theme === 'blueprint',
+          `${String(frames.length)} frame(s); first: ${JSON.stringify(frames[0] ?? null)}; booted: ${String(settled.theme)}`,
+        );
+        check(
+          label,
+          `and starting on the default does not store it as a choice (${colorScheme})`,
+          settled.stored === null,
+          String(settled.stored),
+        );
+      } finally {
+        await first.close().catch(() => {});
+      }
     }
 
     /* -- Every other URL ------------------------------------------------ */

@@ -47,7 +47,7 @@ export const SITE_DESCRIPTION =
 export const SOCIAL_IMAGE = `${SITE_URL}/social-preview.png`;
 
 export const SOCIAL_IMAGE_ALT =
-  'The Patchbay wordmark over a wired node graph, in the graphite theme.';
+  'The Patchbay wordmark over a wired node graph, in the blueprint theme.';
 
 /**
  * One meta tag, in the shape `head` wants.

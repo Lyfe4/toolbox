@@ -38,6 +38,18 @@ export const THEME_PRESETS: Record<ThemeName, ThemePreset> = {
 
 export const THEME_PRESET_LIST: readonly ThemePreset[] = Object.values(THEME_PRESETS);
 
+/**
+ * What a visitor who has never chosen sees, whatever their OS says.
+ *
+ * Not the `system` selection: that one is a choice somebody made in the
+ * switcher, and it keeps following the OS through SYSTEM_THEME below. This is
+ * the preset a first visit starts on, and it is not written to storage until
+ * the visitor picks something. The theme bootstrap in index.html repeats the
+ * name as a literal, because it runs before any module; index.head.test.ts
+ * holds the two together.
+ */
+export const DEFAULT_THEME: ThemeName = 'blueprint';
+
 /** Which preset a `system` selection resolves to for each OS appearance. */
 export const SYSTEM_THEME: Record<'dark' | 'light', ThemeName> = {
   dark: 'graphite',
