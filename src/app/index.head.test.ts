@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import { DEFAULT_THEME } from '@/features/theme/presets';
 import { resolveTheme } from '@/lib/cssTokens';
 
 import { SITE_DESCRIPTION, SITE_NAME, SOCIAL_IMAGE_ALT } from './head';
 import indexHtml from '../../index.html?raw';
+import manifestText from '../../public/site.webmanifest?raw';
 
 /**
  * THE STATIC HEAD.
@@ -48,17 +50,33 @@ describe('theme-color', () => {
    * The browser paints its own chrome with these before a single line of our
    * CSS has run, so they cannot come from a custom property at runtime - they
    * are the one place a token value is legitimately duplicated as a literal.
+   *
+   * One tag and no media query: a first visit is the default theme whatever
+   * the OS says, so there is no second appearance to answer for.
    */
-  it.each([
-    ['dark', 'graphite'],
-    ['light', 'vellum'],
-  ])('matches the %s default theme (%s)', (scheme, theme) => {
-    const pattern = new RegExp(
-      `<meta name="theme-color" media="\\(prefers-color-scheme: ${scheme}\\)" content="([^"]*)"`,
-    );
-    const declared = pattern.exec(indexHtml)?.[1];
+  it(`matches the default theme (${DEFAULT_THEME})`, () => {
+    const declared = [...indexHtml.matchAll(/<meta name="theme-color"([^>]*)\/>/g)];
 
-    expect(declared).toBe(resolveTheme(theme)['pb-surface-raised']);
+    expect(declared).toHaveLength(1);
+    expect(declared[0]?.[1]).toBe(
+      ` content="${resolveTheme(DEFAULT_THEME)['pb-surface-raised'] ?? ''}" `,
+    );
+  });
+
+  it('is the colour an installed app opens in', () => {
+    const manifest = JSON.parse(manifestText) as {
+      theme_color: string;
+      background_color: string;
+    };
+    const tokens = resolveTheme(DEFAULT_THEME);
+
+    expect(manifest.theme_color).toBe(tokens['pb-surface-raised']);
+    expect(manifest.background_color).toBe(tokens['pb-surface-base']);
+  });
+
+  it('is the theme the document starts in before the bootstrap runs', () => {
+    expect(indexHtml).toContain(`<html lang="en" data-theme="${DEFAULT_THEME}">`);
+    expect(indexHtml).toContain(`if (!theme) theme = '${DEFAULT_THEME}';`);
   });
 });
 

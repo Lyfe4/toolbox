@@ -11,6 +11,21 @@ what may reference what — is in
 about the editor, and about the decisions inside it that are not obvious from
 the code.
 
+## The default
+
+A first visit is blueprint, whatever the OS says — `DEFAULT_THEME` in
+[`presets.ts`](../src/features/theme/presets.ts). Starting on it is not
+choosing it: nothing is stored until the visitor picks something, so a visitor
+who never picks follows the default if it changes again. **System** in the
+switcher is a choice like any other, and it still follows the OS (graphite
+dark, vellum light).
+
+The bootstrap in `index.html` repeats the name as a literal, as do the
+`theme-color` meta, the web manifest and the generated icons and social card.
+`hydration.test.ts` runs the bootstrap beside the store, `index.head.test.ts`
+holds the literals to the constant, and `check:browsers` reads the first frames
+of an empty-storage visit under both colour schemes.
+
 ## What a custom theme is
 
 ```ts

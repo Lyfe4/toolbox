@@ -142,26 +142,20 @@ function markSvg({ surface, border, accent, cord }, { framed = true } = {}) {
 /**
  * The favicon, as SVG.
  *
- * Two palettes in one file. A tab strip is drawn in the browser's own chrome,
- * not the page's, so the icon has to answer to the OS light/dark setting
- * rather than to Patchbay's theme - `prefers-color-scheme` inside an SVG
- * favicon is honoured by Firefox and Chromium and ignored harmlessly elsewhere.
+ * One palette, the default theme's. It used to carry a second, vellum's, under
+ * `prefers-color-scheme: light`, so the tab icon followed the OS the way the
+ * first visit did. A first visit is blueprint whatever the OS says now, and
+ * the mark is a framed panel - its own surface and hairline carry it on a
+ * light tab strip as well as a dark one.
  */
-function faviconSvg(dark, light) {
+function faviconSvg(mark) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Patchbay">
   <style>
-    .surface { fill: ${dark.surface} }
-    .border  { stroke: ${dark.border} }
-    .accent  { stroke: ${dark.accent}; fill: none }
-    .core    { fill: ${dark.accent} }
-    .cord    { stroke: ${dark.cord} }
-    @media (prefers-color-scheme: light) {
-      .surface { fill: ${light.surface} }
-      .border  { stroke: ${light.border} }
-      .accent  { stroke: ${light.accent} }
-      .core    { fill: ${light.accent} }
-      .cord    { stroke: ${light.cord} }
-    }
+    .surface { fill: ${mark.surface} }
+    .border  { stroke: ${mark.border} }
+    .accent  { stroke: ${mark.accent}; fill: none }
+    .core    { fill: ${mark.accent} }
+    .cord    { stroke: ${mark.cord} }
   </style>
   <rect class="surface" width="64" height="64"/>
   <rect class="border" x="0.5" y="0.5" width="63" height="63" fill="none" stroke-width="1"/>
@@ -308,23 +302,18 @@ function ico(png, size) {
 
 /* ========================================================================== */
 
-const dark = await resolveTheme('graphite');
-const light = await resolveTheme('vellum');
+// The default theme - DEFAULT_THEME in src/features/theme/presets.ts, which
+// plain Node cannot import. src/app/index.head.test.ts holds the manifest to it.
+const theme = await resolveTheme('blueprint');
 
-const darkMark = {
-  surface: dark('pb-surface-raised'),
-  border: dark('pb-border-hairline'),
-  accent: dark('pb-accent'),
-  cord: dark('pb-border-strong'),
-};
-const lightMark = {
-  surface: light('pb-surface-raised'),
-  border: light('pb-border-hairline'),
-  accent: light('pb-accent'),
-  cord: light('pb-border-strong'),
+const themeMark = {
+  surface: theme('pb-surface-raised'),
+  border: theme('pb-border-hairline'),
+  accent: theme('pb-accent'),
+  cord: theme('pb-border-strong'),
 };
 
-await writeFile(join(PUBLIC, 'favicon.svg'), faviconSvg(darkMark, lightMark), 'utf8');
+await writeFile(join(PUBLIC, 'favicon.svg'), faviconSvg(themeMark), 'utf8');
 console.log('favicon.svg');
 
 const browser = await firefox.launch();
@@ -351,17 +340,17 @@ function markPage(mark, size) {
 
 // Maskable-safe these are not: the manifest declares them "any", because the
 // mark is a framed panel and a maskable crop would cut its border off.
-await raster(markPage(darkMark, 192), 192, 192, 'icon-192.png');
-await raster(markPage(darkMark, 512), 512, 512, 'icon-512.png');
+await raster(markPage(themeMark, 192), 192, 192, 'icon-192.png');
+await raster(markPage(themeMark, 512), 512, 512, 'icon-512.png');
 // iOS ignores transparency and rounds the corners itself, so the framed mark
 // is exactly right here.
-await raster(markPage(darkMark, 180), 180, 180, 'apple-touch-icon.png');
+await raster(markPage(themeMark, 180), 180, 180, 'apple-touch-icon.png');
 
-const png32 = await raster(markPage(darkMark, 32), 32, 32, 'icon-32.png');
+const png32 = await raster(markPage(themeMark, 32), 32, 32, 'icon-32.png');
 await writeFile(join(PUBLIC, 'favicon.ico'), ico(png32, 32));
 console.log('favicon.ico');
 
-await raster(await socialHtml(dark), 1200, 630, 'social-preview.png');
+await raster(await socialHtml(theme), 1200, 630, 'social-preview.png');
 
 await browser.close();
 
@@ -370,7 +359,7 @@ await browser.close();
  *
  * Generated here rather than hand-written so its colours cannot drift from the
  * theme. `theme_color` is the header surface and `background_color` the page
- * surface, both from graphite - an installed app has no OS preference to
+ * surface, both from blueprint - an installed app has no OS preference to
  * follow at splash time, so it gets the default theme.
  * ========================================================================== */
 
@@ -383,8 +372,8 @@ const manifest = {
   scope: '/',
   display: 'standalone',
   orientation: 'any',
-  theme_color: dark('pb-surface-raised'),
-  background_color: dark('pb-surface-base'),
+  theme_color: theme('pb-surface-raised'),
+  background_color: theme('pb-surface-base'),
   categories: ['developer', 'utilities', 'productivity'],
   icons: [
     { src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml' },

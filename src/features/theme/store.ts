@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 import { applyTheme } from './applyTheme';
 import { MAX_CUSTOM_THEMES, readCustomThemes, writeCustomThemes } from './customThemes';
-import { SYSTEM_THEME } from './presets';
+import { DEFAULT_THEME, SYSTEM_THEME } from './presets';
 import { readLegacyCustomThemes, readThemeState, writeThemeState } from './storage';
 
 import type { CustomTheme, ThemeAppearance, ThemeName, ThemeSelection } from './types';
@@ -101,7 +101,7 @@ export const useThemeStore = create<ThemeStore>()((set, get) => {
   };
 
   return {
-    selection: persisted?.selection ?? { kind: 'system' },
+    selection: persisted?.selection ?? { kind: 'preset', name: DEFAULT_THEME },
     customThemes: initialThemes,
     systemAppearance: detectSystemAppearance(),
     draftTheme: null,

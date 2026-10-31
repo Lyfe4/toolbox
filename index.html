@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="graphite">
+<html lang="en" data-theme="blueprint">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -28,7 +28,7 @@
     <meta
       data-default
       property="og:image:alt"
-      content="The Patchbay wordmark over a wired node graph, in the graphite theme."
+      content="The Patchbay wordmark over a wired node graph, in the blueprint theme."
     />
 
     <meta data-default name="twitter:card" content="summary_large_image" />
@@ -40,8 +40,7 @@
     />
     <meta data-default name="twitter:image" content="%VITE_SITE_URL%/social-preview.png" />
 
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111419" />
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fbfaf7" />
+    <meta name="theme-color" content="#0a1f2e" />
 
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon.ico" sizes="32x32" />
@@ -90,12 +89,19 @@
       src/features/canvas/coldOpen.test.ts holds the keys to the constants, and
       check:browsers loads a custom theme and reads the document in the first
       frames it paints. The colour test is applyTheme's own gate, repeated.
+
+      Nothing stored is blueprint, whatever the OS says - DEFAULT_THEME in
+      presets.ts. The OS decides only for a stored `system` selection, and for
+      a custom theme that has since been deleted, because that is where the
+      store falls back too. hydration.test.ts runs this script beside the
+      store and holds the two to the same answer.
     -->
     <script>
       (function () {
         var root = document.documentElement;
         var theme = null;
         var custom = null;
+        var system = false;
         try {
           var stored = window.localStorage.getItem('patchbay:theme:v1');
           if (stored) {
@@ -103,7 +109,10 @@
             var selection = state && state.selection;
             if (selection && selection.kind === 'preset') {
               theme = selection.name;
+            } else if (selection && selection.kind === 'system') {
+              system = true;
             } else if (selection && selection.kind === 'custom') {
+              system = true;
               var library = JSON.parse(window.localStorage.getItem('patchbay:themes:v1') || 'null');
               var lists = [(library && library.themes) || [], state.customThemes || []];
               for (var l = 0; l < lists.length && !custom; l++) {
@@ -120,11 +129,13 @@
         } catch (error) {
           theme = null;
           custom = null;
+          system = false;
         }
-        if (!theme) {
+        if (!theme && system) {
           var light = window.matchMedia('(prefers-color-scheme: light)').matches;
           theme = light ? 'vellum' : 'graphite';
         }
+        if (!theme) theme = 'blueprint';
         root.setAttribute('data-theme', theme);
         var overrides = (custom && custom.overrides) || {};
         for (var token in overrides) {
